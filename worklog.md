@@ -172,3 +172,67 @@ Stage Summary:
 - Test accounts in DB: sara@copilot.dev (OWNER), ali@copilot.dev (ADMIN),
   eve@outsider.dev (no membership) — password copilot2026/evilpass99
   (dev-only database; replace before any production use).
+
+---
+Task ID: 02
+Agent: Z.ai Code (cron webDevReview round)
+Task: Status assessment + QA, then Phase 02 — Master Data (Customers,
+Suppliers, Products CRUD + basic inventory adjustments) per roadmap §6.
+
+Work Log:
+- Baseline verified: server 200, lint clean, Phase 01 handover reviewed.
+- DB: added Customer, Supplier, Product, InventoryAdjustment models.
+  Soft delete (deletedAt) on all master data; money = Int minor units
+  (salePriceMinor/costPriceMinor, A08); stockQty + lowStockAt on Product;
+  adjustments carry delta/reason/actor for full stock history. db:push OK
+  (after adding missing inverse relations on User/Business).
+- API (all tenant-scoped + zod + RBAC + audited):
+  /api/v1/customers[/id] — list (q search, pagination), create, PATCH,
+  soft DELETE; /api/v1/suppliers[/id] — same; /api/v1/products[/id] —
+  CRUD with explicit price-change audit (product.price_change);
+  /api/v1/products/[id]/stock — transactional adjustment: validates
+  newQty >= 0 (422 INSUFFICIENT_STOCK), writes InventoryAdjustment +
+  audit in one tx; /api/v1/inventory/adjustments — recent history feed.
+  Shared schemas extracted to src/lib/schemas.ts (listParams, party,
+  product, stock schemas). Server money contract = integer minor units.
+- Frontend:
+  Generic PartyView (customers & suppliers share one implementation —
+  Rule 04) with search, pagination, create/edit dialog, delete confirm.
+  ProductsView with MoneyInput (symbol prefix, toMinor validation),
+  low-stock/out-of-stock badges, stock dialog. InventoryView with stock
+  levels + recent adjustments feed (green/red deltas). Shared table-kit:
+  SearchInput (debounced), Pagination (labels optional), FormDialog,
+  MoneyInput. Sidebar: customers/suppliers/products/inventory now live
+  (no "coming soon"); badge hidden on icon-collapse (RTL cramp fix).
+  i18n: full parties/products/inventory catalogs in en + fa; dir="auto"
+  on mixed-content cells for bidi correctness.
+- Ops note: dev server restart REQUIRED after schema push (old Prisma
+  Client cached in memory → tx.customer undefined). Killed next-server
+  and relaunched `bun run dev` detached. Future rounds: restart server
+  after any db:push that adds models.
+- Fixed during QA: Pagination crashed when called without labels prop
+  (made labels optional + safe access); leftover void queryClient in
+  InventoryView after import cleanup.
+
+Verification (agent-browser E2E + curl):
+- curl: customer create 201, product create 201, stock +5 → 15,
+  oversell → 422 INSUFFICIENT_STOCK. Audit shows customer.create,
+  product.create, 3× inventory.adjust. OK
+- UI: customers list shows seeded + UI-created "Mina Jafari"; add
+  dialog works. Products table shows Candle (€ price, sku/unit, stock
+  15→13 via dialog decrease with reason). Inventory shows stock +
+  full history (initial 10, +5 delivery, −2 damaged). OK
+- فارسی RTL: inventory fully mirrored, Persian labels; dir=auto fixes
+  mixed-content cells. Screenshots: download/qa-inventory-*.png,
+  qa-final-*.png. OK
+- Mobile 390×844: no horizontal overflow. `bun run lint` clean.
+
+Stage Summary:
+- Phase 02 COMPLETE: items 5-7,13 of MVP scope (customers, suppliers,
+  products, basic inventory) now real and audited.
+- Remaining known issue: none blocking. Dev-DB has test rows (Reza
+  Karimi, Mina Jafari, Handmade Candle) — fine for dev.
+- Next (Phase 03 per roadmap): Transactions — sales invoices + items,
+  expenses, payments; receivables/payables derived views. Reuse
+  money.ts + table-kit; keep everything audited. Phase 04 afterwards
+  (dashboard KPIs + reports from real data).

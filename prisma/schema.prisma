@@ -27,6 +27,7 @@ model User {
   memberships BusinessMember[]
   ownedBusinesses Business[]   @relation("BusinessOwner")
   auditLogs   AuditLog[]
+  inventoryAdjustments InventoryAdjustment[]
 }
 
 model Business {
@@ -46,6 +47,10 @@ model Business {
 
   members   BusinessMember[]
   auditLogs AuditLog[]
+  customers Customer[]
+  suppliers Supplier[]
+  products  Product[]
+  inventoryAdjustments InventoryAdjustment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -85,4 +90,83 @@ model AuditLog {
 
   @@index([businessId, createdAt])
   @@index([entityType, entityId])
+}
+
+// ---------------------------------------------------------------------------
+// Phase 02 — Master data (Constitution MVP scope §2 items 5-7, 13)
+// Financial records use soft delete (deletedAt); money is Int minor units.
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id         String    @id @default(cuid())
+  businessId String
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name       String
+  phone      String?
+  email      String?
+  address    String?
+  note       String?
+  deletedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([businessId, deletedAt])
+  @@index([businessId, name])
+}
+
+model Supplier {
+  id         String    @id @default(cuid())
+  businessId String
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name       String
+  phone      String?
+  email      String?
+  address    String?
+  note       String?
+  deletedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([businessId, deletedAt])
+  @@index([businessId, name])
+}
+
+model Product {
+  id             String    @id @default(cuid())
+  businessId     String
+  business       Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name           String
+  sku            String?
+  unit           String? // e.g. piece, kg, hour
+  // A08 — prices stored as integer minor units (never floats)
+  salePriceMinor Int       @default(0)
+  costPriceMinor Int       @default(0)
+  // Basic inventory: current stock quantity in whole units
+  stockQty       Int       @default(0)
+  lowStockAt     Int       @default(5) // threshold for low-stock alert
+  isActive       Boolean   @default(true)
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  adjustments InventoryAdjustment[]
+
+  @@index([businessId, deletedAt])
+  @@index([businessId, name])
+}
+
+model InventoryAdjustment {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  delta      Int // signed change in units
+  reason     String
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([productId, createdAt])
 }

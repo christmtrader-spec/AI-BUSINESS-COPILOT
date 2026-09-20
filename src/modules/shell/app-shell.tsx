@@ -4,11 +4,15 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { api } from "@/lib/api-client";
 import { useAppStore } from "@/store/app-store";
+import { asRole, type Role } from "@/lib/rbac";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { AppHeader } from "./header";
 import { AppSidebar } from "./app-sidebar";
 import type { BusinessListItem } from "./types";
 import { DashboardView } from "../dashboard/dashboard-view";
+import { PartyView } from "../parties/party-view";
+import { ProductsView } from "../products/products-view";
+import { InventoryView } from "../inventory/inventory-view";
 import { BusinessSettingsView } from "../settings/business-settings-view";
 import { MembersView } from "../settings/members-view";
 import { ProfileView } from "../settings/profile-view";
@@ -28,6 +32,7 @@ export function AppShell({
 
   const membership =
     memberships.find((m) => m.business.id === activeId) ?? memberships[0] ?? null;
+  const role: Role = asRole(membership?.role);
 
   return (
     <SidebarProvider>
@@ -43,7 +48,19 @@ export function AppShell({
             {view.kind === "settings:members" ? <MembersView membership={membership!} /> : null}
             {view.kind === "profile" ? <ProfileView /> : null}
             {view.kind === "audit" ? <AuditView membership={membership!} /> : null}
-            {view.kind === "module" ? <ComingSoonView module={view.module} /> : null}
+            {view.kind === "module" ? (
+              view.module === "customers" ? (
+                <PartyView kind="customer" business={membership!.business} role={role} />
+              ) : view.module === "suppliers" ? (
+                <PartyView kind="supplier" business={membership!.business} role={role} />
+              ) : view.module === "products" ? (
+                <ProductsView business={membership!.business} role={role} />
+              ) : view.module === "inventory" ? (
+                <InventoryView business={membership!.business} role={role} />
+              ) : (
+                <ComingSoonView module={view.module} />
+              )
+            ) : null}
           </div>
         </main>
         <footer className="border-t">

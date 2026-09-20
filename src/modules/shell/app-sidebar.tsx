@@ -66,10 +66,10 @@ const OVERVIEW: NavItem[] = [
 ];
 
 const OPERATIONS: NavItem[] = [
-  { view: { kind: "module", module: "customers" }, labelKey: "customers", icon: Users, soon: true },
-  { view: { kind: "module", module: "suppliers" }, labelKey: "suppliers", icon: Truck, soon: true },
-  { view: { kind: "module", module: "products" }, labelKey: "products", icon: Package, soon: true },
-  { view: { kind: "module", module: "inventory" }, labelKey: "inventory", icon: Warehouse, soon: true },
+  { view: { kind: "module", module: "customers" }, labelKey: "customers", icon: Users },
+  { view: { kind: "module", module: "suppliers" }, labelKey: "suppliers", icon: Truck },
+  { view: { kind: "module", module: "products" }, labelKey: "products", icon: Package },
+  { view: { kind: "module", module: "inventory" }, labelKey: "inventory", icon: Warehouse },
   { view: { kind: "module", module: "sales" }, labelKey: "sales", icon: ShoppingCart, soon: true },
   { view: { kind: "module", module: "expenses" }, labelKey: "expenses", icon: Wallet, soon: true },
   { view: { kind: "module", module: "payments" }, labelKey: "payments", icon: CreditCard, soon: true },
@@ -139,7 +139,7 @@ export function AppSidebar({
                     <span>{t(item.labelKey)}</span>
                   </SidebarMenuButton>
                   {item.soon ? (
-                    <SidebarMenuBadge className="text-muted-foreground text-[10px] uppercase tracking-wide">
+                    <SidebarMenuBadge className="text-muted-foreground group-data-[collapsible=icon]:hidden text-[10px] uppercase tracking-wide">
                       {soonLabel}
                     </SidebarMenuBadge>
                   ) : null}
