@@ -42,15 +42,26 @@ export function PageHeader({
   title,
   subtitle,
   actions,
+  titleClassName,
 }: {
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
+  /** Extra classes for the h1 (e.g. "gradient-shimmer" for heroes).
+   *  The signature `gradient-text` is applied by default. */
+  titleClassName?: string;
 }) {
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        <h1
+          className={cn(
+            "text-2xl font-semibold tracking-tight gradient-text",
+            titleClassName,
+          )}
+        >
+          {title}
+        </h1>
         {subtitle ? <p className="text-muted-foreground text-sm">{subtitle}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}

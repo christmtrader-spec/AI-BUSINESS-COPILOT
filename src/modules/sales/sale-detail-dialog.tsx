@@ -14,18 +14,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { toast } from "@/hooks/use-toast";
+import { DataTable, Ltr } from "@/components/shared/data-table";
 import { FinanceStatusBadge, fmtDate, fmtMoney, useInvalidateFinance } from "../finance-shared/finance-kit";
 import { PaymentFormDialog, type PaymentTarget } from "../payments/payment-form-dialog";
 import type { BusinessSummary } from "../shell/types";
+
+/** One invoice line item — also the row type of the detail-dialog table. */
+export type SaleItemRow = {
+  id: string;
+  name: string;
+  unit: string | null;
+  qty: number;
+  unitPriceMinor: number;
+  lineTotalMinor: number;
+};
 
 type SaleDetail = {
   sale: {
@@ -41,14 +44,7 @@ type SaleDetail = {
     balanceMinor: number;
     note: string | null;
   };
-  items: {
-    id: string;
-    name: string;
-    unit: string | null;
-    qty: number;
-    unitPriceMinor: number;
-    lineTotalMinor: number;
-  }[];
+  items: SaleItemRow[];
   payments: {
     id: string;
     amountMinor: number;
@@ -309,37 +305,47 @@ export function SaleDetailDialog({
                 </DialogDescription>
               </DialogHeader>
 
-              <div className="overflow-x-auto rounded-md border">
-                <Table>
-                  <TableHeader className="bg-muted/50">
-                    <TableRow>
-                      <TableHead>{t("colItem")}</TableHead>
-                      <TableHead className="text-end">{t("colQty")}</TableHead>
-                      <TableHead className="text-end">{t("colUnitPrice")}</TableHead>
-                      <TableHead className="text-end">{t("colLineTotal")}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {data.items.map((i) => (
-                      <TableRow key={i.id}>
-                        <TableCell dir="auto">
-                          <span className="font-medium">{i.name}</span>
-                          {i.unit ? (
-                            <span className="text-muted-foreground ms-1 text-xs">({i.unit})</span>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className="text-end tabular-nums" dir="ltr">{i.qty}</TableCell>
-                        <TableCell className="text-end tabular-nums" dir="ltr">
-                          {fmtMoney(business, i.unitPriceMinor)}
-                        </TableCell>
-                        <TableCell className="text-end font-medium tabular-nums" dir="ltr">
-                          {fmtMoney(business, i.lineTotalMinor)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+              <DataTable<SaleItemRow>
+                ariaLabel={t("printInvoiceLabel")}
+                columns={[
+                  {
+                    id: "item",
+                    header: t("colItem"),
+                    cell: (i) => (
+                      <div className="min-w-0" dir="auto">
+                        <span className="font-medium">{i.name}</span>
+                        {i.unit ? (
+                          <span className="text-muted-foreground ms-1 text-xs">({i.unit})</span>
+                        ) : null}
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "qty",
+                    header: t("colQty"),
+                    align: "end",
+                    cell: (i) => <Ltr>{i.qty}</Ltr>,
+                  },
+                  {
+                    id: "unitPrice",
+                    header: t("colUnitPrice"),
+                    align: "end",
+                    cell: (i) => <Ltr>{fmtMoney(business, i.unitPriceMinor)}</Ltr>,
+                  },
+                  {
+                    id: "lineTotal",
+                    header: t("colLineTotal"),
+                    align: "end",
+                    cell: (i) => (
+                      <Ltr className="font-medium">{fmtMoney(business, i.lineTotalMinor)}</Ltr>
+                    ),
+                  },
+                ]}
+                rows={data.items}
+                getRowId={(i) => i.id}
+                loading={isLoading}
+                skeletonRows={4}
+              />
 
               <div className="space-y-1 text-sm tabular-nums" dir="ltr">
                 <div className="text-muted-foreground flex justify-between">

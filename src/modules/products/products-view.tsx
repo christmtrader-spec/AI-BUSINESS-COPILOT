@@ -14,14 +14,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -33,6 +25,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
+import { DataTable, Ltr } from "@/components/shared/data-table";
 import {
   FormDialog,
   MoneyInput,
@@ -90,7 +83,7 @@ export function ProductsView({
     lowStockAt: "5",
   });
 
-  const { data, isLoading, error, refetch } = useQuery<ProductPage>({
+  const { data, isLoading, isFetching, error, refetch } = useQuery<ProductPage>({
     queryKey: ["products", q, page],
     queryFn: () => api(`/api/v1/products?q=${encodeURIComponent(q)}&page=${page}&pageSize=10`),
   });
@@ -219,84 +212,76 @@ export function ProductsView({
             />
           </div>
 
-          {isLoading ? (
-            <div className="space-y-2" aria-busy="true">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="bg-muted/50 h-12 animate-pulse rounded-md" />
-              ))}
-            </div>
-          ) : error ? (
+          {error ? (
             <div className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm">
               {tErrors("loadFailed")}{" "}
               <button className="underline" onClick={() => void refetch()}>
                 {tCommon("retry")}
               </button>
             </div>
-          ) : items.length === 0 && !q ? (
-            <EmptyState
-              icon={Package}
-              title={t("empty")}
-              description={t("emptyDesc")}
-              action={
-                writable ? (
-                  <Button size="sm" variant="outline" onClick={openCreate}>
-                    <Plus className="size-4" aria-hidden="true" />
-                    {t("add")}
-                  </Button>
-                ) : null
-              }
-            />
-          ) : items.length === 0 ? (
-            <EmptyState icon={Package} title={tCommon("search")} description={t("searchPlaceholder")} />
           ) : (
             <>
-              <div className="overflow-x-auto rounded-md border">
-                <Table>
-                  <TableHeader className="bg-muted/50">
-                    <TableRow>
-                      <TableHead>{t("colProduct")}</TableHead>
-                      <TableHead className="text-end">{t("colPrice")}</TableHead>
-                      <TableHead>{t("colStock")}</TableHead>
-                      {writable ? (
-                        <TableHead className="text-end">{tCommon("actions")}</TableHead>
-                      ) : null}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {items.map((p) => (
-                      <TableRow key={p.id} className="hover:bg-muted/40">
-                        <TableCell>
-                          <div className="flex items-center gap-3">
-                            <div className="bg-primary/10 flex size-9 shrink-0 items-center justify-center rounded-lg">
-                              <Package className="text-primary size-4" aria-hidden="true" />
-                            </div>
-                            <div className="min-w-0">
-                              <p className="truncate font-medium">{p.name}</p>
-                              {p.sku ? (
-                                <p className="text-muted-foreground text-xs" dir="ltr">
-                                  {p.sku}
-                                  {p.unit ? ` · ${p.unit}` : ""}
-                                </p>
-                              ) : p.unit ? (
-                                <p className="text-muted-foreground text-xs">{p.unit}</p>
-                              ) : null}
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-end font-semibold tabular-nums">
-                          {fmt(p.salePriceMinor)}
-                          <p className="text-muted-foreground text-xs font-normal tabular-nums">
-                            {fmt(p.costPriceMinor)}
-                          </p>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold tabular-nums">{p.stockQty}</span>
-                            {stockBadge(p)}
-                          </div>
-                        </TableCell>
-                        {writable ? (
-                          <TableCell className="text-end">
+              <DataTable<Product>
+                ariaLabel={tNav("products")}
+                sortLocale={business.locale}
+                refreshing={isFetching && !isLoading}
+                columns={[
+                  {
+                    id: "product",
+                    header: t("colProduct"),
+                    sortValue: (p) => p.name,
+                    cell: (p) => (
+                      <div className="flex items-center gap-3">
+                        <div className="bg-primary/10 flex size-9 shrink-0 items-center justify-center rounded-lg">
+                          <Package className="text-primary size-4" aria-hidden="true" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{p.name}</p>
+                          {p.sku ? (
+                            <p className="text-muted-foreground text-xs">
+                              <Ltr>
+                                {p.sku}
+                                {p.unit ? ` · ${p.unit}` : ""}
+                              </Ltr>
+                            </p>
+                          ) : p.unit ? (
+                            <p className="text-muted-foreground text-xs">{p.unit}</p>
+                          ) : null}
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "price",
+                    header: t("colPrice"),
+                    align: "end",
+                    sortValue: (p) => p.salePriceMinor,
+                    cell: (p) => (
+                      <div>
+                        <Ltr className="font-semibold">{fmt(p.salePriceMinor)}</Ltr>
+                        <p className="text-muted-foreground text-xs">
+                          <Ltr>{fmt(p.costPriceMinor)}</Ltr>
+                        </p>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "stock",
+                    header: t("colStock"),
+                    cell: (p) => (
+                      <div className="flex items-center gap-2">
+                        <Ltr className="text-sm font-semibold">{p.stockQty}</Ltr>
+                        {stockBadge(p)}
+                      </div>
+                    ),
+                  },
+                  ...(writable
+                    ? [
+                        {
+                          id: "actions",
+                          header: tCommon("actions"),
+                          align: "end" as const,
+                          cell: (p: Product) => (
                             <div className="flex items-center justify-end gap-1">
                               <Button
                                 variant="ghost"
@@ -305,7 +290,7 @@ export function ProductsView({
                                 onClick={() => setStockTarget(p)}
                                 aria-label={t("adjust")}
                               >
-                                <ArrowLeftRight className="size-4" />
+                                <ArrowLeftRight className="size-4" aria-hidden="true" />
                               </Button>
                               <Button
                                 variant="ghost"
@@ -314,7 +299,7 @@ export function ProductsView({
                                 onClick={() => openEdit(p)}
                                 aria-label={t("edit")}
                               >
-                                <Pencil className="size-4" />
+                                <Pencil className="size-4" aria-hidden="true" />
                               </Button>
                               <AlertDialog>
                                 <AlertDialogTrigger asChild>
@@ -324,7 +309,7 @@ export function ProductsView({
                                     className="text-destructive size-8 hover:text-destructive"
                                     aria-label={tCommon("delete")}
                                   >
-                                    <Trash2 className="size-4" />
+                                    <Trash2 className="size-4" aria-hidden="true" />
                                   </Button>
                                 </AlertDialogTrigger>
                                 <AlertDialogContent>
@@ -344,13 +329,35 @@ export function ProductsView({
                                 </AlertDialogContent>
                               </AlertDialog>
                             </div>
-                          </TableCell>
-                        ) : null}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                          ),
+                        },
+                      ]
+                    : []),
+                ]}
+                rows={items}
+                getRowId={(p) => p.id}
+                loading={isLoading}
+                skeletonRows={4}
+                empty={
+                  !q ? (
+                    <EmptyState
+                      icon={Package}
+                      title={t("empty")}
+                      description={t("emptyDesc")}
+                      action={
+                        writable ? (
+                          <Button size="sm" variant="outline" onClick={openCreate}>
+                            <Plus className="size-4" aria-hidden="true" />
+                            {t("add")}
+                          </Button>
+                        ) : null
+                      }
+                    />
+                  ) : (
+                    <EmptyState icon={Package} title={tCommon("search")} description={t("searchPlaceholder")} />
+                  )
+                }
+              />
               <Pagination page={page} pageSize={10} total={total} onPage={setPage} />
             </>
           )}

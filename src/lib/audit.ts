@@ -6,7 +6,8 @@
 import { db } from "@/lib/db";
 
 export type AuditInput = {
-  businessId: string;
+  /** Null for account-level security events (auth.*, account deletion). */
+  businessId: string | null;
   actorId?: string | null;
   action: string;
   entityType: string;

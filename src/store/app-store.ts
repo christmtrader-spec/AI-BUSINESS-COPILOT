@@ -22,7 +22,10 @@ export type AppView =
   | { kind: "settings:members" }
   | { kind: "profile" }
   | { kind: "onboarding" }
-  | { kind: "module"; module: string };
+  | { kind: "join"; token: string }
+  | { kind: "forgot-password" }
+  | { kind: "reset-password"; token: string }
+  | { kind: "module"; module: string; /** optional sub-resource (e.g. reports ?month=YYYY-MM) */ param?: string };
 
 export const KNOWN_MODULES = [
   "customers",
@@ -46,7 +49,28 @@ export function isKnownModule(value: string): value is KnownModule {
 
 /** Stable identity of a view (for equality checks / keys). */
 export function viewKeyOf(view: AppView): string {
-  return view.kind === "module" ? `module:${view.module}` : view.kind;
+  return view.kind === "module"
+    ? `module:${view.module}`
+    : view.kind === "join"
+      ? `join:${view.token}`
+      : view.kind === "reset-password"
+        ? `reset:${view.token}`
+        : view.kind;
+}
+
+/**
+ * Structural view equality (applyHash). Deliberately FINER than viewKeyOf:
+ * module sub-state (?month= deep-link param) must re-enter the store when
+ * the hash changes, but must NOT remount the module (viewKey stays stable
+ * so React keeps the mounted view alive — reports state survives dialog
+ * open/close).
+ */
+export function sameView(a: AppView, b: AppView): boolean {
+  if (viewKeyOf(a) !== viewKeyOf(b)) return false;
+  if (a.kind === "module" && b.kind === "module") {
+    return (a.param ?? null) === (b.param ?? null);
+  }
+  return true;
 }
 
 /** URL hash for a view. `onboarding` is a transient state — no address. */
@@ -62,8 +86,21 @@ export function viewToHash(view: AppView): string | null {
       return "#/settings/members";
     case "profile":
       return "#/profile";
-    case "module":
-      return isKnownModule(view.module) ? `#/${view.module}` : null;
+    case "module": {
+      if (!isKnownModule(view.module)) return null;
+      // Module sub-state deep links (e.g. #/reports?month=YYYY-MM) stay in
+      // the address bar — month is the only sub-param today.
+      if (view.param && /^\d{4}-\d{2}$/.test(view.param)) {
+        return `#/${view.module}?month=${view.param}`;
+      }
+      return `#/${view.module}`;
+    }
+    case "join":
+      return `#/join/${view.token}`;
+    case "forgot-password":
+      return "#/forgot-password";
+    case "reset-password":
+      return `#/reset-password/${view.token}`;
     case "onboarding":
       return null;
   }
@@ -71,13 +108,39 @@ export function viewToHash(view: AppView): string | null {
 
 /** Parse a location hash into a view. Unknown → dashboard (never onboarding). */
 export function hashToView(hash: string): AppView {
-  const path = hash.replace(/^#\/?/, "").replace(/\/+$/, "");
+  const raw = hash.replace(/^#\/?/, "").replace(/\/+$/, "");
+  // Query part (e.g. #/reports?month=2026-04) — module-scoped deep-link params.
+  const qIndex = raw.indexOf("?");
+  const path = (qIndex === -1 ? raw : raw.slice(0, qIndex)).trim();
+  const query = new URLSearchParams(qIndex === -1 ? "" : raw.slice(qIndex + 1));
   if (!path || path === "dashboard") return { kind: "dashboard" };
   if (path === "audit") return { kind: "audit" };
   if (path === "settings") return { kind: "settings:business" };
   if (path === "settings/members") return { kind: "settings:members" };
   if (path === "profile") return { kind: "profile" };
-  if (isKnownModule(path)) return { kind: "module", module: path };
+  if (path.startsWith("join/")) {
+    const token = path.slice("join/".length);
+    // Opaque invite token: non-empty, bounded length (server validates the rest).
+    if (token.length > 0 && token.length <= 128) return { kind: "join", token };
+  }
+  if (path === "forgot-password") return { kind: "forgot-password" };
+  if (path.startsWith("reset-password/")) {
+    const token = path.slice("reset-password/".length);
+    // Opaque reset token: non-empty, bounded length (server validates the rest).
+    if (token.length > 0 && token.length <= 200) return { kind: "reset-password", token };
+    // Malformed reset link → the forgot form so a fresh link can be requested.
+    return { kind: "forgot-password" };
+  }
+  if (isKnownModule(path)) {
+    // Module sub-param deep links: ?month=YYYY-MM opens reports straight
+    // into the drill-down, or pre-filters sales/expenses to that month
+    // (e.g. "Open in Sales" from the reports month dialog).
+    const month = query.get("month");
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      return { kind: "module", module: path, param: month };
+    }
+    return { kind: "module", module: path };
+  }
   return { kind: "dashboard" };
 }
 

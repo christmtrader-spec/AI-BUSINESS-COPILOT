@@ -105,6 +105,16 @@ export const DELETE = route(async (req: NextRequest, { params }: RouteParams) =>
   if (member.id === ctx.member.id) {
     throw new ApiError(400, "CANNOT_REMOVE_SELF", "You cannot remove yourself here.");
   }
+  // Production-hardening (audit r18): removing the member who OWNS the
+  // business would leave Business.ownerId dangling (ownership is an
+  // immutable back-reference until an explicit transfer feature exists).
+  if (member.userId === ctx.business.ownerId) {
+    throw new ApiError(
+      400,
+      "OWNER_TRANSFER_REQUIRED",
+      "Transfer business ownership before removing this member.",
+    );
+  }
   if (ctx.role !== "OWNER" && ROLE_RANK[targetRole] >= ROLE_RANK[ctx.role]) {
     throw new ApiError(403, "ROLE_TOO_HIGH", "You cannot remove a member at or above your rank.");
   }

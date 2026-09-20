@@ -82,7 +82,15 @@ export const POST = route(async (req: NextRequest, { params }: RouteParams) => {
   const modeParam = req.nextUrl.searchParams.get("mode") === "merge" ? "merge" : "dry_run";
   const idsParam = req.nextUrl.searchParams.get("ids") === "new" ? "new" : "keep";
 
-  // Body IS the backup file content.
+  // Body IS the backup file content. Bound the parse size BEFORE reading
+  // the body (audit hardening): zod caps row counts, this caps raw bytes
+  // so a hostile owner cannot force a giant JSON parse into memory.
+  const MAX_BACKUP_BYTES = 25 * 1024 * 1024; // 25 MB — far above any legit export
+  const contentLength = Number(req.headers.get("content-length") ?? "0");
+  if (contentLength > MAX_BACKUP_BYTES) {
+    throw new ApiError(413, "BACKUP_TOO_LARGE", "The backup file exceeds the 25 MB limit.");
+  }
+
   let raw: unknown;
   try {
     raw = await req.json();

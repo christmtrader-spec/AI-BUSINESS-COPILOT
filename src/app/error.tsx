@@ -1,14 +1,20 @@
 "use client";
 
-import { useEffect } from "react";
-import { AlertTriangle, RotateCcw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, Loader2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { hardReloadOnce, isChunkLoadError } from "@/lib/chunk-recovery";
 
 /**
- * Route-level error boundary (Phase 06 hardening).
+ * Route-level error boundary (Phase 06 hardening, r19 chunk-recovery).
  * Catches anything that escapes module boundaries (e.g. a provider crash)
  * and offers a recoverable way back in. Bilingual by construction: the
  * route tree renders outside the app shell's locale context.
+ *
+ * Stale-chunk case: if the failure is a ChunkLoadError (dev server rotated
+ * chunk hashes, or a deploy replaced the bundle under the tab), a plain
+ * reset() re-renders a dead module graph — a full reload is the cure, so
+ * the boundary auto-reloads once and shows a transient "updating" state.
  */
 export default function GlobalRouteError({
   error,
@@ -17,9 +23,39 @@ export default function GlobalRouteError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const [recovering, setRecovering] = useState(false);
+  const chunkError = isChunkLoadError(error);
+
   useEffect(() => {
     console.error("[RouteError]", error);
-  }, [error]);
+    if (!chunkError || !hardReloadOnce()) return;
+    // Defer the UI swap out of the synchronous effect body — the reload
+    // itself lands within the same tick sequence anyway.
+    const t = setTimeout(() => setRecovering(true), 0);
+    return () => clearTimeout(t);
+  }, [error, chunkError]);
+
+  if (recovering) {
+    return (
+      <div className="bg-background flex min-h-svh flex-col items-center justify-center gap-4 p-6 text-center">
+        <Loader2 className="text-muted-foreground size-8 animate-spin" aria-hidden="true" />
+        <div className="space-y-1">
+          <h1 className="text-lg font-semibold tracking-tight">
+            Updating the application…
+            <span className="text-muted-foreground mx-2 font-normal" dir="rtl">
+              · در حال به‌روزرسانی برنامه…
+            </span>
+          </h1>
+          <p className="text-muted-foreground text-sm">
+            A newer version was detected — reloading.
+            <span dir="rtl" className="block">
+              نسخه جدیدی شناسایی شد — در حال بارگیری دوباره.
+            </span>
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-background flex min-h-svh flex-col items-center justify-center gap-6 p-6 text-center">
@@ -34,11 +70,13 @@ export default function GlobalRouteError({
           </span>
         </h1>
         <p className="text-muted-foreground mx-auto max-w-md text-sm">
-          The application hit an unexpected error. You can retry — your saved
-          data is safe on the server.
+          {chunkError
+            ? "A stale application bundle was detected. Reload the page to continue — your saved data is safe on the server."
+            : "The application hit an unexpected error. You can retry — your saved data is safe on the server."}
           <span dir="rtl" className="block">
-            خطای غیرمنتظره‌ای پیش آمد. می‌توانید دوباره تلاش کنید؛ داده‌های شما
-            روی سرور امن است.
+            {chunkError
+              ? "نسخه قدیمی از برنامه شناسایی شد. برای ادامه صفحه را دوباره بارگیری کنید؛ داده‌های شما روی سرور امن است."
+              : "خطای غیرمنتظره‌ای پیش آمد. می‌توانید دوباره تلاش کنید؛ داده‌های شما روی سرور امن است."}
           </span>
         </p>
         {error.digest ? (
@@ -47,11 +85,20 @@ export default function GlobalRouteError({
           </p>
         ) : null}
       </div>
-      <Button onClick={reset}>
+      {/* Chunk errors cannot be healed by reset() — force a full reload. */}
+      <Button
+        onClick={() => {
+          if (chunkError) {
+            window.location.reload();
+            return;
+          }
+          reset();
+        }}
+      >
         <RotateCcw className="size-4" aria-hidden="true" />
-        Try again
+        {chunkError ? "Reload page" : "Try again"}
         <span dir="rtl" className="ms-1">
-          · تلاش دوباره
+          {chunkError ? "· بارگیری دوباره صفحه" : "· تلاش دوباره"}
         </span>
       </Button>
     </div>

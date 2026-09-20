@@ -126,7 +126,7 @@ export function OnboardingView({
             <Building2 className="text-primary size-5" aria-hidden="true" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">{t("title")}</h1>
+            <h1 className="text-xl font-semibold tracking-tight gradient-text">{t("title")}</h1>
             <p className="text-muted-foreground text-sm">{t("subtitle")}</p>
           </div>
         </div>

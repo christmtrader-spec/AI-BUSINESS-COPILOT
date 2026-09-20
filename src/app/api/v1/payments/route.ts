@@ -13,6 +13,7 @@ import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { listParams, paymentCreateSchema } from "@/lib/schemas";
 import { statusOf } from "@/lib/money";
+import { rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -85,6 +86,15 @@ export const GET = route(async (req: NextRequest) => {
 export const POST = route(async (req: NextRequest) => {
   const ctx = await getAuthContext(req);
   requirePermission(ctx, "finance:manage");
+
+  // Audit hardening: money mutations get a light per-user/business limit
+  // (in-memory MVP limiter — see docs/audit/rate-limiting.md).
+  const rl = rateLimit(`payments:write:${ctx.userId}:${ctx.businessId}`, 60, 60_000);
+  if (!rl.allowed) {
+    throw new ApiError(429, "RATE_LIMITED", "Too many payment operations. Please wait a moment.", {
+      retryAfterMs: rl.retryAfterMs,
+    });
+  }
 
   const input = await parseBody(req, paymentCreateSchema);
 

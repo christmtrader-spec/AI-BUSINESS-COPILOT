@@ -17,7 +17,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import type { BusinessListItem } from "./types";
@@ -178,6 +178,13 @@ export function AppHeader() {
   const tShell = useTranslations("shell");
   const tCommon = useTranslations("common");
   const setCommandOpen = useAppStore((s) => s.setCommandOpen);
+  // The open trigger lives in the header ONLY on mobile while the sheet is
+  // closed (the menu is off-screen, so there is nothing to host the button).
+  // On desktop the toggle always sits ON the sidebar itself — close button
+  // inside the expanded panel header, expand button on the collapsed rail —
+  // never floating beside the menu.
+  const { isMobile, openMobile } = useSidebar();
+  const showHeaderTrigger = isMobile && !openMobile;
 
   // Memberships for the switcher are cached by AppRoot via the same key.
   const { data: memberships } = useQuery<BusinessListItem[]>({
@@ -190,8 +197,12 @@ export function AppHeader() {
 
   return (
     <header className="bg-background/80 sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b px-3 backdrop-blur sm:px-4">
-      <SidebarTrigger aria-label={tShell("toggleSidebar")} />
-      <Separator orientation="vertical" className="h-5" />
+      {showHeaderTrigger ? (
+        <>
+          <SidebarTrigger aria-label={tShell("openSidebar")} data-testid="sidebar-open" />
+          <Separator orientation="vertical" className="h-5" />
+        </>
+      ) : null}
       <BusinessSwitcher memberships={list} />
       <Button
         variant="outline"

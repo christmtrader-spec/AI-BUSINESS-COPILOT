@@ -120,14 +120,21 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Explicit body font: the Geist variable class lives on <body>, while
+       Tailwind's preflight sets the font on <html> (which cannot see
+       body-scoped custom properties) — without this, EN silently falls
+       back to the system font. The FA override below is unlayered and
+       therefore wins over this rule when html[lang="fa"]. */
+    font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   }
-  /* A05/A06 — Persian-first typography when the document is RTL. */
-  html[dir="rtl"] body {
+  /* A05/A06 — Persian typography: real Vazirmatn (self-hosted via
+     next/font, exposed as --font-vazir in the root layout) when the
+     workspace language is Persian. English keeps Geist. */
+  html[lang="fa"] body {
     font-family:
+      var(--font-vazir),
       "Vazirmatn",
-      "IRANSans",
       Tahoma,
-      "Segoe UI",
       var(--font-geist-sans),
       system-ui,
       sans-serif;
@@ -208,3 +215,70 @@
 }
 
 /* css touch 1789910297 */
+
+/* ── Signature gradient text (r16) ───────────────────────────────────────
+   Brand gradients harmonized with the chart palette (emerald, teal, amber,
+   rose — no blue). bg-clip:text confines the gradient to the glyphs; the
+   dark theme gets brighter stops to hold AA contrast on near-black.      */
+.gradient-text {
+  background-image: linear-gradient(100deg, #059669, #0d9488 55%, #10b981);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+.dark .gradient-text {
+  background-image: linear-gradient(100deg, #34d399, #5eead4 55%, #6ee7b7);
+}
+
+/* Warm variant — AI/copilot accents (amber → orange → rose). */
+.gradient-warm {
+  background-image: linear-gradient(100deg, #d97706, #ea580c 50%, #e11d48);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+.dark .gradient-warm {
+  background-image: linear-gradient(100deg, #fbbf24, #fb923c 50%, #fb7185);
+}
+
+/* KPI figures — positive (emerald → teal) and negative (rose → orange). */
+.gradient-pos {
+  background-image: linear-gradient(100deg, #059669, #14b8a6);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+.dark .gradient-pos {
+  background-image: linear-gradient(100deg, #34d399, #2dd4bf);
+}
+.gradient-neg {
+  background-image: linear-gradient(100deg, #e11d48, #f97316);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+.dark .gradient-neg {
+  background-image: linear-gradient(100deg, #fb7185, #fb923c);
+}
+
+/* Gentle shimmer reserved for hero headings (dashboard welcome, landing).
+   Honors prefers-reduced-motion. */
+.gradient-shimmer {
+  background-size: 220% auto;
+  animation: gradient-pan 8s ease-in-out infinite;
+}
+@keyframes gradient-pan {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gradient-shimmer {
+    animation: none;
+    background-size: 100% auto;
+  }
+}

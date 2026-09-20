@@ -250,8 +250,10 @@ export function normalizeReportMonths(input: unknown): ReportMonths {
   return (ALLOWED_REPORT_MONTHS as readonly number[]).includes(n) ? (n as ReportMonths) : 6;
 }
 
-/** YYYY-MM key in a given IANA timezone (falls back to UTC). */
-function localMonthKey(d: Date, timeZone: string): string {
+/** YYYY-MM key in a given IANA timezone (falls back to UTC). Exported so the
+ *  sales/expenses list APIs can filter by the EXACT same month bucket the
+ *  MoM table and drill-down use — figures can never drift between views. */
+export function localMonthKey(d: Date, timeZone: string): string {
   try {
     // "en-CA" year + month, e.g. 2026-09 for September 2026.
     const parts = new Intl.DateTimeFormat("en-CA", {
@@ -365,5 +367,155 @@ export async function buildMonthlyBreakdown(businessId: string, months: ReportMo
         netAccrualMinor: b.revenueMinor - b.expensesMinor,
       };
     }),
+  };
+}
+
+// ---- Single-month drill-down --------------------------------------------------
+
+/**
+ * Validate a YYYY-MM drill-down key. Returns null for anything outside
+ * 2000-01 .. 2100-12 — the client value is never trusted.
+ */
+export function normalizeMonthKey(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const m = /^(\d{4})-(\d{2})$/.exec(input);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  if (year < 2000 || year > 2100 || month < 1 || month > 12) return null;
+  return `${m[1]}-${m[2]}`;
+}
+
+export type MonthDetail = Awaited<ReturnType<typeof buildMonthDetail>>;
+
+/**
+ * Widened UTC fetch window for a YYYY-MM month bucket (±2 days so timezone
+ * shifts at month boundaries are covered). Rows are then filtered with the
+ * authoritative localMonthKey — the SAME pattern buildMonthDetail uses.
+ * Shared by the month drill-down AND the sales/expenses list ?month= filter.
+ */
+export function monthWindow(monthKey: string): { from: Date; until: Date } | null {
+  const month = normalizeMonthKey(monthKey);
+  if (!month) return null;
+  const [y, m] = month.split("-").map(Number);
+  const from = new Date(Date.UTC(y, m - 1, 1));
+  from.setUTCDate(from.getUTCDate() - 2);
+  const until = new Date(Date.UTC(y, m, 1));
+  until.setUTCDate(until.getUTCDate() + 2);
+  return { from, until };
+}
+
+/**
+ * Drill-down for ONE month bucket of the MoM table. Uses the SAME
+ * localMonthKey bucketing as buildMonthlyBreakdown — figures here always
+ * match the table row (single source of truth, deterministic).
+ */
+export async function buildMonthDetail(businessId: string, monthKey: string) {
+  const month = normalizeMonthKey(monthKey);
+  if (!month) return null;
+
+  const business = await db.business.findUnique({
+    where: { id: businessId },
+    select: { timezone: true },
+  });
+  const tz = business?.timezone || "UTC";
+
+  // Widened UTC fetch window (±2 days) so tz shifts are covered — rows are
+  // then filtered by the authoritative local month key.
+  const [y, m] = month.split("-").map(Number);
+  const fetchFrom = new Date(Date.UTC(y, m - 1, 1));
+  fetchFrom.setUTCDate(fetchFrom.getUTCDate() - 2);
+  const fetchUntil = new Date(Date.UTC(y, m, 1));
+  fetchUntil.setUTCDate(fetchUntil.getUTCDate() + 2);
+
+  const [sales, expenses, payments] = await Promise.all([
+    db.sale.findMany({
+      where: {
+        businessId,
+        deletedAt: null,
+        issueDate: { gte: fetchFrom, lt: fetchUntil },
+      },
+      select: {
+        number: true,
+        issueDate: true,
+        totalMinor: true,
+        paidMinor: true,
+        status: true,
+        customer: { select: { name: true } },
+      },
+      orderBy: { issueDate: "desc" },
+    }),
+    db.expense.findMany({
+      where: {
+        businessId,
+        deletedAt: null,
+        spentAt: { gte: fetchFrom, lt: fetchUntil },
+      },
+      select: {
+        category: true,
+        spentAt: true,
+        amountMinor: true,
+        paidMinor: true,
+        status: true,
+        supplier: { select: { name: true } },
+      },
+      orderBy: { spentAt: "desc" },
+    }),
+    db.payment.findMany({
+      where: { businessId, paidAt: { gte: fetchFrom, lt: fetchUntil } },
+      select: { paidAt: true, direction: true, amountMinor: true },
+    }),
+  ]);
+
+  let revenueMinor = 0;
+  let collectedMinor = 0;
+  let paidOutMinor = 0;
+  const inMonthSales = sales.filter((s) => {
+    if (localMonthKey(s.issueDate, tz) !== month) return false;
+    revenueMinor += s.totalMinor;
+    return true;
+  });
+  const inMonthExpenses = expenses.filter((e) => {
+    if (localMonthKey(e.spentAt, tz) !== month) return false;
+    return true;
+  });
+  for (const p of payments) {
+    if (localMonthKey(p.paidAt, tz) !== month) continue;
+    if (p.direction === "IN") collectedMinor += p.amountMinor;
+    else paidOutMinor += p.amountMinor;
+  }
+  const expensesMinor = inMonthExpenses.reduce((sum, e) => sum + e.amountMinor, 0);
+
+  return {
+    month,
+    timezone: tz,
+    totals: {
+      revenueMinor,
+      salesCount: inMonthSales.length,
+      expensesMinor,
+      expensesCount: inMonthExpenses.length,
+      collectedMinor,
+      paidOutMinor,
+      netCashMinor: collectedMinor - paidOutMinor,
+      netAccrualMinor: revenueMinor - expensesMinor,
+    },
+    sales: inMonthSales.slice(0, 25).map((s) => ({
+      number: s.number,
+      issueDate: s.issueDate.toISOString(),
+      customerName: s.customer?.name ?? null,
+      totalMinor: s.totalMinor,
+      paidMinor: s.paidMinor,
+      balanceMinor: s.totalMinor - s.paidMinor,
+      status: s.status,
+    })),
+    expenses: inMonthExpenses.slice(0, 25).map((e) => ({
+      category: e.category,
+      spentAt: e.spentAt.toISOString(),
+      supplierName: e.supplier?.name ?? null,
+      amountMinor: e.amountMinor,
+      paidMinor: e.paidMinor,
+      balanceMinor: e.amountMinor - e.paidMinor,
+      status: e.status,
+    })),
   };
 }

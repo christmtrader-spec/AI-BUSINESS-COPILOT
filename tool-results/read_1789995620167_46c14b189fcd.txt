@@ -1,0 +1,1554 @@
+     1→     1→You are continuing work on the EXISTING AI Business Copilot codebase.
+     2→     2→
+     3→     3→This is NOT a greenfield project.
+     4→     4→
+     5→     5→The existing application already contains substantial implemented functionality including authentication, business/tenant management, customers, suppliers, products, inventory, sales, expenses, payments, reports, AI Copilot, localization, RTL/LTR support, dark/light themes, RBAC, audit logging, and related infrastructure.
+     6→     6→
+     7→     7→Your job in this phase is to perform a rigorous Production Readiness + Monetization Readiness Audit and safely correct issues discovered during that audit.
+     8→     8→
+     9→     9→DO NOT rebuild the application.
+    10→    10→
+    11→    11→DO NOT rewrite working functionality.
+    12→    12→
+    13→    13→DO NOT replace the existing architecture merely because you prefer another architecture.
+    14→    14→
+    15→    15→DO NOT automatically proceed to subscription implementation, payment gateway implementation, or other future phases.
+    16→    16→
+    17→    17→This phase ends when the current codebase has a documented and tested production/monetization readiness baseline.
+    18→    18→
+    19→    19→==================================================
+    20→    20→1. PHASE TITLE
+    21→    21→==================================================
+    22→    22→
+    23→    23→PROMPT 17
+    24→    24→Production Readiness + Monetization Readiness Audit
+    25→    25→
+    26→    26→Primary objective:
+    27→    27→
+    28→    28→Transform the CURRENT implementation from:
+    29→    29→
+    30→    30→"advanced functional MVP"
+    31→    31→
+    32→    32→toward:
+    33→    33→
+    34→    34→"stable, auditable, commercially extensible SaaS foundation"
+    35→    35→
+    36→    36→This phase is an AUDIT + HARDENING phase.
+    37→    37→
+    38→    38→==================================================
+    39→    39→2. NON-NEGOTIABLE DEVELOPMENT RULES
+    40→    40→==================================================
+    41→    41→
+    42→    42→1. Continue from the current codebase.
+    43→    43→
+    44→    44→2. Do not recreate the project.
+    45→    45→
+    46→    46→3. Do not migrate frameworks unless absolutely required and explicitly justified.
+    47→    47→
+    48→    48→4. Do not replace working components simply for stylistic reasons.
+    49→    49→
+    50→    50→5. Do not remove implemented features.
+    51→    51→
+    52→    52→6. Do not modify business behavior unless:
+    53→    53→   - a security problem exists,
+    54→    54→   - a correctness problem exists,
+    55→    55→   - a data-integrity problem exists,
+    56→    56→   - a production-readiness problem exists,
+    57→    57→   - or the current implementation violates the documented architecture.
+    58→    58→
+    59→    59→7. Before changing anything:
+    60→    60→   - inspect existing code,
+    61→    61→   - identify dependencies,
+    62→    62→   - identify shared components,
+    63→    63→   - identify database relationships,
+    64→    64→   - identify affected tests.
+    65→    65→
+    66→    66→8. Make incremental changes only.
+    67→    67→
+    68→    68→9. Prefer small, reversible changes.
+    69→    69→
+    70→    70→10. Every significant change must have a reason.
+    71→    71→
+    72→    72→11. If a major architectural change appears necessary:
+    73→    73→   - DO NOT silently implement it.
+    74→    74→   - Document the issue.
+    75→    75→   - Explain the alternatives.
+    76→    76→   - Recommend the safest path.
+    77→    77→   - Only implement if the change is clearly necessary for this phase.
+    78→    78→
+    79→    79→12. Do not implement future phases.
+    80→    80→
+    81→    81→13. Do not create fake production functionality.
+    82→    82→
+    83→    83→14. Do not use placeholder financial logic.
+    84→    84→
+    85→    85→15. Do not expose secrets.
+    86→    86→
+    87→    87→16. Do not add credentials to source code.
+    88→    88→
+    89→    89→==================================================
+    90→    90→3. FIRST TASK — CREATE A BASELINE
+    91→    91→==================================================
+    92→    92→
+    93→    93→Before changing the codebase, inspect the ENTIRE repository.
+    94→    94→
+    95→    95→Inspect:
+    96→    96→
+    97→    97→- package.json
+    98→    98→- lock files
+    99→    99→- environment configuration
+   100→   100→- Prisma schema
+   101→   101→- migrations
+   102→   102→- database adapters
+   103→   103→- authentication
+   104→   104→- authorization
+   105→   105→- middleware
+   106→   106→- API routes
+   107→   107→- server actions
+   108→   108→- server utilities
+   109→   109→- AI integration
+   110→   110→- AI tools
+   111→   111→- financial calculations
+   112→   112→- reporting
+   113→   113→- localization
+   114→   114→- UI components
+   115→   115→- layouts
+   116→   116→- dashboard
+   117→   117→- subscription-related code if any
+   118→   118→- payment-related code if any
+   119→   119→- audit logs
+   120→   120→- rate limiting
+   121→   121→- storage
+   122→   122→- tests
+   123→   123→- E2E tests
+   124→   124→- scripts
+   125→   125→- deployment configuration
+   126→   126→- README
+   127→   127→- architecture documents
+   128→   128→- worklog
+   129→   129→- TODO files
+   130→   130→
+   131→   131→Do not assume the existing documentation is perfectly synchronized with the actual implementation.
+   132→   132→
+   133→   133→Treat executable code as the authoritative source of current behavior.
+   134→   134→
+   135→   135→==================================================
+   136→   136→4. BASELINE REPORT
+   137→   137→==================================================
+   138→   138→
+   139→   139→Create a file:
+   140→   140→
+   141→   141→/docs/audit/production-monetization-baseline.md
+   142→   142→
+   143→   143→The report must contain:
+   144→   144→
+   145→   145→A. Current framework
+   146→   146→
+   147→   147→B. Current runtime
+   148→   148→
+   149→   149→C. Current frontend architecture
+   150→   150→
+   151→   151→D. Current backend architecture
+   152→   152→
+   153→   153→E. Current database
+   154→   154→
+   155→   155→F. Current authentication provider
+   156→   156→
+   157→   157→G. Current AI provider
+   158→   158→
+   159→   159→H. Current file/storage architecture
+   160→   160→
+   161→   161→I. Current tenant model
+   162→   162→
+   163→   163→J. Current RBAC model
+   164→   164→
+   165→   165→K. Current financial calculation model
+   166→   166→
+   167→   167→L. Current testing infrastructure
+   168→   168→
+   169→   169→M. Current deployment assumptions
+   170→   170→
+   171→   171→N. Current environment variables
+   172→   172→
+   173→   173→O. Current billing/subscription functionality
+   174→   174→
+   175→   175→P. Current payment functionality
+   176→   176→
+   177→   177→Q. Current observability
+   178→   178→
+   179→   179→R. Current security controls
+   180→   180→
+   181→   181→S. Current known limitations
+   182→   182→
+   183→   183→==================================================
+   184→   184→5. PRODUCTION READINESS SCORECARD
+   185→   185→==================================================
+   186→   186→
+   187→   187→DO NOT produce a single overall score.
+   188→   188→
+   189→   189→Instead create category-by-category status.
+   190→   190→
+   191→   191→Use:
+   192→   192→
+   193→   193→READY
+   194→   194→PARTIALLY READY
+   195→   195→NOT READY
+   196→   196→BLOCKED
+   197→   197→NOT APPLICABLE
+   198→   198→
+   199→   199→Required categories:
+   200→   200→
+   201→   201→1. Application architecture
+   202→   202→2. Database integrity
+   203→   203→3. Tenant isolation
+   204→   204→4. Authentication
+   205→   205→5. Authorization
+   206→   206→6. Financial correctness
+   207→   207→7. Auditability
+   208→   208→8. AI safety
+   209→   209→9. API security
+   210→   210→10. Rate limiting
+   211→   211→11. File security
+   212→   212→12. Error handling
+   213→   213→13. Logging
+   214→   214→14. Monitoring
+   215→   215→15. Testing
+   216→   216→16. Accessibility
+   217→   217→17. Localization
+   218→   218→18. Responsive UX
+   219→   219→19. Data lifecycle
+   220→   220→20. Account deletion
+   221→   221→21. Business deletion
+   222→   222→22. Backup/restore strategy
+   223→   223→23. Subscription architecture
+   224→   224→24. Payment abstraction
+   225→   225→25. Entitlements
+   226→   226→26. Usage tracking
+   227→   227→27. Marketing readiness
+   228→   228→28. Legal/trust readiness
+   229→   229→29. Production deployment
+   230→   230→30. Disaster recovery
+   231→   231→
+   232→   232→Do not convert these statuses into numerical scores.
+   233→   233→
+   234→   234→==================================================
+   235→   235→6. TENANT ISOLATION AUDIT
+   236→   236→==================================================
+   237→   237→
+   238→   238→This is a CRITICAL task.
+   239→   239→
+   240→   240→Inspect every business-owned entity.
+   241→   241→
+   242→   242→For each entity determine:
+   243→   243→
+   244→   244→- Does it belong to a business?
+   245→   245→- How is ownership represented?
+   246→   246→- Is ownership enforced server-side?
+   247→   247→- Can a user query another business's record by ID?
+   248→   248→- Can a user update another business's record?
+   249→   249→- Can a user delete another business's record?
+   250→   250→- Can AI tools access another business's data?
+   251→   251→- Can exports accidentally include another business's data?
+   252→   252→- Can reports aggregate across unauthorized businesses?
+   253→   253→- Can search return another tenant's data?
+   254→   254→- Can API routes omit tenant authorization?
+   255→   255→- Can server actions be called directly without proper authorization?
+   256→   256→
+   257→   257→Test insecure direct object references such as:
+   258→   258→
+   259→   259→/api/customers/[id]
+   260→   260→
+   261→   261→/api/products/[id]
+   262→   262→
+   263→   263→/api/sales/[id]
+   264→   264→
+   265→   265→/api/expenses/[id]
+   266→   266→
+   267→   267→etc.
+   268→   268→
+   269→   269→Attempt cross-tenant access in tests.
+   270→   270→
+   271→   271→Expected result:
+   272→   272→
+   273→   273→UNAUTHORIZED ACCESS MUST FAIL.
+   274→   274→
+   275→   275→Create automated regression tests for discovered vulnerabilities.
+   276→   276→
+   277→   277→==================================================
+   278→   278→7. RBAC AUDIT
+   279→   279→==================================================
+   280→   280→
+   281→   281→Inspect current roles.
+   282→   282→
+   283→   283→Verify:
+   284→   284→
+   285→   285→Owner
+   286→   286→Admin
+   287→   287→Manager
+   288→   288→Staff
+   289→   289→Accountant
+   290→   290→Viewer
+   291→   291→
+   292→   292→or whatever roles actually exist.
+   293→   293→
+   294→   294→For every sensitive operation determine:
+   295→   295→
+   296→   296→Who can:
+   297→   297→
+   298→   298→- create
+   299→   299→- read
+   300→   300→- update
+   301→   301→- delete
+   302→   302→- export
+   303→   303→- invite
+   304→   304→- remove members
+   305→   305→- change roles
+   306→   306→- change business settings
+   307→   307→- create financial transactions
+   308→   308→- delete financial transactions
+   309→   309→- access AI tools
+   310→   310→- access reports
+   311→   311→- access audit logs
+   312→   312→
+   313→   313→Authorization must be server-enforced.
+   314→   314→
+   315→   315→Do not rely on:
+   316→   316→
+   317→   317→- hidden buttons
+   318→   318→- disabled UI
+   319→   319→- client-side route guards
+   320→   320→- frontend conditions alone.
+   321→   321→
+   322→   322→Create tests for unauthorized actions.
+   323→   323→
+   324→   324→==================================================
+   325→   325→8. AUTHENTICATION AUDIT
+   326→   326→==================================================
+   327→   327→
+   328→   328→Inspect:
+   329→   329→
+   330→   330→- password storage
+   331→   331→- password hashing
+   332→   332→- session handling
+   333→   333→- cookies
+   334→   334→- session expiration
+   335→   335→- CSRF considerations
+   336→   336→- brute-force protections
+   337→   337→- login errors
+   338→   338→- signup validation
+   339→   339→- password reset
+   340→   340→- email verification if present
+   341→   341→- account deletion
+   342→   342→- session invalidation
+   343→   343→- multi-device behavior
+   344→   344→
+   345→   345→Remove unsupported marketing/security claims.
+   346→   346→
+   347→   347→For example:
+   348→   348→
+   349→   349→Do not claim "bank-grade security" unless the implementation and documentation genuinely justify that claim.
+   350→   350→
+   351→   351→Use precise language such as:
+   352→   352→
+   353→   353→"Password-protected account with server-enforced business data isolation."
+   354→   354→
+   355→   355→unless stronger claims can be technically justified.
+   356→   356→
+   357→   357→==================================================
+   358→   358→9. FINANCIAL CORRECTNESS AUDIT
+   359→   359→==================================================
+   360→   360→
+   361→   361→Inspect every financial calculation.
+   362→   362→
+   363→   363→Search for:
+   364→   364→
+   365→   365→- number arithmetic
+   366→   366→- parseFloat
+   367→   367→- floating-point money calculations
+   368→   368→- implicit conversions
+   369→   369→- unsafe rounding
+   370→   370→- inconsistent currency handling
+   371→   371→
+   372→   372→Verify whether authoritative money is represented using:
+   373→   373→
+   374→   374→- integer minor units,
+   375→   375→OR
+   376→   376→- Decimal / NUMERIC,
+   377→   377→OR
+   378→   378→- another safe exact representation.
+   379→   379→
+   380→   380→Inspect:
+   381→   381→
+   382→   382→- sales
+   383→   383→- sale items
+   384→   384→- expenses
+   385→   385→- payments
+   386→   386→- receivables
+   387→   387→- payables
+   388→   388→- profit
+   389→   389→- totals
+   390→   390→- taxes
+   391→   391→- discounts
+   392→   392→- refunds
+   393→   393→- inventory valuation
+   394→   394→- reports
+   395→   395→- dashboard aggregates
+   396→   396→
+   397→   397→Create deterministic tests.
+   398→   398→
+   399→   399→Test values such as:
+   400→   400→
+   401→   401→0.01
+   402→   402→0.10
+   403→   403→0.99
+   404→   404→1.00
+   405→   405→10.01
+   406→   406→999999.99
+   407→   407→
+   408→   408→Test combinations of:
+   409→   409→
+   410→   410→- discounts
+   411→   411→- multiple items
+   412→   412→- partial payments
+   413→   413→- full payments
+   414→   414→- overpayments
+   415→   415→- refunds
+   416→   416→- negative adjustments where applicable
+   417→   417→
+   418→   418→No silent rounding errors.
+   419→   419→
+   420→   420→==================================================
+   421→   421→10. FINANCIAL SEMANTICS
+   422→   422→==================================================
+   423→   423→
+   424→   424→Document what the application actually means by:
+   425→   425→
+   426→   426→Revenue
+   427→   427→Sales
+   428→   428→Expense
+   429→   429→Cost
+   430→   430→Gross profit
+   431→   431→Net profit
+   432→   432→Payment
+   433→   433→Receivable
+   434→   434→Payable
+   435→   435→Outstanding balance
+   436→   436→Cash flow
+   437→   437→
+   438→   438→Do not use accounting terms ambiguously.
+   439→   439→
+   440→   440→If the current MVP uses simplified calculations rather than formal double-entry accounting, explicitly document that.
+   441→   441→
+   442→   442→DO NOT falsely market simplified profit calculations as full professional accounting.
+   443→   443→
+   444→   444→Create:
+   445→   445→
+   446→   446→/docs/audit/financial-semantics.md
+   447→   447→
+   448→   448→==================================================
+   449→   449→11. AI COPILOT AUDIT
+   450→   450→==================================================
+   451→   451→
+   452→   452→Inspect how Copilot obtains data.
+   453→   453→
+   454→   454→Required architecture:
+   455→   455→
+   456→   456→User question
+   457→   457→        ↓
+   458→   458→Intent / tool selection
+   459→   459→        ↓
+   460→   460→Authorization
+   461→   461→        ↓
+   462→   462→Controlled data query
+   463→   463→        ↓
+   464→   464→Deterministic calculation where applicable
+   465→   465→        ↓
+   466→   466→Structured result
+   467→   467→        ↓
+   468→   468→LLM explanation
+   469→   469→        ↓
+   470→   470→User
+   471→   471→
+   472→   472→The LLM must NOT have unrestricted raw database access.
+   473→   473→
+   474→   474→Verify every AI tool.
+   475→   475→
+   476→   476→For each tool document:
+   477→   477→
+   478→   478→- tool name
+   479→   479→- purpose
+   480→   480→- inputs
+   481→   481→- validation
+   482→   482→- authorization
+   483→   483→- tenant scope
+   484→   484→- query behavior
+   485→   485→- output schema
+   486→   486→- failure behavior
+   487→   487→
+   488→   488→Create:
+   489→   489→
+   490→   490→/docs/audit/ai-copilot-safety.md
+   491→   491→
+   492→   492→==================================================
+   493→   493→12. AI HALLUCINATION CONTROLS
+   494→   494→==================================================
+   495→   495→
+   496→   496→Verify that the AI does not fabricate:
+   497→   497→
+   498→   498→- revenue
+   499→   499→- expenses
+   500→   500→- profit
+   501→   501→- customer counts
+   502→   502→- inventory numbers
+   503→   503→- payment status
+   504→   504→- invoice status
+   505→   505→
+   506→   506→If required data is unavailable:
+   507→   507→
+   508→   508→The AI must explicitly indicate insufficient data.
+   509→   509→
+   510→   510→For financial answers:
+   511→   511→
+   512→   512→Prefer:
+   513→   513→
+   514→   514→"Based on recorded transactions..."
+   515→   515→
+   516→   516→rather than unsupported universal claims.
+   517→   517→
+   518→   518→Where useful, provide source context such as:
+   519→   519→
+   520→   520→- period
+   521→   521→- number of records
+   522→   522→- currency
+   523→   523→- timestamp of underlying data retrieval
+   524→   524→
+   525→   525→==================================================
+   526→   526→13. AI ACTION SAFETY
+   527→   527→==================================================
+   528→   528→
+   529→   529→Audit whether AI can execute actions.
+   530→   530→
+   531→   531→Actions such as:
+   532→   532→
+   533→   533→- delete financial data
+   534→   534→- modify financial records
+   535→   535→- send messages
+   536→   536→- change prices
+   537→   537→- change permissions
+   538→   538→- export sensitive data
+   539→   539→
+   540→   540→must have suitable authorization and confirmation.
+   541→   541→
+   542→   542→Do not allow an ambiguous natural-language instruction to perform destructive operations.
+   543→   543→
+   544→   544→==================================================
+   545→   545→14. API SECURITY AUDIT
+   546→   546→==================================================
+   547→   547→
+   548→   548→Inspect every API route and server action.
+   549→   549→
+   550→   550→For each determine:
+   551→   551→
+   552→   552→- Authentication required?
+   553→   553→- Authorization required?
+   554→   554→- Tenant validation?
+   555→   555→- Input validation?
+   556→   556→- Output validation?
+   557→   557→- Error handling?
+   558→   558→- Rate limiting?
+   559→   559→- Sensitive information leakage?
+   560→   560→
+   561→   561→Use Zod or existing validation infrastructure where appropriate.
+   562→   562→
+   563→   563→Do not duplicate schemas unnecessarily.
+   564→   564→
+   565→   565→==================================================
+   566→   566→15. RATE LIMITING AUDIT
+   567→   567→==================================================
+   568→   568→
+   569→   569→Inspect current implementation.
+   570→   570→
+   571→   571→Determine whether the rate limiter works:
+   572→   572→
+   573→   573→- locally
+   574→   574→- in production
+   575→   575→- with multiple instances
+   576→   576→- after restart
+   577→   577→- under burst traffic
+   578→   578→
+   579→   579→If current limiter is in-memory only, document that limitation.
+   580→   580→
+   581→   581→Do not replace it with a distributed system in this phase unless necessary.
+   582→   582→
+   583→   583→Instead:
+   584→   584→
+   585→   585→1. Keep current protection.
+   586→   586→2. Clearly document the production limitation.
+   587→   587→3. Define the future interface for a distributed limiter.
+   588→   588→
+   589→   589→Create:
+   590→   590→
+   591→   591→/docs/audit/rate-limiting.md
+   592→   592→
+   593→   593→==================================================
+   594→   594→16. ERROR HANDLING AUDIT
+   595→   595→==================================================
+   596→   596→
+   597→   597→Verify consistent error handling across:
+   598→   598→
+   599→   599→- API
+   600→   600→- server actions
+   601→   601→- authentication
+   602→   602→- database
+   603→   603→- AI
+   604→   604→- file upload
+   605→   605→- forms
+   606→   606→- reports
+   607→   607→
+   608→   608→Users should not see:
+   609→   609→
+   610→   610→- stack traces
+   611→   611→- SQL errors
+   612→   612→- internal paths
+   613→   613→- secrets
+   614→   614→- provider credentials
+   615→   615→- internal debugging information
+   616→   616→
+   617→   617→Developers should still have useful logs.
+   618→   618→
+   619→   619→==================================================
+   620→   620→17. LOGGING & OBSERVABILITY
+   621→   621→==================================================
+   622→   622→
+   623→   623→Determine whether the current application has:
+   624→   624→
+   625→   625→- structured logging
+   626→   626→- request IDs
+   627→   627→- user IDs where appropriate
+   628→   628→- business IDs where appropriate
+   629→   629→- error logging
+   630→   630→- AI request logging
+   631→   631→- audit logging
+   632→   632→
+   633→   633→Never log:
+   634→   634→
+   635→   635→- passwords
+   636→   636→- access tokens
+   637→   637→- API keys
+   638→   638→- raw secrets
+   639→   639→- sensitive financial data unnecessarily
+   640→   640→
+   641→   641→Create a minimal observability recommendation.
+   642→   642→
+   643→   643→Do not install a giant monitoring stack during this phase.
+   644→   644→
+   645→   645→==================================================
+   646→   646→18. DATA LIFECYCLE AUDIT
+   647→   647→==================================================
+   648→   648→
+   649→   649→Document:
+   650→   650→
+   651→   651→- account creation
+   652→   652→- business creation
+   653→   653→- business deletion
+   654→   654→- user deletion
+   655→   655→- data retention
+   656→   656→- audit log retention
+   657→   657→- AI conversation retention
+   658→   658→- uploaded file lifecycle
+   659→   659→
+   660→   660→Identify whether users can:
+   661→   661→
+   662→   662→- delete account
+   663→   663→- delete business
+   664→   664→- export data
+   665→   665→
+   666→   666→If missing, mark them as requirements for a future phase.
+   667→   667→
+   668→   668→Do not implement a complex compliance system during this phase.
+   669→   669→
+   670→   670→==================================================
+   671→   671→19. EXPORT AUDIT
+   672→   672→==================================================
+   673→   673→
+   674→   674→Inspect CSV and other export features.
+   675→   675→
+   676→   676→Verify:
+   677→   677→
+   678→   678→- tenant isolation
+   679→   679→- authorization
+   680→   680→- output correctness
+   681→   681→- encoding
+   682→   682→- Persian text support
+   683→   683→- date formatting
+   684→   684→- currency handling
+   685→   685→
+   686→   686→Ensure exports cannot leak data between businesses.
+   687→   687→
+   688→   688→==================================================
+   689→   689→20. LOCALIZATION AUDIT
+   690→   690→==================================================
+   691→   691→
+   692→   692→Inspect English/Persian behavior.
+   693→   693→
+   694→   694→Test:
+   695→   695→
+   696→   696→LTR
+   697→   697→RTL
+   698→   698→
+   699→   699→Check:
+   700→   700→
+   701→   701→- navigation
+   702→   702→- tables
+   703→   703→- forms
+   704→   704→- validation errors
+   705→   705→- charts
+   706→   706→- modals
+   707→   707→- dropdowns
+   708→   708→- date formatting
+   709→   709→- number formatting
+   710→   710→- currency formatting
+   711→   711→
+   712→   712→Find hard-coded user-facing strings.
+   713→   713→
+   714→   714→Do not perform a complete localization rewrite unless clearly necessary.
+   715→   715→
+   716→   716→==================================================
+   717→   717→21. UI TRUST AUDIT
+   718→   718→==================================================
+   719→   719→
+   720→   720→Inspect user-facing claims.
+   721→   721→
+   722→   722→Remove or rewrite claims that are stronger than the implementation supports.
+   723→   723→
+   724→   724→Examples:
+   725→   725→
+   726→   726→BAD:
+   727→   727→
+   728→   728→"Bank-grade security"
+   729→   729→
+   730→   730→unless proven.
+   731→   731→
+   732→   732→BAD:
+   733→   733→
+   734→   734→"Never makes mistakes"
+   735→   735→
+   736→   736→BAD:
+   737→   737→
+   738→   738→"100% secure"
+   739→   739→
+   740→   740→GOOD:
+   741→   741→
+   742→   742→"Server-enforced business data isolation"
+   743→   743→
+   744→   744→if actually implemented.
+   745→   745→
+   746→   746→GOOD:
+   747→   747→
+   748→   748→"Financial answers are calculated from recorded business data"
+   749→   749→
+   750→   750→if actually implemented.
+   751→   751→
+   752→   752→Also remove internal developer information from customer-facing UI.
+   753→   753→
+   754→   754→Examples:
+   755→   755→
+   756→   756→"Phase 05"
+   757→   757→
+   758→   758→"Prompt 17"
+   759→   759→
+   760→   760→"Development Mode"
+   761→   761→
+   762→   762→"TODO"
+   763→   763→
+   764→   764→"Prototype"
+   765→   765→
+   766→   766→unless intentionally part of the user experience.
+   767→   767→
+   768→   768→==================================================
+   769→   769→22. RESPONSIVE QA
+   770→   770→==================================================
+   771→   771→
+   772→   772→Test at minimum:
+   773→   773→
+   774→   774→360x640
+   775→   775→390x844
+   776→   776→412x915
+   777→   777→1366x768
+   778→   778→1920x1080
+   779→   779→
+   780→   780→Test:
+   781→   781→
+   782→   782→- login
+   783→   783→- signup
+   784→   784→- dashboard
+   785→   785→- navigation
+   786→   786→- customers
+   787→   787→- products
+   788→   788→- sales
+   789→   789→- expenses
+   790→   790→- reports
+   791→   791→- AI Copilot
+   792→   792→- settings
+   793→   793→
+   794→   794→Test:
+   795→   795→
+   796→   796→Light mode
+   797→   797→Dark mode
+   798→   798→
+   799→   799→Test:
+   800→   800→
+   801→   801→English
+   802→   802→Persian
+   803→   803→
+   804→   804→Test:
+   805→   805→
+   806→   806→LTR
+   807→   807→RTL
+   808→   808→
+   809→   809→Record defects.
+   810→   810→
+   811→   811→Fix only defects relevant to production readiness.
+   812→   812→
+   813→   813→Do not redesign the product in this phase.
+   814→   814→
+   815→   815→==================================================
+   816→   816→23. ACCESSIBILITY AUDIT
+   817→   817→==================================================
+   818→   818→
+   819→   819→Inspect:
+   820→   820→
+   821→   821→- keyboard navigation
+   822→   822→- focus states
+   823→   823→- labels
+   824→   824→- buttons
+   825→   825→- inputs
+   826→   826→- dialogs
+   827→   827→- form errors
+   828→   828→- contrast
+   829→   829→- semantic HTML
+   830→   830→- aria attributes where needed
+   831→   831→- screen-reader labels
+   832→   832→
+   833→   833→Run available automated accessibility testing.
+   834→   834→
+   835→   835→Use axe or the existing project tooling if compatible.
+   836→   836→
+   837→   837→Do not introduce an inaccessible custom component when an existing accessible component already exists.
+   838→   838→
+   839→   839→==================================================
+   840→   840→24. DATABASE AUDIT
+   841→   841→==================================================
+   842→   842→
+   843→   843→Inspect:
+   844→   844→
+   845→   845→- indexes
+   846→   846→- foreign keys
+   847→   847→- cascading behavior
+   848→   848→- uniqueness constraints
+   849→   849→- nullable fields
+   850→   850→- timestamps
+   851→   851→- soft deletion where appropriate
+   852→   852→- migration safety
+   853→   853→
+   854→   854→Identify queries likely to become slow.
+   855→   855→
+   856→   856→Do not prematurely optimize every query.
+   857→   857→
+   858→   858→Focus on:
+   859→   859→
+   860→   860→- tenant filtering
+   861→   861→- dashboard aggregates
+   862→   862→- report queries
+   863→   863→- AI tool queries
+   864→   864→- customer/product search
+   865→   865→- invoice/payment queries
+   866→   866→
+   867→   867→==================================================
+   868→   868→25. DATABASE SCALABILITY REPORT
+   869→   869→==================================================
+   870→   870→
+   871→   871→If the current database is SQLite:
+   872→   872→
+   873→   873→DO NOT automatically migrate it during this phase.
+   874→   874→
+   875→   875→Instead document:
+   876→   876→
+   877→   877→- why SQLite currently works for development/MVP
+   878→   878→- what production limitations exist
+   879→   879→- what changes would be needed for PostgreSQL or equivalent production database
+   880→   880→- what data types must be preserved
+   881→   881→- what migration strategy would be needed
+   882→   882→
+   883→   883→Create:
+   884→   884→
+   885→   885→/docs/audit/database-production-plan.md
+   886→   886→
+   887→   887→The future migration must preserve business logic.
+   888→   888→
+   889→   889→==================================================
+   890→   890→26. BILLING ARCHITECTURE AUDIT
+   891→   891→==================================================
+   892→   892→
+   893→   893→Inspect whether the current system has concepts for:
+   894→   894→
+   895→   895→- Plan
+   896→   896→- Subscription
+   897→   897→- Subscription status
+   898→   898→- Trial
+   899→   899→- Entitlement
+   900→   900→- Usage
+   901→   901→- Billing period
+   902→   902→- Customer subscription
+   903→   903→- Feature limits
+   904→   904→
+   905→   905→If these do not exist:
+   906→   906→
+   907→   907→DO NOT fully implement them in Prompt 17.
+   908→   908→
+   909→   909→Instead design the minimal architecture required for Prompt 19.
+   910→   910→
+   911→   911→Create:
+   912→   912→
+   913→   913→/docs/billing/billing-architecture.md
+   914→   914→
+   915→   915→Include:
+   916→   916→
+   917→   917→Plan
+   918→   918→Subscription
+   919→   919→Entitlement
+   920→   920→Usage
+   921→   921→Trial
+   922→   922→Billing period
+   923→   923→
+   924→   924→==================================================
+   925→   925→27. PAYMENT ABSTRACTION
+   926→   926→==================================================
+   927→   927→
+   928→   928→Create a provider-agnostic payment interface.
+   929→   929→
+   930→   930→Do NOT hard-code business logic directly to one payment provider.
+   931→   931→
+   932→   932→Conceptually:
+   933→   933→
+   934→   934→Payment Provider
+   935→   935→        ↓
+   936→   936→Provider Adapter
+   937→   937→        ↓
+   938→   938→Payment Service
+   939→   939→        ↓
+   940→   940→Subscription / Entitlement
+   941→   941→
+   942→   942→The product must be capable of supporting different payment providers.
+   943→   943→
+   944→   944→For the initial target market, payment integration must be legally and contractually compatible with the user's actual operating jurisdiction.
+   945→   945→
+   946→   946→DO NOT implement methods for bypassing sanctions, provider restrictions, KYC requirements, or payment controls.
+   947→   947→
+   948→   948→DO NOT fake payment confirmation.
+   949→   949→
+   950→   950→==================================================
+   951→   951→28. PLAN ENTITLEMENT DESIGN
+   952→   952→==================================================
+   953→   953→
+   954→   954→Define feature entitlement categories.
+   955→   955→
+   956→   956→Example:
+   957→   957→
+   958→   958→FREE
+   959→   959→- limited businesses
+   960→   960→- limited customers
+   961→   961→- limited products
+   962→   962→- limited AI requests
+   963→   963→- limited reports
+   964→   964→
+   965→   965→STARTER
+   966→   966→- higher limits
+   967→   967→- more AI usage
+   968→   968→- additional reporting
+   969→   969→
+   970→   970→BUSINESS
+   971→   971→- larger limits
+   972→   972→- team members
+   973→   973→- advanced features
+   974→   974→
+   975→   975→PRO
+   976→   976→- advanced AI
+   977→   977→- advanced reporting
+   978→   978→- higher usage
+   979→   979→
+   980→   980→These are conceptual only.
+   981→   981→
+   982→   982→Do not finalize prices in this phase.
+   983→   983→
+   984→   984→Do not implement all plans in this phase.
+   985→   985→
+   986→   986→Instead define:
+   987→   987→
+   988→   988→Feature
+   989→   989→Limit
+   990→   990→Measurement unit
+   991→   991→Enforcement layer
+   992→   992→
+   993→   993→Example:
+   994→   994→
+   995→   995→AI_REQUESTS_MONTHLY
+   996→   996→CUSTOMERS_MAX
+   997→   997→PRODUCTS_MAX
+   998→   998→TEAM_MEMBERS_MAX
+   999→   999→BUSINESSES_MAX
+  1000→  1000→EXPORTS_MONTHLY
+  1001→  1001→FILE_STORAGE_MB
+  1002→  1002→
+  1003→  1003→==================================================
+  1004→  1004→29. USAGE TRACKING DESIGN
+  1005→  1005→==================================================
+  1006→  1006→
+  1007→  1007→Audit whether the application can measure:
+  1008→  1008→
+  1009→  1009→- AI requests
+  1010→  1010→- AI tokens if available
+  1011→  1011→- customers
+  1012→  1012→- products
+  1013→  1013→- storage
+  1014→  1014→- team members
+  1015→  1015→- exports
+  1016→  1016→- businesses
+  1017→  1017→
+  1018→  1018→Define an extensible usage model.
+  1019→  1019→
+  1020→  1020→Do not overbuild.
+  1021→  1021→
+  1022→  1022→A simple usage abstraction is sufficient at this stage.
+  1023→  1023→
+  1024→  1024→==================================================
+  1025→  1025→30. MONETIZATION SAFETY
+  1026→  1026→==================================================
+  1027→  1027→
+  1028→  1028→Never allow a client-side variable to determine whether a user has paid.
+  1029→  1029→
+  1030→  1030→Example:
+  1031→  1031→
+  1032→  1032→DO NOT trust:
+  1033→  1033→
+  1034→  1034→localStorage.plan = "PRO"
+  1035→  1035→
+  1036→  1036→Authorization must be based on server-side state.
+  1037→  1037→
+  1038→  1038→Entitlements must be verified server-side.
+  1039→  1039→
+  1040→  1040→==================================================
+  1041→  1041→31. ACCOUNT / BUSINESS ACCESS RULES
+  1042→  1042→==================================================
+  1043→  1043→
+  1044→  1044→Define clear behavior for:
+  1045→  1045→
+  1046→  1046→User
+  1047→  1047→Business
+  1048→  1048→Membership
+  1049→  1049→Role
+  1050→  1050→Subscription
+  1051→  1051→
+  1052→  1052→Example:
+  1053→  1053→
+  1054→  1054→User
+  1055→  1055→  ↓
+  1056→  1056→Membership
+  1057→  1057→  ↓
+  1058→  1058→Business
+  1059→  1059→  ↓
+  1060→  1060→Subscription
+  1061→  1061→
+  1062→  1062→Do not attach subscription status only to the user if billing is actually business-level.
+  1063→  1063→
+  1064→  1064→Determine whether billing belongs to:
+  1065→  1065→
+  1066→  1066→- User
+  1067→  1067→OR
+  1068→  1068→- Business
+  1069→  1069→
+  1070→  1070→Prefer Business-level billing if the SaaS is intended for teams.
+  1071→  1071→
+  1072→  1072→Document the decision.
+  1073→  1073→
+  1074→  1074→==================================================
+  1075→  1075→32. MARKETING READINESS AUDIT
+  1076→  1076→==================================================
+  1077→  1077→
+  1078→  1078→Inspect whether the existing application has:
+  1079→  1079→
+  1080→  1080→- public landing page
+  1081→  1081→- value proposition
+  1082→  1082→- feature overview
+  1083→  1083→- pricing
+  1084→  1084→- FAQ
+  1085→  1085→- contact
+  1086→  1086→- privacy
+  1087→  1087→- terms
+  1088→  1088→- signup CTA
+  1089→  1089→
+  1090→  1090→DO NOT fully redesign the landing page in this phase.
+  1091→  1091→
+  1092→  1092→Instead identify what is missing.
+  1093→  1093→
+  1094→  1094→Create:
+  1095→  1095→
+  1096→  1096→/docs/marketing/launch-readiness.md
+  1097→  1097→
+  1098→  1098→==================================================
+  1099→  1099→33. PRODUCT POSITIONING AUDIT
+  1100→  1100→==================================================
+  1101→  1101→
+  1102→  1102→Do not claim:
+  1103→  1103→
+  1104→  1104→"AI accounting software"
+  1105→  1105→
+  1106→  1106→unless the current implementation actually provides formal accounting functionality.
+  1107→  1107→
+  1108→  1108→Prefer accurate positioning such as:
+  1109→  1109→
+  1110→  1110→"AI-powered business management and financial insight"
+  1111→  1111→
+  1112→  1112→or another phrase supported by the implemented features.
+  1113→  1113→
+  1114→  1114→The current product should be positioned honestly.
+  1115→  1115→
+  1116→  1116→==================================================
+  1117→  1117→34. DATA PRIVACY AUDIT
+  1118→  1118→==================================================
+  1119→  1119→
+  1120→  1120→Identify what personal/business information is stored.
+  1121→  1121→
+  1122→  1122→Examples:
+  1123→  1123→
+  1124→  1124→- names
+  1125→  1125→- emails
+  1126→  1126→- phone numbers
+  1127→  1127→- customer information
+  1128→  1128→- financial records
+  1129→  1129→- invoices
+  1130→  1130→- business data
+  1131→  1131→- AI conversations
+  1132→  1132→- uploaded files
+  1133→  1133→
+  1134→  1134→Document where sensitive data exists.
+  1135→  1135→
+  1136→  1136→Create:
+  1137→  1137→
+  1138→  1138→/docs/security/data-classification.md
+  1139→  1139→
+  1140→  1140→Classify data as:
+  1141→  1141→
+  1142→  1142→Public
+  1143→  1143→Internal
+  1144→  1144→Sensitive
+  1145→  1145→Highly Sensitive
+  1146→  1146→
+  1147→  1147→Do not claim legal compliance automatically.
+  1148→  1148→
+  1149→  1149→==================================================
+  1150→  1150→35. SECRET MANAGEMENT AUDIT
+  1151→  1151→==================================================
+  1152→  1152→
+  1153→  1153→Search source files for:
+  1154→  1154→
+  1155→  1155→API keys
+  1156→  1156→tokens
+  1157→  1157→passwords
+  1158→  1158→database credentials
+  1159→  1159→private keys
+  1160→  1160→
+  1161→  1161→Check:
+  1162→  1162→
+  1163→  1163→- .env files
+  1164→  1164→- examples
+  1165→  1165→- documentation
+  1166→  1166→- logs
+  1167→  1167→- client bundle exposure
+  1168→  1168→
+  1169→  1169→Never expose server secrets to the browser.
+  1170→  1170→
+  1171→  1171→Do not commit real secrets.
+  1172→  1172→
+  1173→  1173→If obvious test secrets exist:
+  1174→  1174→
+  1175→  1175→remove them and replace with environment variable placeholders.
+  1176→  1176→
+  1177→  1177→==================================================
+  1178→  1178→36. DEPLOYMENT AUDIT
+  1179→  1179→==================================================
+  1180→  1180→
+  1181→  1181→Determine what is required to deploy the current application.
+  1182→  1182→
+  1183→  1183→Document:
+  1184→  1184→
+  1185→  1185→- build command
+  1186→  1186→- dev command
+  1187→  1187→- database setup
+  1188→  1188→- migration command
+  1189→  1189→- environment variables
+  1190→  1190→- storage requirements
+  1191→  1191→- AI provider requirements
+  1192→  1192→- authentication requirements
+  1193→  1193→- production startup
+  1194→  1194→- health checks if available
+  1195→  1195→
+  1196→  1196→Create:
+  1197→  1197→
+  1198→  1198→/docs/deployment/production-checklist.md
+  1199→  1199→
+  1200→  1200→==================================================
+  1201→  1201→37. BACKUP / RESTORE PLAN
+  1202→  1202→==================================================
+  1203→  1203→
+  1204→  1204→Do not build a complicated disaster-recovery platform.
+  1205→  1205→
+  1206→  1206→Instead document:
+  1207→  1207→
+  1208→  1208→- what must be backed up
+  1209→  1209→- database backup
+  1210→  1210→- file backup
+  1211→  1211→- configuration backup
+  1212→  1212→- encryption considerations
+  1213→  1213→- restore procedure
+  1214→  1214→- verification procedure
+  1215→  1215→
+  1216→  1216→Create:
+  1217→  1217→
+  1218→  1218→/docs/deployment/backup-restore-plan.md
+  1219→  1219→
+  1220→  1220→==================================================
+  1221→  1221→38. TEST SUITE HARDENING
+  1222→  1222→==================================================
+  1223→  1223→
+  1224→  1224→Run all existing tests.
+  1225→  1225→
+  1226→  1226→Then add tests only for high-risk areas discovered during this audit.
+  1227→  1227→
+  1228→  1228→Minimum high-risk tests:
+  1229→  1229→
+  1230→  1230→1. Cross-tenant access
+  1231→  1231→2. Unauthorized financial mutation
+  1232→  1232→3. Unauthorized export
+  1233→  1233→4. Money precision
+  1234→  1234→5. Payment totals
+  1235→  1235→6. Receivable calculation
+  1236→  1236→7. Payable calculation
+  1237→  1237→8. AI tool authorization
+  1238→  1238→9. AI tenant isolation
+  1239→  1239→10. Role restrictions
+  1240→  1240→
+  1241→  1241→Do not create meaningless tests merely to increase test count.
+  1242→  1242→
+  1243→  1243→==================================================
+  1244→  1244→39. SECURITY REGRESSION TESTS
+  1245→  1245→==================================================
+  1246→  1246→
+  1247→  1247→For every serious security issue fixed during this phase, create a regression test.
+  1248→  1248→
+  1249→  1249→Required behavior:
+  1250→  1250→
+  1251→  1251→The vulnerability cannot silently return in future development.
+  1252→  1252→
+  1253→  1253→==================================================
+  1254→  1254→40. TEST DATA SAFETY
+  1255→  1255→==================================================
+  1256→  1256→
+  1257→  1257→Verify that development/test fixtures are clearly separated from production data.
+  1258→  1258→
+  1259→  1259→Never use real customer financial information in test fixtures.
+  1260→  1260→
+  1261→  1261→Use obviously synthetic records.
+  1262→  1262→
+  1263→  1263→==================================================
+  1264→  1264→41. DOCUMENTATION STRUCTURE
+  1265→  1265→==================================================
+  1266→  1266→
+  1267→  1267→Create or update:
+  1268→  1268→
+  1269→  1269→/docs/
+  1270→  1270→    audit/
+  1271→  1271→        production-monetization-baseline.md
+  1272→  1272→        financial-semantics.md
+  1273→  1273→        ai-copilot-safety.md
+  1274→  1274→        rate-limiting.md
+  1275→  1275→        database-production-plan.md
+  1276→  1276→        security-findings.md
+  1277→  1277→        accessibility-findings.md
+  1278→  1278→    billing/
+  1279→  1279→        billing-architecture.md
+  1280→  1280→    marketing/
+  1281→  1281→        launch-readiness.md
+  1282→  1282→    security/
+  1283→  1283→        data-classification.md
+  1284→  1284→    deployment/
+  1285→  1285→        production-checklist.md
+  1286→  1286→        backup-restore-plan.md
+  1287→  1287→
+  1288→  1288→Do not create duplicate documentation with conflicting information.
+  1289→  1289→
+  1290→  1290→==================================================
+  1291→  1291→42. UI CLEANUP REQUIRED IN THIS PHASE
+  1292→  1292→==================================================
+  1293→  1293→
+  1294→  1294→From the existing login/onboarding UI:
+  1295→  1295→
+  1296→  1296→Remove or revise internal development wording such as:
+  1297→  1297→
+  1298→  1298→"Phase 05"
+  1299→  1299→
+  1300→  1300→"Prompt 05"
+  1301→  1301→
+  1302→  1302→other internal implementation references.
+  1303→  1303→
+  1304→  1304→Review claims such as:
+  1305→  1305→
+  1306→  1306→"bank-grade hashing"
+  1307→  1307→
+  1308→  1308→and replace with technically supportable wording unless the implementation genuinely supports the stronger claim.
+  1309→  1309→
+  1310→  1310→Keep the existing visual identity unless a production-readiness defect exists.
+  1311→  1311→
+  1312→  1312→DO NOT perform a complete design redesign.
+  1313→  1313→
+  1314→  1314→==================================================
+  1315→  1315→43. CURRENT BRAND
+  1316→  1316→==================================================
+  1317→  1317→
+  1318→  1318→Keep the product brand:
+  1319→  1319→
+  1320→  1320→AI Business Copilot
+  1321→  1321→
+  1322→  1322→Core tagline direction:
+  1323→  1323→
+  1324→  1324→"Your business, understood."
+  1325→  1325→
+  1326→  1326→Do not change the brand during this phase.
+  1327→  1327→
+  1328→  1328→==================================================
+  1329→  1329→44. PERFORMANCE AUDIT
+  1330→  1330→==================================================
+  1331→  1331→
+  1332→  1332→Inspect:
+  1333→  1333→
+  1334→  1334→- excessive client-side fetching
+  1335→  1335→- duplicate database requests
+  1336→  1336→- obvious N+1 queries
+  1337→  1337→- unnecessary rerenders
+  1338→  1338→- oversized page payloads
+  1339→  1339→- unbounded report queries
+  1340→  1340→- unbounded AI history queries
+  1341→  1341→
+  1342→  1342→Fix only clear production-impacting issues.
+  1343→  1343→
+  1344→  1344→Do not prematurely optimize.
+  1345→  1345→
+  1346→  1346→==================================================
+  1347→  1347→45. QUERY SAFETY
+  1348→  1348→==================================================
+  1349→  1349→
+  1350→  1350→Every user-controlled query parameter must be validated.
+  1351→  1351→
+  1352→  1352→Examples:
+  1353→  1353→
+  1354→  1354→search
+  1355→  1355→sort
+  1356→  1356→page
+  1357→  1357→limit
+  1358→  1358→dateFrom
+  1359→  1359→dateTo
+  1360→  1360→businessId
+  1361→  1361→customerId
+  1362→  1362→productId
+  1363→  1363→
+  1364→  1364→Never trust:
+  1365→  1365→
+  1366→  1366→businessId
+  1367→  1367→userId
+  1368→  1368→role
+  1369→  1369→subscription
+  1370→  1370→plan
+  1371→  1371→
+  1372→  1372→coming from the browser.
+  1373→  1373→
+  1374→  1374→Derive security-sensitive identity from authenticated server context.
+  1375→  1375→
+  1376→  1376→==================================================
+  1377→  1377→46. PAGINATION AUDIT
+  1378→  1378→==================================================
+  1379→  1379→
+  1380→  1380→Inspect all growing datasets.
+  1381→  1381→
+  1382→  1382→At minimum:
+  1383→  1383→
+  1384→  1384→customers
+  1385→  1385→suppliers
+  1386→  1386→products
+  1387→  1387→sales
+  1388→  1388→expenses
+  1389→  1389→payments
+  1390→  1390→audit logs
+  1391→  1391→AI conversations
+  1392→  1392→
+  1393→  1393→Avoid loading unlimited datasets into memory.
+  1394→  1394→
+  1395→  1395→Where the current implementation has hard-coded limits, document whether they are appropriate.
+  1396→  1396→
+  1397→  1397→Do not silently remove existing limits.
+  1398→  1398→
+  1399→  1399→==================================================
+  1400→  1400→47. EXPORT AND REPORT PERFORMANCE
+  1401→  1401→==================================================
+  1402→  1402→
+  1403→  1403→Large reports must not blindly load entire tables.
+  1404→  1404→
+  1405→  1405→Identify high-risk cases.
+  1406→  1406→
+  1407→  1407→Document future pagination / streaming requirements where applicable.
+  1408→  1408→
+  1409→  1409→==================================================
+  1410→  1410→48. FINAL CHANGE POLICY
+  1411→  1411→==================================================
+  1412→  1412→
+  1413→  1413→At the end of the audit:
+  1414→  1414→
+  1415→  1415→Only commit changes that are justified.
+  1416→  1416→
+  1417→  1417→Do not add speculative features.
+  1418→  1418→
+  1419→  1419→Do not add payment gateway SDKs yet.
+  1420→  1420→
+  1421→  1421→Do not add subscription checkout yet.
+  1422→  1422→
+  1423→  1423→Do not add advanced accounting yet.
+  1424→  1424→
+  1425→  1425→Do not add manufacturing yet.
+  1426→  1426→
+  1427→  1427→Do not add payroll yet.
+  1428→  1428→
+  1429→  1429→Do not add tax modules yet.
+  1430→  1430→
+  1431→  1431→Do not add cryptocurrency transaction processing yet.
+  1432→  1432→
+  1433→  1433→==================================================
+  1434→  1434→49. REQUIRED OUTPUT
+  1435→  1435→==================================================
+  1436→  1436→
+  1437→  1437→At completion, provide:
+  1438→  1438→
+  1439→  1439→1. Executive summary
+  1440→  1440→2. Files inspected
+  1441→  1441→3. Files changed
+  1442→  1442→4. Bugs discovered
+  1443→  1443→5. Security issues discovered
+  1444→  1444→6. Data-integrity issues discovered
+  1445→  1445→7. Financial-calculation issues discovered
+  1446→  1446→8. AI safety issues discovered
+  1447→  1447→9. Billing architecture findings
+  1448→  1448→10. Payment architecture findings
+  1449→  1449→11. Deployment findings
+  1450→  1450→12. Testing performed
+  1451→  1451→13. Tests added
+  1452→  1452→14. Remaining blockers
+  1453→  1453→15. Recommended next phase
+  1454→  1454→16. Exact commands used for validation
+  1455→  1455→
+  1456→  1456→==================================================
+  1457→  1457→50. PHASE COMPLETION CHECKLIST
+  1458→  1458→==================================================
+  1459→  1459→
+  1460→  1460→Prompt 17 is complete only when:
+  1461→  1461→
+  1462→  1462→[ ] Existing repository fully inspected
+  1463→  1463→
+  1464→  1464→[ ] Current architecture documented
+  1465→  1465→
+  1466→  1466→[ ] Current financial model documented
+  1467→  1467→
+  1468→  1468→[ ] Tenant isolation audited
+  1469→  1469→
+  1470→  1470→[ ] RBAC audited
+  1471→  1471→
+  1472→  1472→[ ] Authentication audited
+  1473→  1473→
+  1474→  1474→[ ] API authorization audited
+  1475→  1475→
+  1476→  1476→[ ] Financial precision audited
+  1477→  1477→
+  1478→  1478→[ ] AI Copilot data flow audited
+  1479→  1479→
+  1480→  1480→[ ] AI tenant isolation tested
+  1481→  1481→
+  1482→  1482→[ ] AI hallucination protections reviewed
+  1483→  1483→
+  1484→  1484→[ ] AI action safety reviewed
+  1485→  1485→
+  1486→  1486→[ ] Rate limiting reviewed
+  1487→  1487→
+  1488→  1488→[ ] Error handling reviewed
+  1489→  1489→
+  1490→  1490→[ ] Logging reviewed
+  1491→  1491→
+  1492→  1492→[ ] Sensitive data handling reviewed
+  1493→  1493→
+  1494→  1494→[ ] Export isolation reviewed
+  1495→  1495→
+  1496→  1496→[ ] Localization reviewed
+  1497→  1497→
+  1498→  1498→[ ] RTL reviewed
+  1499→  1499→
+  1500→  1500→[ ] Responsive behavior reviewed
+  1501→  1501→
+  1502→  1502→[ ] Accessibility reviewed
+  1503→  1503→
+  1504→  1504→[ ] Database structure reviewed
+  1505→  1505→
+  1506→  1506→[ ] SQLite production limitations documented if applicable
+  1507→  1507→
+  1508→  1508→[ ] Billing architecture documented
+  1509→  1509→
+  1510→  1510→[ ] Payment abstraction documented
+  1511→  1511→
+  1512→  1512→[ ] Entitlement architecture documented
+  1513→  1513→
+  1514→  1514→[ ] Usage tracking requirements documented
+  1515→  1515→
+  1516→  1516→[ ] Marketing readiness documented
+  1517→  1517→
+  1518→  1518→[ ] Data classification documented
+  1519→  1519→
+  1520→  1520→[ ] Secret exposure checked
+  1521→  1521→
+  1522→  1522→[ ] Deployment requirements documented
+  1523→  1523→
+  1524→  1524→[ ] Backup/restore requirements documented
+  1525→  1525→
+  1526→  1526→[ ] High-risk regression tests added
+  1527→  1527→
+  1528→  1528→[ ] Existing tests pass or failures documented
+  1529→  1529→
+  1530→  1530→[ ] Unsupported security/marketing claims removed or corrected
+  1531→  1531→
+  1532→  1532→[ ] Internal phase/developer labels removed from customer-facing UI
+  1533→  1533→
+  1534→  1534→[ ] No future phase implemented
+  1535→  1535→
+  1536→  1536→[ ] No working functionality intentionally broken
+  1537→  1537→
+  1538→  1538→==================================================
+  1539→  1539→51. STOP CONDITION
+  1540→  1540→==================================================
+  1541→  1541→
+  1542→  1542→STOP after completing Prompt 17.
+  1543→  1543→
+  1544→  1544→DO NOT automatically continue to Prompt 18.
+  1545→  1545→
+  1546→  1546→Do not implement subscription checkout.
+  1547→  1547→
+  1548→  1548→Do not implement payment providers.
+  1549→  1549→
+  1550→  1550→Do not implement final pricing.
+  1551→  1551→
+  1552→  1552→Do not deploy production.
+  1553→  1553→
+  1554→  1554→Wait for the next phase instruction.

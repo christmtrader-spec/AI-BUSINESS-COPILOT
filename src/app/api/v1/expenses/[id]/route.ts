@@ -5,6 +5,7 @@
  * payments exist.
  */
 import { NextRequest } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { ApiError, ok, parseBody, route } from "@/lib/api-helpers";
 import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
@@ -52,13 +53,24 @@ export const PATCH = route(async (req: NextRequest, { params }: RouteParams) => 
   }
 
   const updated = await db.$transaction(async (tx) => {
-    const data = {
-      ...input,
-      ...(input.amountMinor !== undefined
-        ? { status: statusOf(input.amountMinor, before.paidMinor) }
-        : {}),
-    };
-    const e = await tx.expense.update({ where: { id: before.id }, data });
+    // Build the patch explicitly — only fields the client actually sent.
+    // (undefined = untouched; null = clear the FK. Spreading `input` directly
+    // trips Prisma's UpdateInput XOR types.)
+    const patch: Prisma.ExpenseUncheckedUpdateInput = {};
+    if (input.supplierId !== undefined) patch.supplierId = input.supplierId;
+    if (input.category !== undefined) patch.category = input.category;
+    if (input.amountMinor !== undefined) {
+      patch.amountMinor = input.amountMinor;
+      patch.status = statusOf(input.amountMinor, before.paidMinor);
+    }
+    // spentAt is NOT NULL in the schema — a null in the payload is ignored
+    // (the zod schema funnels absent → null; only a real date is written).
+    if (input.spentAt) patch.spentAt = input.spentAt;
+    if (input.note !== undefined) patch.note = input.note;
+    const e = await tx.expense.update({
+      where: { id: before.id },
+      data: patch,
+    });
     await audit(
       {
         businessId: ctx.businessId,

@@ -7,6 +7,8 @@ import {
   HandCoins,
   LayoutDashboard,
   Package,
+  PanelLeftClose,
+  PanelLeftOpen,
   ScrollText,
   Settings,
   ShoppingCart,
@@ -36,7 +38,9 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
+  useSidebar,
 } from "@/components/ui/sidebar";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { BusinessListItem } from "./types";
 
@@ -112,9 +116,14 @@ export function AppSidebar({
   const t = useTranslations("nav");
   const tSettings = useTranslations("settings");
   const tCommon = useTranslations("common");
+  const tShell = useTranslations("shell");
   const view = useAppStore((s) => s.view);
   const navigate = useAppStore((s) => s.navigate);
   const queryClient = useQueryClient();
+  // Collapse (desktop) / close (mobile) affordance lives INSIDE the sidebar,
+  // at the inner edge of the header row — the header only carries the
+  // "open" trigger when the sidebar is actually hidden.
+  const { toggleSidebar } = useSidebar();
 
   const role = asRole(membership?.role);
   const canSeeAudit = can(role, "audit:read");
@@ -169,8 +178,8 @@ export function AppSidebar({
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <div className="flex items-center gap-2 px-2 py-1.5">
-              <div className="bg-primary/10 flex size-8 shrink-0 items-center justify-center rounded-lg">
+            <div className="flex items-center gap-2 px-2 py-1.5 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500/20 via-teal-500/15 to-amber-500/10 group-data-[collapsible=icon]:hidden">
                 <img src="/logo.svg" alt="" className="size-4" aria-hidden="true" />
               </div>
               <div className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
@@ -192,6 +201,39 @@ export function AppSidebar({
                   ★
                 </Badge>
               ) : null}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleSidebar}
+                aria-label={tShell("closeSidebar")}
+                title={tShell("closeSidebar")}
+                data-testid="sidebar-collapse"
+                className="text-muted-foreground group-data-[collapsible=icon]:hidden hover:text-foreground size-7 shrink-0"
+              >
+                {/* Panel points toward the sidebar side — mirrored for RTL */}
+                <PanelLeftClose
+                  className="size-4 rtl:-scale-x-100"
+                  aria-hidden="true"
+                />
+              </Button>
+              {/* Collapsed (desktop icon rail): the SAME control stays ON the
+                  rail — flipped icon, centered in the header slot. The page
+                  header never hosts it, so the toggle never floats beside
+                  the menu in either state. */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleSidebar}
+                aria-label={tShell("openSidebar")}
+                title={tShell("openSidebar")}
+                data-testid="sidebar-expand"
+                className="text-muted-foreground hover:text-foreground hidden size-7 shrink-0 group-data-[collapsible=icon]:flex"
+              >
+                <PanelLeftOpen
+                  className="size-4 rtl:-scale-x-100"
+                  aria-hidden="true"
+                />
+              </Button>
             </div>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -204,7 +246,7 @@ export function AppSidebar({
       </SidebarContent>
       <SidebarFooter>
         <div className="text-muted-foreground group-data-[collapsible=icon]:hidden px-3 py-1 text-[11px]">
-          Phase 06 · Hardening &amp; polish
+          {tCommon("tagline")}
         </div>
       </SidebarFooter>
       <SidebarRail />

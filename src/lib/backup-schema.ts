@@ -13,6 +13,7 @@
  *   and history are not portable across businesses).
  */
 import { z } from "zod";
+import { statusOf } from "@/lib/money";
 
 export const BACKUP_SCHEMA_ID = "ai-business-copilot/backup@1";
 
@@ -122,6 +123,8 @@ export const saleItemRowSchema = z.object({
   unitPriceMinor: moneyInt,
   lineTotalMinor: moneyInt,
   productId: nullableText(64),
+}).refine((item) => item.lineTotalMinor === item.qty * item.unitPriceMinor, {
+  message: "lineTotalMinor must equal qty × unitPriceMinor (A08 integer math)",
 });
 
 export const saleRowSchema = z.object({
@@ -137,7 +140,16 @@ export const saleRowSchema = z.object({
   note: nullableText(1000),
   deletedAt: isoDate,
   items: z.array(saleItemRowSchema).max(200),
-});
+})
+  .refine((s) => s.totalMinor === s.subtotalMinor - s.discountMinor, {
+    message: "totalMinor must equal subtotalMinor − discountMinor",
+  })
+  .refine((s) => s.paidMinor <= s.totalMinor, {
+    message: "paidMinor cannot exceed totalMinor (no overpayment)",
+  })
+  .refine((s) => s.status === statusOf(s.totalMinor, s.paidMinor), {
+    message: "status must match statusOf(totalMinor, paidMinor)",
+  });
 
 export const expenseRowSchema = z.object({
   id: z.string().min(1).max(64),
@@ -149,7 +161,13 @@ export const expenseRowSchema = z.object({
   spentAt: isoDate,
   note: nullableText(1000),
   deletedAt: isoDate,
-});
+})
+  .refine((e) => e.paidMinor <= e.amountMinor, {
+    message: "paidMinor cannot exceed amountMinor (no overpayment)",
+  })
+  .refine((e) => e.status === statusOf(e.amountMinor, e.paidMinor), {
+    message: "status must match statusOf(amountMinor, paidMinor)",
+  });
 
 export const paymentRowSchema = z
   .object({
@@ -164,6 +182,9 @@ export const paymentRowSchema = z
   })
   .refine((p) => (p.saleId === null) !== (p.expenseId === null), {
     message: "exactly one of saleId / expenseId is required",
+  })
+  .refine((p) => p.amountMinor > 0, {
+    message: "payment amountMinor must be positive",
   });
 
 export const backupV1Schema = z

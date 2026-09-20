@@ -1,0 +1,1000 @@
+     1→"use client";
+     2→
+     3→import {
+     4→  useCallback,
+     5→  useEffect,
+     6→  useMemo,
+     7→  useRef,
+     8→  useState,
+     9→  type ReactNode,
+    10→} from "react";
+    11→import { useTranslations } from "next-intl";
+    12→import {
+    13→  ArrowDown,
+    14→  BarChart3,
+    15→  BookMarked,
+    16→  Bot,
+    17→  CalendarClock,
+    18→  Check,
+    19→  ChevronDown,
+    20→  Copy,
+    21→  Download,
+    22→  HandCoins,
+    23→  ListTree,
+    24→  Lock,
+    25→  Package,
+    26→  ReceiptText,
+    27→  RefreshCcw,
+    28→  SendHorizontal,
+    29→  ShieldCheck,
+    30→  Sparkles,
+    31→  Square,
+    32→  TriangleAlert,
+    33→  UserRound,
+    34→  Wallet,
+    35→} from "lucide-react";
+    36→import { ApiClientError } from "@/lib/api-client";
+    37→import { can, type Role } from "@/lib/rbac";
+    38→import { cn } from "@/lib/utils";
+    39→import { toast } from "@/hooks/use-toast";
+    40→import { Button } from "@/components/ui/button";
+    41→import { Card } from "@/components/ui/card";
+    42→import {
+    43→  Collapsible,
+    44→  CollapsibleContent,
+    45→  CollapsibleTrigger,
+    46→} from "@/components/ui/collapsible";
+    47→import { PageHeader } from "@/components/shared/primitives";
+    48→import type { BusinessSummary } from "../shell/types";
+    49→
+    50→/**
+    51→ * AI Copilot — Phase 05/06. Read-only Q&A over deterministic, server-computed
+    52→ * figures (A11-A13). The client sends ONLY the question + conversation
+    53→ * history; all authoritative data is injected server-side.
+    54→ *
+    55→ * Phase 06: answers stream token-by-token over SSE
+    56→ * (`POST /api/v1/copilot/stream`), with a Stop control that aborts the
+    57→ * stream and keeps the partial answer.
+    58→ */
+    59→
+    60→type ChatMessage = {
+    61→  id: string;
+    62→  role: "user" | "assistant";
+    63→  content: string;
+    64→  failed?: boolean;
+    65→  /** Dataset provenance for this answer (first SSE event) — rendered as
+    66→   *  citation chips under the bubble so every figure is traceable. */
+    67→  meta?: CopilotMeta;
+    68→};
+    69→
+    70→type CopilotMetaCounts = {
+    71→  sales: number;
+    72→  expenses: number;
+    73→  openInvoices: number;
+    74→  openBills: number;
+    75→  activeProducts: number;
+    76→  lowStock: number;
+    77→  topProducts: number;
+    78→  expenseCategories: number;
+    79→  timelineDays: number;
+    80→  recentPayments: number;
+    81→};
+    82→
+    83→type CopilotMeta = {
+    84→  days: number;
+    85→  generatedAt: string;
+    86→  rangeFrom: string;
+    87→  rangeTo: string;
+    88→  sections: string[];
+    89→  counts?: CopilotMetaCounts;
+    90→};
+    91→
+    92→const WINDOWS = [7, 30, 90] as const;
+    93→let seq = 0;
+    94→const nextId = () => `m${++seq}`;
+    95→
+    96→// ---- Markdown-lite renderer (no deps, no raw HTML — safe by construction) --
+    97→
+    98→function inline(text: string, keyPrefix: string): ReactNode[] {
+    99→  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+   100→  return parts.map((part, i) => {
+   101→    const key = `${keyPrefix}-${i}`;
+   102→    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+   103→      return (
+   104→        <strong key={key} className="font-semibold">
+   105→          {part.slice(2, -2)}
+   106→        </strong>
+   107→      );
+   108→    }
+   109→    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+   110→      return (
+   111→        <code
+   112→          key={key}
+   113→          dir="ltr"
+   114→          className="bg-muted rounded px-1 py-0.5 font-mono text-[0.85em]"
+   115→        >
+   116→          {part.slice(1, -1)}
+   117→        </code>
+   118→      );
+   119→    }
+   120→    return <span key={key}>{part}</span>;
+   121→  });
+   122→}
+   123→
+   124→function MarkdownLite({ text, streaming }: { text: string; streaming?: boolean }) {
+   125→  const nodes: ReactNode[] = [];
+   126→  let bullets: string[] = [];
+   127→  let para: string[] = [];
+   128→
+   129→  const flushBullets = () => {
+   130→    if (bullets.length === 0) return;
+   131→    nodes.push(
+   132→      <ul
+   133→        key={`ul-${nodes.length}`}
+   134→        className="marker:text-muted-foreground/50 my-1 list-disc space-y-1 ps-5"
+   135→      >
+   136→        {bullets.map((b, i) => (
+   137→          <li key={i}>{inline(b, `b${nodes.length}-${i}`)}</li>
+   138→        ))}
+   139→      </ul>,
+   140→    );
+   141→    bullets = [];
+   142→  };
+   143→  const flushPara = () => {
+   144→    if (para.length === 0) return;
+   145→    nodes.push(
+   146→      <p key={`p-${nodes.length}`} className="leading-relaxed whitespace-pre-wrap">
+   147→        {inline(para.join("\n"), `p${nodes.length}`)}
+   148→      </p>,
+   149→    );
+   150→    para = [];
+   151→  };
+   152→
+   153→  for (const raw of text.split("\n")) {
+   154→    const line = raw.trimEnd();
+   155→    if (/^\s*[-*•]\s+/.test(line)) {
+   156→      flushPara();
+   157→      bullets.push(line.replace(/^\s*[-*•]\s+/, ""));
+   158→    } else if (line === "") {
+   159→      flushBullets();
+   160→      flushPara();
+   161→    } else {
+   162→      flushBullets();
+   163→      para.push(line);
+   164→    }
+   165→  }
+   166→  flushBullets();
+   167→  flushPara();
+   168→
+   169→  return (
+   170→    <div className="space-y-1.5 text-sm">
+   171→      {nodes}
+   172→      {streaming ? (
+   173→        <span
+   174→          aria-hidden="true"
+   175→          className="ml-0.5 inline-block h-4 w-0.5 animate-pulse rounded-full bg-emerald-600 align-middle dark:bg-emerald-400"
+   176→        />
+   177→      ) : null}
+   178→    </div>
+   179→  );
+   180→}
+   181→
+   182→// ---- Citation strip ----------------------------------------------------------
+   183→
+   184→/**
+   185→ * Dataset provenance chips rendered under each grounded answer — the UI
+   186→ * mirror of the server snapshot: which window, which date range, and how
+   187→ * many records the answer is built from. Counts come from the server
+   188→ * (deterministic), never from the model.
+   189→ */
+   190→function CitationStrip({ meta, locale }: { meta: CopilotMeta; locale: string }) {
+   191→  const t = useTranslations("copilot");
+   192→  const c = meta.counts;
+   193→  const chips: { key: string; icon: typeof ReceiptText; label: string; title?: string }[] = [
+   194→    {
+   195→      key: "window",
+   196→      icon: CalendarClock,
+   197→      label: t(`window_${meta.days === 7 ? "7" : meta.days === 30 ? "30" : "90"}`),
+   198→    },
+   199→    { key: "range", icon: BookMarked, label: `${meta.rangeFrom} → ${meta.rangeTo}` },
+   200→    ...(c
+   201→      ? [
+   202→          { key: "sales", icon: ReceiptText, label: t("citationsSales", { count: c.sales }) },
+   203→          { key: "expenses", icon: Wallet, label: t("citationsExpenses", { count: c.expenses }) },
+   204→          {
+   205→            key: "openInvoices",
+   206→            icon: HandCoins,
+   207→            label: t("citationsOpenInvoices", { count: c.openInvoices }),
+   208→            title: t("citationsAllTime"),
+   209→          },
+   210→          ...(c.lowStock > 0
+   211→            ? [
+   212→                {
+   213→                  key: "lowStock",
+   214→                  icon: Package,
+   215→                  label: t("citationsLowStock", { count: c.lowStock }),
+   216→                },
+   217→              ]
+   218→            : []),
+   219→          {
+   220→            key: "payments",
+   221→            icon: ArrowDown,
+   222→            label: t("citationsPayments", { count: c.recentPayments }),
+   223→          },
+   224→        ]
+   225→      : []),
+   226→  ];
+   227→
+   228→  const generatedLabel = (() => {
+   229→    try {
+   230→      const time = new Intl.DateTimeFormat(locale === "fa" ? "fa-IR" : "en-GB", {
+   231→        hour: "2-digit",
+   232→        minute: "2-digit",
+   233→      }).format(new Date(meta.generatedAt));
+   234→      return t("citationsGenerated", { time });
+   235→    } catch {
+   236→      return null;
+   237→    }
+   238→  })();
+   239→
+   240→  return (
+   241→    <div
+   242→      className="animate-in fade-in slide-in-from-bottom-1 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 ps-1"
+   243→      data-testid="copilot-citations"
+   244→    >
+   245→      <span className="text-muted-foreground/80 inline-flex items-center gap-1 text-[11px] font-medium">
+   246→        <BookMarked className="size-3" aria-hidden="true" />
+   247→        {t("citationsTitle")}
+   248→      </span>
+   249→      {chips.map((chip) => (
+   250→        <span
+   251→          key={chip.key}
+   252→          title={chip.title}
+   253→          className="border-border/70 bg-background text-muted-foreground inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] leading-none"
+   254→        >
+   255→          <chip.icon className="size-3" aria-hidden="true" />
+   256→          {chip.key === "range" ? (
+   257→            <span dir="ltr" className="tabular-nums">
+   258→              {chip.label}
+   259→            </span>
+   260→          ) : (
+   261→            chip.label
+   262→          )}
+   263→        </span>
+   264→      ))}
+   265→      {generatedLabel ? (
+   266→        <span className="text-muted-foreground/70 text-[11px]">· {generatedLabel}</span>
+   267→      ) : null}
+   268→    </div>
+   269→  );
+   270→}
+   271→
+   272→// ---- Follow-up suggestions ---------------------------------------------------
+   273→
+   274→/**
+   275→ * Context-aware follow-up pool. The chips are UI suggestions only — they
+   276→ * never touch data. Deterministic: keyword match on the answer text picks
+   277→ * the lead chip; the rest rotate by conversation length so repeated
+   278→ * answers surface different prompts.
+   279→ */
+   280→const FOLLOW_UP_KEYS = [
+   281→  "followUpOutstanding",
+   282→  "followUpLowStock",
+   283→  "followUpExpenses",
+   284→  "followUpSales",
+   285→  "followUpCash",
+   286→  "followUpProducts",
+   287→  "followUpPayments",
+   288→  "followUpSummary",
+   289→] as const;
+   290→
+   291→type FollowUpKey = (typeof FOLLOW_UP_KEYS)[number];
+   292→
+   293→const FOLLOW_UP_MATCHERS: Array<{ key: FollowUpKey; re: RegExp }> = [
+   294→  { key: "followUpOutstanding", re: /owe|outstanding|receivable|بدهکار|بدهی|طلب/i },
+   295→  { key: "followUpLowStock", re: /low.?stock|restock|inventory|موجودی|انبار|شارژ/i },
+   296→  { key: "followUpExpenses", re: /expense|spend|cost|هزینه|خرج/i },
+   297→  { key: "followUpSales", re: /sale|revenue|invoice|فروش|درآمد|فاکتور/i },
+   298→  { key: "followUpCash", re: /cash|payment|collected|نقد|پرداخت|دریافتی/i },
+   299→  { key: "followUpProducts", re: /product|best.?seller|top|محصول|پرفروش/i },
+   300→];
+   301→
+   302→function pickFollowUps(answer: string, conversationLength: number): FollowUpKey[] {
+   303→  const lead = FOLLOW_UP_MATCHERS.find((m) => m.re.test(answer))?.key;
+   304→  const rest = FOLLOW_UP_KEYS.filter((k) => k !== lead);
+   305→  const rotate = conversationLength % rest.length;
+   306→  const rotated = [...rest.slice(rotate), ...rest.slice(0, rotate)];
+   307→  const picked = rotated.slice(0, lead ? 2 : 3);
+   308→  return lead ? [lead, ...picked] : picked;
+   309→}
+   310→
+   311→// ---- View -------------------------------------------------------------------
+   312→
+   313→export function CopilotView({
+   314→  business,
+   315→  role,
+   316→}: {
+   317→  business: BusinessSummary;
+   318→  role: Role;
+   319→}) {
+   320→  const t = useTranslations("copilot");
+   321→  const tCommon = useTranslations("common");
+   322→  const tErrors = useTranslations("errors");
+   323→
+   324→  const [messages, setMessages] = useState<ChatMessage[]>([]);
+   325→  const [input, setInput] = useState("");
+   326→  const [activeStreamId, setActiveStreamId] = useState<string | null>(null);
+   327→  const [days, setDays] = useState<7 | 30 | 90>(30);
+   328→  const [copiedId, setCopiedId] = useState<string | null>(null);
+   329→  const [dataOpen, setDataOpen] = useState(false);
+   330→  const [atBottom, setAtBottom] = useState(true);
+   331→  const lastQuestionRef = useRef<string | null>(null);
+   332→  const abortRef = useRef<AbortController | null>(null);
+   333→  const scrollRef = useRef<HTMLDivElement>(null);
+   334→  const textareaRef = useRef<HTMLTextAreaElement>(null);
+   335→
+   336→  const suggestions = useMemo(
+   337→    () => [
+   338→      t("suggestion1"),
+   339→      t("suggestion2"),
+   340→      t("suggestion3"),
+   341→      t("suggestion4"),
+   342→      t("suggestion5"),
+   343→      t("suggestion6"),
+   344→    ],
+   345→    [t],
+   346→  );
+   347→
+   348→  const canUse = can(role, "copilot:use");
+   349→  const pending = activeStreamId !== null;
+   350→
+   351→  // Follow-up chips — only under the LAST completed answer.
+   352→  const lastMessage = messages[messages.length - 1];
+   353→  const showFollowUps =
+   354→    !pending &&
+   355→    messages.length >= 2 &&
+   356→    lastMessage?.role === "assistant" &&
+   357→    lastMessage.failed !== true &&
+   358→    lastMessage.content.trim().length > 0;
+   359→  const followUps = useMemo(
+   360→    () => (showFollowUps ? pickFollowUps(lastMessage.content, messages.length) : []),
+   361→    [showFollowUps, lastMessage?.content, messages.length],
+   362→  );
+   363→
+   364→  // Keep the latest message in view (scroll-only effect — no setState).
+   365→  useEffect(() => {
+   366→    if (atBottom && scrollRef.current) {
+   367→      scrollRef.current.scrollTo({
+   368→        top: scrollRef.current.scrollHeight,
+   369→        behavior: "smooth",
+   370→      });
+   371→    }
+   372→  }, [messages, pending, atBottom]);
+   373→
+   374→  // Abort any in-flight stream when the module unmounts.
+   375→  useEffect(() => {
+   376→    return () => abortRef.current?.abort();
+   377→  }, []);
+   378→
+   379→  const patchAssistant = useCallback(
+   380→    (id: string, patch: (m: ChatMessage) => ChatMessage) => {
+   381→      setMessages((prev) => prev.map((m) => (m.id === id ? patch(m) : m)));
+   382→    },
+   383→    [],
+   384→  );
+   385→
+   386→  const localizedError = useCallback(
+   387→    (code: string, retryAfterMs?: number) => {
+   388→      switch (code) {
+   389→        case "RATE_LIMITED":
+   390→          return t("errorRateLimited", {
+   391→            seconds: String(Math.max(1, Math.ceil((retryAfterMs ?? 0) / 1000))),
+   392→          });
+   393→        case "PERMISSION_DENIED":
+   394→          return t("errorForbidden");
+   395→        case "AI_UNAVAILABLE":
+   396→          return t("errorAiUnavailable");
+   397→        default:
+   398→          return tErrors("generic");
+   399→      }
+   400→    },
+   401→    [t, tErrors],
+   402→  );
+   403→
+   404→  const send = useCallback(
+   405→    async (question: string, history: ChatMessage[]) => {
+   406→      const trimmed = question.trim();
+   407→      if (!trimmed || trimmed.length > 500 || activeStreamId !== null) return;
+   408→      lastQuestionRef.current = trimmed;
+   409→      setAtBottom(true);
+   410→
+   411→      const assistantId = nextId();
+   412→      setMessages((prev) => [
+   413→        ...prev,
+   414→        { id: assistantId, role: "assistant", content: "" },
+   415→      ]);
+   416→      setActiveStreamId(assistantId);
+   417→
+   418→      const controller = new AbortController();
+   419→      abortRef.current = controller;
+   420→
+   421→      try {
+   422→        const res = await fetch("/api/v1/copilot/stream", {
+   423→          method: "POST",
+   424→          credentials: "same-origin",
+   425→          headers: {
+   426→            "content-type": "application/json",
+   427→            "x-business-id": business.id,
+   428→          },
+   429→          body: JSON.stringify({
+   430→            question: trimmed,
+   431→            history: history
+   432→              .filter((m) => !m.failed)
+   433→              .slice(-6)
+   434→              .map((m) => ({ role: m.role, content: m.content })),
+   435→            days,
+   436→          }),
+   437→          signal: controller.signal,
+   438→        });
+   439→
+   440→        if (!res.ok || !res.body) {
+   441→          let code = "INTERNAL_ERROR";
+   442→          let retryAfterMs: number | undefined;
+   443→          try {
+   444→            const body = (await res.json()) as {
+   445→              error?: { code?: string; details?: { retryAfterMs?: number } };
+   446→            };
+   447→            if (body?.error?.code) code = body.error.code;
+   448→            retryAfterMs = body?.error?.details?.retryAfterMs;
+   449→          } catch {
+   450→            // keep defaults
+   451→          }
+   452→          patchAssistant(assistantId, (m) => ({
+   453→            ...m,
+   454→            content: localizedError(code, retryAfterMs),
+   455→            failed: true,
+   456→          }));
+   457→          return;
+   458→        }
+   459→
+   460→        // Parse the SSE stream incrementally.
+   461→        const reader = res.body.getReader();
+   462→        const decoder = new TextDecoder();
+   463→        let buffer = "";
+   464→        let streamError: { code?: string; message?: string } | null = null;
+   465→        let sawDone = false;
+   466→
+   467→        while (true) {
+   468→          const { done, value } = await reader.read();
+   469→          if (done) break;
+   470→          buffer += decoder.decode(value, { stream: true });
+   471→          const events = buffer.split("\n\n");
+   472→          buffer = events.pop() ?? "";
+   473→          for (const evt of events) {
+   474→            for (const line of evt.split("\n")) {
+   475→              if (!line.startsWith("data: ")) continue;
+   476→              let payload: {
+   477→                meta?: CopilotMeta;
+   478→                delta?: string;
+   479→                done?: boolean;
+   480→                error?: { code?: string; message?: string };
+   481→              };
+   482→              try {
+   483→                payload = JSON.parse(line.slice(6));
+   484→              } catch {
+   485→                continue;
+   486→              }
+   487→              if (payload.meta) {
+   488→                // First event — dataset provenance for this answer.
+   489→                const meta = payload.meta;
+   490→                patchAssistant(assistantId, (m) => ({ ...m, meta }));
+   491→              } else if (typeof payload.delta === "string" && payload.delta.length > 0) {
+   492→                const delta = payload.delta;
+   493→                patchAssistant(assistantId, (m) => ({
+   494→                  ...m,
+   495→                  content: m.content + delta,
+   496→                }));
+   497→              } else if (payload.error) {
+   498→                streamError = payload.error;
+   499→              } else if (payload.done) {
+   500→                sawDone = true;
+   501→              }
+   502→            }
+   503→          }
+   504→        }
+   505→
+   506→        if (streamError) {
+   507→          const code = streamError.code ?? "INTERNAL_ERROR";
+   508→          if (code === "RATE_LIMITED" || code === "AI_UNAVAILABLE" || !sawDone) {
+   509→            patchAssistant(assistantId, (m) =>
+   510→              m.content.trim().length === 0
+   511→                ? { ...m, content: localizedError(code), failed: true }
+   512→                : { ...m, content: `${m.content}\n\n⚠ ${localizedError(code)}` },
+   513→            );
+   514→          }
+   515→        }
+   516→      } catch (error) {
+   517→        if ((error as Error)?.name === "AbortError") {
+   518→          // User pressed Stop — keep the partial answer, drop it if empty.
+   519→          setMessages((prev) =>
+   520→            prev.flatMap((m) =>
+   521→              m.id === assistantId ? (m.content.trim() ? [m] : []) : [m],
+   522→            ),
+   523→          );
+   524→        } else if (error instanceof ApiClientError) {
+   525→          patchAssistant(assistantId, (m) => ({
+   526→            ...m,
+   527→            content: localizedError(error.code),
+   528→            failed: true,
+   529→          }));
+   530→        } else {
+   531→          patchAssistant(assistantId, (m) => ({
+   532→            ...m,
+   533→            content: localizedError("NETWORK_ERROR"),
+   534→            failed: true,
+   535→          }));
+   536→        }
+   537→      } finally {
+   538→        abortRef.current = null;
+   539→        setActiveStreamId((cur) => (cur === assistantId ? null : cur));
+   540→      }
+   541→    },
+   542→    [activeStreamId, business.id, days, localizedError, patchAssistant],
+   543→  );
+   544→
+   545→  const handleSubmit = () => {
+   546→    const trimmed = input.trim();
+   547→    if (!trimmed || pending) return;
+   548→    setInput("");
+   549→    if (textareaRef.current) textareaRef.current.style.height = "auto";
+   550→    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: trimmed }]);
+   551→    void send(trimmed, messages);
+   552→  };
+   553→
+   554→  const handleStop = () => {
+   555→    abortRef.current?.abort();
+   556→  };
+   557→
+   558→  const handleRetry = () => {
+   559→    const q = lastQuestionRef.current;
+   560→    if (!q || pending) return;
+   561→    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: q }]);
+   562→    void send(q, messages);
+   563→  };
+   564→
+   565→  const copyAnswer = async (m: ChatMessage) => {
+   566→    try {
+   567→      await navigator.clipboard.writeText(m.content);
+   568→      setCopiedId(m.id);
+   569→      window.setTimeout(() => setCopiedId((c) => (c === m.id ? null : c)), 1500);
+   570→    } catch {
+   571→      /* clipboard unavailable — silently ignore */
+   572→    }
+   573→  };
+   574→
+   575→  /** Download the Q&A transcript as a shareable Markdown file. */
+   576→  const exportTranscript = () => {
+   577→    if (messages.length === 0 || pending) return;
+   578→    try {
+   579→      const localeTag = business.locale === "fa" ? "fa-IR" : "en-GB";
+   580→      const nowLabel = new Intl.DateTimeFormat(localeTag, {
+   581→        dateStyle: "long",
+   582→        timeStyle: "short",
+   583→      }).format(new Date());
+   584→      const windowLabel = t(`window_${days}` as "window_7");
+   585→
+   586→      const lines: string[] = [];
+   587→      lines.push(`# ${t("title")} — ${t("exportTranscript")}`);
+   588→      lines.push("");
+   589→      lines.push(`- **${business.name}**`);
+   590→      lines.push(`- ${t("windowLabel")}: ${windowLabel}`);
+   591→      lines.push(`- ${t("citationsGenerated", { time: nowLabel })}`);
+   592→      lines.push(`- ${t("groundedNote")}`);
+   593→      lines.push("");
+   594→      lines.push("---");
+   595→
+   596→      let qIndex = 0;
+   597→      for (let i = 0; i < messages.length; i++) {
+   598→        const m = messages[i];
+   599→        if (m.role !== "user" || m.failed) continue;
+   600→        const answer = messages[i + 1];
+   601→        if (!answer || answer.role !== "assistant" || answer.failed) continue;
+   602→        qIndex += 1;
+   603→        lines.push("");
+   604→        lines.push(`## ${qIndex}. ${m.content}`);
+   605→        lines.push("");
+   606→        lines.push(answer.content);
+   607→        const meta = answer.meta;
+   608→        if (meta) {
+   609→          const c = meta.counts;
+   610→          const bits = [
+   611→            t(`window_${meta.days === 7 ? "7" : meta.days === 30 ? "30" : "90"}` as "window_7"),
+   612→            `${meta.rangeFrom} → ${meta.rangeTo}`,
+   613→            ...(c
+   614→              ? [
+   615→                  t("citationsSales", { count: c.sales }),
+   616→                  t("citationsExpenses", { count: c.expenses }),
+   617→                  t("citationsOpenInvoices", { count: c.openInvoices }),
+   618→                  t("citationsPayments", { count: c.recentPayments }),
+   619→                ]
+   620→              : []),
+   621→          ];
+   622→          try {
+   623→            const time = new Intl.DateTimeFormat(localeTag, {
+   624→              hour: "2-digit",
+   625→              minute: "2-digit",
+   626→            }).format(new Date(meta.generatedAt));
+   627→            bits.push(t("citationsGenerated", { time }));
+   628→          } catch {
+   629→            /* timestamp is decorative in the export */
+   630→          }
+   631→          lines.push("");
+   632→          lines.push(`> ${t("citationsTitle")}: ${bits.join(" · ")}`);
+   633→        }
+   634→        lines.push("");
+   635→        lines.push("---");
+   636→      }
+   637→
+   638→      if (qIndex === 0) return; // nothing answerable to export
+   639→
+   640→      const md = lines.join("\n");
+   641→      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+   642→      const url = URL.createObjectURL(blob);
+   643→      const a = document.createElement("a");
+   644→      a.href = url;
+   645→      a.download = `copilot-transcript-${new Date().toISOString().slice(0, 10)}.md`;
+   646→      document.body.appendChild(a);
+   647→      a.click();
+   648→      a.remove();
+   649→      URL.revokeObjectURL(url);
+   650→      toast({ title: t("exportedToast") });
+   651→    } catch {
+   652→      toast({ title: t("exportFailed"), variant: "destructive" });
+   653→    }
+   654→  };
+   655→
+   656→  const askFollowUp = (question: string) => {
+   657→    if (pending) return;
+   658→    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: question }]);
+   659→    void send(question, messages);
+   660→  };
+   661→
+   662→  if (!canUse) {
+   663→    return (
+   664→      <div className="space-y-6" data-view="copilot">
+   665→        <PageHeader title={t("title")} subtitle={t("subtitle")} />
+   666→        <Card className="mx-auto max-w-md p-8 text-center">
+   667→          <div className="bg-muted mx-auto flex size-12 items-center justify-center rounded-full">
+   668→            <Lock className="text-muted-foreground size-5" aria-hidden="true" />
+   669→          </div>
+   670→          <h2 className="mt-4 text-base font-semibold">{t("lockedTitle")}</h2>
+   671→          <p className="text-muted-foreground mt-1.5 text-sm">{t("lockedDesc")}</p>
+   672→        </Card>
+   673→      </div>
+   674→    );
+   675→  }
+   676→
+   677→  const empty = messages.length === 0;
+   678→  const lastFailed = !pending && messages[messages.length - 1]?.failed === true;
+   679→  const waitingForFirstToken =
+   680→    pending && (messages[messages.length - 1]?.content ?? "").length === 0;
+   681→
+   682→  return (
+   683→    <div className="space-y-4" data-view="copilot">
+   684→      <PageHeader
+   685→        title={t("title")}
+   686→        subtitle={t("subtitle")}
+   687→        actions={
+   688→          <span className="text-muted-foreground border-emerald-500/30 bg-emerald-500/5 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+   689→            <ShieldCheck className="size-3.5" aria-hidden="true" />
+   690→            {t("readOnly")}
+   691→          </span>
+   692→        }
+   693→      />
+   694→
+   695→      <Card className="flex h-[calc(100svh-15rem)] min-h-[520px] flex-col overflow-hidden">
+   696→        {/* Toolbar */}
+   697→        <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2.5">
+   698→          <div className="flex items-center gap-2" role="group" aria-label={t("windowLabel")}>
+   699→            <CalendarClock className="text-muted-foreground size-4" aria-hidden="true" />
+   700→            <span className="text-muted-foreground text-xs font-medium">{t("windowLabel")}</span>
+   701→            <div className="bg-muted flex overflow-hidden rounded-lg p-0.5">
+   702→              {WINDOWS.map((w) => (
+   703→                <button
+   704→                  key={w}
+   705→                  type="button"
+   706→                  onClick={() => setDays(w)}
+   707→                  aria-pressed={days === w}
+   708→                  className={cn(
+   709→                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+   710→                    days === w
+   711→                      ? "bg-background text-foreground shadow-sm"
+   712→                      : "text-muted-foreground hover:text-foreground",
+   713→                  )}
+   714→                >
+   715→                  {t(`window_${w}` as "window_7")}
+   716→                </button>
+   717→              ))}
+   718→            </div>
+   719→          </div>
+   720→          <div className="flex items-center gap-1">
+   721→            <Collapsible open={dataOpen} onOpenChange={setDataOpen}>
+   722→              <CollapsibleTrigger asChild>
+   723→                <Button variant="ghost" size="sm" className="text-muted-foreground h-8 gap-1.5 text-xs">
+   724→                  <ListTree className="size-3.5" aria-hidden="true" />
+   725→                  {t("dataIncludedTitle")}
+   726→                  <ChevronDown className={cn("size-3.5 transition-transform", dataOpen && "rotate-180")} aria-hidden="true" />
+   727→                </Button>
+   728→              </CollapsibleTrigger>
+   729→            </Collapsible>
+   730→            {messages.length > 0 ? (
+   731→              <>
+   732→                <Button
+   733→                  variant="ghost"
+   734→                  size="sm"
+   735→                  className="text-muted-foreground h-8 gap-1.5 text-xs hover:text-foreground"
+   736→                  onClick={exportTranscript}
+   737→                  disabled={pending}
+   738→                  title={t("exportTranscript")}
+   739→                >
+   740→                  <Download className="size-3.5" aria-hidden="true" />
+   741→                  <span className="hidden sm:inline">{t("exportTranscript")}</span>
+   742→                  <span className="sr-only">{t("exportTranscript")}</span>
+   743→                </Button>
+   744→                <Button
+   745→                  variant="ghost"
+   746→                  size="sm"
+   747→                  className="text-muted-foreground h-8 gap-1.5 text-xs"
+   748→                  onClick={() => setMessages([])}
+   749→                  disabled={pending}
+   750→                >
+   751→                  <RefreshCcw className="size-3.5" aria-hidden="true" />
+   752→                  <span className="hidden sm:inline">{t("newConversation")}</span>
+   753→                  <span className="sr-only">{t("newConversation")}</span>
+   754→                </Button>
+   755→              </>
+   756→            ) : null}
+   757→          </div>
+   758→        </div>
+   759→
+   760→        {/* Transparency: what data can the copilot see */}
+   761→        {dataOpen ? (
+   762→          <div className="bg-muted/40 border-b px-4 py-3">
+   763→            <p className="text-muted-foreground text-xs">{t("dataIncludedDesc")}</p>
+   764→            <ul className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+   765→              {[
+   766→                { icon: BarChart3, label: t("sectionKpis") },
+   767→                { icon: CalendarClock, label: t("sectionTimeline") },
+   768→                { icon: Package, label: t("sectionTopProducts") },
+   769→                { icon: Wallet, label: t("sectionExpensesByCategory") },
+   770→                { icon: HandCoins, label: t("sectionOutstanding") },
+   771→                { icon: ListTree, label: t("sectionInventory") },
+   772→                { icon: ArrowDown, label: t("sectionRecentPayments") },
+   773→              ].map((row) => (
+   774→                <li key={row.label} className="flex items-center gap-1.5">
+   775→                  <row.icon className="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />
+   776→                  <span className="text-muted-foreground">{row.label}</span>
+   777→                </li>
+   778→              ))}
+   779→            </ul>
+   780→          </div>
+   781→        ) : null}
+   782→
+   783→        {/* Messages */}
+   784→        <div
+   785→          ref={scrollRef}
+   786→          className="flex-1 space-y-4 overflow-y-auto px-4 py-4"
+   787→          onScroll={(e) => {
+   788→            const el = e.currentTarget;
+   789→            setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 60);
+   790→          }}
+   791→        >
+   792→          {empty ? (
+   793→            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+   794→              <div className="border-emerald-500/20 from-emerald-500/15 to-teal-500/10 flex size-14 items-center justify-center rounded-2xl border bg-gradient-to-br">
+   795→                <Bot className="text-emerald-700 size-7 dark:text-emerald-400" aria-hidden="true" />
+   796→              </div>
+   797→              <div>
+   798→                <p className="font-medium">{t("emptyTitle")}</p>
+   799→                <p className="text-muted-foreground mx-auto mt-1 max-w-sm text-sm">
+   800→                  {t("emptyDesc")}
+   801→                </p>
+   802→              </div>
+   803→              <div className="mt-2 max-w-lg">
+   804→                <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+   805→                  {t("suggestionsLabel")}
+   806→                </p>
+   807→                <div className="mt-2 flex flex-wrap justify-center gap-2">
+   808→                  {suggestions.map((s) => (
+   809→                    <button
+   810→                      key={s}
+   811→                      type="button"
+   812→                      onClick={() => {
+   813→                        setMessages([{ id: nextId(), role: "user", content: s }]);
+   814→                        void send(s, []);
+   815→                      }}
+   816→                      className="border-border bg-background hover:border-emerald-500/40 hover:bg-emerald-500/5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors"
+   817→                    >
+   818→                      {s}
+   819→                    </button>
+   820→                  ))}
+   821→                </div>
+   822→              </div>
+   823→            </div>
+   824→          ) : (
+   825→            <>
+   826→              {messages.map((m) =>
+   827→                m.role === "user" ? (
+   828→                  <div key={m.id} className="flex items-start justify-end gap-2.5">
+   829→                    <div className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl rounded-ee-sm px-3.5 py-2.5 sm:max-w-[70%]">
+   830→                      <p className="text-sm leading-relaxed whitespace-pre-wrap" dir="auto">
+   831→                        {m.content}
+   832→                      </p>
+   833→                    </div>
+   834→                    <div
+   835→                      className="bg-primary text-primary-foreground mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full"
+   836→                      aria-hidden="true"
+   837→                    >
+   838→                      <UserRound className="size-3.5" />
+   839→                    </div>
+   840→                  </div>
+   841→                ) : (
+   842→                  <div key={m.id} className="flex items-start gap-2.5">
+   843→                    <div
+   844→                      className={cn(
+   845→                        "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border",
+   846→                        m.failed
+   847→                          ? "border-destructive/30 bg-destructive/10 text-destructive"
+   848→                          : "border-emerald-500/20 from-emerald-500/15 to-teal-500/10 text-emerald-700 bg-gradient-to-br dark:text-emerald-400",
+   849→                      )}
+   850→                      aria-hidden="true"
+   851→                    >
+   852→                      {m.failed ? (
+   853→                        <TriangleAlert className="size-3.5" />
+   854→                      ) : (
+   855→                        <Bot className="size-3.5" />
+   856→                      )}
+   857→                    </div>
+   858→                    <div className="flex min-w-0 max-w-[88%] flex-col sm:max-w-[75%]">
+   859→                      <div
+   860→                        className={cn(
+   861→                          "group relative w-fit rounded-2xl rounded-ss-sm border px-3.5 py-2.5",
+   862→                          m.failed
+   863→                            ? "border-destructive/30 bg-destructive/5"
+   864→                            : "bg-muted/50",
+   865→                        )}
+   866→                      >
+   867→                      {m.content.length === 0 && m.id === activeStreamId ? (
+   868→                        <div className="flex items-center gap-1.5 px-1 py-1">
+   869→                          {[0, 1, 2].map((i) => (
+   870→                            <span
+   871→                              key={i}
+   872→                              className="bg-muted-foreground/60 size-1.5 animate-bounce rounded-full"
+   873→                              style={{ animationDelay: `${i * 150}ms` }}
+   874→                            />
+   875→                          ))}
+   876→                          <span className="text-muted-foreground ms-1.5 text-xs">{t("thinking")}</span>
+   877→                        </div>
+   878→                      ) : (
+   879→                        <MarkdownLite text={m.content} streaming={m.id === activeStreamId} />
+   880→                      )}
+   881→                      {!m.failed && m.content.length > 0 && m.id !== activeStreamId ? (
+   882→                        <button
+   883→                          type="button"
+   884→                          onClick={() => void copyAnswer(m)}
+   885→                          aria-label={copiedId === m.id ? t("copied") : t("copy")}
+   886→                          className="text-muted-foreground hover:text-foreground absolute end-2 bottom-1.5 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+   887→                        >
+   888→                          {copiedId === m.id ? (
+   889→                            <Check className="size-3.5 text-emerald-600" aria-hidden="true" />
+   890→                          ) : (
+   891→                            <Copy className="size-3.5" aria-hidden="true" />
+   892→                          )}
+   893→                        </button>
+   894→                      ) : null}
+   895→                      </div>
+   896→                      {!m.failed && m.meta ? (
+   897→                        <CitationStrip meta={m.meta} locale={business.locale} />
+   898→                      ) : null}
+   899→                    </div>
+   900→                  </div>
+   901→                ),
+   902→              )}
+   903→
+   904→              {waitingForFirstToken ? null : null}
+   905→
+   906→              {lastFailed ? (
+   907→                <div className="ps-9.5">
+   908→                  <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleRetry}>
+   909→                    <RefreshCcw className="size-3.5" aria-hidden="true" />
+   910→                    {tCommon("retry")}
+   911→                  </Button>
+   912→                </div>
+   913→              ) : null}
+   914→
+   915→              {followUps.length > 0 ? (
+   916→                <div
+   917→                  className="animate-in fade-in slide-in-from-bottom-1 ps-9.5"
+   918→                  data-testid="copilot-followups"
+   919→                >
+   920→                  <p className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-medium tracking-wide uppercase">
+   921→                    <Sparkles className="size-3 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+   922→                    {t("followUpsLabel")}
+   923→                  </p>
+   924→                  <div className="mt-1.5 flex flex-wrap gap-2">
+   925→                    {followUps.map((key) => (
+   926→                      <button
+   927→                        key={key}
+   928→                        type="button"
+   929→                        onClick={() => askFollowUp(t(key))}
+   930→                        className="border-emerald-500/25 bg-emerald-500/5 hover:border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors"
+   931→                      >
+   932→                        {t(key)}
+   933→                      </button>
+   934→                    ))}
+   935→                  </div>
+   936→                </div>
+   937→              ) : null}
+   938→            </>
+   939→          )}
+   940→        </div>
+   941→
+   942→        {/* Composer */}
+   943→        <div className="border-t p-3 sm:p-4">
+   944→          <div className="border-input focus-within:ring-ring/40 flex items-end gap-2 rounded-2xl border p-2 transition-shadow focus-within:ring-2 focus-within:ring-offset-0">
+   945→            <textarea
+   946→              ref={textareaRef}
+   947→              value={input}
+   948→              onChange={(e) => {
+   949→                setInput(e.target.value);
+   950→                e.target.style.height = "auto";
+   951→                e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+   952→              }}
+   953→              onKeyDown={(e) => {
+   954→                if (e.key === "Enter" && !e.shiftKey) {
+   955→                  e.preventDefault();
+   956→                  handleSubmit();
+   957→                }
+   958→              }}
+   959→              rows={1}
+   960→              maxLength={500}
+   961→              placeholder={t("placeholder")}
+   962→              aria-label={t("placeholder")}
+   963→              disabled={pending}
+   964→              className="placeholder:text-muted-foreground max-h-[120px] min-h-[38px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none disabled:opacity-50"
+   965→            />
+   966→            {pending ? (
+   967→              <Button
+   968→                size="icon"
+   969→                variant="secondary"
+   970→                className="border-destructive/30 text-destructive hover:bg-destructive/10 size-9 shrink-0 rounded-xl border"
+   971→                onClick={handleStop}
+   972→                aria-label={t("stop")}
+   973→                title={t("stop")}
+   974→              >
+   975→                <Square className="size-3.5 fill-current" aria-hidden="true" />
+   976→              </Button>
+   977→            ) : (
+   978→              <Button
+   979→                size="icon"
+   980→                className="size-9 shrink-0 rounded-xl"
+   981→                onClick={handleSubmit}
+   982→                disabled={input.trim().length === 0}
+   983→                aria-label={t("send")}
+   984→              >
+   985→                <SendHorizontal className="size-4" aria-hidden="true" />
+   986→              </Button>
+   987→            )}
+   988→          </div>
+   989→          <p className="text-muted-foreground mt-2 flex items-center justify-between gap-2 text-[11px]">
+   990→            <span className="truncate">{t("groundedNote")}</span>
+   991→            <span className="shrink-0 tabular-nums" dir="ltr">
+   992→              {input.length}/500
+   993→            </span>
+   994→          </p>
+   995→        </div>
+   996→      </Card>
+   997→    </div>
+   998→  );
+   999→}
+  1000→

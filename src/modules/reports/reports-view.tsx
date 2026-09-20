@@ -10,6 +10,8 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
+  Line,
   Pie,
   PieChart,
   XAxis,
@@ -20,7 +22,9 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Boxes,
+  CalendarDays,
   ChartPie,
+  ChevronRight,
   Coins,
   Download,
   HandCoins,
@@ -32,6 +36,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
+import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 import { toast } from "@/hooks/use-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,20 +50,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { DataTable, Ltr } from "@/components/shared/data-table";
 import {
   ChartContainer,
   ChartTooltip,
   type ChartConfig,
 } from "@/components/ui/chart";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { fmtCount, fmtMoney } from "../finance-shared/finance-kit";
 import type { BusinessSummary } from "../shell/types";
 
@@ -128,6 +133,40 @@ type MonthlyRow = {
 
 type MonthlyData = { months: number; series: MonthlyRow[] };
 
+/** Single-month drill-down (GET /api/v1/reports/monthly/[month]). */
+type MonthDetail = {
+  month: string;
+  timezone: string;
+  totals: {
+    revenueMinor: number;
+    salesCount: number;
+    expensesMinor: number;
+    expensesCount: number;
+    collectedMinor: number;
+    paidOutMinor: number;
+    netCashMinor: number;
+    netAccrualMinor: number;
+  };
+  sales: Array<{
+    number: number;
+    issueDate: string;
+    customerName: string | null;
+    totalMinor: number;
+    paidMinor: number;
+    balanceMinor: number;
+    status: string;
+  }>;
+  expenses: Array<{
+    category: string;
+    spentAt: string;
+    supplierName: string | null;
+    amountMinor: number;
+    paidMinor: number;
+    balanceMinor: number;
+    status: string;
+  }>;
+};
+
 /** Percent change between two minor-unit totals; null when undefined (÷0). */
 function pctChange(cur: number, prev: number): number | null {
   if (prev === 0) return null;
@@ -183,8 +222,21 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
   const t = useTranslations("reports");
   const uiLocale = useLocale();
   const navigate = useAppStore((s) => s.navigate);
+  const view = useAppStore((s) => s.view);
   const activeId = useAppStore((s) => s.activeBusinessId);
   const [days, setDays] = useState<string>("30");
+
+  // Month drill-down state lives in the URL (store view param) — deep-linkable
+  // via #/reports?month=YYYY-MM and sync'd with browser back/forward. The
+  // dialog is a DERIVED view of the store: row clicks navigate({param}),
+  // close navigates back to the bare module; hashchange (Back/Forward,
+  // external deep links) flows through app-root's replaceView into here.
+  const detailMonth =
+    view.kind === "module" && view.module === "reports" ? (view.param ?? null) : null;
+  const openMonth = (month: string) =>
+    navigate({ kind: "module", module: "reports", param: month }, { replace: true });
+  const closeMonth = () =>
+    navigate({ kind: "module", module: "reports" }, { replace: true });
 
   const fmt = (minor: number) => fmtMoney(business, minor);
 
@@ -198,6 +250,15 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
   const { data: monthly } = useQuery<MonthlyData>({
     queryKey: ["reports", "monthly", 6],
     queryFn: () => api("/api/v1/reports/monthly?months=6"),
+    staleTime: 60_000,
+  });
+
+  // MoM drill-down — clicking a month row navigates to that month's detail
+  // (URL becomes #/reports?month=YYYY-MM, shareable + back/forward safe).
+  const { data: monthDetail, isLoading: detailLoading } = useQuery<MonthDetail>({
+    queryKey: ["reports", "monthDetail", detailMonth],
+    queryFn: () => api(`/api/v1/reports/monthly/${detailMonth}`),
+    enabled: detailMonth !== null,
     staleTime: 60_000,
   });
 
@@ -240,6 +301,44 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
       }),
   });
 
+  // Per-month CSV export (month dialog) — same server builder as the dialog.
+  const monthCsvExport = useMutation({
+    mutationFn: async (month: string) => {
+      const res = await fetch(`/api/v1/reports/monthly/${month}/export`, {
+        credentials: "same-origin",
+        headers: activeId ? { "x-business-id": activeId } : undefined,
+      });
+      if (!res.ok) {
+        let message = t("csvFailed");
+        try {
+          const body = (await res.json()) as { error?: { code?: string; message?: string } };
+          if (body.error?.code === "RATE_LIMITED") message = t("csvRateLimited");
+          else if (body.error?.message) message = body.error.message;
+        } catch {
+          // keep default
+        }
+        throw new Error(message);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const dispo = res.headers.get("content-disposition") ?? "";
+      const match = /filename="([^"]+)"/.exec(dispo);
+      a.download = match?.[1] ?? `report-${month}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+    onSuccess: () => toast({ title: t("csvExportedToast") }),
+    onError: (err) =>
+      toast({
+        title: err instanceof Error ? err.message : t("csvFailed"),
+        variant: "destructive",
+      }),
+  });
+
   const fmtDay = (key: string) => {
     // YYYY-MM-DD -> localized medium date for tooltips (UI locale, not
     // business locale — these are interface labels, not financial data).
@@ -260,6 +359,18 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
     }).format(d);
   };
 
+  const fmtIsoDate = (iso: string) => {
+    // ISO instant -> localized medium date for drill-down lists.
+    try {
+      return new Intl.DateTimeFormat(uiLocale === "fa" ? "fa-IR" : "en-US", {
+        dateStyle: "medium",
+        timeZone: business.timezone || "UTC",
+      }).format(new Date(iso));
+    } catch {
+      return iso.slice(0, 10);
+    }
+  };
+
   const timelineConfig = {
     revenueMinor: { label: t("legendRevenue"), color: "var(--chart-1)" },
     expenseMinor: { label: t("legendExpenses"), color: "var(--chart-3)" },
@@ -269,6 +380,27 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
     collectedMinor: { label: t("legendCollected"), color: "var(--chart-2)" },
     paidOutMinor: { label: t("legendPaidOut"), color: "var(--chart-5)" },
   } satisfies ChartConfig;
+
+  const momConfig = {
+    revenueMinor: { label: t("momRevenue"), color: "var(--chart-1)" },
+    expensesMinor: { label: t("momExpenses"), color: "var(--chart-3)" },
+    netCashMinor: { label: t("momNetCash"), color: "var(--chart-2)" },
+  } satisfies ChartConfig;
+
+  // Chronological context for the MoM DataTable — delta / "new" badge /
+  // current-month note key off the month itself (not the displayed row
+  // order), so they stay truthful when the user client-sorts the table.
+  const momPrevByMonth = new Map<string, MonthlyRow | null>();
+  let momCurrentMonth: string | null = null;
+  if (monthly) {
+    monthly.series.forEach((row, i) => {
+      momPrevByMonth.set(row.month, i > 0 ? monthly.series[i - 1] : null);
+    });
+    momCurrentMonth =
+      monthly.series.length > 0
+        ? monthly.series[monthly.series.length - 1].month
+        : null;
+  }
 
   const hasAnyActivity =
     !!data &&
@@ -496,110 +628,214 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                   {t("momDesc", { months: fmtCount(uiLocale, monthly.months) })}
                 </CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{t("momMonth")}</TableHead>
-                        <TableHead className="text-end">{t("momRevenue")}</TableHead>
-                        <TableHead className="text-end">{t("momExpenses")}</TableHead>
-                        <TableHead className="text-end">{t("momNetCash")}</TableHead>
-                        <TableHead className="w-20 text-end" title={t("momDeltaVsPrev", { prev: "" })}>
+              <CardContent className="min-w-0">
+                {/* Companion chart — bars for revenue/expenses, line for net cash. */}
+                <ChartContainer
+                  config={momConfig}
+                  className="mb-4 h-44 w-full sm:h-48"
+                  dir="ltr"
+                >
+                  <ComposedChart data={monthly.series} margin={{ left: 4, right: 12, top: 8 }}>
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="month"
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={8}
+                      tickFormatter={(v: string) => fmtMonth(v).replace(/\s*\d{4}/, "")}
+                    />
+                    <YAxis
+                      width={64}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v: number) => fmt(v)}
+                    />
+                    <ChartTooltip
+                      cursor={{ fill: "var(--muted)" }}
+                      content={
+                        <MoneyTooltip fmt={fmt} labelFmt={(v) => fmtMonth(v)} />
+                      }
+                    />
+                    <Bar
+                      dataKey="revenueMinor"
+                      fill="var(--color-revenueMinor)"
+                      radius={3}
+                      name={momConfig.revenueMinor.label}
+                    />
+                    <Bar
+                      dataKey="expensesMinor"
+                      fill="var(--color-expensesMinor)"
+                      radius={3}
+                      name={momConfig.expensesMinor.label}
+                    />
+                    <Line
+                      dataKey="netCashMinor"
+                      stroke="var(--color-netCashMinor)"
+                      strokeWidth={2}
+                      dot={{ r: 2.5, strokeWidth: 0, fill: "var(--color-netCashMinor)" }}
+                      name={momConfig.netCashMinor.label}
+                    />
+                  </ComposedChart>
+                </ChartContainer>
+                <div className="mb-2 flex flex-wrap items-center gap-3">
+                  {(Object.keys(momConfig) as Array<keyof typeof momConfig>).map((key) => (
+                    <span key={key} className="text-muted-foreground flex items-center gap-1.5 text-xs">
+                      <span
+                        className="size-2.5 rounded-[2px]"
+                        style={{ background: momConfig[key].color }}
+                        aria-hidden="true"
+                      />
+                      {momConfig[key].label}
+                    </span>
+                  ))}
+                </div>
+                <DataTable<MonthlyRow>
+                  ariaLabel={t("momTitle")}
+                  sortLocale={uiLocale}
+                  onRowClick={(row) => openMonth(row.month)}
+                  columns={[
+                    {
+                      id: "month",
+                      header: t("momMonth"),
+                      sortValue: (row) => row.month,
+                      cell: (row) => {
+                        const isCurrent = row.month === momCurrentMonth;
+                        return (
+                          <div className="flex min-w-0 items-center">
+                            <button
+                              type="button"
+                              className="hover:text-foreground inline-flex items-center gap-1 rounded font-medium transition-colors focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2"
+                              aria-label={t("momRowOpen", {
+                                month: fmtMonth(row.month),
+                              })}
+                            >
+                              {fmtMonth(row.month)}
+                              <ChevronRight
+                                className="text-muted-foreground/60 size-3.5 rtl:-scale-x-100"
+                                aria-hidden="true"
+                              />
+                            </button>
+                            {isCurrent ? (
+                              <span className="text-muted-foreground ms-2 hidden text-[11px] md:inline">
+                                · {t("momCurrentNote")}
+                              </span>
+                            ) : null}
+                          </div>
+                        );
+                      },
+                    },
+                    {
+                      id: "revenue",
+                      header: t("momRevenue"),
+                      align: "end",
+                      sortValue: (row) => row.revenueMinor,
+                      defaultSortDir: "desc",
+                      cell: (row) => (
+                        <Ltr>
+                          {fmt(row.revenueMinor)}
+                          <span className="text-muted-foreground ms-1.5 hidden text-xs lg:inline">
+                            ({fmtCount(uiLocale, row.salesCount)})
+                          </span>
+                        </Ltr>
+                      ),
+                    },
+                    {
+                      id: "expenses",
+                      header: t("momExpenses"),
+                      align: "end",
+                      cell: (row) => <Ltr>{fmt(row.expensesMinor)}</Ltr>,
+                    },
+                    {
+                      id: "netCash",
+                      header: t("momNetCash"),
+                      align: "end",
+                      sortValue: (row) => row.netCashMinor,
+                      defaultSortDir: "desc",
+                      cell: (row) => (
+                        <Ltr
+                          className={
+                            row.netCashMinor >= 0
+                              ? "text-emerald-700 dark:text-emerald-400"
+                              : "text-rose-700 dark:text-rose-400"
+                          }
+                        >
+                          {fmt(row.netCashMinor)}
+                        </Ltr>
+                      ),
+                    },
+                    {
+                      id: "delta",
+                      header: (
+                        <span title={t("momDeltaVsPrev", { prev: "" })}>
                           <span aria-hidden="true">Δ</span>
                           <span className="sr-only">{t("momTitle")}</span>
-                        </TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {monthly.series.map((row, i) => {
-                        const prev = i > 0 ? monthly.series[i - 1] : null;
-                        const delta = prev ? pctChange(row.revenueMinor, prev.revenueMinor) : null;
-                        const isCurrent = i === monthly.series.length - 1;
+                        </span>
+                      ),
+                      align: "end",
+                      className: "w-20",
+                      cell: (row) => {
+                        // Delta keys off the CHRONOLOGICAL previous month
+                        // (momPrevByMonth), so it stays truthful under sorting.
+                        const prev = momPrevByMonth.get(row.month) ?? null;
+                        const delta = prev
+                          ? pctChange(row.revenueMinor, prev.revenueMinor)
+                          : null;
                         const deltaTitle = prev
                           ? t("momDeltaVsPrev", { prev: fmtMonth(prev.month) })
                           : undefined;
-                        return (
-                          <TableRow key={row.month} className={isCurrent ? "bg-muted/40" : ""}>
-                            <TableCell>
-                              <span className="font-medium">{fmtMonth(row.month)}</span>
-                              {isCurrent ? (
-                                <span className="text-muted-foreground ms-2 hidden text-[11px] md:inline">
-                                  · {t("momCurrentNote")}
-                                </span>
-                              ) : null}
-                            </TableCell>
-                            <TableCell className="text-end tabular-nums" dir="ltr">
-                              {fmt(row.revenueMinor)}
-                              <span className="text-muted-foreground ms-1.5 hidden text-xs lg:inline">
-                                ({fmtCount(uiLocale, row.salesCount)})
-                              </span>
-                            </TableCell>
-                            <TableCell className="text-end tabular-nums" dir="ltr">
-                              {fmt(row.expensesMinor)}
-                            </TableCell>
-                            <TableCell
-                              className={`text-end tabular-nums ${
-                                row.netCashMinor >= 0
-                                  ? "text-emerald-700 dark:text-emerald-400"
-                                  : "text-rose-700 dark:text-rose-400"
-                              }`}
-                              dir="ltr"
+                        return delta === null ? (
+                          prev && prev.revenueMinor === 0 && row.revenueMinor > 0 ? (
+                            <Badge
+                              variant="outline"
+                              title={deltaTitle}
+                              className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 gap-0.5 text-[11px] dark:text-emerald-400"
                             >
-                              {fmt(row.netCashMinor)}
-                            </TableCell>
-                            <TableCell className="text-end">
-                              {delta === null ? (
-                                prev && prev.revenueMinor === 0 && row.revenueMinor > 0 ? (
-                                  <Badge
-                                    variant="outline"
-                                    title={deltaTitle}
-                                    className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 gap-0.5 text-[11px] dark:text-emerald-400"
-                                  >
-                                    <ArrowUpRight className="size-3" aria-hidden="true" />
-                                    new
-                                  </Badge>
-                                ) : (
-                                  <span className="text-muted-foreground/60 inline-flex items-center">
-                                    <Minus className="size-3" aria-hidden="true" />
-                                    <span className="sr-only">—</span>
-                                  </span>
-                                )
-                              ) : delta > 0 ? (
-                                <Badge
-                                  variant="outline"
-                                  title={deltaTitle}
-                                  className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 gap-0.5 text-[11px] tabular-nums dark:text-emerald-400"
-                                >
-                                  <ArrowUpRight className="size-3" aria-hidden="true" />
-                                  +{delta}%
-                                </Badge>
-                              ) : delta < 0 ? (
-                                <Badge
-                                  variant="outline"
-                                  title={deltaTitle}
-                                  className="border-rose-500/30 bg-rose-500/10 text-rose-700 gap-0.5 text-[11px] tabular-nums dark:text-rose-400"
-                                >
-                                  <ArrowDownRight className="size-3" aria-hidden="true" />
-                                  {delta}%
-                                </Badge>
-                              ) : (
-                                <Badge
-                                  variant="outline"
-                                  title={deltaTitle}
-                                  className="text-muted-foreground gap-0.5 text-[11px] tabular-nums"
-                                >
-                                  <Minus className="size-3" aria-hidden="true" />
-                                  0%
-                                </Badge>
-                              )}
-                            </TableCell>
-                          </TableRow>
+                              <ArrowUpRight className="size-3" aria-hidden="true" />
+                              new
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground/60 inline-flex items-center">
+                              <Minus className="size-3" aria-hidden="true" />
+                              <span className="sr-only">—</span>
+                            </span>
+                          )
+                        ) : delta > 0 ? (
+                          <Badge
+                            variant="outline"
+                            title={deltaTitle}
+                            className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 gap-0.5 text-[11px] tabular-nums dark:text-emerald-400"
+                          >
+                            <ArrowUpRight className="size-3" aria-hidden="true" />
+                            <Ltr>+{delta}%</Ltr>
+                          </Badge>
+                        ) : delta < 0 ? (
+                          <Badge
+                            variant="outline"
+                            title={deltaTitle}
+                            className="border-rose-500/30 bg-rose-500/10 text-rose-700 gap-0.5 text-[11px] tabular-nums dark:text-rose-400"
+                          >
+                            <ArrowDownRight className="size-3" aria-hidden="true" />
+                            <Ltr>{delta}%</Ltr>
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            title={deltaTitle}
+                            className="text-muted-foreground gap-0.5 text-[11px] tabular-nums"
+                          >
+                            <Minus className="size-3" aria-hidden="true" />
+                            <Ltr>0%</Ltr>
+                          </Badge>
                         );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
+                      },
+                    },
+                  ]}
+                  rows={monthly.series}
+                  getRowId={(row) => row.month}
+                />
+                <p className="text-muted-foreground mt-2 text-[11px]">
+                  {t("momRowHint")}
+                </p>
               </CardContent>
             </Card>
           ) : null}
@@ -872,6 +1108,191 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
           <p className="text-muted-foreground text-center text-xs">{t("derivedNote")}</p>
         </>
       )}
+
+      {/* ---- Single-month drill-down (MoM row click / #?month= deep link) - */}
+      <Dialog open={detailMonth !== null} onOpenChange={(open) => !open && closeMonth()}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <CalendarDays className="text-primary size-4" aria-hidden="true" />
+              {detailMonth ? t("momDetailTitle", { month: fmtMonth(detailMonth) }) : null}
+            </DialogTitle>
+            <DialogDescription className="flex flex-wrap items-center justify-between gap-2">
+              <span>{t("momDetailDesc")}</span>
+              {detailMonth ? (
+                <span className="flex flex-wrap items-center gap-1.5">
+                  {/* r12: continue from the numbers — jump into the filtered
+                      module list for this month (deep-linked, shareable). */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 text-xs"
+                    disabled={monthDetail?.totals.salesCount === 0}
+                    onClick={() =>
+                      navigate({ kind: "module", module: "sales", param: detailMonth })
+                    }
+                  >
+                    <ReceiptText className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                    {t("openInSales")}
+                    <ChevronRight className="size-3 rtl:-scale-x-100" aria-hidden="true" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 text-xs"
+                    disabled={monthDetail?.totals.expensesCount === 0}
+                    onClick={() =>
+                      navigate({ kind: "module", module: "expenses", param: detailMonth })
+                    }
+                  >
+                    <Coins className="size-3.5 text-rose-600 dark:text-rose-400" aria-hidden="true" />
+                    {t("openInExpenses")}
+                    <ChevronRight className="size-3 rtl:-scale-x-100" aria-hidden="true" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 text-xs"
+                    onClick={() => monthCsvExport.mutate(detailMonth)}
+                    disabled={monthCsvExport.isPending}
+                  >
+                    {monthCsvExport.isPending ? (
+                      <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Download className="size-3.5" aria-hidden="true" />
+                    )}
+                    {t("exportMonthCsv")}
+                  </Button>
+                </span>
+              ) : null}
+            </DialogDescription>
+          </DialogHeader>
+
+          {detailLoading || !monthDetail ? (
+            <div className="space-y-2" aria-busy="true">
+              {[0, 1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-10 w-full animate-pulse" />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {/* Totals — mirror the MoM row figures. */}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[
+                  {
+                    label: t("momRevenue"),
+                    value: monthDetail.totals.revenueMinor,
+                    tone: "text-emerald-700 dark:text-emerald-400",
+                  },
+                  {
+                    label: t("momExpenses"),
+                    value: monthDetail.totals.expensesMinor,
+                    tone: "text-rose-700 dark:text-rose-400",
+                  },
+                  {
+                    label: t("momDetailCollected"),
+                    value: monthDetail.totals.collectedMinor,
+                    tone: "text-teal-700 dark:text-teal-300",
+                  },
+                  {
+                    label: t("momNetCash"),
+                    value: monthDetail.totals.netCashMinor,
+                    tone:
+                      monthDetail.totals.netCashMinor >= 0
+                        ? "text-emerald-700 dark:text-emerald-400"
+                        : "text-rose-700 dark:text-rose-400",
+                  },
+                ].map((cell) => (
+                  <div key={cell.label} className="rounded-lg border p-2.5">
+                    <p className="text-muted-foreground text-[11px] font-medium uppercase">
+                      {cell.label}
+                    </p>
+                    <p className={cn("mt-0.5 text-sm font-semibold tabular-nums", cell.tone)} dir="ltr">
+                      {fmt(cell.value)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Sales in month */}
+              <div>
+                <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold">
+                  <ReceiptText className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                  {t("momDetailSales", { count: fmtCount(uiLocale, monthDetail.totals.salesCount) })}
+                </p>
+                {monthDetail.sales.length === 0 ? (
+                  <p className="text-muted-foreground rounded-md border border-dashed px-3 py-3 text-xs">
+                    {t("momDetailEmpty")}
+                  </p>
+                ) : (
+                  <ul className="max-h-56 space-y-1 overflow-y-auto pe-1">
+                    {monthDetail.sales.map((s) => (
+                      <li
+                        key={`${s.number}-${s.issueDate}`}
+                        className="flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-xs"
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="text-muted-foreground shrink-0 tabular-nums" dir="ltr">
+                            #{String(s.number).padStart(4, "0")}
+                          </span>
+                          <span className="truncate font-medium">
+                            {s.customerName ?? t("momDetailNoCustomer")}
+                          </span>
+                          <span className="text-muted-foreground hidden shrink-0 sm:inline">
+                            {fmtIsoDate(s.issueDate)}
+                          </span>
+                        </span>
+                        <span className="shrink-0 tabular-nums" dir="ltr">
+                          {fmt(s.totalMinor)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              {/* Expenses in month */}
+              <div>
+                <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold">
+                  <Coins className="size-3.5 text-rose-600 dark:text-rose-400" aria-hidden="true" />
+                  {t("momDetailExpensesList", {
+                    count: fmtCount(uiLocale, monthDetail.totals.expensesCount),
+                  })}
+                </p>
+                {monthDetail.expenses.length === 0 ? (
+                  <p className="text-muted-foreground rounded-md border border-dashed px-3 py-3 text-xs">
+                    {t("momDetailEmpty")}
+                  </p>
+                ) : (
+                  <ul className="max-h-56 space-y-1 overflow-y-auto pe-1">
+                    {monthDetail.expenses.map((e) => (
+                      <li
+                        key={`${e.category}-${e.spentAt}-${e.amountMinor}`}
+                        className="flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-xs"
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+                            {e.category}
+                          </Badge>
+                          <span className="truncate">
+                            {e.supplierName ?? t("momDetailNoSupplier")}
+                          </span>
+                          <span className="text-muted-foreground hidden shrink-0 sm:inline">
+                            {fmtIsoDate(e.spentAt)}
+                          </span>
+                        </span>
+                        <span className="shrink-0 tabular-nums" dir="ltr">
+                          {fmt(e.amountMinor)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

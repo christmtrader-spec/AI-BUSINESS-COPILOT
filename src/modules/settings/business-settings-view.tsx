@@ -233,7 +233,10 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
       const res = await fetch(`/api/v1/businesses/${activeId}`, {
         method: "DELETE",
         credentials: "same-origin",
-        headers: { "content-type": "application/json", "x-business-id": activeId },
+        headers: {
+          "content-type": "application/json",
+          ...(activeId ? { "x-business-id": activeId } : {}),
+        },
         body: JSON.stringify({ confirmName: confirmText }),
       });
       const body = (await res.json().catch(() => null)) as {
@@ -317,7 +320,10 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
         {
         method: "POST",
         credentials: "same-origin",
-        headers: { "content-type": "application/json", "x-business-id": activeId },
+        headers: {
+          "content-type": "application/json",
+          ...(activeId ? { "x-business-id": activeId } : {}),
+        },
         body: JSON.stringify(restoreFile.body),
       });
       const body = (await res.json()) as {

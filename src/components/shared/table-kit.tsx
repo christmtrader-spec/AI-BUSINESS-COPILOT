@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, type ReactNode } from "react";
-import { useLocale } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { ChevronLeft, ChevronRight, Loader2, Search } from "lucide-react";
 import { toMinor } from "@/lib/money";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,26 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+
+/** Locale-aware digits (fa gets ۰۱۲۳…, en gets 0123…). */
+function localizedDigits(locale: string, n: number): string {
+  return new Intl.NumberFormat(locale === "fa" ? "fa-IR" : "en-US").format(n);
+}
+
+/** Compact page window with ellipses: 1 … 4 5 6 … 12 */
+function pageWindow(page: number, pages: number): (number | "ellipsis")[] {
+  if (pages <= 7) {
+    return Array.from({ length: pages }, (_, i) => i + 1);
+  }
+  const out: (number | "ellipsis")[] = [1];
+  const start = Math.max(2, page - 1);
+  const end = Math.min(pages - 1, page + 1);
+  if (start > 2) out.push("ellipsis");
+  for (let i = start; i <= end; i++) out.push(i);
+  if (end < pages - 1) out.push("ellipsis");
+  out.push(pages);
+  return out;
+}
 
 /** Debounced search input (300ms). Owns its draft state internally. */
 export function SearchInput({
@@ -70,41 +90,75 @@ export function Pagination({
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
   // Interface chrome follows the UI locale (not the business data locale) —
-  // a Persian-UI user reads "از" even while managing an English business.
+  // a Persian-UI user reads "از" and ۰۱۲۳ digits even while managing an
+  // English business.
   const uiLocale = useLocale();
+  const tCommon = useTranslations("common");
   const ofWord = labels?.of ?? (uiLocale === "fa" ? "از" : "of");
+  const num = (n: number) => localizedDigits(uiLocale, n);
+  const safePage = Math.min(Math.max(page, 1), pages);
+
   return (
-    <div className="flex items-center justify-between gap-2 pt-3">
+    <div className="flex flex-col-reverse items-center justify-between gap-3 pt-4 sm:flex-row">
       <p className="text-muted-foreground text-xs tabular-nums">
         {/* LTR spans keep "from–to" and the total visually intact in RTL
             locales — bidi would otherwise scramble the en-dash sequence. */}
         <span dir="ltr">
-          {from}–{to}
+          {num(from)}–{num(to)}
         </span>{" "}
-        {ofWord} <span dir="ltr">{total}</span>
+        {ofWord} <span dir="ltr">{num(total)}</span>
       </p>
-      <div className="flex items-center gap-1">
+      <nav
+        aria-label={uiLocale === "fa" ? "صفحه‌بندی" : "Pagination"}
+        className="flex items-center gap-1"
+      >
         <Button
           variant="outline"
           size="icon"
           className="size-8"
-          disabled={page <= 1}
-          onClick={() => onPage(page - 1)}
-          aria-label={labels?.prev ?? "Previous"}
+          disabled={safePage <= 1}
+          onClick={() => onPage(safePage - 1)}
+          aria-label={labels?.prev ?? tCommon("previous")}
         >
-          <ChevronLeft className="size-4 rtl:rotate-180" />
+          <ChevronLeft className="size-4 rtl:rotate-180" aria-hidden="true" />
         </Button>
+        <div className="hidden items-center gap-1 sm:flex">
+          {pageWindow(safePage, pages).map((p, i) =>
+            p === "ellipsis" ? (
+              <span
+                key={`gap-${i}`}
+                className="text-muted-foreground inline-flex size-8 items-center justify-center text-xs"
+                aria-hidden="true"
+              >
+                …
+              </span>
+            ) : (
+              <Button
+                key={p}
+                variant={p === safePage ? "default" : "ghost"}
+                size="icon"
+                className="size-8 text-xs tabular-nums"
+                aria-current={p === safePage ? "page" : undefined}
+                aria-label={tCommon("goToPage", { page: num(p) })}
+                onClick={() => onPage(p)}
+                disabled={p === safePage}
+              >
+                {num(p)}
+              </Button>
+            ),
+          )}
+        </div>
         <Button
           variant="outline"
           size="icon"
           className="size-8"
-          disabled={page >= pages}
-          onClick={() => onPage(page + 1)}
-          aria-label={labels?.next ?? "Next"}
+          disabled={safePage >= pages}
+          onClick={() => onPage(safePage + 1)}
+          aria-label={labels?.next ?? tCommon("next")}
         >
-          <ChevronRight className="size-4 rtl:rotate-180" />
+          <ChevronRight className="size-4 rtl:rotate-180" aria-hidden="true" />
         </Button>
-      </div>
+      </nav>
     </div>
   );
 }

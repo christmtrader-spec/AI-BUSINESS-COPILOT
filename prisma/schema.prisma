@@ -21,6 +21,10 @@ model User {
   name         String?
   passwordHash String
   locale       String           @default("en") // user display preference (A05)
+  // Prompt 18 session security: bumped on password change / password reset /
+  // account security events. JWTs carry the version they were issued with;
+  // a mismatch means the session was invalidated and must re-authenticate.
+  sessionVersion Int            @default(0)
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 
@@ -29,6 +33,33 @@ model User {
   auditLogs   AuditLog[]
   inventoryAdjustments InventoryAdjustment[]
   payments    Payment[]
+  invitesCreated BusinessInvite[] @relation("InviteCreator")
+  invitesAccepted BusinessInvite[] @relation("InviteAcceptor")
+  chatSessions ChatSession[]
+  chatMessages ChatMessage[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 18 — credential recovery. ONLY the SHA-256 HASH of a one-time reset
+// token is stored (the raw token lives exclusively inside the emailed link).
+// Tokens are single-use (usedAt), short-lived (expiresAt, 30 minutes) and
+// cleaned up opportunistically. requestedIp/userAgent support security
+// review of recovery abuse; they never contain secrets.
+// ---------------------------------------------------------------------------
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  requestedIp String?
+  userAgent   String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
 }
 
 model Business {
@@ -48,6 +79,7 @@ model Business {
 
   members   BusinessMember[]
   auditLogs AuditLog[]
+  invites   BusinessInvite[]
   customers Customer[]
   suppliers Supplier[]
   products  Product[]
@@ -55,6 +87,7 @@ model Business {
   sales     Sale[]
   expenses  Expense[]
   payments  Payment[]
+  chatSessions ChatSession[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -76,10 +109,35 @@ model BusinessMember {
   @@index([userId])
 }
 
+// Phase 06+ — invite links (no email sending in MVP scope): an OWNER/ADMIN
+// mints a one-time token link; the invitee opens #/join/<token>, previews
+// the business + role and accepts. Roles/audit identical to member.add.
+model BusinessInvite {
+  id           String    @id @default(cuid())
+  businessId   String
+  business     Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Opaque 48-char token; unique lookup by token — never guessable.
+  token        String    @unique
+  // OWNER is intentionally NOT grantable via invites (see rbac.ts).
+  role         String    @default("VIEWER")
+  createdById  String?
+  createdBy    User?     @relation("InviteCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  expiresAt    DateTime
+  acceptedById String?
+  acceptedBy   User?     @relation("InviteAcceptor", fields: [acceptedById], references: [id], onDelete: SetNull)
+  acceptedAt   DateTime?
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([businessId, createdAt])
+}
+
 model AuditLog {
   id         String   @id @default(cuid())
-  businessId String
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Nullable since Prompt 18: account-level security events (password
+  // change/reset, account deletion) are not bound to a business.
+  businessId String?
+  business   Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
   actorId    String?
   actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
   action     String // e.g. "business.update", "member.role_change"
@@ -277,4 +335,53 @@ model Payment {
   @@index([businessId, paidAt])
   @@index([saleId])
   @@index([expenseId])
+}
+
+// ---------------------------------------------------------------------------
+// Phase 07 — Copilot transcript persistence (r10 rec #1).
+// Conversations follow the user ACROSS DEVICES: scoped per (business, user) —
+// a user's questions are their own, never shared across members. The client
+// localStorage store remains the offline/fallback cache; the server copy is
+// NOT financial authority (answers are recomputed on every ask — A11-A13).
+// Session ids are client-generated (validated format) so local↔server
+// reconciliation is identity-based and idempotent.
+// ---------------------------------------------------------------------------
+
+model ChatSession {
+  id         String        @id // client-generated (s-<random>), format-validated
+  businessId String
+  business   Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title      String        @default("") // auto-title from first question (≤80 chars)
+  // User renamed via PATCH — after this the auto-title never overwrites it.
+  titleEdited Boolean      @default(false)
+  // Pinned conversations sort first in the history list (UI-only affordance).
+  pinned     Boolean       @default(false)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  messages   ChatMessage[]
+
+  @@unique([businessId, userId, id]) // defense in depth: id alone is never enough
+  @@index([businessId, userId, updatedAt])
+}
+
+model ChatMessage {
+  id        String      @id @default(cuid())
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  // USER | ASSISTANT (validated in the API schema)
+  role      String
+  content   String      // capped at 8000 chars server-side
+  failed    Boolean     @default(false) // failed attempts stay LOCAL-only (never synced)
+  // Citation provenance (server-computed CopilotMeta) as JSON — answers
+  // restored on another device still show WHERE their numbers came from.
+  metaJson  String?
+  createdAt DateTime    @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@index([userId])
 }

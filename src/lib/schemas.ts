@@ -124,3 +124,36 @@ export const copilotAskSchema = z.object({
     .catch(30)
     .default(30),
 });
+
+// ---------------------------------------------------------------------------
+// Phase 07 — Copilot transcript persistence. The client keeps its own
+// session/message ids; the server validates FORMAT (never trusts content
+// beyond plain text) and caps sizes. Failed answers are intentionally not
+// synced (client filters them before calling).
+// ---------------------------------------------------------------------------
+
+/** Client session id: "s-" + 11-40 url-safe chars (collision-proof uuid slice). */
+export const chatSessionIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9_-]{6,64}$/, "Malformed session id.");
+
+export const chatMessageAppendSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string().trim().min(1).max(8000),
+  // Citation provenance — arbitrary JSON object, size-capped; never financial
+  // authority (figures are recomputed on every ask — A11-A13).
+  meta: z.unknown().optional(),
+  // Only used when this append CREATES the session (auto-titled).
+  title: z.string().trim().max(80).optional(),
+});
+
+/** PATCH /copilot/sessions/[id] — rename and/or pin one conversation. */
+export const chatSessionUpdateSchema = z
+  .object({
+    title: z.string().trim().min(1).max(80).optional(),
+    pinned: z.boolean().optional(),
+  })
+  .refine((v) => v.title !== undefined || v.pinned !== undefined, {
+    message: "Nothing to update.",
+  });

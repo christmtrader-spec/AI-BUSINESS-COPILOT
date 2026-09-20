@@ -10,6 +10,7 @@ import { authOptions } from "@/lib/auth";
 import { ApiError, ok, parseBody, route } from "@/lib/api-helpers";
 import { audit } from "@/lib/audit";
 import { findCurrency } from "@/lib/currencies";
+import { rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -72,6 +73,14 @@ export const POST = route(async (req: NextRequest) => {
   const userId = (session?.user as { id?: string } | undefined)?.id;
   if (!session || !userId) {
     throw new ApiError(401, "UNAUTHENTICATED", "Please sign in to continue.");
+  }
+
+  // Audit hardening: bound business creation per user (in-memory MVP limiter).
+  const rl = rateLimit(`business:create:${userId}`, 5, 60 * 60_000);
+  if (!rl.allowed) {
+    throw new ApiError(429, "RATE_LIMITED", "Too many businesses created. Please try again later.", {
+      retryAfterMs: rl.retryAfterMs,
+    });
   }
 
   const input = await parseBody(req, createSchema);

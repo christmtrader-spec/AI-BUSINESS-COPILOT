@@ -8,6 +8,7 @@ import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { expenseCreateSchema, listParams, statusParam } from "@/lib/schemas";
+import { localMonthKey, monthWindow } from "@/lib/reports";
 
 export const dynamic = "force-dynamic";
 
@@ -18,10 +19,21 @@ export const GET = route(async (req: NextRequest) => {
   const { q, page, pageSize } = listParams(new URL(req.url));
   const status = statusParam(new URL(req.url));
 
+  // Optional month drill-down (?month=YYYY-MM): "Open in Expenses" from the
+  // reports month dialog — SAME business-timezone bucket as the MoM table.
+  const monthRaw = new URL(req.url).searchParams.get("month");
+  const month = monthRaw ? monthWindow(monthRaw) ? monthRaw : null : null;
+  if (monthRaw && !month) {
+    throw new ApiError(422, "VALIDATION_ERROR", "Invalid month. Use YYYY-MM.");
+  }
+
   const where = {
     businessId: ctx.businessId,
     deletedAt: null,
     ...(status ? { status } : {}),
+    ...(month
+      ? { spentAt: { gte: monthWindow(month)!.from, lt: monthWindow(month)!.until } }
+      : {}),
     ...(q
       ? {
           OR: [
@@ -33,36 +45,66 @@ export const GET = route(async (req: NextRequest) => {
       : {}),
   };
 
-  const [expenses, total] = await Promise.all([
-    db.expense.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      include: { supplier: { select: { name: true } } },
-    }),
-    db.expense.count({ where }),
-  ]);
+  if (!month) {
+    const [expenses, total] = await Promise.all([
+      db.expense.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: { supplier: { select: { name: true } } },
+      }),
+      db.expense.count({ where }),
+    ]);
+    return ok({ items: expenses.map(toRow), total, page, pageSize });
+  }
 
-  return ok({
-    items: expenses.map((e) => ({
-      id: e.id,
-      supplierId: e.supplierId,
-      supplierName: e.supplier?.name ?? null,
-      category: e.category,
-      amountMinor: e.amountMinor,
-      paidMinor: e.paidMinor,
-      status: e.status,
-      balanceMinor: e.amountMinor - e.paidMinor,
-      spentAt: e.spentAt.toISOString(),
-      note: e.note,
-      createdAt: e.createdAt.toISOString(),
-    })),
-    total,
-    page,
-    pageSize,
+  // Month filter: widened UTC window + authoritative localMonthKey re-filter
+  // (identical bucketing to buildMonthDetail), in-memory pagination.
+  const business = await db.business.findUnique({
+    where: { id: ctx.businessId },
+    select: { timezone: true },
   });
+  const tz = business?.timezone || "UTC";
+  const all = await db.expense.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    include: { supplier: { select: { name: true } } },
+  });
+  const inMonth = all.filter((e) => localMonthKey(e.spentAt, tz) === month);
+  const total = inMonth.length;
+  const pageRows = inMonth.slice((page - 1) * pageSize, page * pageSize);
+  return ok({ items: pageRows.map(toRow), total, page, pageSize });
 });
+
+type ExpenseRowInput = {
+  id: string;
+  supplierId: string | null;
+  category: string;
+  amountMinor: number;
+  paidMinor: number;
+  status: string;
+  spentAt: Date;
+  note: string | null;
+  createdAt: Date;
+  supplier: { name: string } | null;
+};
+
+function toRow(e: ExpenseRowInput) {
+  return {
+    id: e.id,
+    supplierId: e.supplierId,
+    supplierName: e.supplier?.name ?? null,
+    category: e.category,
+    amountMinor: e.amountMinor,
+    paidMinor: e.paidMinor,
+    status: e.status,
+    balanceMinor: e.amountMinor - e.paidMinor,
+    spentAt: e.spentAt.toISOString(),
+    note: e.note,
+    createdAt: e.createdAt.toISOString(),
+  };
+}
 
 export const POST = route(async (req: NextRequest) => {
   const ctx = await getAuthContext(req);

@@ -170,7 +170,7 @@ export function AppShell({
         <footer className="border-t">
           <div className="text-muted-foreground mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-1 px-4 py-3 text-xs sm:flex-row">
             <p>
-              {tCommon("appName")} · Phase 06 · Hardening &amp; polish
+              {tCommon("appName")}
             </p>
             <p>© {new Date().getFullYear()} — {tCommon("tagline")}</p>
           </div>

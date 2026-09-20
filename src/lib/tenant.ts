@@ -14,6 +14,7 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ApiError } from "@/lib/api-helpers";
 import { asRole, can, type Permission, type Role } from "@/lib/rbac";
+import { sessionVersionOf } from "@/lib/auth-security";
 
 export type AuthContext = {
   session: Session;
@@ -49,10 +50,25 @@ export async function getAuthContext(req: Request): Promise<AuthContext> {
 
   const member = await db.businessMember.findUnique({
     where: { businessId_userId: { businessId, userId } },
-    include: { business: true },
+    include: {
+      business: true,
+      // Prompt 18: the user row rides along so the session-version freshness
+      // gate costs zero extra queries. A JWT stamped before a password
+      // change/reset fails here exactly as it does on account-scoped APIs.
+      user: { select: { sessionVersion: true } },
+    },
   });
   if (!member) {
     throw new ApiError(403, "FORBIDDEN", "You do not have access to this business.");
+  }
+
+  // Session invalidation checkpoint (§16) — see auth-security.ts.
+  if (sessionVersionOf(session) !== member.user.sessionVersion) {
+    throw new ApiError(
+      401,
+      "SESSION_INVALIDATED",
+      "Your session was invalidated (password changed). Please sign in again.",
+    );
   }
 
   return {

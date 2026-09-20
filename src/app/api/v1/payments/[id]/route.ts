@@ -8,6 +8,7 @@ import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { statusOf } from "@/lib/money";
+import { rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,14 @@ export const DELETE = route(async (req: NextRequest, { params }: RouteParams) =>
   const ctx = await getAuthContext(req);
   requirePermission(ctx, "finance:manage");
 
+  // Audit hardening: light limit on money reversals (in-memory MVP limiter).
+  const rl = rateLimit(`payments:revert:${ctx.userId}:${ctx.businessId}`, 30, 60_000);
+  if (!rl.allowed) {
+    throw new ApiError(429, "RATE_LIMITED", "Too many payment operations. Please wait a moment.", {
+      retryAfterMs: rl.retryAfterMs,
+    });
+  }
+
   const payment = await db.payment.findFirst({
     where: { id, businessId: ctx.businessId },
   });
@@ -25,7 +34,7 @@ export const DELETE = route(async (req: NextRequest, { params }: RouteParams) =>
 
   await db.$transaction(async (tx) => {
     if (payment.saleId) {
-      const sale = await tx.sale.findFirst({ where: { id: payment.saleId } });
+      const sale = await tx.sale.findFirst({ where: { id: payment.saleId, businessId: ctx.businessId } });
       if (sale) {
         const paidMinor = Math.max(sale.paidMinor - payment.amountMinor, 0);
         await tx.sale.update({
@@ -34,7 +43,7 @@ export const DELETE = route(async (req: NextRequest, { params }: RouteParams) =>
         });
       }
     } else if (payment.expenseId) {
-      const expense = await tx.expense.findFirst({ where: { id: payment.expenseId } });
+      const expense = await tx.expense.findFirst({ where: { id: payment.expenseId, businessId: ctx.businessId } });
       if (expense) {
         const paidMinor = Math.max(expense.paidMinor - payment.amountMinor, 0);
         await tx.expense.update({

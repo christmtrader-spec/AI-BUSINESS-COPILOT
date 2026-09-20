@@ -9,8 +9,8 @@ import { join } from "node:path";
 
 type Msgs = Record<string, unknown>;
 
-const en = (await import("../src/i18n/messages/en.ts")).default as Msgs;
-const fa = (await import("../src/i18n/messages/fa.ts")).default as Msgs;
+const en = (await import("../src/i18n/messages/en")).default as Msgs;
+const fa = (await import("../src/i18n/messages/fa")).default as Msgs;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const f of readdirSync(dir)) {

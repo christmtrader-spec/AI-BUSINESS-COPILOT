@@ -15,14 +15,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -35,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
+import { DataTable, Ltr } from "@/components/shared/data-table";
 import { FormDialog, Pagination, SearchInput } from "@/components/shared/table-kit";
 import type { BusinessSummary } from "../shell/types";
 
@@ -227,121 +220,152 @@ export function PartyView({
                 {tCommon("retry")}
               </button>
             </div>
-          ) : items.length === 0 && !q ? (
-            <EmptyState
-              icon={Users}
-              title={t("empty", { type: typeLabel })}
-              description={t("emptyDesc", { type: typeLabel })}
-              action={
-                writable ? (
-                  <Button size="sm" variant="outline" onClick={openCreate}>
-                    <Plus className="size-4" aria-hidden="true" />
-                    {t("add", { type: typeLabel })}
-                  </Button>
-                ) : null
-              }
-            />
-          ) : items.length === 0 ? (
-            <EmptyState icon={Users} title={tCommon("search")} description={t("searchPlaceholder")} />
           ) : (
             <>
-              <div className="overflow-x-auto rounded-md border">
-                <Table>
-                  <TableHeader className="bg-muted/50">
-                    <TableRow>
-                      <TableHead>{t("colName")}</TableHead>
-                      <TableHead>{t("colContact")}</TableHead>
-                      <TableHead className="hidden md:table-cell">{t("colNote")}</TableHead>
-                      <TableHead className="hidden sm:table-cell">{t("colCreated")}</TableHead>
-                      {writable ? (
-                        <TableHead className="text-end">{tCommon("actions")}</TableHead>
-                      ) : null}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {items.map((p) => {
-                      const initials = p.name.slice(0, 2).toUpperCase();
-                      return (
-                        <TableRow key={p.id} className="hover:bg-muted/40">
-                          <TableCell>
-                            <div className="flex items-center gap-3">
-                              <Avatar className="size-8">
-                                <AvatarFallback className="text-xs">{initials}</AvatarFallback>
-                              </Avatar>
-                              <span className="font-medium">{p.name}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="text-sm">
-                              {p.phone ? (
-                                <p dir="ltr" className="text-start">{p.phone}</p>
-                              ) : null}
-                              {p.email ? (
-                                <p className="text-muted-foreground text-xs" dir="ltr">{p.email}</p>
-                              ) : null}
-                              {!p.phone && !p.email ? (
-                                <span className="text-muted-foreground text-xs">—</span>
-                              ) : null}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-muted-foreground hidden max-w-52 truncate text-sm md:table-cell" dir="auto">
-                            {p.note ?? "—"}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground hidden whitespace-nowrap text-sm sm:table-cell">
-                            {dateFmt.format(new Date(p.createdAt))}
-                          </TableCell>
-                          {writable ? (
-                            <TableCell className="text-end">
-                              <div className="flex items-center justify-end gap-1">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-8"
-                                  onClick={() => openEdit(p)}
-                                  aria-label={t("edit", { type: typeLabel })}
-                                >
-                                  <Pencil className="size-4" />
-                                </Button>
-                                <AlertDialog>
-                                  <AlertDialogTrigger asChild>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="text-destructive size-8 hover:text-destructive"
-                                      aria-label={tCommon("delete")}
+              <DataTable<Party>
+                ariaLabel={typePlural}
+                sortLocale={business.locale}
+                columns={[
+                  {
+                    id: "name",
+                    header: t("colName"),
+                    sortValue: (p) => p.name,
+                    cell: (p) => (
+                      <div className="flex items-center gap-3">
+                        <Avatar className="size-8 ring-1 ring-border">
+                          <AvatarFallback className="bg-emerald-500/10 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                            {p.name.slice(0, 2).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="font-medium">{p.name}</span>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "contact",
+                    header: t("colContact"),
+                    cell: (p) => (
+                      <div className="text-sm">
+                        {p.phone ? (
+                          <div>
+                            <Ltr className="text-[13px]">{p.phone}</Ltr>
+                          </div>
+                        ) : null}
+                        {p.email ? (
+                          <div className="text-muted-foreground text-xs">
+                            <Ltr>{p.email}</Ltr>
+                          </div>
+                        ) : null}
+                        {!p.phone && !p.email ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : null}
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "note",
+                    header: t("colNote"),
+                    hideBelow: "md",
+                    cell: (p) => (
+                      <div className="text-muted-foreground max-w-52 truncate text-sm">
+                        {p.note ?? "—"}
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "created",
+                    header: t("colCreated"),
+                    hideBelow: "sm",
+                    sortValue: (p) => p.createdAt,
+                    defaultSortDir: "desc",
+                    cell: (p) => (
+                      <span className="text-muted-foreground text-xs tabular-nums">
+                        {dateFmt.format(new Date(p.createdAt))}
+                      </span>
+                    ),
+                  },
+                  ...(writable
+                    ? [
+                        {
+                          id: "actions",
+                          header: tCommon("actions"),
+                          align: "end" as const,
+                          cell: (p: Party) => (
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-muted-foreground hover:text-foreground size-8"
+                                onClick={() => openEdit(p)}
+                                aria-label={t("edit", { type: typeLabel })}
+                              >
+                                <Pencil className="size-4" aria-hidden="true" />
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="text-muted-foreground size-8 hover:bg-destructive/10 hover:text-destructive"
+                                    aria-label={tCommon("delete")}
+                                  >
+                                    <Trash2 className="size-4" aria-hidden="true" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>
+                                      {t("deleteTitle", { type: typeLabel })}
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      {t("deleteDesc")}
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                      onClick={() => deleteMutation.mutate(p.id)}
                                     >
-                                      <Trash2 className="size-4" />
-                                    </Button>
-                                  </AlertDialogTrigger>
-                                  <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                      <AlertDialogTitle>
-                                        {t("deleteTitle", { type: typeLabel })}
-                                      </AlertDialogTitle>
-                                      <AlertDialogDescription>
-                                        {t("deleteDesc")}
-                                      </AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                      <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
-                                      <AlertDialogAction
-                                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                        onClick={() => deleteMutation.mutate(p.id)}
-                                      >
-                                        {tCommon("delete")}
-                                      </AlertDialogAction>
-                                    </AlertDialogFooter>
-                                  </AlertDialogContent>
-                                </AlertDialog>
-                              </div>
-                            </TableCell>
-                          ) : null}
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
+                                      {tCommon("delete")}
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          ),
+                        },
+                      ]
+                    : []),
+                ]}
+                rows={items}
+                getRowId={(p) => p.id}
+                loading={isLoading}
+                skeletonRows={4}
+                empty={
+                  items.length === 0 && !q ? (
+                    <EmptyState
+                      icon={Users}
+                      title={t("empty", { type: typeLabel })}
+                      description={t("emptyDesc", { type: typeLabel })}
+                      action={
+                        writable ? (
+                          <Button size="sm" variant="outline" onClick={openCreate}>
+                            <Plus className="size-4" aria-hidden="true" />
+                            {t("add", { type: typeLabel })}
+                          </Button>
+                        ) : null
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      icon={Users}
+                      title={tCommon("search")}
+                      description={t("searchPlaceholder")}
+                    />
+                  )
+                }
+              />
               <Pagination
                 page={page}
                 pageSize={10}

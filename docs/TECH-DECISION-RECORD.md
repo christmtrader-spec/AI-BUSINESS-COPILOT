@@ -117,3 +117,22 @@ demand it (gateway-provided pattern).
   prefer what is already installed.
 - `bun run lint` must stay clean; the dev server (port 3000) is the only
   runtime target; `bun run build` is not used in this environment.
+
+---
+
+## 5. Environment Variables (.env) — load-bearing keys (r12)
+
+Discovered the hard way in r11 (BUG 1: random 401s from an unstable
+NextAuth secret). These keys are now **required** for a working dev/prod
+environment — document before deleting or rotating:
+
+| Key               | Purpose                                                             | Rotation notes                                                        |
+|-------------------|---------------------------------------------------------------------|-----------------------------------------------------------------------|
+| `DATABASE_URL`    | Prisma/SQLite connection (`file:../db/custom.db`)                    | Changing it points the app at a different database file               |
+| `NEXTAUTH_SECRET` | NextAuth v4 JWT/JWE encryption + signing key material                | Rotating invalidates ALL sessions (users must sign in again)          |
+| `NEXTAUTH_URL`    | Canonical origin NextAuth issues cookies against (`http://localhost:3000` here) | Must match the externally reachable origin or CSRF checks fail |
+
+Generation: `openssl rand -hex 32` for `NEXTAUTH_SECRET`.
+`src/lib/auth.ts` falls back to a STABLE dev-only literal when the env var
+is missing so local restarts keep sessions — production fails fast via
+next-auth's `NO_SECRET` throw. Never rely on the fallback outside dev.

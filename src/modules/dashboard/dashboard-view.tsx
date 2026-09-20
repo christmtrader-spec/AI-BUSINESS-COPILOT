@@ -39,6 +39,7 @@ type ReportsSummary = {
     salesCount: number;
     collectedMinor: number;
     expensesMinor: number;
+    expensesCount: number;
     netCashMinor: number;
   };
   timeline: Array<{ date: string; revenueMinor: number; expenseMinor: number }>;
@@ -138,6 +139,7 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
     <div className="space-y-6" data-view="dashboard">
       <PageHeader
         title={`${t("welcomeBack")}${session?.user?.name ? `, ${session.user.name.split(" ")[0]}` : ""}`}
+        titleClassName="gradient-shimmer"
         subtitle={t("subtitle")}
         actions={
           <Badge variant="outline" className="gap-1.5 px-3 py-1.5">
@@ -227,7 +229,8 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Bot className="text-primary size-4" aria-hidden="true" />
-              {t("copilotTeaser")}
+              {/* Gradient only on the words — the icon must keep its own color */}
+              <span className="gradient-warm">{t("copilotTeaser")}</span>
             </CardTitle>
             <CardDescription>{t("copilotTeaserDesc")}</CardDescription>
           </CardHeader>
@@ -321,16 +324,16 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
               </div>
               <div className="grid grid-cols-2 gap-3 lg:col-span-2 lg:grid-cols-2">
                 {[
-                  { label: t("perfRevenue"), value: summary.kpis.revenueMinor, cls: "text-emerald-700 dark:text-emerald-400" },
-                  { label: t("perfCollected"), value: summary.kpis.collectedMinor, cls: "text-teal-700 dark:text-teal-300" },
-                  { label: t("perfExpenses"), value: summary.kpis.expensesMinor, cls: "text-rose-700 dark:text-rose-400" },
+                  { label: t("perfRevenue"), value: summary.kpis.revenueMinor, cls: "gradient-pos" },
+                  { label: t("perfCollected"), value: summary.kpis.collectedMinor, cls: "gradient-pos" },
+                  { label: t("perfExpenses"), value: summary.kpis.expensesMinor, cls: "gradient-neg" },
                   {
                     label: t("perfNetCash"),
                     value: summary.kpis.netCashMinor,
                     cls:
                       summary.kpis.netCashMinor >= 0
-                        ? "text-emerald-700 dark:text-emerald-400"
-                        : "text-rose-700 dark:text-rose-400",
+                        ? "gradient-pos"
+                        : "gradient-neg",
                   },
                 ].map((stat) => (
                   <div key={stat.label} className="rounded-lg border p-3">

@@ -1,13 +1,35 @@
 /**
  * GET   /api/v1/me — caller profile.
  * PATCH /api/v1/me — update profile (name, locale preference).
+ * DELETE /api/v1/me — delete the account (Prompt 18 §17/§18).
+ *
+ * Account-scoped routes enforce the session-version freshness gate
+ * (assertFreshSession): a JWT stamped before a password change/reset is
+ * rejected here as well as on business APIs.
+ *
+ * User-vs-business law (§19): the USER row and user-private data (profile,
+ * password, chat transcripts, memberships, reset tokens) are deleted;
+ * BUSINESS-owned data is never touched. The user may NOT delete the account
+ * while they still OWN a business — ownership must be resolved first via the
+ * existing OWNER-only business-deletion flow, so Business.ownerId can never
+ * dangle and a business shared with other members is never silently
+ * destroyed. Non-owner memberships disappear with the user
+ * (BusinessMember.userId cascade) and their businesses continue to exist.
+ *
+ * Session law (§16C): the User row is gone — every existing JWT resolves to
+ * a missing user and fails the next checkpoint: all sessions are dead
+ * immediately after deletion.
  */
 import { NextRequest } from "next/server";
 import { z } from "zod";
+import bcrypt from "bcryptjs";
 import { getServerSession } from "next-auth";
-import { ApiError, ok, parseBody, route } from "@/lib/api-helpers";
-import { db } from "@/lib/db";
+import { ApiError, getClientIp, ok, parseBody, route } from "@/lib/api-helpers";
 import { authOptions } from "@/lib/auth";
+import { db } from "@/lib/db";
+import { audit } from "@/lib/audit";
+import { rateLimit } from "@/lib/rate-limit";
+import { assertFreshSession } from "@/lib/auth-security";
 
 export const dynamic = "force-dynamic";
 
@@ -16,12 +38,15 @@ const updateSchema = z.object({
   locale: z.enum(["en", "fa"]).optional(),
 });
 
+const deleteSchema = z.object({
+  password: z.string().min(1).max(200),
+  /** Explicit typed confirmation phrase (destructive action, §31). */
+  confirmation: z.literal("DELETE"),
+});
+
 export const GET = route(async () => {
   const session = await getServerSession(authOptions);
-  const userId = (session?.user as { id?: string } | undefined)?.id;
-  if (!session || !userId) {
-    throw new ApiError(401, "UNAUTHENTICATED", "Please sign in to continue.");
-  }
+  const userId = await assertFreshSession(session);
 
   const user = await db.user.findUnique({
     where: { id: userId },
@@ -34,10 +59,7 @@ export const GET = route(async () => {
 
 export const PATCH = route(async (req: NextRequest) => {
   const session = await getServerSession(authOptions);
-  const userId = (session?.user as { id?: string } | undefined)?.id;
-  if (!session || !userId) {
-    throw new ApiError(401, "UNAUTHENTICATED", "Please sign in to continue.");
-  }
+  const userId = await assertFreshSession(session);
 
   const input = await parseBody(req, updateSchema);
 
@@ -51,4 +73,70 @@ export const PATCH = route(async (req: NextRequest) => {
   });
 
   return ok(user);
+});
+
+export const DELETE = route(async (req: NextRequest) => {
+  const session = await getServerSession(authOptions);
+  const userId = await assertFreshSession(session);
+
+  // Bound attempts on the password check (destructive action).
+  const rl = rateLimit(`account-delete:${userId}:${getClientIp(req)}`, 5, 15 * 60_000);
+  if (!rl.allowed) {
+    throw new ApiError(429, "RATE_LIMITED", "Too many attempts. Please wait a moment.", {
+      retryAfterMs: rl.retryAfterMs,
+    });
+  }
+
+  const input = await parseBody(req, deleteSchema);
+
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { id: true, passwordHash: true },
+  });
+  if (!user) {
+    throw new ApiError(401, "SESSION_INVALIDATED", "This session is no longer valid. Please sign in again.");
+  }
+
+  const passwordOk = await bcrypt.compare(input.password, user.passwordHash);
+  if (!passwordOk) {
+    throw new ApiError(400, "INVALID_CURRENT_PASSWORD", "The password is incorrect.");
+  }
+
+  // §18.8-10 — ownership constraint: resolve BEFORE destroying anything.
+  const owned = await db.business.findMany({
+    where: { ownerId: userId },
+    select: { id: true, name: true, _count: { select: { members: true } } },
+  });
+  if (owned.length > 0) {
+    throw new ApiError(
+      409,
+      "OWNED_BUSINESS_BLOCKED",
+      "You still own a business. Delete the business first (Settings → Business → Danger zone) before deleting your account — ownership cannot be orphaned.",
+      {
+        ownedBusinesses: owned.map((b) => ({ id: b.id, name: b.name, members: b._count.members })),
+      },
+    );
+  }
+
+  await db.$transaction(async (tx) => {
+    await audit(
+      {
+        businessId: null,
+        actorId: userId,
+        action: "auth.account_deleted",
+        entityType: "User",
+        entityId: userId,
+        after: {
+          // Safe metadata only — no password, no tokens.
+          membershipsRemoved: true,
+        },
+        ip: req.headers.get("x-forwarded-for"),
+        userAgent: req.headers.get("user-agent"),
+      },
+      tx,
+    );
+    await tx.user.delete({ where: { id: userId } });
+  });
+
+  return ok({ deleted: true, sessionsInvalidated: true });
 });

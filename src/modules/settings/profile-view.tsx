@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { signOut } from "next-auth/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { Loader2, Save, UserRound } from "lucide-react";
+import { KeyRound, Loader2, Save, TriangleAlert, UserRound } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
 import { localeLabel, LOCALES } from "@/i18n/config";
@@ -12,14 +13,44 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/shared/primitives";
 
 type Me = { id: string; name: string | null; email: string; locale: string; createdAt: string };
+type OwnedBusiness = { id: string; name: string; members: number };
+
+/** Narrows the 409 OWNED_BUSINESS_BLOCKED details into the owned-business list. */
+function ownedBusinessesOf(err: unknown): OwnedBusiness[] {
+  if (!(err instanceof ApiClientError) || err.code !== "OWNED_BUSINESS_BLOCKED") return [];
+  const details = err.details as { ownedBusinesses?: unknown } | null | undefined;
+  const list = details?.ownedBusinesses;
+  if (!Array.isArray(list)) return [];
+  return list.filter(
+    (b): b is OwnedBusiness =>
+      !!b &&
+      typeof b === "object" &&
+      typeof (b as OwnedBusiness).id === "string" &&
+      typeof (b as OwnedBusiness).name === "string",
+  );
+}
+
+const deleteConfirmWord = "DELETE";
 
 export function ProfileView() {
   const t = useTranslations("profile");
+  const tAuth = useTranslations("auth");
   const tErrors = useTranslations("errors");
+  const tCommon = useTranslations("common");
   const queryClient = useQueryClient();
   const locale = useAppStore((s) => s.locale);
   const setLocale = useAppStore((s) => s.setLocale);
@@ -62,6 +93,97 @@ export function ProfileView() {
     setLocale(next === "fa" ? "fa" : "en");
     saveMutation.mutate({ locale: next });
   }
+
+  // --- Change password ----------------------------------------------
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [changeError, setChangeError] = useState<string | null>(null);
+
+  const changePasswordMutation = useMutation({
+    mutationFn: async () =>
+      api<{ changed: boolean; sessionsInvalidated: boolean }>(
+        "/api/v1/auth/password-change",
+        {
+          method: "POST",
+          businessId: null,
+          body: JSON.stringify({ currentPassword, newPassword, confirmPassword }),
+        },
+      ),
+    onSuccess: () => {
+      setChangeError(null);
+      // ALL sessions (including this one) are invalidated server-side —
+      // clear the local session; the app falls back to the signed-in gate.
+      toast({ title: tAuth("changePasswordSuccess") });
+      void signOut({ redirect: false });
+      void queryClient.invalidateQueries();
+    },
+    onError: (err) => {
+      if (err instanceof ApiClientError) {
+        if (err.code === "INVALID_CURRENT_PASSWORD") setChangeError(tAuth("errors.invalidCurrentPassword"));
+        else if (err.code === "PASSWORD_UNCHANGED") setChangeError(tAuth("errors.passwordUnchanged"));
+        else if (err.code === "SESSION_INVALIDATED") setChangeError(tAuth("errors.sessionInvalidated"));
+        else if (err.code === "RATE_LIMITED") setChangeError(tAuth("errors.rateLimited"));
+        else if (err.status === 0) setChangeError(tErrors("network"));
+        else setChangeError(tErrors("generic"));
+      } else {
+        setChangeError(tErrors("generic"));
+      }
+    },
+  });
+
+  function onChangePasswordSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setChangeError(null);
+    if (newPassword !== confirmPassword) {
+      setChangeError(tAuth("errors.passwordMismatch"));
+      return;
+    }
+    changePasswordMutation.mutate();
+  }
+
+  // --- Delete account ------------------------------------------------
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [ownedBlocked, setOwnedBlocked] = useState<OwnedBusiness[] | null>(null);
+
+  const deleteAccountMutation = useMutation({
+    mutationFn: async () =>
+      api<{ deleted: boolean; sessionsInvalidated: boolean }>("/api/v1/me", {
+        method: "DELETE",
+        businessId: null,
+        body: JSON.stringify({ password: deletePassword, confirmation: deleteConfirmation }),
+      }),
+    onSuccess: () => {
+      setDeleteOpen(false);
+      toast({ title: tAuth("deleteSuccess") });
+      // Account is gone and every session is invalidated — sign out; the
+      // app falls back to the AuthView signed-out gate automatically.
+      void signOut({ redirect: false });
+      void queryClient.invalidateQueries();
+    },
+    onError: (err) => {
+      const blocked = ownedBusinessesOf(err);
+      if (blocked.length > 0) {
+        setOwnedBlocked(blocked);
+        setDeleteError(tAuth("deleteAccountBlocked"));
+        return; // do NOT sign out — the account still exists
+      }
+      if (err instanceof ApiClientError) {
+        if (err.code === "INVALID_CURRENT_PASSWORD") setDeleteError(tAuth("errors.invalidCurrentPassword"));
+        else if (err.code === "RATE_LIMITED") setDeleteError(tAuth("errors.rateLimited"));
+        else if (err.status === 0) setDeleteError(tErrors("network"));
+        else setDeleteError(tErrors("generic"));
+      } else {
+        setDeleteError(tErrors("generic"));
+      }
+    },
+  });
+
+  const deleteGated =
+    deletePassword.length > 0 && deleteConfirmation === deleteConfirmWord;
 
   const memberSince = me
     ? new Intl.DateTimeFormat(locale === "fa" ? "fa-IR" : "en-US", {
@@ -115,6 +237,82 @@ export function ProfileView() {
 
       <Card>
         <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <KeyRound className="text-primary size-4" aria-hidden="true" />
+            {tAuth("changePasswordTitle")}
+          </CardTitle>
+          <CardDescription className="text-muted-foreground">
+            {tAuth("changePasswordDesc")}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={onChangePasswordSubmit} className="space-y-4" noValidate>
+            <div className="space-y-2">
+              <Label htmlFor="change-current">{tAuth("currentPassword")}</Label>
+              <Input
+                id="change-current"
+                type="password"
+                autoComplete="current-password"
+                dir="ltr"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="change-new">{tAuth("newPassword")}</Label>
+              <Input
+                id="change-new"
+                type="password"
+                autoComplete="new-password"
+                dir="ltr"
+                placeholder={tAuth("passwordPlaceholder")}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                required
+                minLength={8}
+              />
+              <p className="text-muted-foreground text-xs">{tAuth("passwordHint")}</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="change-confirm">{tAuth("confirmNewPassword")}</Label>
+              <Input
+                id="change-confirm"
+                type="password"
+                autoComplete="new-password"
+                dir="ltr"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+              />
+            </div>
+            {changeError ? (
+              <p className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm" role="alert">
+                {changeError}
+              </p>
+            ) : null}
+            <Button
+              type="submit"
+              disabled={
+                changePasswordMutation.isPending ||
+                !currentPassword ||
+                !newPassword ||
+                !confirmPassword
+              }
+            >
+              {changePasswordMutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <KeyRound className="size-4" aria-hidden="true" />
+              )}
+              {tAuth("changePassword")}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle className="text-base">{t("preferencesSection")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -134,6 +332,112 @@ export function ProfileView() {
           <p className="text-muted-foreground text-xs">{t("languageHint")}</p>
         </CardContent>
       </Card>
+
+      <Card className="border-destructive/40">
+        <CardHeader>
+          <CardTitle className="text-destructive flex items-center gap-2 text-base">
+            <TriangleAlert className="size-4" aria-hidden="true" />
+            {tAuth("deleteAccountTitle")}
+          </CardTitle>
+          <CardDescription className="text-muted-foreground">
+            {tAuth("deleteAccountDesc")}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-destructive bg-destructive/10 flex items-start gap-1.5 rounded-md px-3 py-2 text-xs">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            {tAuth("deleteAccountDescBusinesses")}
+          </p>
+          <div className="space-y-2">
+            <Label htmlFor="delete-password">{tAuth("password")}</Label>
+            <Input
+              id="delete-password"
+              type="password"
+              autoComplete="current-password"
+              dir="ltr"
+              value={deletePassword}
+              onChange={(e) => setDeletePassword(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="delete-confirmation">{tAuth("deleteAccountConfirmLabel")}</Label>
+            <Input
+              id="delete-confirmation"
+              autoComplete="off"
+              dir="ltr"
+              placeholder={deleteConfirmWord}
+              maxLength={20}
+              value={deleteConfirmation}
+              onChange={(e) => setDeleteConfirmation(e.target.value)}
+            />
+          </div>
+          <Button
+            type="button"
+            variant="destructive"
+            className="gap-2"
+            disabled={!deleteGated || deleteAccountMutation.isPending}
+            onClick={() => setDeleteOpen(true)}
+          >
+            <TriangleAlert className="size-4" aria-hidden="true" />
+            {tAuth("deleteAccountConfirmButton")}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Final confirmation — destructive AlertDialog; server errors
+          (including the owned-business block) surface inside the dialog. */}
+      <AlertDialog
+        open={deleteOpen}
+        onOpenChange={(open) => {
+          setDeleteOpen(open);
+          if (!open) {
+            deleteAccountMutation.reset();
+            setDeleteError(null);
+            setOwnedBlocked(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{tAuth("deleteAccountTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{tAuth("deleteAccountDesc")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          {ownedBlocked && ownedBlocked.length > 0 ? (
+            <div className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm" role="alert">
+              <p>{tAuth("deleteAccountBlocked")}</p>
+              <ul className="mt-1.5 list-disc space-y-0.5 ps-5">
+                {ownedBlocked.map((b) => (
+                  <li key={b.id} className="font-medium">
+                    {b.name}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : deleteError ? (
+            <p className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm" role="alert">
+              {deleteError}
+            </p>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90 text-white"
+              disabled={deleteAccountMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault(); // keep the dialog open until the DELETE resolves
+                deleteAccountMutation.mutate();
+              }}
+            >
+              {deleteAccountMutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <TriangleAlert className="size-4" aria-hidden="true" />
+              )}
+              {tAuth("deleteAccountConfirmButton")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

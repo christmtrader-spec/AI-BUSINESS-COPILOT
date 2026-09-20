@@ -1,0 +1,1554 @@
+You are continuing work on the EXISTING AI Business Copilot codebase.
+
+This is NOT a greenfield project.
+
+The existing application already contains substantial implemented functionality including authentication, business/tenant management, customers, suppliers, products, inventory, sales, expenses, payments, reports, AI Copilot, localization, RTL/LTR support, dark/light themes, RBAC, audit logging, and related infrastructure.
+
+Your job in this phase is to perform a rigorous Production Readiness + Monetization Readiness Audit and safely correct issues discovered during that audit.
+
+DO NOT rebuild the application.
+
+DO NOT rewrite working functionality.
+
+DO NOT replace the existing architecture merely because you prefer another architecture.
+
+DO NOT automatically proceed to subscription implementation, payment gateway implementation, or other future phases.
+
+This phase ends when the current codebase has a documented and tested production/monetization readiness baseline.
+
+==================================================
+1. PHASE TITLE
+==================================================
+
+PROMPT 17
+Production Readiness + Monetization Readiness Audit
+
+Primary objective:
+
+Transform the CURRENT implementation from:
+
+"advanced functional MVP"
+
+toward:
+
+"stable, auditable, commercially extensible SaaS foundation"
+
+This phase is an AUDIT + HARDENING phase.
+
+==================================================
+2. NON-NEGOTIABLE DEVELOPMENT RULES
+==================================================
+
+1. Continue from the current codebase.
+
+2. Do not recreate the project.
+
+3. Do not migrate frameworks unless absolutely required and explicitly justified.
+
+4. Do not replace working components simply for stylistic reasons.
+
+5. Do not remove implemented features.
+
+6. Do not modify business behavior unless:
+   - a security problem exists,
+   - a correctness problem exists,
+   - a data-integrity problem exists,
+   - a production-readiness problem exists,
+   - or the current implementation violates the documented architecture.
+
+7. Before changing anything:
+   - inspect existing code,
+   - identify dependencies,
+   - identify shared components,
+   - identify database relationships,
+   - identify affected tests.
+
+8. Make incremental changes only.
+
+9. Prefer small, reversible changes.
+
+10. Every significant change must have a reason.
+
+11. If a major architectural change appears necessary:
+   - DO NOT silently implement it.
+   - Document the issue.
+   - Explain the alternatives.
+   - Recommend the safest path.
+   - Only implement if the change is clearly necessary for this phase.
+
+12. Do not implement future phases.
+
+13. Do not create fake production functionality.
+
+14. Do not use placeholder financial logic.
+
+15. Do not expose secrets.
+
+16. Do not add credentials to source code.
+
+==================================================
+3. FIRST TASK — CREATE A BASELINE
+==================================================
+
+Before changing the codebase, inspect the ENTIRE repository.
+
+Inspect:
+
+- package.json
+- lock files
+- environment configuration
+- Prisma schema
+- migrations
+- database adapters
+- authentication
+- authorization
+- middleware
+- API routes
+- server actions
+- server utilities
+- AI integration
+- AI tools
+- financial calculations
+- reporting
+- localization
+- UI components
+- layouts
+- dashboard
+- subscription-related code if any
+- payment-related code if any
+- audit logs
+- rate limiting
+- storage
+- tests
+- E2E tests
+- scripts
+- deployment configuration
+- README
+- architecture documents
+- worklog
+- TODO files
+
+Do not assume the existing documentation is perfectly synchronized with the actual implementation.
+
+Treat executable code as the authoritative source of current behavior.
+
+==================================================
+4. BASELINE REPORT
+==================================================
+
+Create a file:
+
+/docs/audit/production-monetization-baseline.md
+
+The report must contain:
+
+A. Current framework
+
+B. Current runtime
+
+C. Current frontend architecture
+
+D. Current backend architecture
+
+E. Current database
+
+F. Current authentication provider
+
+G. Current AI provider
+
+H. Current file/storage architecture
+
+I. Current tenant model
+
+J. Current RBAC model
+
+K. Current financial calculation model
+
+L. Current testing infrastructure
+
+M. Current deployment assumptions
+
+N. Current environment variables
+
+O. Current billing/subscription functionality
+
+P. Current payment functionality
+
+Q. Current observability
+
+R. Current security controls
+
+S. Current known limitations
+
+==================================================
+5. PRODUCTION READINESS SCORECARD
+==================================================
+
+DO NOT produce a single overall score.
+
+Instead create category-by-category status.
+
+Use:
+
+READY
+PARTIALLY READY
+NOT READY
+BLOCKED
+NOT APPLICABLE
+
+Required categories:
+
+1. Application architecture
+2. Database integrity
+3. Tenant isolation
+4. Authentication
+5. Authorization
+6. Financial correctness
+7. Auditability
+8. AI safety
+9. API security
+10. Rate limiting
+11. File security
+12. Error handling
+13. Logging
+14. Monitoring
+15. Testing
+16. Accessibility
+17. Localization
+18. Responsive UX
+19. Data lifecycle
+20. Account deletion
+21. Business deletion
+22. Backup/restore strategy
+23. Subscription architecture
+24. Payment abstraction
+25. Entitlements
+26. Usage tracking
+27. Marketing readiness
+28. Legal/trust readiness
+29. Production deployment
+30. Disaster recovery
+
+Do not convert these statuses into numerical scores.
+
+==================================================
+6. TENANT ISOLATION AUDIT
+==================================================
+
+This is a CRITICAL task.
+
+Inspect every business-owned entity.
+
+For each entity determine:
+
+- Does it belong to a business?
+- How is ownership represented?
+- Is ownership enforced server-side?
+- Can a user query another business's record by ID?
+- Can a user update another business's record?
+- Can a user delete another business's record?
+- Can AI tools access another business's data?
+- Can exports accidentally include another business's data?
+- Can reports aggregate across unauthorized businesses?
+- Can search return another tenant's data?
+- Can API routes omit tenant authorization?
+- Can server actions be called directly without proper authorization?
+
+Test insecure direct object references such as:
+
+/api/customers/[id]
+
+/api/products/[id]
+
+/api/sales/[id]
+
+/api/expenses/[id]
+
+etc.
+
+Attempt cross-tenant access in tests.
+
+Expected result:
+
+UNAUTHORIZED ACCESS MUST FAIL.
+
+Create automated regression tests for discovered vulnerabilities.
+
+==================================================
+7. RBAC AUDIT
+==================================================
+
+Inspect current roles.
+
+Verify:
+
+Owner
+Admin
+Manager
+Staff
+Accountant
+Viewer
+
+or whatever roles actually exist.
+
+For every sensitive operation determine:
+
+Who can:
+
+- create
+- read
+- update
+- delete
+- export
+- invite
+- remove members
+- change roles
+- change business settings
+- create financial transactions
+- delete financial transactions
+- access AI tools
+- access reports
+- access audit logs
+
+Authorization must be server-enforced.
+
+Do not rely on:
+
+- hidden buttons
+- disabled UI
+- client-side route guards
+- frontend conditions alone.
+
+Create tests for unauthorized actions.
+
+==================================================
+8. AUTHENTICATION AUDIT
+==================================================
+
+Inspect:
+
+- password storage
+- password hashing
+- session handling
+- cookies
+- session expiration
+- CSRF considerations
+- brute-force protections
+- login errors
+- signup validation
+- password reset
+- email verification if present
+- account deletion
+- session invalidation
+- multi-device behavior
+
+Remove unsupported marketing/security claims.
+
+For example:
+
+Do not claim "bank-grade security" unless the implementation and documentation genuinely justify that claim.
+
+Use precise language such as:
+
+"Password-protected account with server-enforced business data isolation."
+
+unless stronger claims can be technically justified.
+
+==================================================
+9. FINANCIAL CORRECTNESS AUDIT
+==================================================
+
+Inspect every financial calculation.
+
+Search for:
+
+- number arithmetic
+- parseFloat
+- floating-point money calculations
+- implicit conversions
+- unsafe rounding
+- inconsistent currency handling
+
+Verify whether authoritative money is represented using:
+
+- integer minor units,
+OR
+- Decimal / NUMERIC,
+OR
+- another safe exact representation.
+
+Inspect:
+
+- sales
+- sale items
+- expenses
+- payments
+- receivables
+- payables
+- profit
+- totals
+- taxes
+- discounts
+- refunds
+- inventory valuation
+- reports
+- dashboard aggregates
+
+Create deterministic tests.
+
+Test values such as:
+
+0.01
+0.10
+0.99
+1.00
+10.01
+999999.99
+
+Test combinations of:
+
+- discounts
+- multiple items
+- partial payments
+- full payments
+- overpayments
+- refunds
+- negative adjustments where applicable
+
+No silent rounding errors.
+
+==================================================
+10. FINANCIAL SEMANTICS
+==================================================
+
+Document what the application actually means by:
+
+Revenue
+Sales
+Expense
+Cost
+Gross profit
+Net profit
+Payment
+Receivable
+Payable
+Outstanding balance
+Cash flow
+
+Do not use accounting terms ambiguously.
+
+If the current MVP uses simplified calculations rather than formal double-entry accounting, explicitly document that.
+
+DO NOT falsely market simplified profit calculations as full professional accounting.
+
+Create:
+
+/docs/audit/financial-semantics.md
+
+==================================================
+11. AI COPILOT AUDIT
+==================================================
+
+Inspect how Copilot obtains data.
+
+Required architecture:
+
+User question
+        ↓
+Intent / tool selection
+        ↓
+Authorization
+        ↓
+Controlled data query
+        ↓
+Deterministic calculation where applicable
+        ↓
+Structured result
+        ↓
+LLM explanation
+        ↓
+User
+
+The LLM must NOT have unrestricted raw database access.
+
+Verify every AI tool.
+
+For each tool document:
+
+- tool name
+- purpose
+- inputs
+- validation
+- authorization
+- tenant scope
+- query behavior
+- output schema
+- failure behavior
+
+Create:
+
+/docs/audit/ai-copilot-safety.md
+
+==================================================
+12. AI HALLUCINATION CONTROLS
+==================================================
+
+Verify that the AI does not fabricate:
+
+- revenue
+- expenses
+- profit
+- customer counts
+- inventory numbers
+- payment status
+- invoice status
+
+If required data is unavailable:
+
+The AI must explicitly indicate insufficient data.
+
+For financial answers:
+
+Prefer:
+
+"Based on recorded transactions..."
+
+rather than unsupported universal claims.
+
+Where useful, provide source context such as:
+
+- period
+- number of records
+- currency
+- timestamp of underlying data retrieval
+
+==================================================
+13. AI ACTION SAFETY
+==================================================
+
+Audit whether AI can execute actions.
+
+Actions such as:
+
+- delete financial data
+- modify financial records
+- send messages
+- change prices
+- change permissions
+- export sensitive data
+
+must have suitable authorization and confirmation.
+
+Do not allow an ambiguous natural-language instruction to perform destructive operations.
+
+==================================================
+14. API SECURITY AUDIT
+==================================================
+
+Inspect every API route and server action.
+
+For each determine:
+
+- Authentication required?
+- Authorization required?
+- Tenant validation?
+- Input validation?
+- Output validation?
+- Error handling?
+- Rate limiting?
+- Sensitive information leakage?
+
+Use Zod or existing validation infrastructure where appropriate.
+
+Do not duplicate schemas unnecessarily.
+
+==================================================
+15. RATE LIMITING AUDIT
+==================================================
+
+Inspect current implementation.
+
+Determine whether the rate limiter works:
+
+- locally
+- in production
+- with multiple instances
+- after restart
+- under burst traffic
+
+If current limiter is in-memory only, document that limitation.
+
+Do not replace it with a distributed system in this phase unless necessary.
+
+Instead:
+
+1. Keep current protection.
+2. Clearly document the production limitation.
+3. Define the future interface for a distributed limiter.
+
+Create:
+
+/docs/audit/rate-limiting.md
+
+==================================================
+16. ERROR HANDLING AUDIT
+==================================================
+
+Verify consistent error handling across:
+
+- API
+- server actions
+- authentication
+- database
+- AI
+- file upload
+- forms
+- reports
+
+Users should not see:
+
+- stack traces
+- SQL errors
+- internal paths
+- secrets
+- provider credentials
+- internal debugging information
+
+Developers should still have useful logs.
+
+==================================================
+17. LOGGING & OBSERVABILITY
+==================================================
+
+Determine whether the current application has:
+
+- structured logging
+- request IDs
+- user IDs where appropriate
+- business IDs where appropriate
+- error logging
+- AI request logging
+- audit logging
+
+Never log:
+
+- passwords
+- access tokens
+- API keys
+- raw secrets
+- sensitive financial data unnecessarily
+
+Create a minimal observability recommendation.
+
+Do not install a giant monitoring stack during this phase.
+
+==================================================
+18. DATA LIFECYCLE AUDIT
+==================================================
+
+Document:
+
+- account creation
+- business creation
+- business deletion
+- user deletion
+- data retention
+- audit log retention
+- AI conversation retention
+- uploaded file lifecycle
+
+Identify whether users can:
+
+- delete account
+- delete business
+- export data
+
+If missing, mark them as requirements for a future phase.
+
+Do not implement a complex compliance system during this phase.
+
+==================================================
+19. EXPORT AUDIT
+==================================================
+
+Inspect CSV and other export features.
+
+Verify:
+
+- tenant isolation
+- authorization
+- output correctness
+- encoding
+- Persian text support
+- date formatting
+- currency handling
+
+Ensure exports cannot leak data between businesses.
+
+==================================================
+20. LOCALIZATION AUDIT
+==================================================
+
+Inspect English/Persian behavior.
+
+Test:
+
+LTR
+RTL
+
+Check:
+
+- navigation
+- tables
+- forms
+- validation errors
+- charts
+- modals
+- dropdowns
+- date formatting
+- number formatting
+- currency formatting
+
+Find hard-coded user-facing strings.
+
+Do not perform a complete localization rewrite unless clearly necessary.
+
+==================================================
+21. UI TRUST AUDIT
+==================================================
+
+Inspect user-facing claims.
+
+Remove or rewrite claims that are stronger than the implementation supports.
+
+Examples:
+
+BAD:
+
+"Bank-grade security"
+
+unless proven.
+
+BAD:
+
+"Never makes mistakes"
+
+BAD:
+
+"100% secure"
+
+GOOD:
+
+"Server-enforced business data isolation"
+
+if actually implemented.
+
+GOOD:
+
+"Financial answers are calculated from recorded business data"
+
+if actually implemented.
+
+Also remove internal developer information from customer-facing UI.
+
+Examples:
+
+"Phase 05"
+
+"Prompt 17"
+
+"Development Mode"
+
+"TODO"
+
+"Prototype"
+
+unless intentionally part of the user experience.
+
+==================================================
+22. RESPONSIVE QA
+==================================================
+
+Test at minimum:
+
+360x640
+390x844
+412x915
+1366x768
+1920x1080
+
+Test:
+
+- login
+- signup
+- dashboard
+- navigation
+- customers
+- products
+- sales
+- expenses
+- reports
+- AI Copilot
+- settings
+
+Test:
+
+Light mode
+Dark mode
+
+Test:
+
+English
+Persian
+
+Test:
+
+LTR
+RTL
+
+Record defects.
+
+Fix only defects relevant to production readiness.
+
+Do not redesign the product in this phase.
+
+==================================================
+23. ACCESSIBILITY AUDIT
+==================================================
+
+Inspect:
+
+- keyboard navigation
+- focus states
+- labels
+- buttons
+- inputs
+- dialogs
+- form errors
+- contrast
+- semantic HTML
+- aria attributes where needed
+- screen-reader labels
+
+Run available automated accessibility testing.
+
+Use axe or the existing project tooling if compatible.
+
+Do not introduce an inaccessible custom component when an existing accessible component already exists.
+
+==================================================
+24. DATABASE AUDIT
+==================================================
+
+Inspect:
+
+- indexes
+- foreign keys
+- cascading behavior
+- uniqueness constraints
+- nullable fields
+- timestamps
+- soft deletion where appropriate
+- migration safety
+
+Identify queries likely to become slow.
+
+Do not prematurely optimize every query.
+
+Focus on:
+
+- tenant filtering
+- dashboard aggregates
+- report queries
+- AI tool queries
+- customer/product search
+- invoice/payment queries
+
+==================================================
+25. DATABASE SCALABILITY REPORT
+==================================================
+
+If the current database is SQLite:
+
+DO NOT automatically migrate it during this phase.
+
+Instead document:
+
+- why SQLite currently works for development/MVP
+- what production limitations exist
+- what changes would be needed for PostgreSQL or equivalent production database
+- what data types must be preserved
+- what migration strategy would be needed
+
+Create:
+
+/docs/audit/database-production-plan.md
+
+The future migration must preserve business logic.
+
+==================================================
+26. BILLING ARCHITECTURE AUDIT
+==================================================
+
+Inspect whether the current system has concepts for:
+
+- Plan
+- Subscription
+- Subscription status
+- Trial
+- Entitlement
+- Usage
+- Billing period
+- Customer subscription
+- Feature limits
+
+If these do not exist:
+
+DO NOT fully implement them in Prompt 17.
+
+Instead design the minimal architecture required for Prompt 19.
+
+Create:
+
+/docs/billing/billing-architecture.md
+
+Include:
+
+Plan
+Subscription
+Entitlement
+Usage
+Trial
+Billing period
+
+==================================================
+27. PAYMENT ABSTRACTION
+==================================================
+
+Create a provider-agnostic payment interface.
+
+Do NOT hard-code business logic directly to one payment provider.
+
+Conceptually:
+
+Payment Provider
+        ↓
+Provider Adapter
+        ↓
+Payment Service
+        ↓
+Subscription / Entitlement
+
+The product must be capable of supporting different payment providers.
+
+For the initial target market, payment integration must be legally and contractually compatible with the user's actual operating jurisdiction.
+
+DO NOT implement methods for bypassing sanctions, provider restrictions, KYC requirements, or payment controls.
+
+DO NOT fake payment confirmation.
+
+==================================================
+28. PLAN ENTITLEMENT DESIGN
+==================================================
+
+Define feature entitlement categories.
+
+Example:
+
+FREE
+- limited businesses
+- limited customers
+- limited products
+- limited AI requests
+- limited reports
+
+STARTER
+- higher limits
+- more AI usage
+- additional reporting
+
+BUSINESS
+- larger limits
+- team members
+- advanced features
+
+PRO
+- advanced AI
+- advanced reporting
+- higher usage
+
+These are conceptual only.
+
+Do not finalize prices in this phase.
+
+Do not implement all plans in this phase.
+
+Instead define:
+
+Feature
+Limit
+Measurement unit
+Enforcement layer
+
+Example:
+
+AI_REQUESTS_MONTHLY
+CUSTOMERS_MAX
+PRODUCTS_MAX
+TEAM_MEMBERS_MAX
+BUSINESSES_MAX
+EXPORTS_MONTHLY
+FILE_STORAGE_MB
+
+==================================================
+29. USAGE TRACKING DESIGN
+==================================================
+
+Audit whether the application can measure:
+
+- AI requests
+- AI tokens if available
+- customers
+- products
+- storage
+- team members
+- exports
+- businesses
+
+Define an extensible usage model.
+
+Do not overbuild.
+
+A simple usage abstraction is sufficient at this stage.
+
+==================================================
+30. MONETIZATION SAFETY
+==================================================
+
+Never allow a client-side variable to determine whether a user has paid.
+
+Example:
+
+DO NOT trust:
+
+localStorage.plan = "PRO"
+
+Authorization must be based on server-side state.
+
+Entitlements must be verified server-side.
+
+==================================================
+31. ACCOUNT / BUSINESS ACCESS RULES
+==================================================
+
+Define clear behavior for:
+
+User
+Business
+Membership
+Role
+Subscription
+
+Example:
+
+User
+  ↓
+Membership
+  ↓
+Business
+  ↓
+Subscription
+
+Do not attach subscription status only to the user if billing is actually business-level.
+
+Determine whether billing belongs to:
+
+- User
+OR
+- Business
+
+Prefer Business-level billing if the SaaS is intended for teams.
+
+Document the decision.
+
+==================================================
+32. MARKETING READINESS AUDIT
+==================================================
+
+Inspect whether the existing application has:
+
+- public landing page
+- value proposition
+- feature overview
+- pricing
+- FAQ
+- contact
+- privacy
+- terms
+- signup CTA
+
+DO NOT fully redesign the landing page in this phase.
+
+Instead identify what is missing.
+
+Create:
+
+/docs/marketing/launch-readiness.md
+
+==================================================
+33. PRODUCT POSITIONING AUDIT
+==================================================
+
+Do not claim:
+
+"AI accounting software"
+
+unless the current implementation actually provides formal accounting functionality.
+
+Prefer accurate positioning such as:
+
+"AI-powered business management and financial insight"
+
+or another phrase supported by the implemented features.
+
+The current product should be positioned honestly.
+
+==================================================
+34. DATA PRIVACY AUDIT
+==================================================
+
+Identify what personal/business information is stored.
+
+Examples:
+
+- names
+- emails
+- phone numbers
+- customer information
+- financial records
+- invoices
+- business data
+- AI conversations
+- uploaded files
+
+Document where sensitive data exists.
+
+Create:
+
+/docs/security/data-classification.md
+
+Classify data as:
+
+Public
+Internal
+Sensitive
+Highly Sensitive
+
+Do not claim legal compliance automatically.
+
+==================================================
+35. SECRET MANAGEMENT AUDIT
+==================================================
+
+Search source files for:
+
+API keys
+tokens
+passwords
+database credentials
+private keys
+
+Check:
+
+- .env files
+- examples
+- documentation
+- logs
+- client bundle exposure
+
+Never expose server secrets to the browser.
+
+Do not commit real secrets.
+
+If obvious test secrets exist:
+
+remove them and replace with environment variable placeholders.
+
+==================================================
+36. DEPLOYMENT AUDIT
+==================================================
+
+Determine what is required to deploy the current application.
+
+Document:
+
+- build command
+- dev command
+- database setup
+- migration command
+- environment variables
+- storage requirements
+- AI provider requirements
+- authentication requirements
+- production startup
+- health checks if available
+
+Create:
+
+/docs/deployment/production-checklist.md
+
+==================================================
+37. BACKUP / RESTORE PLAN
+==================================================
+
+Do not build a complicated disaster-recovery platform.
+
+Instead document:
+
+- what must be backed up
+- database backup
+- file backup
+- configuration backup
+- encryption considerations
+- restore procedure
+- verification procedure
+
+Create:
+
+/docs/deployment/backup-restore-plan.md
+
+==================================================
+38. TEST SUITE HARDENING
+==================================================
+
+Run all existing tests.
+
+Then add tests only for high-risk areas discovered during this audit.
+
+Minimum high-risk tests:
+
+1. Cross-tenant access
+2. Unauthorized financial mutation
+3. Unauthorized export
+4. Money precision
+5. Payment totals
+6. Receivable calculation
+7. Payable calculation
+8. AI tool authorization
+9. AI tenant isolation
+10. Role restrictions
+
+Do not create meaningless tests merely to increase test count.
+
+==================================================
+39. SECURITY REGRESSION TESTS
+==================================================
+
+For every serious security issue fixed during this phase, create a regression test.
+
+Required behavior:
+
+The vulnerability cannot silently return in future development.
+
+==================================================
+40. TEST DATA SAFETY
+==================================================
+
+Verify that development/test fixtures are clearly separated from production data.
+
+Never use real customer financial information in test fixtures.
+
+Use obviously synthetic records.
+
+==================================================
+41. DOCUMENTATION STRUCTURE
+==================================================
+
+Create or update:
+
+/docs/
+    audit/
+        production-monetization-baseline.md
+        financial-semantics.md
+        ai-copilot-safety.md
+        rate-limiting.md
+        database-production-plan.md
+        security-findings.md
+        accessibility-findings.md
+    billing/
+        billing-architecture.md
+    marketing/
+        launch-readiness.md
+    security/
+        data-classification.md
+    deployment/
+        production-checklist.md
+        backup-restore-plan.md
+
+Do not create duplicate documentation with conflicting information.
+
+==================================================
+42. UI CLEANUP REQUIRED IN THIS PHASE
+==================================================
+
+From the existing login/onboarding UI:
+
+Remove or revise internal development wording such as:
+
+"Phase 05"
+
+"Prompt 05"
+
+other internal implementation references.
+
+Review claims such as:
+
+"bank-grade hashing"
+
+and replace with technically supportable wording unless the implementation genuinely supports the stronger claim.
+
+Keep the existing visual identity unless a production-readiness defect exists.
+
+DO NOT perform a complete design redesign.
+
+==================================================
+43. CURRENT BRAND
+==================================================
+
+Keep the product brand:
+
+AI Business Copilot
+
+Core tagline direction:
+
+"Your business, understood."
+
+Do not change the brand during this phase.
+
+==================================================
+44. PERFORMANCE AUDIT
+==================================================
+
+Inspect:
+
+- excessive client-side fetching
+- duplicate database requests
+- obvious N+1 queries
+- unnecessary rerenders
+- oversized page payloads
+- unbounded report queries
+- unbounded AI history queries
+
+Fix only clear production-impacting issues.
+
+Do not prematurely optimize.
+
+==================================================
+45. QUERY SAFETY
+==================================================
+
+Every user-controlled query parameter must be validated.
+
+Examples:
+
+search
+sort
+page
+limit
+dateFrom
+dateTo
+businessId
+customerId
+productId
+
+Never trust:
+
+businessId
+userId
+role
+subscription
+plan
+
+coming from the browser.
+
+Derive security-sensitive identity from authenticated server context.
+
+==================================================
+46. PAGINATION AUDIT
+==================================================
+
+Inspect all growing datasets.
+
+At minimum:
+
+customers
+suppliers
+products
+sales
+expenses
+payments
+audit logs
+AI conversations
+
+Avoid loading unlimited datasets into memory.
+
+Where the current implementation has hard-coded limits, document whether they are appropriate.
+
+Do not silently remove existing limits.
+
+==================================================
+47. EXPORT AND REPORT PERFORMANCE
+==================================================
+
+Large reports must not blindly load entire tables.
+
+Identify high-risk cases.
+
+Document future pagination / streaming requirements where applicable.
+
+==================================================
+48. FINAL CHANGE POLICY
+==================================================
+
+At the end of the audit:
+
+Only commit changes that are justified.
+
+Do not add speculative features.
+
+Do not add payment gateway SDKs yet.
+
+Do not add subscription checkout yet.
+
+Do not add advanced accounting yet.
+
+Do not add manufacturing yet.
+
+Do not add payroll yet.
+
+Do not add tax modules yet.
+
+Do not add cryptocurrency transaction processing yet.
+
+==================================================
+49. REQUIRED OUTPUT
+==================================================
+
+At completion, provide:
+
+1. Executive summary
+2. Files inspected
+3. Files changed
+4. Bugs discovered
+5. Security issues discovered
+6. Data-integrity issues discovered
+7. Financial-calculation issues discovered
+8. AI safety issues discovered
+9. Billing architecture findings
+10. Payment architecture findings
+11. Deployment findings
+12. Testing performed
+13. Tests added
+14. Remaining blockers
+15. Recommended next phase
+16. Exact commands used for validation
+
+==================================================
+50. PHASE COMPLETION CHECKLIST
+==================================================
+
+Prompt 17 is complete only when:
+
+[ ] Existing repository fully inspected
+
+[ ] Current architecture documented
+
+[ ] Current financial model documented
+
+[ ] Tenant isolation audited
+
+[ ] RBAC audited
+
+[ ] Authentication audited
+
+[ ] API authorization audited
+
+[ ] Financial precision audited
+
+[ ] AI Copilot data flow audited
+
+[ ] AI tenant isolation tested
+
+[ ] AI hallucination protections reviewed
+
+[ ] AI action safety reviewed
+
+[ ] Rate limiting reviewed
+
+[ ] Error handling reviewed
+
+[ ] Logging reviewed
+
+[ ] Sensitive data handling reviewed
+
+[ ] Export isolation reviewed
+
+[ ] Localization reviewed
+
+[ ] RTL reviewed
+
+[ ] Responsive behavior reviewed
+
+[ ] Accessibility reviewed
+
+[ ] Database structure reviewed
+
+[ ] SQLite production limitations documented if applicable
+
+[ ] Billing architecture documented
+
+[ ] Payment abstraction documented
+
+[ ] Entitlement architecture documented
+
+[ ] Usage tracking requirements documented
+
+[ ] Marketing readiness documented
+
+[ ] Data classification documented
+
+[ ] Secret exposure checked
+
+[ ] Deployment requirements documented
+
+[ ] Backup/restore requirements documented
+
+[ ] High-risk regression tests added
+
+[ ] Existing tests pass or failures documented
+
+[ ] Unsupported security/marketing claims removed or corrected
+
+[ ] Internal phase/developer labels removed from customer-facing UI
+
+[ ] No future phase implemented
+
+[ ] No working functionality intentionally broken
+
+==================================================
+51. STOP CONDITION
+==================================================
+
+STOP after completing Prompt 17.
+
+DO NOT automatically continue to Prompt 18.
+
+Do not implement subscription checkout.
+
+Do not implement payment providers.
+
+Do not implement final pricing.
+
+Do not deploy production.
+
+Wait for the next phase instruction.

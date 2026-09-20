@@ -7,21 +7,19 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { asRole, can, type Role } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DataTable, Ltr } from "@/components/shared/data-table";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import type { AuditEntry, BusinessListItem } from "../shell/types";
 
 function formatAction(action: string): string {
   return action.replace(/[._-]+/g, " ");
+}
+
+function initialsOf(name: string): string {
+  return name.trim().slice(0, 2).toUpperCase();
 }
 
 export function AuditView({ membership }: { membership: BusinessListItem }) {
@@ -34,7 +32,7 @@ export function AuditView({ membership }: { membership: BusinessListItem }) {
   const role: Role = asRole(membership.role);
   const allowed = can(role, "audit:read");
 
-  const { data: logs, isLoading, error, refetch } = useQuery<AuditEntry[]>({
+  const { data: logs, isLoading, error, refetch, isFetching } = useQuery<AuditEntry[]>({
     queryKey: ["audit", activeId],
     queryFn: () => api(`/api/v1/audit?take=100`),
     enabled: allowed,
@@ -53,19 +51,15 @@ export function AuditView({ membership }: { membership: BusinessListItem }) {
     );
   }
 
+  const items = logs ?? [];
+
   return (
     <div className="mx-auto max-w-5xl space-y-6" data-view="audit">
       <PageHeader title={t("title")} subtitle={t("subtitle")} />
 
       <Card>
         <CardContent className="pt-6">
-          {isLoading ? (
-            <div className="space-y-2" aria-busy="true">
-              {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="bg-muted/50 h-10 animate-pulse rounded-md" />
-              ))}
-            </div>
-          ) : error ? (
+          {error ? (
             <div className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm">
               {error instanceof ApiClientError && error.status === 403
                 ? tErrors("forbidden")
@@ -74,46 +68,80 @@ export function AuditView({ membership }: { membership: BusinessListItem }) {
                 {tCommon("retry")}
               </button>
             </div>
-          ) : !logs || logs.length === 0 ? (
-            <EmptyState
-              icon={ScrollText}
-              title={t("empty")}
-              description={t("emptyDesc")}
-            />
           ) : (
-            <div className="max-h-[32rem] overflow-y-auto rounded-md border">
-              <Table>
-                <TableHeader className="bg-muted/50 sticky top-0">
-                  <TableRow>
-                    <TableHead className="w-44">{t("time")}</TableHead>
-                    <TableHead>{t("actor")}</TableHead>
-                    <TableHead>{t("action")}</TableHead>
-                    <TableHead className="hidden sm:table-cell">{t("entity")}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {logs.map((l) => (
-                    <TableRow key={l.id}>
-                      <TableCell className="text-muted-foreground whitespace-nowrap text-xs tabular-nums">
-                        {fmt.format(new Date(l.createdAt))}
-                      </TableCell>
-                      <TableCell className="max-w-40 truncate text-sm">
-                        {l.actor?.name ?? l.actor?.email ?? t("system")}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary" className="font-normal" dir="ltr">
-                          {formatAction(l.action)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground hidden text-sm sm:table-cell" dir="ltr">
+            <DataTable<AuditEntry>
+              ariaLabel={t("title")}
+              sortLocale={locale}
+              maxHeightClass="max-h-[34rem]"
+              stickyHeader
+              refreshing={isFetching && !isLoading}
+              columns={[
+                {
+                  id: "time",
+                  header: t("time"),
+                  className: "w-44",
+                  sortValue: (l) => l.createdAt,
+                  defaultSortDir: "desc",
+                  cell: (l) => (
+                    <span className="text-muted-foreground text-xs tabular-nums">
+                      {fmt.format(new Date(l.createdAt))}
+                    </span>
+                  ),
+                },
+                {
+                  id: "actor",
+                  header: t("actor"),
+                  cell: (l) => {
+                    const name = l.actor?.name ?? l.actor?.email ?? t("system");
+                    return (
+                      <div className="flex items-center gap-2.5">
+                        <Avatar className="size-7 ring-1 ring-border">
+                          <AvatarFallback className="bg-teal-500/10 text-[10px] font-semibold text-teal-700 dark:text-teal-300">
+                            {l.actor?.name || l.actor?.email
+                              ? initialsOf(l.actor?.name ?? l.actor?.email ?? "")
+                              : "AI"}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="max-w-40 truncate text-sm font-medium">{name}</span>
+                      </div>
+                    );
+                  },
+                },
+                {
+                  id: "action",
+                  header: t("action"),
+                  cell: (l) => (
+                    <Badge variant="secondary" className="font-normal" dir="ltr">
+                      {formatAction(l.action)}
+                    </Badge>
+                  ),
+                },
+                {
+                  id: "entity",
+                  header: t("entity"),
+                  hideBelow: "sm",
+                  cell: (l) => (
+                    <span className="text-muted-foreground text-sm">
+                      <Ltr>
                         {l.entityType}
                         {l.entityId ? ` · ${l.entityId.slice(-6)}` : ""}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                      </Ltr>
+                    </span>
+                  ),
+                },
+              ]}
+              rows={items}
+              getRowId={(l) => l.id}
+              loading={isLoading}
+              skeletonRows={6}
+              empty={
+                <EmptyState
+                  icon={ScrollText}
+                  title={t("empty")}
+                  description={t("emptyDesc")}
+                />
+              }
+            />
           )}
         </CardContent>
       </Card>

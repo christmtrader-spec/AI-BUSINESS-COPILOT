@@ -9,18 +9,15 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { ApiError, getClientIp, ok, parseBody, route } from "@/lib/api-helpers";
 import { rateLimit } from "@/lib/rate-limit";
+import { passwordSchema } from "@/lib/auth-security";
 
 export const dynamic = "force-dynamic";
 
 const registerSchema = z.object({
   name: z.string().trim().min(1).max(80),
   email: z.string().trim().toLowerCase().email(),
-  password: z
-    .string()
-    .min(8, "Password must be at least 8 characters")
-    .max(200)
-    .regex(/[a-zA-Z]/, "Password must contain a letter")
-    .regex(/[0-9]/, "Password must contain a number"),
+  // Single source of truth for the password policy (Prompt 18 §6).
+  password: passwordSchema,
 });
 
 export const POST = route(async (req: NextRequest) => {

@@ -1,0 +1,598 @@
+   760→        }
+   761→      } finally {
+   762→        abortRef.current = null;
+   763→        setActiveStreamId((cur) => (cur === assistantId ? null : cur));
+   764→      }
+   765→    },
+   766→    [activeStreamId, business.id, days, localizedError, patchAssistant],
+   767→  );
+   768→
+   769→  const handleSubmit = () => {
+   770→    const trimmed = input.trim();
+   771→    if (!trimmed || pending) return;
+   772→    setInput("");
+   773→    if (textareaRef.current) textareaRef.current.style.height = "auto";
+   774→    ensureActiveSession(trimmed);
+   775→    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: trimmed }]);
+   776→    void send(trimmed, messages);
+   777→  };
+   778→
+   779→  const handleStop = () => {
+   780→    abortRef.current?.abort();
+   781→  };
+   782→
+   783→  const handleRetry = () => {
+   784→    const q = lastQuestionRef.current;
+   785→    if (!q || pending) return;
+   786→    ensureActiveSession();
+   787→    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: q }]);
+   788→    void send(q, messages);
+   789→  };
+   790→
+   791→  const copyAnswer = async (m: ChatMessage) => {
+   792→    try {
+   793→      await navigator.clipboard.writeText(m.content);
+   794→      setCopiedId(m.id);
+   795→      window.setTimeout(() => setCopiedId((c) => (c === m.id ? null : c)), 1500);
+   796→    } catch {
+   797→      /* clipboard unavailable — silently ignore */
+   798→    }
+   799→  };
+   800→
+   801→  /** Download the Q&A transcript as a shareable Markdown file. */
+   802→  const exportTranscript = () => {
+   803→    if (messages.length === 0 || pending) return;
+   804→    try {
+   805→      const localeTag = business.locale === "fa" ? "fa-IR" : "en-GB";
+   806→      const nowLabel = new Intl.DateTimeFormat(localeTag, {
+   807→        dateStyle: "long",
+   808→        timeStyle: "short",
+   809→      }).format(new Date());
+   810→      const windowLabel = t(`window_${days}` as "window_7");
+   811→
+   812→      const lines: string[] = [];
+   813→      lines.push(`# ${t("title")} — ${t("exportTranscript")}`);
+   814→      lines.push("");
+   815→      lines.push(`- **${business.name}**`);
+   816→      lines.push(`- ${t("windowLabel")}: ${windowLabel}`);
+   817→      lines.push(`- ${t("citationsGenerated", { time: nowLabel })}`);
+   818→      lines.push(`- ${t("groundedNote")}`);
+   819→      lines.push("");
+   820→      lines.push("---");
+   821→
+   822→      let qIndex = 0;
+   823→      for (let i = 0; i < messages.length; i++) {
+   824→        const m = messages[i];
+   825→        if (m.role !== "user" || m.failed) continue;
+   826→        const answer = messages[i + 1];
+   827→        if (!answer || answer.role !== "assistant" || answer.failed) continue;
+   828→        qIndex += 1;
+   829→        lines.push("");
+   830→        lines.push(`## ${qIndex}. ${m.content}`);
+   831→        lines.push("");
+   832→        lines.push(answer.content);
+   833→        const meta = answer.meta;
+   834→        if (meta) {
+   835→          const c = meta.counts;
+   836→          const bits = [
+   837→            t(`window_${meta.days === 7 ? "7" : meta.days === 30 ? "30" : "90"}` as "window_7"),
+   838→            `${meta.rangeFrom} → ${meta.rangeTo}`,
+   839→            ...(c
+   840→              ? [
+   841→                  t("citationsSales", { count: c.sales }),
+   842→                  t("citationsExpenses", { count: c.expenses }),
+   843→                  t("citationsOpenInvoices", { count: c.openInvoices }),
+   844→                  t("citationsPayments", { count: c.recentPayments }),
+   845→                ]
+   846→              : []),
+   847→          ];
+   848→          try {
+   849→            const time = new Intl.DateTimeFormat(localeTag, {
+   850→              hour: "2-digit",
+   851→              minute: "2-digit",
+   852→            }).format(new Date(meta.generatedAt));
+   853→            bits.push(t("citationsGenerated", { time }));
+   854→          } catch {
+   855→            /* timestamp is decorative in the export */
+   856→          }
+   857→          lines.push("");
+   858→          lines.push(`> ${t("citationsTitle")}: ${bits.join(" · ")}`);
+   859→        }
+   860→        lines.push("");
+   861→        lines.push("---");
+   862→      }
+   863→
+   864→      if (qIndex === 0) return; // nothing answerable to export
+   865→
+   866→      const md = lines.join("\n");
+   867→      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+   868→      const url = URL.createObjectURL(blob);
+   869→      const a = document.createElement("a");
+   870→      a.href = url;
+   871→      a.download = `copilot-transcript-${new Date().toISOString().slice(0, 10)}.md`;
+   872→      document.body.appendChild(a);
+   873→      a.click();
+   874→      a.remove();
+   875→      URL.revokeObjectURL(url);
+   876→      toast({ title: t("exportedToast") });
+   877→    } catch {
+   878→      toast({ title: t("exportFailed"), variant: "destructive" });
+   879→    }
+   880→  };
+   881→
+   882→  const askFollowUp = (question: string) => {
+   883→    if (pending) return;
+   884→    ensureActiveSession();
+   885→    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: question }]);
+   886→    void send(question, messages);
+   887→  };
+   888→
+   889→  // Sessions that hold an actual transcript (newest first — setSessions keeps
+   890→  // the mutated session at the front, hydration sorts by updatedAt).
+   891→  // NOTE: hooks must run before the `!canUse` early return below.
+   892→  const savedSessions = useMemo(
+   893→    () =>
+   894→      sessions
+   895→        .filter((s) => s.messages.length > 0)
+   896→        .sort((a, b) => b.updatedAt - a.updatedAt),
+   897→    [sessions],
+   898→  );
+   899→  const recentSessions = savedSessions.slice(0, 3);
+   900→
+   901→  if (!canUse) {
+   902→    return (
+   903→      <div className="space-y-6" data-view="copilot">
+   904→        <PageHeader title={t("title")} subtitle={t("subtitle")} />
+   905→        <Card className="mx-auto max-w-md p-8 text-center">
+   906→          <div className="bg-muted mx-auto flex size-12 items-center justify-center rounded-full">
+   907→            <Lock className="text-muted-foreground size-5" aria-hidden="true" />
+   908→          </div>
+   909→          <h2 className="mt-4 text-base font-semibold">{t("lockedTitle")}</h2>
+   910→          <p className="text-muted-foreground mt-1.5 text-sm">{t("lockedDesc")}</p>
+   911→        </Card>
+   912→      </div>
+   913→    );
+   914→  }
+   915→
+   916→  const empty = messages.length === 0;
+   917→  const lastFailed = !pending && messages[messages.length - 1]?.failed === true;
+   918→  const waitingForFirstToken =
+   919→    pending && (messages[messages.length - 1]?.content ?? "").length === 0;
+   920→
+   921→  const formatRelative = (ts: number) => {
+   922→    try {
+   923→      const rtf = new Intl.RelativeTimeFormat(uiLocale === "fa" ? "fa" : "en", {
+   924→        numeric: "auto",
+   925→      });
+   926→      const diffMs = ts - Date.now();
+   927→      const mins = Math.round(diffMs / 60_000);
+   928→      if (Math.abs(mins) < 60) return rtf.format(mins, "minute");
+   929→      const hours = Math.round(diffMs / 3_600_000);
+   930→      if (Math.abs(hours) < 24) return rtf.format(hours, "hour");
+   931→      return rtf.format(Math.round(diffMs / 86_400_000), "day");
+   932→    } catch {
+   933→      return "";
+   934→    }
+   935→  };
+   936→
+   937→  return (
+   938→    <div className="space-y-4" data-view="copilot">
+   939→      <PageHeader
+   940→        title={t("title")}
+   941→        subtitle={t("subtitle")}
+   942→        actions={
+   943→          <span className="text-muted-foreground border-emerald-500/30 bg-emerald-500/5 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+   944→            <ShieldCheck className="size-3.5" aria-hidden="true" />
+   945→            {t("readOnly")}
+   946→          </span>
+   947→        }
+   948→      />
+   949→
+   950→      <Card className="flex h-[calc(100svh-15rem)] min-h-[520px] flex-col overflow-hidden">
+   951→        {/* Toolbar */}
+   952→        <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2.5">
+   953→          <div className="flex items-center gap-2" role="group" aria-label={t("windowLabel")}>
+   954→            <CalendarClock className="text-muted-foreground size-4" aria-hidden="true" />
+   955→            <span className="text-muted-foreground text-xs font-medium">{t("windowLabel")}</span>
+   956→            <div className="bg-muted flex overflow-hidden rounded-lg p-0.5">
+   957→              {WINDOWS.map((w) => (
+   958→                <button
+   959→                  key={w}
+   960→                  type="button"
+   961→                  onClick={() => setDays(w)}
+   962→                  aria-pressed={days === w}
+   963→                  className={cn(
+   964→                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+   965→                    days === w
+   966→                      ? "bg-background text-foreground shadow-sm"
+   967→                      : "text-muted-foreground hover:text-foreground",
+   968→                  )}
+   969→                >
+   970→                  {t(`window_${w}` as "window_7")}
+   971→                </button>
+   972→              ))}
+   973→            </div>
+   974→          </div>
+   975→          <div className="flex items-center gap-1">
+   976→            <Collapsible open={dataOpen} onOpenChange={setDataOpen}>
+   977→              <CollapsibleTrigger asChild>
+   978→                <Button variant="ghost" size="sm" className="text-muted-foreground h-8 gap-1.5 text-xs">
+   979→                  <ListTree className="size-3.5" aria-hidden="true" />
+   980→                  {t("dataIncludedTitle")}
+   981→                  <ChevronDown className={cn("size-3.5 transition-transform", dataOpen && "rotate-180")} aria-hidden="true" />
+   982→                </Button>
+   983→              </CollapsibleTrigger>
+   984→            </Collapsible>
+   985→            {/* Conversation history — switch / resume / delete transcripts. */}
+   986→            <DropdownMenu>
+   987→              <DropdownMenuTrigger asChild disabled={pending}>
+   988→                <Button
+   989→                  variant="ghost"
+   990→                  size="sm"
+   991→                  className="text-muted-foreground h-8 gap-1.5 text-xs hover:text-foreground"
+   992→                  title={t("sessionHistory")}
+   993→                  aria-label={t("sessionHistory")}
+   994→                >
+   995→                  <History className="size-3.5" aria-hidden="true" />
+   996→                  <span className="hidden sm:inline">{t("sessionHistory")}</span>
+   997→                  {savedSessions.length > 0 ? (
+   998→                    <span className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 ms-0.5 rounded-full px-1.5 text-[10px] font-semibold tabular-nums">
+   999→                      {savedSessions.length}
+  1000→                    </span>
+  1001→                  ) : null}
+  1002→                </Button>
+  1003→              </DropdownMenuTrigger>
+  1004→              <DropdownMenuContent align="end" className="w-80">
+  1005→                <DropdownMenuLabel className="text-xs text-muted-foreground">
+  1006→                  {t("sessionHistory")}
+  1007→                </DropdownMenuLabel>
+  1008→                <DropdownMenuSeparator />
+  1009→                {savedSessions.length === 0 ? (
+  1010→                  <p className="text-muted-foreground px-2 py-3 text-xs">
+  1011→                    {t("noSessions")}
+  1012→                  </p>
+  1013→                ) : (
+  1014→                  <div className="max-h-72 overflow-y-auto">
+  1015→                    {savedSessions.map((s) => (
+  1016→                      <DropdownMenuItem
+  1017→                        key={s.id}
+  1018→                        onSelect={() => switchSession(s.id)}
+  1019→                        className="focus:bg-muted/70 items-start gap-2 rounded-md py-2"
+  1020→                      >
+  1021→                        <MessageSquareText
+  1022→                          className="text-muted-foreground mt-0.5 size-3.5 shrink-0"
+  1023→                          aria-hidden="true"
+  1024→                        />
+  1025→                        <span className="min-w-0 flex-1">
+  1026→                          <span className="block truncate text-xs font-medium">
+  1027→                            {s.title || t("untitledConversation")}
+  1028→                          </span>
+  1029→                          <span className="text-muted-foreground block text-[11px] tabular-nums">
+  1030→                            {t("messagesCount", { count: s.messages.length })}
+  1031→                            {" · "}
+  1032→                            {formatRelative(s.updatedAt)}
+  1033→                          </span>
+  1034→                        </span>
+  1035→                        {s.id === activeSessionId ? (
+  1036→                          <Check
+  1037→                            className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400"
+  1038→                            aria-hidden="true"
+  1039→                          />
+  1040→                        ) : null}
+  1041→                        <button
+  1042→                          type="button"
+  1043→                          onClick={(e) => {
+  1044→                            e.stopPropagation();
+  1045→                            deleteSession(s.id);
+  1046→                          }}
+  1047→                          aria-label={t("deleteConversation")}
+  1048→                          title={t("deleteConversation")}
+  1049→                          className="text-muted-foreground/70 hover:text-destructive rounded p-1 transition-colors"
+  1050→                        >
+  1051→                          <Trash2 className="size-3.5" aria-hidden="true" />
+  1052→                        </button>
+  1053→                      </DropdownMenuItem>
+  1054→                    ))}
+  1055→                  </div>
+  1056→                )}
+  1057→              </DropdownMenuContent>
+  1058→            </DropdownMenu>
+  1059→            {messages.length > 0 ? (
+  1060→              <>
+  1061→                <Button
+  1062→                  variant="ghost"
+  1063→                  size="sm"
+  1064→                  className="text-muted-foreground h-8 gap-1.5 text-xs hover:text-foreground"
+  1065→                  onClick={exportTranscript}
+  1066→                  disabled={pending}
+  1067→                  title={t("exportTranscript")}
+  1068→                  aria-label={t("exportTranscript")}
+  1069→                >
+  1070→                  <Download className="size-3.5" aria-hidden="true" />
+  1071→                  <span className="hidden sm:inline">{t("exportTranscript")}</span>
+  1072→                </Button>
+  1073→                <Button
+  1074→                  variant="ghost"
+  1075→                  size="sm"
+  1076→                  className="text-muted-foreground h-8 gap-1.5 text-xs"
+  1077→                  onClick={startNewConversation}
+  1078→                  disabled={pending}
+  1079→                  title={t("newConversation")}
+  1080→                  aria-label={t("newConversation")}
+  1081→                >
+  1082→                  <RefreshCcw className="size-3.5" aria-hidden="true" />
+  1083→                  <span className="hidden sm:inline">{t("newConversation")}</span>
+  1084→                </Button>
+  1085→              </>
+  1086→            ) : null}
+  1087→          </div>
+  1088→        </div>
+  1089→
+  1090→        {/* Transparency: what data can the copilot see */}
+  1091→        {dataOpen ? (
+  1092→          <div className="bg-muted/40 border-b px-4 py-3">
+  1093→            <p className="text-muted-foreground text-xs">{t("dataIncludedDesc")}</p>
+  1094→            <ul className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+  1095→              {[
+  1096→                { icon: BarChart3, label: t("sectionKpis") },
+  1097→                { icon: CalendarClock, label: t("sectionTimeline") },
+  1098→                { icon: Package, label: t("sectionTopProducts") },
+  1099→                { icon: Wallet, label: t("sectionExpensesByCategory") },
+  1100→                { icon: HandCoins, label: t("sectionOutstanding") },
+  1101→                { icon: ListTree, label: t("sectionInventory") },
+  1102→                { icon: ArrowDown, label: t("sectionRecentPayments") },
+  1103→              ].map((row) => (
+  1104→                <li key={row.label} className="flex items-center gap-1.5">
+  1105→                  <row.icon className="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />
+  1106→                  <span className="text-muted-foreground">{row.label}</span>
+  1107→                </li>
+  1108→              ))}
+  1109→            </ul>
+  1110→          </div>
+  1111→        ) : null}
+  1112→
+  1113→        {/* Messages */}
+  1114→        <div
+  1115→          ref={scrollRef}
+  1116→          className="flex-1 space-y-4 overflow-y-auto px-4 py-4"
+  1117→          onScroll={(e) => {
+  1118→            const el = e.currentTarget;
+  1119→            setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 60);
+  1120→          }}
+  1121→        >
+  1122→          {empty ? (
+  1123→            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+  1124→              <div className="border-emerald-500/20 from-emerald-500/15 to-teal-500/10 flex size-14 items-center justify-center rounded-2xl border bg-gradient-to-br">
+  1125→                <Bot className="text-emerald-700 size-7 dark:text-emerald-400" aria-hidden="true" />
+  1126→              </div>
+  1127→              <div>
+  1128→                <p className="font-medium">{t("emptyTitle")}</p>
+  1129→                <p className="text-muted-foreground mx-auto mt-1 max-w-sm text-sm">
+  1130→                  {t("emptyDesc")}
+  1131→                </p>
+  1132→              </div>
+  1133→              {recentSessions.length > 0 ? (
+  1134→                <div className="w-full max-w-lg">
+  1135→                  <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+  1136→                    {t("recentConversations")}
+  1137→                  </p>
+  1138→                  <div className="mt-2 flex flex-wrap justify-center gap-2">
+  1139→                    {recentSessions.map((s) => (
+  1140→                      <button
+  1141→                        key={s.id}
+  1142→                        type="button"
+  1143→                        onClick={() => switchSession(s.id)}
+  1144→                        className="border-border bg-muted/40 hover:border-emerald-500/40 hover:bg-emerald-500/5 group inline-flex max-w-full items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all hover:shadow-sm"
+  1145→                      >
+  1146→                        <MessageSquareText
+  1147→                          className="text-muted-foreground group-hover:text-emerald-600 size-3 shrink-0 transition-colors dark:group-hover:text-emerald-400"
+  1148→                          aria-hidden="true"
+  1149→                        />
+  1150→                        <span className="max-w-44 truncate">{s.title || t("untitledConversation")}</span>
+  1151→                        <span className="text-muted-foreground shrink-0 tabular-nums">
+  1152→                          · {t("messagesCount", { count: s.messages.length })}
+  1153→                        </span>
+  1154→                      </button>
+  1155→                    ))}
+  1156→                  </div>
+  1157→                </div>
+  1158→              ) : null}
+  1159→              <div className="mt-2 max-w-lg">
+  1160→                <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+  1161→                  {t("suggestionsLabel")}
+  1162→                </p>
+  1163→                <div className="mt-2 flex flex-wrap justify-center gap-2">
+  1164→                  {suggestions.map((s) => (
+  1165→                    <button
+  1166→                      key={s}
+  1167→                      type="button"
+  1168→                      onClick={() => {
+  1169→                        ensureActiveSession(s);
+  1170→                        setMessages([{ id: nextId(), role: "user", content: s }]);
+  1171→                        void send(s, []);
+  1172→                      }}
+  1173→                      className="border-border bg-background hover:border-emerald-500/40 hover:bg-emerald-500/5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors"
+  1174→                    >
+  1175→                      {s}
+  1176→                    </button>
+  1177→                  ))}
+  1178→                </div>
+  1179→              </div>
+  1180→            </div>
+  1181→          ) : (
+  1182→            <>
+  1183→              {messages.map((m) =>
+  1184→                m.role === "user" ? (
+  1185→                  <div key={m.id} className="flex items-start justify-end gap-2.5">
+  1186→                    <div className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl rounded-ee-sm px-3.5 py-2.5 sm:max-w-[70%]">
+  1187→                      <p className="text-sm leading-relaxed whitespace-pre-wrap" dir="auto">
+  1188→                        {m.content}
+  1189→                      </p>
+  1190→                    </div>
+  1191→                    <div
+  1192→                      className="bg-primary text-primary-foreground mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full"
+  1193→                      aria-hidden="true"
+  1194→                    >
+  1195→                      <UserRound className="size-3.5" />
+  1196→                    </div>
+  1197→                  </div>
+  1198→                ) : (
+  1199→                  <div key={m.id} className="flex items-start gap-2.5">
+  1200→                    <div
+  1201→                      className={cn(
+  1202→                        "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border",
+  1203→                        m.failed
+  1204→                          ? "border-destructive/30 bg-destructive/10 text-destructive"
+  1205→                          : "border-emerald-500/20 from-emerald-500/15 to-teal-500/10 text-emerald-700 bg-gradient-to-br dark:text-emerald-400",
+  1206→                      )}
+  1207→                      aria-hidden="true"
+  1208→                    >
+  1209→                      {m.failed ? (
+  1210→                        <TriangleAlert className="size-3.5" />
+  1211→                      ) : (
+  1212→                        <Bot className="size-3.5" />
+  1213→                      )}
+  1214→                    </div>
+  1215→                    <div className="flex min-w-0 max-w-[88%] flex-col sm:max-w-[75%]">
+  1216→                      <div
+  1217→                        className={cn(
+  1218→                          "group relative w-fit rounded-2xl rounded-ss-sm border px-3.5 py-2.5",
+  1219→                          m.failed
+  1220→                            ? "border-destructive/30 bg-destructive/5"
+  1221→                            : "bg-muted/50",
+  1222→                        )}
+  1223→                      >
+  1224→                      {m.content.length === 0 && m.id === activeStreamId ? (
+  1225→                        <div className="flex items-center gap-1.5 px-1 py-1">
+  1226→                          {[0, 1, 2].map((i) => (
+  1227→                            <span
+  1228→                              key={i}
+  1229→                              className="bg-muted-foreground/60 size-1.5 animate-bounce rounded-full"
+  1230→                              style={{ animationDelay: `${i * 150}ms` }}
+  1231→                            />
+  1232→                          ))}
+  1233→                          <span className="text-muted-foreground ms-1.5 text-xs">{t("thinking")}</span>
+  1234→                        </div>
+  1235→                      ) : (
+  1236→                        <MarkdownLite text={m.content} streaming={m.id === activeStreamId} />
+  1237→                      )}
+  1238→                      {!m.failed && m.content.length > 0 && m.id !== activeStreamId ? (
+  1239→                        <button
+  1240→                          type="button"
+  1241→                          onClick={() => void copyAnswer(m)}
+  1242→                          aria-label={copiedId === m.id ? t("copied") : t("copy")}
+  1243→                          className="text-muted-foreground hover:text-foreground absolute end-2 bottom-1.5 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+  1244→                        >
+  1245→                          {copiedId === m.id ? (
+  1246→                            <Check className="size-3.5 text-emerald-600" aria-hidden="true" />
+  1247→                          ) : (
+  1248→                            <Copy className="size-3.5" aria-hidden="true" />
+  1249→                          )}
+  1250→                        </button>
+  1251→                      ) : null}
+  1252→                      </div>
+  1253→                      {!m.failed && m.meta ? (
+  1254→                        <CitationStrip meta={m.meta} locale={business.locale} />
+  1255→                      ) : null}
+  1256→                    </div>
+  1257→                  </div>
+  1258→                ),
+  1259→              )}
+  1260→
+  1261→              {waitingForFirstToken ? null : null}
+  1262→
+  1263→              {lastFailed ? (
+  1264→                <div className="ps-9.5">
+  1265→                  <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleRetry}>
+  1266→                    <RefreshCcw className="size-3.5" aria-hidden="true" />
+  1267→                    {tCommon("retry")}
+  1268→                  </Button>
+  1269→                </div>
+  1270→              ) : null}
+  1271→
+  1272→              {followUps.length > 0 ? (
+  1273→                <div
+  1274→                  className="animate-in fade-in slide-in-from-bottom-1 ps-9.5"
+  1275→                  data-testid="copilot-followups"
+  1276→                >
+  1277→                  <p className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-medium tracking-wide uppercase">
+  1278→                    <Sparkles className="size-3 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+  1279→                    {t("followUpsLabel")}
+  1280→                  </p>
+  1281→                  <div className="mt-1.5 flex flex-wrap gap-2">
+  1282→                    {followUps.map((key) => (
+  1283→                      <button
+  1284→                        key={key}
+  1285→                        type="button"
+  1286→                        onClick={() => askFollowUp(t(key))}
+  1287→                        className="border-emerald-500/25 bg-emerald-500/5 hover:border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors"
+  1288→                      >
+  1289→                        {t(key)}
+  1290→                      </button>
+  1291→                    ))}
+  1292→                  </div>
+  1293→                </div>
+  1294→              ) : null}
+  1295→            </>
+  1296→          )}
+  1297→        </div>
+  1298→
+  1299→        {/* Composer */}
+  1300→        <div className="border-t p-3 sm:p-4">
+  1301→          <div className="border-input focus-within:ring-ring/40 flex items-end gap-2 rounded-2xl border p-2 transition-shadow focus-within:ring-2 focus-within:ring-offset-0">
+  1302→            <textarea
+  1303→              ref={textareaRef}
+  1304→              value={input}
+  1305→              onChange={(e) => {
+  1306→                setInput(e.target.value);
+  1307→                e.target.style.height = "auto";
+  1308→                e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+  1309→              }}
+  1310→              onKeyDown={(e) => {
+  1311→                if (e.key === "Enter" && !e.shiftKey) {
+  1312→                  e.preventDefault();
+  1313→                  handleSubmit();
+  1314→                }
+  1315→              }}
+  1316→              rows={1}
+  1317→              maxLength={500}
+  1318→              placeholder={t("placeholder")}
+  1319→              aria-label={t("placeholder")}
+  1320→              disabled={pending}
+  1321→              className="placeholder:text-muted-foreground max-h-[120px] min-h-[38px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none disabled:opacity-50"
+  1322→            />
+  1323→            {pending ? (
+  1324→              <Button
+  1325→                size="icon"
+  1326→                variant="secondary"
+  1327→                className="border-destructive/30 text-destructive hover:bg-destructive/10 size-9 shrink-0 rounded-xl border"
+  1328→                onClick={handleStop}
+  1329→                aria-label={t("stop")}
+  1330→                title={t("stop")}
+  1331→              >
+  1332→                <Square className="size-3.5 fill-current" aria-hidden="true" />
+  1333→              </Button>
+  1334→            ) : (
+  1335→              <Button
+  1336→                size="icon"
+  1337→                className="size-9 shrink-0 rounded-xl"
+  1338→                onClick={handleSubmit}
+  1339→                disabled={input.trim().length === 0}
+  1340→                aria-label={t("send")}
+  1341→              >
+  1342→                <SendHorizontal className="size-4" aria-hidden="true" />
+  1343→              </Button>
+  1344→            )}
+  1345→          </div>
+  1346→          <p className="text-muted-foreground mt-2 flex items-center justify-between gap-2 text-[11px]">
+  1347→            <span className="truncate">{t("groundedNote")}</span>
+  1348→            <span className="shrink-0 tabular-nums" dir="ltr">
+  1349→              {input.length}/500
+  1350→            </span>
+  1351→          </p>
+  1352→        </div>
+  1353→      </Card>
+  1354→    </div>
+  1355→  );
+  1356→}
+  1357→

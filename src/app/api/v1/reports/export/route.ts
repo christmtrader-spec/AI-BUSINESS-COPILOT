@@ -20,15 +20,11 @@ import { audit } from "@/lib/audit";
 import { rateLimit } from "@/lib/rate-limit";
 import { fromMinor } from "@/lib/money";
 import { buildReportSummary, normalizeReportDays } from "@/lib/reports";
+import { csvCell } from "@/lib/csv";
 
 export const dynamic = "force-dynamic";
 
-function csvCell(value: string | number): string {
-  const s = String(value);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-function csvRow(cells: (string | number)[]): string {
+function csvRow(cells: (string | number | null | undefined)[]): string {
   return cells.map(csvCell).join(",");
 }
 

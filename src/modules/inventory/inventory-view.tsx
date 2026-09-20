@@ -9,14 +9,8 @@ import { can, type Role } from "@/lib/rbac";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+import { DataTable, Ltr } from "@/components/shared/data-table";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
 import { StockDialog } from "../products/stock-dialog";
@@ -85,63 +79,65 @@ export function InventoryView({
             />
           </div>
 
-          {products.isLoading ? (
-            <div className="space-y-2" aria-busy="true">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="bg-muted/50 h-12 animate-pulse rounded-md" />
-              ))}
-            </div>
-          ) : products.error ? (
+          {products.error ? (
             <div className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm">
               {tErrors("loadFailed")}{" "}
               <button className="underline" onClick={() => void products.refetch()}>
                 {tCommon("retry")}
               </button>
             </div>
-          ) : items.length === 0 ? (
-            <EmptyState icon={Package} title={t("currentStock")} description={t("emptyAdjustmentsDesc")} />
           ) : (
             <>
-              <div className="overflow-x-auto rounded-md border">
-                <Table>
-                  <TableHeader className="bg-muted/50">
-                    <TableRow>
-                      <TableHead>{t("colProduct")}</TableHead>
-                      <TableHead className="text-end">{t("currentStock")}</TableHead>
-                      {writable ? (
-                        <TableHead className="text-end">{tCommon("actions")}</TableHead>
-                      ) : null}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {items.map((p) => (
-                      <TableRow key={p.id} className="hover:bg-muted/40">
-                        <TableCell>
-                          <div className="flex items-center gap-3">
-                            <div className="bg-primary/10 flex size-9 shrink-0 items-center justify-center rounded-lg">
-                              <Boxes className="text-primary size-4" aria-hidden="true" />
-                            </div>
-                            <div className="min-w-0">
-                              <p className="truncate font-medium">{p.name}</p>
-                              {p.sku ? (
-                                <p className="text-muted-foreground text-xs" dir="ltr">{p.sku}</p>
-                              ) : null}
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-end">
-                          <span className="font-semibold tabular-nums">{p.stockQty}</span>{" "}
-                          <span className="text-muted-foreground text-xs">{p.unit ?? t("units")}</span>
-                          {p.stockQty <= 0 ? (
-                            <Badge variant="destructive" className="ms-2">{t("stockOut")}</Badge>
-                          ) : p.stockQty <= p.lowStockAt ? (
-                            <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 ms-2 dark:text-amber-400">
-                              {t("stockLow")}
-                            </Badge>
+              <DataTable<Product>
+                ariaLabel={t("currentStock")}
+                sortLocale={business.locale}
+                refreshing={products.isFetching && !products.isLoading}
+                columns={[
+                  {
+                    id: "product",
+                    header: t("colProduct"),
+                    cell: (p) => (
+                      <div className="flex items-center gap-3">
+                        <div className="bg-primary/10 flex size-9 shrink-0 items-center justify-center rounded-lg">
+                          <Boxes className="text-primary size-4" aria-hidden="true" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{p.name}</p>
+                          {p.sku ? (
+                            <p className="text-muted-foreground text-xs">
+                              <Ltr>{p.sku}</Ltr>
+                            </p>
                           ) : null}
-                        </TableCell>
-                        {writable ? (
-                          <TableCell className="text-end">
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "stock",
+                    header: t("currentStock"),
+                    align: "end",
+                    sortValue: (p) => p.stockQty,
+                    cell: (p) => (
+                      <>
+                        <Ltr className="font-semibold">{p.stockQty}</Ltr>{" "}
+                        <span className="text-muted-foreground text-xs">{p.unit ?? t("units")}</span>
+                        {p.stockQty <= 0 ? (
+                          <Badge variant="destructive" className="ms-2">{t("stockOut")}</Badge>
+                        ) : p.stockQty <= p.lowStockAt ? (
+                          <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 ms-2 dark:text-amber-400">
+                            {t("stockLow")}
+                          </Badge>
+                        ) : null}
+                      </>
+                    ),
+                  },
+                  ...(writable
+                    ? [
+                        {
+                          id: "actions",
+                          header: tCommon("actions"),
+                          align: "end" as const,
+                          cell: (p: Product) => (
                             <Button
                               variant="outline"
                               size="sm"
@@ -149,13 +145,23 @@ export function InventoryView({
                             >
                               {t("adjust")}
                             </Button>
-                          </TableCell>
-                        ) : null}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                          ),
+                        },
+                      ]
+                    : []),
+                ]}
+                rows={items}
+                getRowId={(p) => p.id}
+                loading={products.isLoading}
+                skeletonRows={4}
+                empty={
+                  <EmptyState
+                    icon={Package}
+                    title={t("currentStock")}
+                    description={t("emptyAdjustmentsDesc")}
+                  />
+                }
+              />
               <Pagination
                 page={page}
                 pageSize={10}
@@ -171,63 +177,82 @@ export function InventoryView({
       <Card>
         <CardContent className="pt-6">
           <h2 className="mb-4 text-base font-semibold">{t("history")}</h2>
-          {adjustments.isLoading ? (
-            <div className="space-y-2" aria-busy="true">
-              {[0, 1].map((i) => (
-                <div key={i} className="bg-muted/50 h-10 animate-pulse rounded-md" />
-              ))}
-            </div>
-          ) : !adjustments.data || adjustments.data.items.length === 0 ? (
-            <EmptyState
-              icon={Boxes}
-              title={t("emptyAdjustments")}
-              description={t("emptyAdjustmentsDesc")}
-            />
-          ) : (
-            <div className="max-h-96 overflow-y-auto rounded-md border">
-              <Table>
-                <TableHeader className="bg-muted/50 sticky top-0">
-                  <TableRow>
-                    <TableHead className="w-40">{t("colWhen")}</TableHead>
-                    <TableHead>{t("colProduct")}</TableHead>
-                    <TableHead className="text-end">{t("colChange")}</TableHead>
-                    <TableHead className="hidden md:table-cell">{t("colReason")}</TableHead>
-                    <TableHead className="hidden sm:table-cell">{t("colBy")}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {adjustments.data.items.map((a) => (
-                    <TableRow key={a.id} className="hover:bg-muted/40">
-                      <TableCell className="text-muted-foreground whitespace-nowrap text-xs tabular-nums">
-                        {dateFmt.format(new Date(a.createdAt))}
-                      </TableCell>
-                      <TableCell className="text-sm font-medium">{a.product.name}</TableCell>
-                      <TableCell className="text-end">
-                        <span
-                          className={`inline-flex items-center gap-1 text-sm font-semibold tabular-nums ${
-                            a.delta > 0 ? "text-emerald-600" : "text-destructive"
-                          }`}
-                        >
-                          {a.delta > 0 ? (
-                            <ArrowUp className="size-3.5 rtl:-scale-x-100" aria-hidden="true" />
-                          ) : (
-                            <ArrowDown className="size-3.5 rtl:-scale-x-100" aria-hidden="true" />
-                          )}
-                          {a.delta > 0 ? `+${a.delta}` : a.delta}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground hidden max-w-56 truncate text-sm md:table-cell" dir="auto">
-                        {a.reason}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground hidden text-sm sm:table-cell">
-                        {a.actor?.name ?? a.actor?.email ?? "—"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
+          <DataTable<AdjustmentItem>
+            ariaLabel={t("history")}
+            sortLocale={business.locale}
+            maxHeightClass="max-h-96"
+            stickyHeader
+            refreshing={adjustments.isFetching && !adjustments.isLoading}
+            columns={[
+              {
+                id: "when",
+                header: t("colWhen"),
+                className: "w-40",
+                sortValue: (a) => a.createdAt,
+                defaultSortDir: "desc",
+                cell: (a) => (
+                  <span className="text-muted-foreground whitespace-nowrap text-xs tabular-nums">
+                    {dateFmt.format(new Date(a.createdAt))}
+                  </span>
+                ),
+              },
+              {
+                id: "product",
+                header: t("colProduct"),
+                cell: (a) => <span className="text-sm font-medium">{a.product.name}</span>,
+              },
+              {
+                id: "change",
+                header: t("colChange"),
+                align: "end",
+                sortValue: (a) => a.delta,
+                cell: (a) => (
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1 text-sm font-semibold",
+                      a.delta > 0 ? "text-emerald-600" : "text-destructive",
+                    )}
+                  >
+                    {a.delta > 0 ? (
+                      <ArrowUp className="size-3.5 rtl:-scale-x-100" aria-hidden="true" />
+                    ) : (
+                      <ArrowDown className="size-3.5 rtl:-scale-x-100" aria-hidden="true" />
+                    )}
+                    <Ltr>{a.delta > 0 ? `+${a.delta}` : a.delta}</Ltr>
+                  </span>
+                ),
+              },
+              {
+                id: "reason",
+                header: t("colReason"),
+                hideBelow: "md",
+                cell: (a) => (
+                  <div className="text-muted-foreground max-w-56 truncate text-sm">{a.reason}</div>
+                ),
+              },
+              {
+                id: "by",
+                header: t("colBy"),
+                hideBelow: "sm",
+                cell: (a) => (
+                  <span className="text-muted-foreground text-sm">
+                    {a.actor?.name ?? a.actor?.email ?? "—"}
+                  </span>
+                ),
+              },
+            ]}
+            rows={adjustments.data?.items ?? []}
+            getRowId={(a) => a.id}
+            loading={adjustments.isLoading}
+            skeletonRows={3}
+            empty={
+              <EmptyState
+                icon={Boxes}
+                title={t("emptyAdjustments")}
+                description={t("emptyAdjustmentsDesc")}
+              />
+            }
+          />
         </CardContent>
       </Card>
 

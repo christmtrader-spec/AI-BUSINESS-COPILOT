@@ -1,0 +1,1357 @@
+     1→"use client";
+     2→
+     3→import {
+     4→  useCallback,
+     5→  useEffect,
+     6→  useMemo,
+     7→  useRef,
+     8→  useState,
+     9→  type ReactNode,
+    10→} from "react";
+    11→import { useLocale, useTranslations } from "next-intl";
+    12→import {
+    13→  ArrowDown,
+    14→  BarChart3,
+    15→  BookMarked,
+    16→  Bot,
+    17→  CalendarClock,
+    18→  Check,
+    19→  ChevronDown,
+    20→  Copy,
+    21→  Download,
+    22→  HandCoins,
+    23→  History,
+    24→  ListTree,
+    25→  Lock,
+    26→  MessageSquareText,
+    27→  Package,
+    28→  ReceiptText,
+    29→  RefreshCcw,
+    30→  SendHorizontal,
+    31→  ShieldCheck,
+    32→  Sparkles,
+    33→  Square,
+    34→  Trash2,
+    35→  TriangleAlert,
+    36→  UserRound,
+    37→  Wallet,
+    38→} from "lucide-react";
+    39→import { useQuery } from "@tanstack/react-query";
+    40→import { api, ApiClientError } from "@/lib/api-client";
+    41→import {
+    42→  createEmptySession,
+    43→  loadCopilotState,
+    44→  newMessageId,
+    45→  saveCopilotState,
+    46→  titleFromQuestion,
+    47→  type CopilotSession,
+    48→} from "@/lib/copilot-sessions";
+    49→import { can, type Role } from "@/lib/rbac";
+    50→import { cn } from "@/lib/utils";
+    51→import { toast } from "@/hooks/use-toast";
+    52→import { Button } from "@/components/ui/button";
+    53→import { Card } from "@/components/ui/card";
+    54→import {
+    55→  Collapsible,
+    56→  CollapsibleContent,
+    57→  CollapsibleTrigger,
+    58→} from "@/components/ui/collapsible";
+    59→import { PageHeader } from "@/components/shared/primitives";
+    60→import {
+    61→  DropdownMenu,
+    62→  DropdownMenuContent,
+    63→  DropdownMenuItem,
+    64→  DropdownMenuLabel,
+    65→  DropdownMenuSeparator,
+    66→  DropdownMenuTrigger,
+    67→} from "@/components/ui/dropdown-menu";
+    68→import type { BusinessSummary } from "../shell/types";
+    69→
+    70→/**
+    71→ * AI Copilot — Phase 05/06. Read-only Q&A over deterministic, server-computed
+    72→ * figures (A11-A13). The client sends ONLY the question + conversation
+    73→ * history; all authoritative data is injected server-side.
+    74→ *
+    75→ * Phase 06: answers stream token-by-token over SSE
+    76→ * (`POST /api/v1/copilot/stream`), with a Stop control that aborts the
+    77→ * stream and keeps the partial answer.
+    78→ */
+    79→
+    80→type ChatMessage = {
+    81→  id: string;
+    82→  role: "user" | "assistant";
+    83→  content: string;
+    84→  failed?: boolean;
+    85→  /** Dataset provenance for this answer (first SSE event) — rendered as
+    86→   *  citation chips under the bubble so every figure is traceable. */
+    87→  meta?: CopilotMeta;
+    88→};
+    89→
+    90→type CopilotMetaCounts = {
+    91→  sales: number;
+    92→  expenses: number;
+    93→  openInvoices: number;
+    94→  openBills: number;
+    95→  activeProducts: number;
+    96→  lowStock: number;
+    97→  topProducts: number;
+    98→  expenseCategories: number;
+    99→  timelineDays: number;
+   100→  recentPayments: number;
+   101→};
+   102→
+   103→type CopilotMeta = {
+   104→  days: number;
+   105→  generatedAt: string;
+   106→  rangeFrom: string;
+   107→  rangeTo: string;
+   108→  sections: string[];
+   109→  counts?: CopilotMetaCounts;
+   110→};
+   111→
+   112→const WINDOWS = [7, 30, 90] as const;
+   113→const nextId = newMessageId;
+   114→
+   115→// ---- Markdown-lite renderer (no deps, no raw HTML — safe by construction) --
+   116→
+   117→function inline(text: string, keyPrefix: string): ReactNode[] {
+   118→  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+   119→  return parts.map((part, i) => {
+   120→    const key = `${keyPrefix}-${i}`;
+   121→    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+   122→      return (
+   123→        <strong key={key} className="font-semibold">
+   124→          {part.slice(2, -2)}
+   125→        </strong>
+   126→      );
+   127→    }
+   128→    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+   129→      return (
+   130→        <code
+   131→          key={key}
+   132→          dir="ltr"
+   133→          className="bg-muted rounded px-1 py-0.5 font-mono text-[0.85em]"
+   134→        >
+   135→          {part.slice(1, -1)}
+   136→        </code>
+   137→      );
+   138→    }
+   139→    return <span key={key}>{part}</span>;
+   140→  });
+   141→}
+   142→
+   143→function MarkdownLite({ text, streaming }: { text: string; streaming?: boolean }) {
+   144→  const nodes: ReactNode[] = [];
+   145→  let bullets: string[] = [];
+   146→  let para: string[] = [];
+   147→
+   148→  const flushBullets = () => {
+   149→    if (bullets.length === 0) return;
+   150→    nodes.push(
+   151→      <ul
+   152→        key={`ul-${nodes.length}`}
+   153→        className="marker:text-muted-foreground/50 my-1 list-disc space-y-1 ps-5"
+   154→      >
+   155→        {bullets.map((b, i) => (
+   156→          <li key={i}>{inline(b, `b${nodes.length}-${i}`)}</li>
+   157→        ))}
+   158→      </ul>,
+   159→    );
+   160→    bullets = [];
+   161→  };
+   162→  const flushPara = () => {
+   163→    if (para.length === 0) return;
+   164→    nodes.push(
+   165→      <p key={`p-${nodes.length}`} className="leading-relaxed whitespace-pre-wrap">
+   166→        {inline(para.join("\n"), `p${nodes.length}`)}
+   167→      </p>,
+   168→    );
+   169→    para = [];
+   170→  };
+   171→
+   172→  for (const raw of text.split("\n")) {
+   173→    const line = raw.trimEnd();
+   174→    if (/^\s*[-*•]\s+/.test(line)) {
+   175→      flushPara();
+   176→      bullets.push(line.replace(/^\s*[-*•]\s+/, ""));
+   177→    } else if (line === "") {
+   178→      flushBullets();
+   179→      flushPara();
+   180→    } else {
+   181→      flushBullets();
+   182→      para.push(line);
+   183→    }
+   184→  }
+   185→  flushBullets();
+   186→  flushPara();
+   187→
+   188→  return (
+   189→    <div className="space-y-1.5 text-sm">
+   190→      {nodes}
+   191→      {streaming ? (
+   192→        <span
+   193→          aria-hidden="true"
+   194→          className="ml-0.5 inline-block h-4 w-0.5 animate-pulse rounded-full bg-emerald-600 align-middle dark:bg-emerald-400"
+   195→        />
+   196→      ) : null}
+   197→    </div>
+   198→  );
+   199→}
+   200→
+   201→// ---- Citation strip ----------------------------------------------------------
+   202→
+   203→/**
+   204→ * Dataset provenance chips rendered under each grounded answer — the UI
+   205→ * mirror of the server snapshot: which window, which date range, and how
+   206→ * many records the answer is built from. Counts come from the server
+   207→ * (deterministic), never from the model.
+   208→ */
+   209→function CitationStrip({ meta, locale }: { meta: CopilotMeta; locale: string }) {
+   210→  const t = useTranslations("copilot");
+   211→  const c = meta.counts;
+   212→  const chips: { key: string; icon: typeof ReceiptText; label: string; title?: string }[] = [
+   213→    {
+   214→      key: "window",
+   215→      icon: CalendarClock,
+   216→      label: t(`window_${meta.days === 7 ? "7" : meta.days === 30 ? "30" : "90"}`),
+   217→    },
+   218→    { key: "range", icon: BookMarked, label: `${meta.rangeFrom} → ${meta.rangeTo}` },
+   219→    ...(c
+   220→      ? [
+   221→          { key: "sales", icon: ReceiptText, label: t("citationsSales", { count: c.sales }) },
+   222→          { key: "expenses", icon: Wallet, label: t("citationsExpenses", { count: c.expenses }) },
+   223→          {
+   224→            key: "openInvoices",
+   225→            icon: HandCoins,
+   226→            label: t("citationsOpenInvoices", { count: c.openInvoices }),
+   227→            title: t("citationsAllTime"),
+   228→          },
+   229→          ...(c.lowStock > 0
+   230→            ? [
+   231→                {
+   232→                  key: "lowStock",
+   233→                  icon: Package,
+   234→                  label: t("citationsLowStock", { count: c.lowStock }),
+   235→                },
+   236→              ]
+   237→            : []),
+   238→          {
+   239→            key: "payments",
+   240→            icon: ArrowDown,
+   241→            label: t("citationsPayments", { count: c.recentPayments }),
+   242→          },
+   243→        ]
+   244→      : []),
+   245→  ];
+   246→
+   247→  const generatedLabel = (() => {
+   248→    try {
+   249→      const time = new Intl.DateTimeFormat(locale === "fa" ? "fa-IR" : "en-GB", {
+   250→        hour: "2-digit",
+   251→        minute: "2-digit",
+   252→      }).format(new Date(meta.generatedAt));
+   253→      return t("citationsGenerated", { time });
+   254→    } catch {
+   255→      return null;
+   256→    }
+   257→  })();
+   258→
+   259→  return (
+   260→    <div
+   261→      className="animate-in fade-in slide-in-from-bottom-1 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 ps-1"
+   262→      data-testid="copilot-citations"
+   263→    >
+   264→      <span className="text-muted-foreground/80 inline-flex items-center gap-1 text-[11px] font-medium">
+   265→        <BookMarked className="size-3" aria-hidden="true" />
+   266→        {t("citationsTitle")}
+   267→      </span>
+   268→      {chips.map((chip) => (
+   269→        <span
+   270→          key={chip.key}
+   271→          title={chip.title}
+   272→          className="border-border/70 bg-background text-muted-foreground inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] leading-none"
+   273→        >
+   274→          <chip.icon className="size-3" aria-hidden="true" />
+   275→          {chip.key === "range" ? (
+   276→            <span dir="ltr" className="tabular-nums">
+   277→              {chip.label}
+   278→            </span>
+   279→          ) : (
+   280→            chip.label
+   281→          )}
+   282→        </span>
+   283→      ))}
+   284→      {generatedLabel ? (
+   285→        <span className="text-muted-foreground/70 text-[11px]">· {generatedLabel}</span>
+   286→      ) : null}
+   287→    </div>
+   288→  );
+   289→}
+   290→
+   291→// ---- Follow-up suggestions ---------------------------------------------------
+   292→
+   293→/**
+   294→ * Context-aware follow-up pool. The chips are UI suggestions only — they
+   295→ * never touch data. Deterministic: keyword match on the answer text picks
+   296→ * the lead chip; the rest rotate by conversation length so repeated
+   297→ * answers surface different prompts.
+   298→ */
+   299→const FOLLOW_UP_KEYS = [
+   300→  "followUpOutstanding",
+   301→  "followUpLowStock",
+   302→  "followUpExpenses",
+   303→  "followUpSales",
+   304→  "followUpCash",
+   305→  "followUpProducts",
+   306→  "followUpPayments",
+   307→  "followUpSummary",
+   308→] as const;
+   309→
+   310→type FollowUpKey = (typeof FOLLOW_UP_KEYS)[number];
+   311→
+   312→const FOLLOW_UP_MATCHERS: Array<{ key: FollowUpKey; re: RegExp }> = [
+   313→  { key: "followUpOutstanding", re: /owe|outstanding|receivable|بدهکار|بدهی|طلب/i },
+   314→  { key: "followUpLowStock", re: /low.?stock|restock|inventory|موجودی|انبار|شارژ/i },
+   315→  { key: "followUpExpenses", re: /expense|spend|cost|هزینه|خرج/i },
+   316→  { key: "followUpSales", re: /sale|revenue|invoice|فروش|درآمد|فاکتور/i },
+   317→  { key: "followUpCash", re: /cash|payment|collected|نقد|پرداخت|دریافتی/i },
+   318→  { key: "followUpProducts", re: /product|best.?seller|top|محصول|پرفروش/i },
+   319→];
+   320→
+   321→/** Live server counts (same deterministic aggregates as the dashboard)
+   322→ *  used to RANK suggestions — a chip is only proposed when its subject
+   323→ *  actually exists in the data (r10: "only propose restock when there is
+   324→ *  something to restock"). */
+   325→type SummaryLite = {
+   326→  kpis?: { salesCount?: number; expensesCount?: number };
+   327→  outstanding?: { receivableCount?: number };
+   328→  inventory?: { lowStockCount?: number };
+   329→  topProducts?: unknown[];
+   330→};
+   331→
+   332→function followUpRelevant(
+   333→  key: FollowUpKey,
+   334→  counts: {
+   335→    receivableCount: number;
+   336→    lowStockCount: number;
+   337→    salesCount: number;
+   338→    expensesCount: number;
+   339→    topProducts: number;
+   340→  } | null,
+   341→): boolean {
+   342→  if (!counts) return true; // counts not loaded yet — keep the neutral default
+   343→  switch (key) {
+   344→    case "followUpOutstanding":
+   345→      return counts.receivableCount > 0;
+   346→    case "followUpLowStock":
+   347→      return counts.lowStockCount > 0;
+   348→    case "followUpExpenses":
+   349→      return counts.expensesCount > 0;
+   350→    case "followUpProducts":
+   351→      return counts.topProducts > 0;
+   352→    case "followUpSales":
+   353→      return true;
+   354→    case "followUpCash":
+   355→    case "followUpPayments":
+   356→    case "followUpSummary":
+   357→      return true;
+   358→  }
+   359→}
+   360→
+   361→function pickFollowUps(
+   362→  answer: string,
+   363→  conversationLength: number,
+   364→  counts: Parameters<typeof followUpRelevant>[1] = null,
+   365→): FollowUpKey[] {
+   366→  const lead = FOLLOW_UP_MATCHERS.find((m) => m.re.test(answer))?.key;
+   367→  const pool = FOLLOW_UP_KEYS.filter(
+   368→    (k) => k !== lead && followUpRelevant(k, counts),
+   369→  );
+   370→  const rotate = conversationLength % Math.max(1, pool.length);
+   371→  const rotated = [...pool.slice(rotate), ...pool.slice(0, rotate)];
+   372→  const picked = rotated.slice(0, lead ? 2 : 3);
+   373→  return lead ? [lead, ...picked] : picked;
+   374→}
+   375→
+   376→// ---- View -------------------------------------------------------------------
+   377→
+   378→export function CopilotView({
+   379→  business,
+   380→  role,
+   381→}: {
+   382→  business: BusinessSummary;
+   383→  role: Role;
+   384→}) {
+   385→  const t = useTranslations("copilot");
+   386→  const tCommon = useTranslations("common");
+   387→  const tErrors = useTranslations("errors");
+   388→  const uiLocale = useLocale();
+   389→
+   390→  // ---- Multi-session transcripts (per business, localStorage) -------------
+   391→  // `messages` below is ALWAYS the active session's message list; every
+   392→  // mutation flows through the same setMessages wrapper, so streaming,
+   393→  // retry and follow-up logic stays unchanged.
+   394→  const [sessions, setSessions] = useState<CopilotSession[]>([]);
+   395→  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+   396→  const [hydrated, setHydrated] = useState(false);
+   397→  const activeSessionIdRef = useRef<string | null>(null);
+   398→
+   399→  const messages = useMemo(
+   400→    () =>
+   401→      (sessions.find((s) => s.id === activeSessionId)?.messages ?? []) as ChatMessage[],
+   402→    [sessions, activeSessionId],
+   403→  );
+   404→
+   405→  const [input, setInput] = useState("");
+   406→  const [activeStreamId, setActiveStreamId] = useState<string | null>(null);
+   407→  const [days, setDays] = useState<7 | 30 | 90>(30);
+   408→  const [copiedId, setCopiedId] = useState<string | null>(null);
+   409→  const [dataOpen, setDataOpen] = useState(false);
+   410→  const [atBottom, setAtBottom] = useState(true);
+   411→  const lastQuestionRef = useRef<string | null>(null);
+   412→  const abortRef = useRef<AbortController | null>(null);
+   413→  const scrollRef = useRef<HTMLDivElement>(null);
+   414→  const textareaRef = useRef<HTMLTextAreaElement>(null);
+   415→
+   416→  const canUse = can(role, "copilot:use");
+   417→  const pending = activeStreamId !== null;
+   418→
+   419→  // Feature B — live server counts (the SAME cached aggregate the dashboard
+   420→  // and idle prefetch warm: ["reports","summary","30"]). Deterministic —
+   421→  // suggestions reorder/hide from real data, never from the model.
+   422→  const { data: summaryLite } = useQuery<SummaryLite>({
+   423→    queryKey: ["reports", "summary", "30"],
+   424→    queryFn: () => api("/api/v1/reports/summary?days=30"),
+   425→    enabled: canUse,
+   426→    staleTime: 30_000,
+   427→  });
+   428→  const liveCounts = useMemo(
+   429→    () =>
+   430→      summaryLite
+   431→        ? {
+   432→            receivableCount: summaryLite.outstanding?.receivableCount ?? 0,
+   433→            lowStockCount: summaryLite.inventory?.lowStockCount ?? 0,
+   434→            salesCount: summaryLite.kpis?.salesCount ?? 0,
+   435→            expensesCount: summaryLite.kpis?.expensesCount ?? 0,
+   436→            topProducts: summaryLite.topProducts?.length ?? 0,
+   437→          }
+   438→        : null,
+   439→    [summaryLite],
+   440→  );
+   441→
+   442→  // Empty-state suggestions — relevant-first (stable, deterministic);
+   443→  // purely-unhelpful chips ("who owes" with 0 open invoices, "restock"
+   444→  // with nothing low) are hidden until the data supports them.
+   445→  const suggestions = useMemo(() => {
+   446→    const c = liveCounts;
+   447→    const items = [
+   448→      { text: t("suggestion1"), relevant: c ? c.receivableCount > 0 : true, hideable: true },
+   449→      { text: t("suggestion2"), relevant: true, hideable: false },
+   450→      { text: t("suggestion3"), relevant: c ? c.expensesCount > 0 : true, hideable: false },
+   451→      { text: t("suggestion4"), relevant: c ? c.topProducts > 0 : true, hideable: false },
+   452→      { text: t("suggestion5"), relevant: c ? c.lowStockCount > 0 : true, hideable: true },
+   453→      { text: t("suggestion6"), relevant: true, hideable: false },
+   454→    ];
+   455→    const visible = items.filter((i) => i.relevant || !i.hideable);
+   456→    return [
+   457→      ...visible.filter((i) => i.relevant),
+   458→      ...visible.filter((i) => !i.relevant),
+   459→    ].map((i) => i.text);
+   460→  }, [t, liveCounts]);
+   461→
+   462→  // Follow-up chips — only under the LAST completed answer.
+   463→  const lastMessage = messages[messages.length - 1];
+   464→  const showFollowUps =
+   465→    !pending &&
+   466→    messages.length >= 2 &&
+   467→    lastMessage?.role === "assistant" &&
+   468→    lastMessage.failed !== true &&
+   469→    lastMessage.content.trim().length > 0;
+   470→  const followUps = useMemo(
+   471→    () =>
+   472→      showFollowUps ? pickFollowUps(lastMessage.content, messages.length, liveCounts) : [],
+   473→    [showFollowUps, lastMessage?.content, messages.length, liveCounts],
+   474→  );
+   475→
+   476→  // Keep the latest message in view (scroll-only effect — no setState).
+   477→  useEffect(() => {
+   478→    if (atBottom && scrollRef.current) {
+   479→      scrollRef.current.scrollTo({
+   480→        top: scrollRef.current.scrollHeight,
+   481→        behavior: "smooth",
+   482→      });
+   483→    }
+   484→  }, [messages, pending, atBottom]);
+   485→
+   486→  // Abort any in-flight stream when the module unmounts.
+   487→  useEffect(() => {
+   488→    return () => abortRef.current?.abort();
+   489→  }, []);
+   490→
+   491→  // ---- Session lifecycle ---------------------------------------------------
+   492→
+   493→  // Hydrate this business's transcripts on mount / business switch.
+   494→  useEffect(() => {
+   495→    const state = loadCopilotState(business.id);
+   496→    setSessions(state.sessions);
+   497→    setActiveSessionId(state.activeId);
+   498→    activeSessionIdRef.current = state.activeId;
+   499→    setHydrated(true);
+   500→  }, [business.id]);
+   501→
+   502→  // Debounced write-through persistence (400ms) — streaming patches coalesce.
+   503→  useEffect(() => {
+   504→    if (!hydrated) return;
+   505→    const timer = window.setTimeout(() => {
+   506→      saveCopilotState(business.id, { sessions, activeId: activeSessionId });
+   507→    }, 400);
+   508→    return () => window.clearTimeout(timer);
+   509→  }, [sessions, activeSessionId, hydrated, business.id]);
+   510→
+   511→  /** Point future message mutations at a live session (create if needed). */
+   512→  const ensureActiveSession = useCallback((titleQuestion?: string): string => {
+   513→    if (activeSessionIdRef.current) return activeSessionIdRef.current;
+   514→    const session = createEmptySession(
+   515→      titleQuestion ? titleFromQuestion(titleQuestion) : "",
+   516→    );
+   517→    activeSessionIdRef.current = session.id;
+   518→    setActiveSessionId(session.id);
+   519→    setSessions((prev) => [session, ...prev]);
+   520→    return session.id;
+   521→  }, []);
+   522→
+   523→  /**
+   524→   * Mutate the ACTIVE session's messages. Accepts a value or updater so the
+   525→   * existing send/stream/patch code (and its functional setState calls)
+   526→   * keeps working unchanged.
+   527→   */
+   528→  const setMessages = useCallback(
+   529→    (update: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
+   530→      const targetId = activeSessionIdRef.current;
+   531→      setSessions((prevSessions) => {
+   532→        const idx = prevSessions.findIndex((s) => s.id === targetId);
+   533→        if (idx === -1) {
+   534→          // No live session — create one from the resulting messages.
+   535→          if (!targetId) return prevSessions;
+   536→          const msgs = typeof update === "function" ? update([]) : update;
+   537→          if (msgs.length === 0) return prevSessions;
+   538→          const firstUser = msgs.find((m) => m.role === "user");
+   539→          const session: CopilotSession = {
+   540→            ...createEmptySession(firstUser ? titleFromQuestion(firstUser.content) : ""),
+   541→            id: targetId,
+   542→            messages: msgs,
+   543→            updatedAt: Date.now(),
+   544→          };
+   545→          return [session, ...prevSessions];
+   546→        }
+   547→        const cur = prevSessions[idx];
+   548→        const msgs =
+   549→          typeof update === "function"
+   550→            ? update(cur.messages as ChatMessage[])
+   551→            : update;
+   552→        const firstUser = msgs.find((m) => m.role === "user");
+   553→        const next: CopilotSession = {
+   554→          ...cur,
+   555→          title:
+   556→            cur.title ||
+   557→            (firstUser ? titleFromQuestion(firstUser.content) : cur.title),
+   558→          messages: msgs,
+   559→          updatedAt: Date.now(),
+   560→        };
+   561→        return [next, ...prevSessions.filter((s) => s.id !== targetId)];
+   562→      });
+   563→    },
+   564→    [],
+   565→  );
+   566→
+   567→  const switchSession = useCallback((id: string) => {
+   568→    if (activeStreamId !== null) return; // never mid-stream
+   569→    activeSessionIdRef.current = id;
+   570→    setActiveSessionId(id);
+   571→  }, [activeStreamId]);
+   572→
+   573→  const startNewConversation = useCallback(() => {
+   574→    if (activeStreamId !== null) return;
+   575→    if ((sessions.find((s) => s.id === activeSessionIdRef.current)?.messages ?? []).length === 0) {
+   576→      textareaRef.current?.focus();
+   577→      return; // already on a fresh conversation
+   578→    }
+   579→    const session = createEmptySession();
+   580→    activeSessionIdRef.current = session.id;
+   581→    setActiveSessionId(session.id);
+   582→    setSessions((prev) => [session, ...prev]);
+   583→    textareaRef.current?.focus();
+   584→  }, [activeStreamId, sessions]);
+   585→
+   586→  const deleteSession = useCallback(
+   587→    (id: string) => {
+   588→      if (activeStreamId !== null) return;
+   589→      setSessions((prev) => {
+   590→        const next = prev.filter((s) => s.id !== id);
+   591→        if (activeSessionIdRef.current === id) {
+   592→          const fallback = next[0]?.id ?? null;
+   593→          activeSessionIdRef.current = fallback;
+   594→          setActiveSessionId(fallback);
+   595→        }
+   596→        return next;
+   597→      });
+   598→      toast({ title: t("sessionDeletedToast") });
+   599→    },
+   600→    [activeStreamId, t],
+   601→  );
+   602→
+   603→  const patchAssistant = useCallback(
+   604→    (id: string, patch: (m: ChatMessage) => ChatMessage) => {
+   605→      setMessages((prev) => prev.map((m) => (m.id === id ? patch(m) : m)));
+   606→    },
+   607→    [],
+   608→  );
+   609→
+   610→  const localizedError = useCallback(
+   611→    (code: string, retryAfterMs?: number) => {
+   612→      switch (code) {
+   613→        case "RATE_LIMITED":
+   614→          return t("errorRateLimited", {
+   615→            seconds: String(Math.max(1, Math.ceil((retryAfterMs ?? 0) / 1000))),
+   616→          });
+   617→        case "PERMISSION_DENIED":
+   618→          return t("errorForbidden");
+   619→        case "AI_UNAVAILABLE":
+   620→          return t("errorAiUnavailable");
+   621→        default:
+   622→          return tErrors("generic");
+   623→      }
+   624→    },
+   625→    [t, tErrors],
+   626→  );
+   627→
+   628→  const send = useCallback(
+   629→    async (question: string, history: ChatMessage[]) => {
+   630→      const trimmed = question.trim();
+   631→      if (!trimmed || trimmed.length > 500 || activeStreamId !== null) return;
+   632→      lastQuestionRef.current = trimmed;
+   633→      setAtBottom(true);
+   634→
+   635→      const assistantId = nextId();
+   636→      setMessages((prev) => [
+   637→        ...prev,
+   638→        { id: assistantId, role: "assistant", content: "" },
+   639→      ]);
+   640→      setActiveStreamId(assistantId);
+   641→
+   642→      const controller = new AbortController();
+   643→      abortRef.current = controller;
+   644→
+   645→      try {
+   646→        const res = await fetch("/api/v1/copilot/stream", {
+   647→          method: "POST",
+   648→          credentials: "same-origin",
+   649→          headers: {
+   650→            "content-type": "application/json",
+   651→            "x-business-id": business.id,
+   652→          },
+   653→          body: JSON.stringify({
+   654→            question: trimmed,
+   655→            history: history
+   656→              .filter((m) => !m.failed)
+   657→              .slice(-6)
+   658→              .map((m) => ({ role: m.role, content: m.content })),
+   659→            days,
+   660→          }),
+   661→          signal: controller.signal,
+   662→        });
+   663→
+   664→        if (!res.ok || !res.body) {
+   665→          let code = "INTERNAL_ERROR";
+   666→          let retryAfterMs: number | undefined;
+   667→          try {
+   668→            const body = (await res.json()) as {
+   669→              error?: { code?: string; details?: { retryAfterMs?: number } };
+   670→            };
+   671→            if (body?.error?.code) code = body.error.code;
+   672→            retryAfterMs = body?.error?.details?.retryAfterMs;
+   673→          } catch {
+   674→            // keep defaults
+   675→          }
+   676→          patchAssistant(assistantId, (m) => ({
+   677→            ...m,
+   678→            content: localizedError(code, retryAfterMs),
+   679→            failed: true,
+   680→          }));
+   681→          return;
+   682→        }
+   683→
+   684→        // Parse the SSE stream incrementally.
+   685→        const reader = res.body.getReader();
+   686→        const decoder = new TextDecoder();
+   687→        let buffer = "";
+   688→        let streamError: { code?: string; message?: string } | null = null;
+   689→        let sawDone = false;
+   690→
+   691→        while (true) {
+   692→          const { done, value } = await reader.read();
+   693→          if (done) break;
+   694→          buffer += decoder.decode(value, { stream: true });
+   695→          const events = buffer.split("\n\n");
+   696→          buffer = events.pop() ?? "";
+   697→          for (const evt of events) {
+   698→            for (const line of evt.split("\n")) {
+   699→              if (!line.startsWith("data: ")) continue;
+   700→              let payload: {
+   701→                meta?: CopilotMeta;
+   702→                delta?: string;
+   703→                done?: boolean;
+   704→                error?: { code?: string; message?: string };
+   705→              };
+   706→              try {
+   707→                payload = JSON.parse(line.slice(6));
+   708→              } catch {
+   709→                continue;
+   710→              }
+   711→              if (payload.meta) {
+   712→                // First event — dataset provenance for this answer.
+   713→                const meta = payload.meta;
+   714→                patchAssistant(assistantId, (m) => ({ ...m, meta }));
+   715→              } else if (typeof payload.delta === "string" && payload.delta.length > 0) {
+   716→                const delta = payload.delta;
+   717→                patchAssistant(assistantId, (m) => ({
+   718→                  ...m,
+   719→                  content: m.content + delta,
+   720→                }));
+   721→              } else if (payload.error) {
+   722→                streamError = payload.error;
+   723→              } else if (payload.done) {
+   724→                sawDone = true;
+   725→              }
+   726→            }
+   727→          }
+   728→        }
+   729→
+   730→        if (streamError) {
+   731→          const code = streamError.code ?? "INTERNAL_ERROR";
+   732→          if (code === "RATE_LIMITED" || code === "AI_UNAVAILABLE" || !sawDone) {
+   733→            patchAssistant(assistantId, (m) =>
+   734→              m.content.trim().length === 0
+   735→                ? { ...m, content: localizedError(code), failed: true }
+   736→                : { ...m, content: `${m.content}\n\n⚠ ${localizedError(code)}` },
+   737→            );
+   738→          }
+   739→        }
+   740→      } catch (error) {
+   741→        if ((error as Error)?.name === "AbortError") {
+   742→          // User pressed Stop — keep the partial answer, drop it if empty.
+   743→          setMessages((prev) =>
+   744→            prev.flatMap((m) =>
+   745→              m.id === assistantId ? (m.content.trim() ? [m] : []) : [m],
+   746→            ),
+   747→          );
+   748→        } else if (error instanceof ApiClientError) {
+   749→          patchAssistant(assistantId, (m) => ({
+   750→            ...m,
+   751→            content: localizedError(error.code),
+   752→            failed: true,
+   753→          }));
+   754→        } else {
+   755→          patchAssistant(assistantId, (m) => ({
+   756→            ...m,
+   757→            content: localizedError("NETWORK_ERROR"),
+   758→            failed: true,
+   759→          }));
+   760→        }
+   761→      } finally {
+   762→        abortRef.current = null;
+   763→        setActiveStreamId((cur) => (cur === assistantId ? null : cur));
+   764→      }
+   765→    },
+   766→    [activeStreamId, business.id, days, localizedError, patchAssistant],
+   767→  );
+   768→
+   769→  const handleSubmit = () => {
+   770→    const trimmed = input.trim();
+   771→    if (!trimmed || pending) return;
+   772→    setInput("");
+   773→    if (textareaRef.current) textareaRef.current.style.height = "auto";
+   774→    ensureActiveSession(trimmed);
+   775→    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: trimmed }]);
+   776→    void send(trimmed, messages);
+   777→  };
+   778→
+   779→  const handleStop = () => {
+   780→    abortRef.current?.abort();
+   781→  };
+   782→
+   783→  const handleRetry = () => {
+   784→    const q = lastQuestionRef.current;
+   785→    if (!q || pending) return;
+   786→    ensureActiveSession();
+   787→    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: q }]);
+   788→    void send(q, messages);
+   789→  };
+   790→
+   791→  const copyAnswer = async (m: ChatMessage) => {
+   792→    try {
+   793→      await navigator.clipboard.writeText(m.content);
+   794→      setCopiedId(m.id);
+   795→      window.setTimeout(() => setCopiedId((c) => (c === m.id ? null : c)), 1500);
+   796→    } catch {
+   797→      /* clipboard unavailable — silently ignore */
+   798→    }
+   799→  };
+   800→
+   801→  /** Download the Q&A transcript as a shareable Markdown file. */
+   802→  const exportTranscript = () => {
+   803→    if (messages.length === 0 || pending) return;
+   804→    try {
+   805→      const localeTag = business.locale === "fa" ? "fa-IR" : "en-GB";
+   806→      const nowLabel = new Intl.DateTimeFormat(localeTag, {
+   807→        dateStyle: "long",
+   808→        timeStyle: "short",
+   809→      }).format(new Date());
+   810→      const windowLabel = t(`window_${days}` as "window_7");
+   811→
+   812→      const lines: string[] = [];
+   813→      lines.push(`# ${t("title")} — ${t("exportTranscript")}`);
+   814→      lines.push("");
+   815→      lines.push(`- **${business.name}**`);
+   816→      lines.push(`- ${t("windowLabel")}: ${windowLabel}`);
+   817→      lines.push(`- ${t("citationsGenerated", { time: nowLabel })}`);
+   818→      lines.push(`- ${t("groundedNote")}`);
+   819→      lines.push("");
+   820→      lines.push("---");
+   821→
+   822→      let qIndex = 0;
+   823→      for (let i = 0; i < messages.length; i++) {
+   824→        const m = messages[i];
+   825→        if (m.role !== "user" || m.failed) continue;
+   826→        const answer = messages[i + 1];
+   827→        if (!answer || answer.role !== "assistant" || answer.failed) continue;
+   828→        qIndex += 1;
+   829→        lines.push("");
+   830→        lines.push(`## ${qIndex}. ${m.content}`);
+   831→        lines.push("");
+   832→        lines.push(answer.content);
+   833→        const meta = answer.meta;
+   834→        if (meta) {
+   835→          const c = meta.counts;
+   836→          const bits = [
+   837→            t(`window_${meta.days === 7 ? "7" : meta.days === 30 ? "30" : "90"}` as "window_7"),
+   838→            `${meta.rangeFrom} → ${meta.rangeTo}`,
+   839→            ...(c
+   840→              ? [
+   841→                  t("citationsSales", { count: c.sales }),
+   842→                  t("citationsExpenses", { count: c.expenses }),
+   843→                  t("citationsOpenInvoices", { count: c.openInvoices }),
+   844→                  t("citationsPayments", { count: c.recentPayments }),
+   845→                ]
+   846→              : []),
+   847→          ];
+   848→          try {
+   849→            const time = new Intl.DateTimeFormat(localeTag, {
+   850→              hour: "2-digit",
+   851→              minute: "2-digit",
+   852→            }).format(new Date(meta.generatedAt));
+   853→            bits.push(t("citationsGenerated", { time }));
+   854→          } catch {
+   855→            /* timestamp is decorative in the export */
+   856→          }
+   857→          lines.push("");
+   858→          lines.push(`> ${t("citationsTitle")}: ${bits.join(" · ")}`);
+   859→        }
+   860→        lines.push("");
+   861→        lines.push("---");
+   862→      }
+   863→
+   864→      if (qIndex === 0) return; // nothing answerable to export
+   865→
+   866→      const md = lines.join("\n");
+   867→      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+   868→      const url = URL.createObjectURL(blob);
+   869→      const a = document.createElement("a");
+   870→      a.href = url;
+   871→      a.download = `copilot-transcript-${new Date().toISOString().slice(0, 10)}.md`;
+   872→      document.body.appendChild(a);
+   873→      a.click();
+   874→      a.remove();
+   875→      URL.revokeObjectURL(url);
+   876→      toast({ title: t("exportedToast") });
+   877→    } catch {
+   878→      toast({ title: t("exportFailed"), variant: "destructive" });
+   879→    }
+   880→  };
+   881→
+   882→  const askFollowUp = (question: string) => {
+   883→    if (pending) return;
+   884→    ensureActiveSession();
+   885→    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: question }]);
+   886→    void send(question, messages);
+   887→  };
+   888→
+   889→  // Sessions that hold an actual transcript (newest first — setSessions keeps
+   890→  // the mutated session at the front, hydration sorts by updatedAt).
+   891→  // NOTE: hooks must run before the `!canUse` early return below.
+   892→  const savedSessions = useMemo(
+   893→    () =>
+   894→      sessions
+   895→        .filter((s) => s.messages.length > 0)
+   896→        .sort((a, b) => b.updatedAt - a.updatedAt),
+   897→    [sessions],
+   898→  );
+   899→  const recentSessions = savedSessions.slice(0, 3);
+   900→
+   901→  if (!canUse) {
+   902→    return (
+   903→      <div className="space-y-6" data-view="copilot">
+   904→        <PageHeader title={t("title")} subtitle={t("subtitle")} />
+   905→        <Card className="mx-auto max-w-md p-8 text-center">
+   906→          <div className="bg-muted mx-auto flex size-12 items-center justify-center rounded-full">
+   907→            <Lock className="text-muted-foreground size-5" aria-hidden="true" />
+   908→          </div>
+   909→          <h2 className="mt-4 text-base font-semibold">{t("lockedTitle")}</h2>
+   910→          <p className="text-muted-foreground mt-1.5 text-sm">{t("lockedDesc")}</p>
+   911→        </Card>
+   912→      </div>
+   913→    );
+   914→  }
+   915→
+   916→  const empty = messages.length === 0;
+   917→  const lastFailed = !pending && messages[messages.length - 1]?.failed === true;
+   918→  const waitingForFirstToken =
+   919→    pending && (messages[messages.length - 1]?.content ?? "").length === 0;
+   920→
+   921→  const formatRelative = (ts: number) => {
+   922→    try {
+   923→      const rtf = new Intl.RelativeTimeFormat(uiLocale === "fa" ? "fa" : "en", {
+   924→        numeric: "auto",
+   925→      });
+   926→      const diffMs = ts - Date.now();
+   927→      const mins = Math.round(diffMs / 60_000);
+   928→      if (Math.abs(mins) < 60) return rtf.format(mins, "minute");
+   929→      const hours = Math.round(diffMs / 3_600_000);
+   930→      if (Math.abs(hours) < 24) return rtf.format(hours, "hour");
+   931→      return rtf.format(Math.round(diffMs / 86_400_000), "day");
+   932→    } catch {
+   933→      return "";
+   934→    }
+   935→  };
+   936→
+   937→  return (
+   938→    <div className="space-y-4" data-view="copilot">
+   939→      <PageHeader
+   940→        title={t("title")}
+   941→        subtitle={t("subtitle")}
+   942→        actions={
+   943→          <span className="text-muted-foreground border-emerald-500/30 bg-emerald-500/5 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+   944→            <ShieldCheck className="size-3.5" aria-hidden="true" />
+   945→            {t("readOnly")}
+   946→          </span>
+   947→        }
+   948→      />
+   949→
+   950→      <Card className="flex h-[calc(100svh-15rem)] min-h-[520px] flex-col overflow-hidden">
+   951→        {/* Toolbar */}
+   952→        <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2.5">
+   953→          <div className="flex items-center gap-2" role="group" aria-label={t("windowLabel")}>
+   954→            <CalendarClock className="text-muted-foreground size-4" aria-hidden="true" />
+   955→            <span className="text-muted-foreground text-xs font-medium">{t("windowLabel")}</span>
+   956→            <div className="bg-muted flex overflow-hidden rounded-lg p-0.5">
+   957→              {WINDOWS.map((w) => (
+   958→                <button
+   959→                  key={w}
+   960→                  type="button"
+   961→                  onClick={() => setDays(w)}
+   962→                  aria-pressed={days === w}
+   963→                  className={cn(
+   964→                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+   965→                    days === w
+   966→                      ? "bg-background text-foreground shadow-sm"
+   967→                      : "text-muted-foreground hover:text-foreground",
+   968→                  )}
+   969→                >
+   970→                  {t(`window_${w}` as "window_7")}
+   971→                </button>
+   972→              ))}
+   973→            </div>
+   974→          </div>
+   975→          <div className="flex items-center gap-1">
+   976→            <Collapsible open={dataOpen} onOpenChange={setDataOpen}>
+   977→              <CollapsibleTrigger asChild>
+   978→                <Button variant="ghost" size="sm" className="text-muted-foreground h-8 gap-1.5 text-xs">
+   979→                  <ListTree className="size-3.5" aria-hidden="true" />
+   980→                  {t("dataIncludedTitle")}
+   981→                  <ChevronDown className={cn("size-3.5 transition-transform", dataOpen && "rotate-180")} aria-hidden="true" />
+   982→                </Button>
+   983→              </CollapsibleTrigger>
+   984→            </Collapsible>
+   985→            {/* Conversation history — switch / resume / delete transcripts. */}
+   986→            <DropdownMenu>
+   987→              <DropdownMenuTrigger asChild disabled={pending}>
+   988→                <Button
+   989→                  variant="ghost"
+   990→                  size="sm"
+   991→                  className="text-muted-foreground h-8 gap-1.5 text-xs hover:text-foreground"
+   992→                  title={t("sessionHistory")}
+   993→                  aria-label={t("sessionHistory")}
+   994→                >
+   995→                  <History className="size-3.5" aria-hidden="true" />
+   996→                  <span className="hidden sm:inline">{t("sessionHistory")}</span>
+   997→                  {savedSessions.length > 0 ? (
+   998→                    <span className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 ms-0.5 rounded-full px-1.5 text-[10px] font-semibold tabular-nums">
+   999→                      {savedSessions.length}
+  1000→                    </span>
+  1001→                  ) : null}
+  1002→                </Button>
+  1003→              </DropdownMenuTrigger>
+  1004→              <DropdownMenuContent align="end" className="w-80">
+  1005→                <DropdownMenuLabel className="text-xs text-muted-foreground">
+  1006→                  {t("sessionHistory")}
+  1007→                </DropdownMenuLabel>
+  1008→                <DropdownMenuSeparator />
+  1009→                {savedSessions.length === 0 ? (
+  1010→                  <p className="text-muted-foreground px-2 py-3 text-xs">
+  1011→                    {t("noSessions")}
+  1012→                  </p>
+  1013→                ) : (
+  1014→                  <div className="max-h-72 overflow-y-auto">
+  1015→                    {savedSessions.map((s) => (
+  1016→                      <DropdownMenuItem
+  1017→                        key={s.id}
+  1018→                        onSelect={() => switchSession(s.id)}
+  1019→                        className="focus:bg-muted/70 items-start gap-2 rounded-md py-2"
+  1020→                      >
+  1021→                        <MessageSquareText
+  1022→                          className="text-muted-foreground mt-0.5 size-3.5 shrink-0"
+  1023→                          aria-hidden="true"
+  1024→                        />
+  1025→                        <span className="min-w-0 flex-1">
+  1026→                          <span className="block truncate text-xs font-medium">
+  1027→                            {s.title || t("untitledConversation")}
+  1028→                          </span>
+  1029→                          <span className="text-muted-foreground block text-[11px] tabular-nums">
+  1030→                            {t("messagesCount", { count: s.messages.length })}
+  1031→                            {" · "}
+  1032→                            {formatRelative(s.updatedAt)}
+  1033→                          </span>
+  1034→                        </span>
+  1035→                        {s.id === activeSessionId ? (
+  1036→                          <Check
+  1037→                            className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400"
+  1038→                            aria-hidden="true"
+  1039→                          />
+  1040→                        ) : null}
+  1041→                        <button
+  1042→                          type="button"
+  1043→                          onClick={(e) => {
+  1044→                            e.stopPropagation();
+  1045→                            deleteSession(s.id);
+  1046→                          }}
+  1047→                          aria-label={t("deleteConversation")}
+  1048→                          title={t("deleteConversation")}
+  1049→                          className="text-muted-foreground/70 hover:text-destructive rounded p-1 transition-colors"
+  1050→                        >
+  1051→                          <Trash2 className="size-3.5" aria-hidden="true" />
+  1052→                        </button>
+  1053→                      </DropdownMenuItem>
+  1054→                    ))}
+  1055→                  </div>
+  1056→                )}
+  1057→              </DropdownMenuContent>
+  1058→            </DropdownMenu>
+  1059→            {messages.length > 0 ? (
+  1060→              <>
+  1061→                <Button
+  1062→                  variant="ghost"
+  1063→                  size="sm"
+  1064→                  className="text-muted-foreground h-8 gap-1.5 text-xs hover:text-foreground"
+  1065→                  onClick={exportTranscript}
+  1066→                  disabled={pending}
+  1067→                  title={t("exportTranscript")}
+  1068→                  aria-label={t("exportTranscript")}
+  1069→                >
+  1070→                  <Download className="size-3.5" aria-hidden="true" />
+  1071→                  <span className="hidden sm:inline">{t("exportTranscript")}</span>
+  1072→                </Button>
+  1073→                <Button
+  1074→                  variant="ghost"
+  1075→                  size="sm"
+  1076→                  className="text-muted-foreground h-8 gap-1.5 text-xs"
+  1077→                  onClick={startNewConversation}
+  1078→                  disabled={pending}
+  1079→                  title={t("newConversation")}
+  1080→                  aria-label={t("newConversation")}
+  1081→                >
+  1082→                  <RefreshCcw className="size-3.5" aria-hidden="true" />
+  1083→                  <span className="hidden sm:inline">{t("newConversation")}</span>
+  1084→                </Button>
+  1085→              </>
+  1086→            ) : null}
+  1087→          </div>
+  1088→        </div>
+  1089→
+  1090→        {/* Transparency: what data can the copilot see */}
+  1091→        {dataOpen ? (
+  1092→          <div className="bg-muted/40 border-b px-4 py-3">
+  1093→            <p className="text-muted-foreground text-xs">{t("dataIncludedDesc")}</p>
+  1094→            <ul className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+  1095→              {[
+  1096→                { icon: BarChart3, label: t("sectionKpis") },
+  1097→                { icon: CalendarClock, label: t("sectionTimeline") },
+  1098→                { icon: Package, label: t("sectionTopProducts") },
+  1099→                { icon: Wallet, label: t("sectionExpensesByCategory") },
+  1100→                { icon: HandCoins, label: t("sectionOutstanding") },
+  1101→                { icon: ListTree, label: t("sectionInventory") },
+  1102→                { icon: ArrowDown, label: t("sectionRecentPayments") },
+  1103→              ].map((row) => (
+  1104→                <li key={row.label} className="flex items-center gap-1.5">
+  1105→                  <row.icon className="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />
+  1106→                  <span className="text-muted-foreground">{row.label}</span>
+  1107→                </li>
+  1108→              ))}
+  1109→            </ul>
+  1110→          </div>
+  1111→        ) : null}
+  1112→
+  1113→        {/* Messages */}
+  1114→        <div
+  1115→          ref={scrollRef}
+  1116→          className="flex-1 space-y-4 overflow-y-auto px-4 py-4"
+  1117→          onScroll={(e) => {
+  1118→            const el = e.currentTarget;
+  1119→            setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 60);
+  1120→          }}
+  1121→        >
+  1122→          {empty ? (
+  1123→            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+  1124→              <div className="border-emerald-500/20 from-emerald-500/15 to-teal-500/10 flex size-14 items-center justify-center rounded-2xl border bg-gradient-to-br">
+  1125→                <Bot className="text-emerald-700 size-7 dark:text-emerald-400" aria-hidden="true" />
+  1126→              </div>
+  1127→              <div>
+  1128→                <p className="font-medium">{t("emptyTitle")}</p>
+  1129→                <p className="text-muted-foreground mx-auto mt-1 max-w-sm text-sm">
+  1130→                  {t("emptyDesc")}
+  1131→                </p>
+  1132→              </div>
+  1133→              {recentSessions.length > 0 ? (
+  1134→                <div className="w-full max-w-lg">
+  1135→                  <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+  1136→                    {t("recentConversations")}
+  1137→                  </p>
+  1138→                  <div className="mt-2 flex flex-wrap justify-center gap-2">
+  1139→                    {recentSessions.map((s) => (
+  1140→                      <button
+  1141→                        key={s.id}
+  1142→                        type="button"
+  1143→                        onClick={() => switchSession(s.id)}
+  1144→                        className="border-border bg-muted/40 hover:border-emerald-500/40 hover:bg-emerald-500/5 group inline-flex max-w-full items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all hover:shadow-sm"
+  1145→                      >
+  1146→                        <MessageSquareText
+  1147→                          className="text-muted-foreground group-hover:text-emerald-600 size-3 shrink-0 transition-colors dark:group-hover:text-emerald-400"
+  1148→                          aria-hidden="true"
+  1149→                        />
+  1150→                        <span className="max-w-44 truncate">{s.title || t("untitledConversation")}</span>
+  1151→                        <span className="text-muted-foreground shrink-0 tabular-nums">
+  1152→                          · {t("messagesCount", { count: s.messages.length })}
+  1153→                        </span>
+  1154→                      </button>
+  1155→                    ))}
+  1156→                  </div>
+  1157→                </div>
+  1158→              ) : null}
+  1159→              <div className="mt-2 max-w-lg">
+  1160→                <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+  1161→                  {t("suggestionsLabel")}
+  1162→                </p>
+  1163→                <div className="mt-2 flex flex-wrap justify-center gap-2">
+  1164→                  {suggestions.map((s) => (
+  1165→                    <button
+  1166→                      key={s}
+  1167→                      type="button"
+  1168→                      onClick={() => {
+  1169→                        ensureActiveSession(s);
+  1170→                        setMessages([{ id: nextId(), role: "user", content: s }]);
+  1171→                        void send(s, []);
+  1172→                      }}
+  1173→                      className="border-border bg-background hover:border-emerald-500/40 hover:bg-emerald-500/5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors"
+  1174→                    >
+  1175→                      {s}
+  1176→                    </button>
+  1177→                  ))}
+  1178→                </div>
+  1179→              </div>
+  1180→            </div>
+  1181→          ) : (
+  1182→            <>
+  1183→              {messages.map((m) =>
+  1184→                m.role === "user" ? (
+  1185→                  <div key={m.id} className="flex items-start justify-end gap-2.5">
+  1186→                    <div className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl rounded-ee-sm px-3.5 py-2.5 sm:max-w-[70%]">
+  1187→                      <p className="text-sm leading-relaxed whitespace-pre-wrap" dir="auto">
+  1188→                        {m.content}
+  1189→                      </p>
+  1190→                    </div>
+  1191→                    <div
+  1192→                      className="bg-primary text-primary-foreground mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full"
+  1193→                      aria-hidden="true"
+  1194→                    >
+  1195→                      <UserRound className="size-3.5" />
+  1196→                    </div>
+  1197→                  </div>
+  1198→                ) : (
+  1199→                  <div key={m.id} className="flex items-start gap-2.5">
+  1200→                    <div
+  1201→                      className={cn(
+  1202→                        "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border",
+  1203→                        m.failed
+  1204→                          ? "border-destructive/30 bg-destructive/10 text-destructive"
+  1205→                          : "border-emerald-500/20 from-emerald-500/15 to-teal-500/10 text-emerald-700 bg-gradient-to-br dark:text-emerald-400",
+  1206→                      )}
+  1207→                      aria-hidden="true"
+  1208→                    >
+  1209→                      {m.failed ? (
+  1210→                        <TriangleAlert className="size-3.5" />
+  1211→                      ) : (
+  1212→                        <Bot className="size-3.5" />
+  1213→                      )}
+  1214→                    </div>
+  1215→                    <div className="flex min-w-0 max-w-[88%] flex-col sm:max-w-[75%]">
+  1216→                      <div
+  1217→                        className={cn(
+  1218→                          "group relative w-fit rounded-2xl rounded-ss-sm border px-3.5 py-2.5",
+  1219→                          m.failed
+  1220→                            ? "border-destructive/30 bg-destructive/5"
+  1221→                            : "bg-muted/50",
+  1222→                        )}
+  1223→                      >
+  1224→                      {m.content.length === 0 && m.id === activeStreamId ? (
+  1225→                        <div className="flex items-center gap-1.5 px-1 py-1">
+  1226→                          {[0, 1, 2].map((i) => (
+  1227→                            <span
+  1228→                              key={i}
+  1229→                              className="bg-muted-foreground/60 size-1.5 animate-bounce rounded-full"
+  1230→                              style={{ animationDelay: `${i * 150}ms` }}
+  1231→                            />
+  1232→                          ))}
+  1233→                          <span className="text-muted-foreground ms-1.5 text-xs">{t("thinking")}</span>
+  1234→                        </div>
+  1235→                      ) : (
+  1236→                        <MarkdownLite text={m.content} streaming={m.id === activeStreamId} />
+  1237→                      )}
+  1238→                      {!m.failed && m.content.length > 0 && m.id !== activeStreamId ? (
+  1239→                        <button
+  1240→                          type="button"
+  1241→                          onClick={() => void copyAnswer(m)}
+  1242→                          aria-label={copiedId === m.id ? t("copied") : t("copy")}
+  1243→                          className="text-muted-foreground hover:text-foreground absolute end-2 bottom-1.5 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+  1244→                        >
+  1245→                          {copiedId === m.id ? (
+  1246→                            <Check className="size-3.5 text-emerald-600" aria-hidden="true" />
+  1247→                          ) : (
+  1248→                            <Copy className="size-3.5" aria-hidden="true" />
+  1249→                          )}
+  1250→                        </button>
+  1251→                      ) : null}
+  1252→                      </div>
+  1253→                      {!m.failed && m.meta ? (
+  1254→                        <CitationStrip meta={m.meta} locale={business.locale} />
+  1255→                      ) : null}
+  1256→                    </div>
+  1257→                  </div>
+  1258→                ),
+  1259→              )}
+  1260→
+  1261→              {waitingForFirstToken ? null : null}
+  1262→
+  1263→              {lastFailed ? (
+  1264→                <div className="ps-9.5">
+  1265→                  <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleRetry}>
+  1266→                    <RefreshCcw className="size-3.5" aria-hidden="true" />
+  1267→                    {tCommon("retry")}
+  1268→                  </Button>
+  1269→                </div>
+  1270→              ) : null}
+  1271→
+  1272→              {followUps.length > 0 ? (
+  1273→                <div
+  1274→                  className="animate-in fade-in slide-in-from-bottom-1 ps-9.5"
+  1275→                  data-testid="copilot-followups"
+  1276→                >
+  1277→                  <p className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-medium tracking-wide uppercase">
+  1278→                    <Sparkles className="size-3 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+  1279→                    {t("followUpsLabel")}
+  1280→                  </p>
+  1281→                  <div className="mt-1.5 flex flex-wrap gap-2">
+  1282→                    {followUps.map((key) => (
+  1283→                      <button
+  1284→                        key={key}
+  1285→                        type="button"
+  1286→                        onClick={() => askFollowUp(t(key))}
+  1287→                        className="border-emerald-500/25 bg-emerald-500/5 hover:border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors"
+  1288→                      >
+  1289→                        {t(key)}
+  1290→                      </button>
+  1291→                    ))}
+  1292→                  </div>
+  1293→                </div>
+  1294→              ) : null}
+  1295→            </>
+  1296→          )}
+  1297→        </div>
+  1298→
+  1299→        {/* Composer */}
+  1300→        <div className="border-t p-3 sm:p-4">
+  1301→          <div className="border-input focus-within:ring-ring/40 flex items-end gap-2 rounded-2xl border p-2 transition-shadow focus-within:ring-2 focus-within:ring-offset-0">
+  1302→            <textarea
+  1303→              ref={textareaRef}
+  1304→              value={input}
+  1305→              onChange={(e) => {
+  1306→                setInput(e.target.value);
+  1307→                e.target.style.height = "auto";
+  1308→                e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+  1309→              }}
+  1310→              onKeyDown={(e) => {
+  1311→                if (e.key === "Enter" && !e.shiftKey) {
+  1312→                  e.preventDefault();
+  1313→                  handleSubmit();
+  1314→                }
+  1315→              }}
+  1316→              rows={1}
+  1317→              maxLength={500}
+  1318→              placeholder={t("placeholder")}
+  1319→              aria-label={t("placeholder")}
+  1320→              disabled={pending}
+  1321→              className="placeholder:text-muted-foreground max-h-[120px] min-h-[38px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none disabled:opacity-50"
+  1322→            />
+  1323→            {pending ? (
+  1324→              <Button
+  1325→                size="icon"
+  1326→                variant="secondary"
+  1327→                className="border-destructive/30 text-destructive hover:bg-destructive/10 size-9 shrink-0 rounded-xl border"
+  1328→                onClick={handleStop}
+  1329→                aria-label={t("stop")}
+  1330→                title={t("stop")}
+  1331→              >
+  1332→                <Square className="size-3.5 fill-current" aria-hidden="true" />
+  1333→              </Button>
+  1334→            ) : (
+  1335→              <Button
+  1336→                size="icon"
+  1337→                className="size-9 shrink-0 rounded-xl"
+  1338→                onClick={handleSubmit}
+  1339→                disabled={input.trim().length === 0}
+  1340→                aria-label={t("send")}
+  1341→              >
+  1342→                <SendHorizontal className="size-4" aria-hidden="true" />
+  1343→              </Button>
+  1344→            )}
+  1345→          </div>
+  1346→          <p className="text-muted-foreground mt-2 flex items-center justify-between gap-2 text-[11px]">
+  1347→            <span className="truncate">{t("groundedNote")}</span>
+  1348→            <span className="shrink-0 tabular-nums" dir="ltr">
+  1349→              {input.length}/500
+  1350→            </span>
+  1351→          </p>
+  1352→        </div>
+  1353→      </Card>
+  1354→    </div>
+  1355→  );
+  1356→}
+  1357→

@@ -10,14 +10,6 @@ import { can, asRole, type Role } from "@/lib/rbac";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -37,6 +29,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
+import { DataTable, DataTableToolbar, Ltr } from "@/components/shared/data-table";
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
 import { fmtDate, fmtMoney, txKeys, useInvalidateFinance } from "../finance-shared/finance-kit";
 import { PaymentFormDialog } from "./payment-form-dialog";
@@ -82,7 +75,7 @@ export function PaymentsView({
 
   const dirQs = direction === "ALL" ? "" : `&direction=${direction}`;
   const qQs = search ? `&q=${encodeURIComponent(search)}` : "";
-  const { data, isLoading, error, refetch } = useQuery<PaymentsPage>({
+  const { data, isLoading, isFetching, error, refetch } = useQuery<PaymentsPage>({
     queryKey: [...txKeys.payments, page, direction, search],
     queryFn: () => api(`/api/v1/payments?page=${page}&pageSize=15${dirQs}${qQs}`),
   });
@@ -137,7 +130,7 @@ export function PaymentsView({
 
       <Card>
         <CardContent className="pt-6">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <DataTableToolbar>
             <SearchInput
               value={search}
               onChange={(v) => {
@@ -164,132 +157,155 @@ export function PaymentsView({
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </DataTableToolbar>
 
-          {isLoading ? (
-            <div className="space-y-2" aria-busy="true">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="bg-muted/50 h-12 animate-pulse rounded-md" />
-              ))}
-            </div>
-          ) : items.length === 0 && direction === "ALL" && !search ? (
-            <EmptyState
-              icon={ArrowDownToLine}
-              title={t("empty")}
-              description={t("emptyDesc")}
-              action={
-                canPay ? (
-                  <Button size="sm" variant="outline" onClick={() => setFormOpen(true)}>
-                    <Plus className="size-4" aria-hidden="true" />
-                    {t("recordPayment")}
-                  </Button>
-                ) : null
-              }
-            />
-          ) : items.length === 0 ? (
-            <EmptyState icon={ArrowDownToLine} title={t("emptyFiltered")} />
-          ) : (
-            <>
-              <div className="overflow-x-auto rounded-md border">
-                <Table>
-                  <TableHeader className="bg-muted/50">
-                    <TableRow>
-                      <TableHead>{t("colDate")}</TableHead>
-                      <TableHead>{t("colDirection")}</TableHead>
-                      <TableHead>{t("colTarget")}</TableHead>
-                      <TableHead className="hidden md:table-cell">{t("colMethod")}</TableHead>
-                      <TableHead className="text-end">{t("colAmount")}</TableHead>
-                      {canPay ? (
-                        <TableHead className="text-end">{tCommon("actions")}</TableHead>
-                      ) : null}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {items.map((p) => (
-                      <TableRow key={p.id} className="hover:bg-muted/40">
-                        <TableCell className="text-muted-foreground whitespace-nowrap text-sm">
-                          {fmtDate(business, p.paidAt)}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className={
-                              p.direction === "IN"
-                                ? "border-emerald-300/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                                : "border-rose-300/60 bg-rose-500/10 text-rose-700 dark:text-rose-400"
-                            }
-                          >
-                            {p.direction === "IN" ? t("dir_IN") : t("dir_OUT")}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="max-w-44 truncate text-sm" dir="auto">
-                          {partyLabel(p)}
-                          {p.note ? (
-                            <p className="text-muted-foreground truncate text-xs" dir="auto">{p.note}</p>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground hidden text-sm md:table-cell">
-                          {tPay(`methods.${p.method}`)}
-                        </TableCell>
-                        <TableCell
-                          className={`text-end font-medium tabular-nums ${
-                            p.direction === "IN"
-                              ? "text-emerald-700 dark:text-emerald-400"
-                              : "text-rose-700 dark:text-rose-400"
-                          }`}
-                          dir="ltr"
-                        >
-                          {p.direction === "IN" ? "+" : "−"}
-                          {fmtMoney(business, p.amountMinor)}
-                        </TableCell>
-                        {canPay ? (
-                          <TableCell className="text-end">
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="text-destructive hover:text-destructive size-8"
-                                  aria-label={tCommon("delete")}
-                                >
-                                  <Trash2 className="size-4" />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>{t("deleteTitle")}</AlertDialogTitle>
-                                  <AlertDialogDescription>{t("deleteDesc")}</AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                    onClick={() => deleteMutation.mutate(p.id)}
-                                  >
-                                    {tCommon("delete")}
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          </TableCell>
-                        ) : null}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <Pagination
-                page={page}
-                pageSize={15}
-                total={data?.total ?? 0}
-                onPage={setPage}
-                labels={{
-                  prev: tCommon("previous"),
-                  next: tCommon("next")
-                }}
-              />
-            </>
-          )}
+          <DataTable<PaymentRow>
+            ariaLabel={t("title")}
+            sortLocale={business.locale}
+            refreshing={isFetching && !isLoading}
+            columns={[
+              {
+                id: "date",
+                header: t("colDate"),
+                sortValue: (p) => p.paidAt,
+                defaultSortDir: "desc",
+                cell: (p) => (
+                  <span className="text-muted-foreground text-sm tabular-nums whitespace-nowrap">
+                    {fmtDate(business, p.paidAt)}
+                  </span>
+                ),
+              },
+              {
+                id: "direction",
+                header: t("colDirection"),
+                cell: (p) => (
+                  <Badge
+                    variant="outline"
+                    className={
+                      p.direction === "IN"
+                        ? "border-emerald-300/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                        : "border-rose-300/60 bg-rose-500/10 text-rose-700 dark:text-rose-400"
+                    }
+                  >
+                    {p.direction === "IN" ? t("dir_IN") : t("dir_OUT")}
+                  </Badge>
+                ),
+              },
+              {
+                id: "target",
+                header: t("colTarget"),
+                cell: (p) => (
+                  <div className="text-sm">
+                    <div className="max-w-44 truncate">{partyLabel(p)}</div>
+                    {p.note ? (
+                      <p className="text-muted-foreground max-w-44 truncate text-xs">
+                        {p.note}
+                      </p>
+                    ) : null}
+                  </div>
+                ),
+              },
+              {
+                id: "method",
+                header: t("colMethod"),
+                hideBelow: "md",
+                cell: (p) => (
+                  <span className="text-muted-foreground text-sm">
+                    {tPay(`methods.${p.method}`)}
+                  </span>
+                ),
+              },
+              {
+                id: "amount",
+                header: t("colAmount"),
+                align: "end",
+                sortValue: (p) => p.amountMinor,
+                cell: (p) => (
+                  <Ltr
+                    className={
+                      p.direction === "IN"
+                        ? "font-medium text-emerald-700 dark:text-emerald-400"
+                        : "font-medium text-rose-700 dark:text-rose-400"
+                    }
+                  >
+                    {p.direction === "IN" ? "+" : "−"}
+                    {fmtMoney(business, p.amountMinor)}
+                  </Ltr>
+                ),
+              },
+              ...(canPay
+                ? [
+                    {
+                      id: "actions",
+                      header: tCommon("actions"),
+                      align: "end" as const,
+                      cell: (p: PaymentRow) => (
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:text-destructive size-8"
+                              aria-label={tCommon("delete")}
+                            >
+                              <Trash2 className="size-4" aria-hidden="true" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>{t("deleteTitle")}</AlertDialogTitle>
+                              <AlertDialogDescription>{t("deleteDesc")}</AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                onClick={() => deleteMutation.mutate(p.id)}
+                              >
+                                {tCommon("delete")}
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+            rows={items}
+            getRowId={(p) => p.id}
+            loading={isLoading}
+            skeletonRows={6}
+            empty={
+              direction === "ALL" && !search ? (
+                <EmptyState
+                  icon={ArrowDownToLine}
+                  title={t("empty")}
+                  description={t("emptyDesc")}
+                  action={
+                    canPay ? (
+                      <Button size="sm" variant="outline" onClick={() => setFormOpen(true)}>
+                        <Plus className="size-4" aria-hidden="true" />
+                        {t("recordPayment")}
+                      </Button>
+                    ) : null
+                  }
+                />
+              ) : (
+                <EmptyState icon={ArrowDownToLine} title={t("emptyFiltered")} />
+              )
+            }
+          />
+          <Pagination
+            page={page}
+            pageSize={15}
+            total={data?.total ?? 0}
+            onPage={setPage}
+            labels={{
+              prev: tCommon("previous"),
+              next: tCommon("next")
+            }}
+          />
         </CardContent>
       </Card>
 

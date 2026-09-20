@@ -7,16 +7,9 @@ import { Banknote, HandCoins } from "lucide-react";
 import { can, asRole, type Role } from "@/lib/rbac";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
+import { DataTable, DataTableToolbar, Ltr } from "@/components/shared/data-table";
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
 import {
   FinanceStatusBadge,
@@ -55,7 +48,7 @@ export function BalancesView({
   const [page, setPage] = useState(1);
   const [payTarget, setPayTarget] = useState<PaymentTarget | null>(null);
 
-  const { data, isLoading, error, refetch } = useQuery<BalancesData>({
+  const { data, isLoading, isFetching, error, refetch } = useQuery<BalancesData>({
     queryKey: kind === "receivables" ? txKeys.receivables : txKeys.payables,
     // Shared fetch+transform — the shell prefetcher uses the same function,
     // so a warmed cache entry always has this exact shape.
@@ -128,77 +121,88 @@ export function BalancesView({
 
       <Card>
         <CardContent className="pt-6">
-          <div className="mb-4">
-            <SearchInput
-              value={q}
-              onChange={(v) => {
-                setQ(v);
-                setPage(1);
-              }}
-              placeholder={t("searchPlaceholder")}
-            />
-          </div>
-
-          {isLoading ? (
-            <div className="space-y-2" aria-busy="true">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="bg-muted/50 h-12 animate-pulse rounded-md" />
-              ))}
-            </div>
-          ) : error ? (
+          {error ? (
             <div className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm">
               {t("loadFailed")}{" "}
               <button className="underline" onClick={() => void refetch()}>
                 {tCommon("retry")}
               </button>
             </div>
-          ) : (data?.items ?? []).length === 0 ? (
-            <EmptyState icon={HandCoins} title={t("allSettled")} description={t("allSettledDesc")} />
-          ) : pageItems.length === 0 ? (
-            <EmptyState icon={HandCoins} title={tCommon("search")} description={t("searchPlaceholder")} />
           ) : (
             <>
-              <div className="overflow-x-auto rounded-md border">
-                <Table>
-                  <TableHeader className="bg-muted/50">
-                    <TableRow>
-                      <TableHead>{t("colRef")}</TableHead>
-                      <TableHead>{t("colParty")}</TableHead>
-                      <TableHead className="hidden sm:table-cell">{t("colDate")}</TableHead>
-                      <TableHead className="hidden text-end md:table-cell">{t("colAmount")}</TableHead>
-                      <TableHead className="text-end">{t("colBalance")}</TableHead>
-                      <TableHead>{t("colStatus")}</TableHead>
-                      {canPay ? (
-                        <TableHead className="text-end">{tCommon("actions")}</TableHead>
-                      ) : null}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pageItems.map((i) => (
-                      <TableRow key={i.id} className="hover:bg-muted/40">
-                        <TableCell className="font-medium" dir="ltr">
-                          {i.label1}
-                        </TableCell>
-                        <TableCell className="max-w-36 truncate" dir="auto">
-                          {i.label2 ?? <span className="text-muted-foreground">—</span>}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground hidden whitespace-nowrap text-sm sm:table-cell">
-                          {fmtDate(business, i.date)}
-                        </TableCell>
-                        <TableCell className="hidden text-end tabular-nums md:table-cell" dir="ltr">
-                          {fmtMoney(business, i.amountMinor)}
-                        </TableCell>
-                        <TableCell
-                          className="text-end font-medium text-amber-700 tabular-nums dark:text-amber-400"
-                          dir="ltr"
-                        >
-                          {fmtMoney(business, i.balanceMinor)}
-                        </TableCell>
-                        <TableCell>
-                          <FinanceStatusBadge status={i.status} />
-                        </TableCell>
-                        {canPay ? (
-                          <TableCell className="text-end">
+              <DataTableToolbar>
+                <SearchInput
+                  value={q}
+                  onChange={(v) => {
+                    setQ(v);
+                    setPage(1);
+                  }}
+                  placeholder={t("searchPlaceholder")}
+                />
+              </DataTableToolbar>
+
+              <DataTable<BalanceItem>
+                ariaLabel={t("title")}
+                sortLocale={business.locale}
+                refreshing={isFetching && !isLoading}
+                columns={[
+                  {
+                    id: "ref",
+                    header: t("colRef"),
+                    cell: (i) => <Ltr className="font-medium">{i.label1}</Ltr>,
+                  },
+                  {
+                    id: "party",
+                    header: t("colParty"),
+                    cell: (i) =>
+                      i.label2 ? (
+                        <div className="max-w-36 truncate">{i.label2}</div>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      ),
+                  },
+                  {
+                    id: "date",
+                    header: t("colDate"),
+                    hideBelow: "sm",
+                    sortValue: (i) => i.date,
+                    defaultSortDir: "desc",
+                    cell: (i) => (
+                      <span className="text-muted-foreground text-sm tabular-nums whitespace-nowrap">
+                        {fmtDate(business, i.date)}
+                      </span>
+                    ),
+                  },
+                  {
+                    id: "amount",
+                    header: t("colAmount"),
+                    align: "end",
+                    hideBelow: "md",
+                    cell: (i) => <Ltr>{fmtMoney(business, i.amountMinor)}</Ltr>,
+                  },
+                  {
+                    id: "balance",
+                    header: t("colBalance"),
+                    align: "end",
+                    sortValue: (i) => i.balanceMinor,
+                    cell: (i) => (
+                      <Ltr className="font-medium text-amber-700 dark:text-amber-400">
+                        {fmtMoney(business, i.balanceMinor)}
+                      </Ltr>
+                    ),
+                  },
+                  {
+                    id: "status",
+                    header: t("colStatus"),
+                    cell: (i) => <FinanceStatusBadge status={i.status} />,
+                  },
+                  ...(canPay
+                    ? [
+                        {
+                          id: "actions",
+                          header: tCommon("actions"),
+                          align: "end" as const,
+                          cell: (i: BalanceItem) => (
                             <Button
                               variant="outline"
                               size="sm"
@@ -208,13 +212,31 @@ export function BalancesView({
                               <Banknote className="size-4" aria-hidden="true" />
                               {t("pay")}
                             </Button>
-                          </TableCell>
-                        ) : null}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                          ),
+                        },
+                      ]
+                    : []),
+                ]}
+                rows={pageItems}
+                getRowId={(i) => i.id}
+                loading={isLoading}
+                skeletonRows={5}
+                empty={
+                  (data?.items ?? []).length === 0 ? (
+                    <EmptyState
+                      icon={HandCoins}
+                      title={t("allSettled")}
+                      description={t("allSettledDesc")}
+                    />
+                  ) : (
+                    <EmptyState
+                      icon={HandCoins}
+                      title={tCommon("search")}
+                      description={t("searchPlaceholder")}
+                    />
+                  )
+                }
+              />
               <Pagination
                 page={page}
                 pageSize={pageSize}

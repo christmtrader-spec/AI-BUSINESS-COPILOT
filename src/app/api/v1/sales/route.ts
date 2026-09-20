@@ -12,6 +12,7 @@ import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { listParams, saleCreateSchema, statusParam } from "@/lib/schemas";
 import { formatInvoiceNumber } from "@/lib/finance";
+import { localMonthKey, monthWindow } from "@/lib/reports";
 
 export const dynamic = "force-dynamic";
 
@@ -22,11 +23,23 @@ export const GET = route(async (req: NextRequest) => {
   const { q, page, pageSize } = listParams(new URL(req.url));
   const status = statusParam(new URL(req.url));
 
+  // Optional month drill-down (?month=YYYY-MM): "Open in Sales" from the
+  // reports month dialog. Uses the SAME business-timezone month bucket as
+  // the MoM table — the dialog figures and this list can never disagree.
+  const monthRaw = new URL(req.url).searchParams.get("month");
+  const month = monthRaw ? monthWindow(monthRaw) ? monthRaw : null : null;
+  if (monthRaw && !month) {
+    throw new ApiError(422, "VALIDATION_ERROR", "Invalid month. Use YYYY-MM.");
+  }
+
   const numberEq = /^\d+$/.test(q) ? Number(q) : null;
   const where = {
     businessId: ctx.businessId,
     deletedAt: null,
     ...(status ? { status } : {}),
+    ...(month
+      ? { issueDate: { gte: monthWindow(month)!.from, lt: monthWindow(month)!.until } }
+      : {}),
     ...(q
       ? {
           OR: [
@@ -38,38 +51,72 @@ export const GET = route(async (req: NextRequest) => {
       : {}),
   };
 
-  const [sales, total] = await Promise.all([
-    db.sale.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      include: { customer: { select: { name: true } } },
-    }),
-    db.sale.count({ where }),
-  ]);
+  // Without a month filter: normal DB pagination. With one: the UTC window
+  // is intentionally widened (±2 days) for timezone safety, so rows are
+  // re-filtered by the authoritative local month key and paginated in
+  // memory — identical bucketing to buildMonthDetail, tiny datasets.
+  if (!month) {
+    const [sales, total] = await Promise.all([
+      db.sale.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: { customer: { select: { name: true } } },
+      }),
+      db.sale.count({ where }),
+    ]);
+    return ok({ items: sales.map(toRow), total, page, pageSize });
+  }
 
-  return ok({
-    items: sales.map((s) => ({
-      id: s.id,
-      number: s.number,
-      customerId: s.customerId,
-      customerName: s.customer?.name ?? null,
-      issueDate: s.issueDate.toISOString(),
-      subtotalMinor: s.subtotalMinor,
-      discountMinor: s.discountMinor,
-      totalMinor: s.totalMinor,
-      paidMinor: s.paidMinor,
-      status: s.status,
-      balanceMinor: s.totalMinor - s.paidMinor,
-      note: s.note,
-      createdAt: s.createdAt.toISOString(),
-    })),
-    total,
-    page,
-    pageSize,
+  const business = await db.business.findUnique({
+    where: { id: ctx.businessId },
+    select: { timezone: true },
   });
+  const tz = business?.timezone || "UTC";
+  const all = await db.sale.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    include: { customer: { select: { name: true } } },
+  });
+  const inMonth = all.filter((s) => localMonthKey(s.issueDate, tz) === month);
+  const total = inMonth.length;
+  const pageRows = inMonth.slice((page - 1) * pageSize, page * pageSize);
+  return ok({ items: pageRows.map(toRow), total, page, pageSize });
 });
+
+type SaleRowInput = {
+  id: string;
+  number: number;
+  customerId: string | null;
+  issueDate: Date;
+  subtotalMinor: number;
+  discountMinor: number;
+  totalMinor: number;
+  paidMinor: number;
+  status: string;
+  note: string | null;
+  createdAt: Date;
+  customer: { name: string } | null;
+};
+
+function toRow(s: SaleRowInput) {
+  return {
+    id: s.id,
+    number: s.number,
+    customerId: s.customerId,
+    customerName: s.customer?.name ?? null,
+    issueDate: s.issueDate.toISOString(),
+    subtotalMinor: s.subtotalMinor,
+    discountMinor: s.discountMinor,
+    totalMinor: s.totalMinor,
+    paidMinor: s.paidMinor,
+    status: s.status,
+    balanceMinor: s.totalMinor - s.paidMinor,
+    note: s.note,
+    createdAt: s.createdAt.toISOString(),
+  };
+}
 
 export const POST = route(async (req: NextRequest) => {
   const ctx = await getAuthContext(req);

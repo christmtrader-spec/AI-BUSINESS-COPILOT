@@ -1,14 +1,36 @@
 /**
- * Minimal CSV export helpers (client-side). Values are escaped per
- * RFC 4180; a BOM is prepended so Excel renders Persian text correctly.
+ * Minimal CSV export helpers (client-safe, server-safe). Values are escaped
+ * per RFC 4180; a BOM is prepended so Excel renders Persian text correctly.
  */
 
-function escapeCell(value: string | number | null | undefined): string {
+/** Plain numeric cells (incl. negatives) are allowed through as-is. */
+const PLAIN_NUMBER = /^-?\d+(\.\d+)?$/;
+
+/**
+ * CSV formula-injection guard (OWASP): cells that spreadsheet apps execute
+ * as formulas (=, +, @, tab, CR, and non-numeric "-" leads) get a leading
+ * apostrophe so they render as text. Negative NUMBERS stay untouched so
+ * accounting exports remain numeric.
+ */
+export function csvCell(value: string | number | null | undefined): string {
   const s = value == null ? "" : String(value);
-  if (/[",\n\r]/.test(s)) {
-    return `"${s.replace(/"/g, '""')}"`;
+  let guarded = s;
+  if (s !== "") {
+    const first = s[0];
+    if (first === "=" || first === "+" || first === "@" || first === "\t" || first === "\r") {
+      guarded = `'${s}`;
+    } else if (first === "-" && !PLAIN_NUMBER.test(s)) {
+      guarded = `'${s}`;
+    }
   }
-  return s;
+  if (/[",\n\r]/.test(guarded)) {
+    return `"${guarded.replace(/"/g, '""')}"`;
+  }
+  return guarded;
+}
+
+function escapeCell(value: string | number | null | undefined): string {
+  return csvCell(value);
 }
 
 export function toCsv(headers: string[], rows: Array<Array<string | number | null | undefined>>): string {

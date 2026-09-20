@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { useSession, signIn } from "next-auth/react";
+import { signIn, signOut, useSession } from "next-auth/react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { Loader2, LogIn, ShieldCheck, Sparkles, UserPlus, TrendingUp } from "lucide-react";
-import { toast } from "@/hooks/use-toast";
+import { KeyRound, Loader2, LogIn, MailCheck, ShieldCheck, Sparkles, UserPlus, TrendingUp } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
+import { useAppStore } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,9 +35,297 @@ function mapApiError(err: unknown, t: AuthErrors): string {
   return t.generic;
 }
 
+/** Shared styling for inline auth error boxes (role="alert"). */
+const errorBoxClass =
+  "text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm";
+
+/**
+ * "Forgot password" flow — requests a reset link. The server ALWAYS answers
+ * 200 (never confirms whether the account exists), so the success state is a
+ * generic reassurance card, never a claim about the account.
+ */
+function ForgotPasswordCard({ onBackToSignIn }: { onBackToSignIn: () => void }) {
+  const t = useTranslations("auth");
+  const [email, setEmail] = useState("");
+  const [sentMessage, setSentMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const requestMutation = useMutation({
+    mutationFn: async () =>
+      api<{ message?: string }>("/api/v1/auth/password-reset/request", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      }),
+    onSuccess: (data) => {
+      setError(null);
+      // Generic by design — never claim whether the account exists.
+      setSentMessage(data?.message || t("resetSentGeneric"));
+    },
+    onError: (err) => {
+      if (err instanceof ApiClientError) {
+        if (err.status === 0) setError(t("errors.network"));
+        else if (err.code === "RESET_DELIVERY_UNAVAILABLE") setError(t("errors.resetUnavailable"));
+        else if (err.code === "RATE_LIMITED") setError(t("errors.rateLimited"));
+        else setError(t("errors.generic"));
+      } else {
+        setError(t("errors.generic"));
+      }
+    },
+  });
+
+  return (
+    <Card className="w-full max-w-md shadow-sm">
+      <CardHeader className="space-y-1.5">
+        <CardTitle className="text-2xl">{t("forgotTitle")}</CardTitle>
+        <CardDescription>{t("forgotSubtitle")}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {sentMessage ? (
+          <div className="space-y-5 py-2 text-center">
+            <div
+              className="bg-primary/10 mx-auto flex size-12 items-center justify-center rounded-full"
+              aria-hidden="true"
+            >
+              <MailCheck className="text-primary size-6" />
+            </div>
+            <div className="space-y-2">
+              <p className="text-foreground text-sm" role="status">
+                {sentMessage}
+              </p>
+              <p className="text-muted-foreground text-xs">{t("resetLinkExpiryNote")}</p>
+            </div>
+            <Button type="button" variant="outline" className="w-full" onClick={onBackToSignIn}>
+              <LogIn className="size-4" aria-hidden="true" />
+              {t("backToSignIn")}
+            </Button>
+          </div>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setError(null);
+              requestMutation.mutate();
+            }}
+            className="space-y-4"
+            noValidate
+          >
+            <div className="space-y-2">
+              <Label htmlFor="forgot-email">{t("email")}</Label>
+              <Input
+                id="forgot-email"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                dir="ltr"
+                placeholder={t("emailPlaceholder")}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
+
+            {error ? (
+              <p className={errorBoxClass} role="alert">
+                {error}
+              </p>
+            ) : null}
+
+            <Button type="submit" className="w-full" disabled={requestMutation.isPending}>
+              {requestMutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <MailCheck className="size-4" aria-hidden="true" />
+              )}
+              {t("sendResetLink")}
+            </Button>
+
+            <p className="text-center text-sm">
+              <button
+                type="button"
+                className="text-primary font-medium underline-offset-4 hover:underline"
+                onClick={onBackToSignIn}
+              >
+                {t("backToSignIn")}
+              </button>
+            </p>
+
+            <div className="bg-muted/50 text-muted-foreground rounded-md px-3 py-2 text-xs">
+              <ShieldCheck className="me-1.5 inline size-3.5" aria-hidden="true" />
+              {t("privacyNote")}
+            </div>
+          </form>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * "Reset password" flow — consumes a single-use token from the deep link
+ * (#/reset-password/<token>). On success every previous session is dead:
+ * any stale local session is cleared immediately and the user is sent to
+ * sign-in via the success card button.
+ */
+function ResetPasswordCard({
+  token,
+  onGoToSignIn,
+  onRequestNewLink,
+}: {
+  token: string;
+  onGoToSignIn: () => void;
+  onRequestNewLink: () => void;
+}) {
+  const t = useTranslations("auth");
+  const queryClient = useQueryClient();
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [tokenInvalid, setTokenInvalid] = useState(false);
+  const [doneMessage, setDoneMessage] = useState<string | null>(null);
+
+  const resetMutation = useMutation({
+    mutationFn: async () =>
+      api<{ message?: string }>("/api/v1/auth/password-reset/confirm", {
+        method: "POST",
+        body: JSON.stringify({ token, newPassword, confirmPassword }),
+      }),
+    onSuccess: (data) => {
+      setError(null);
+      setTokenInvalid(false);
+      setDoneMessage(data?.message || t("resetSuccessTitle"));
+      // The server killed every session for this user — clear any stale
+      // local one right away (the success card below routes to sign-in).
+      void signOut({ redirect: false });
+      void queryClient.invalidateQueries();
+    },
+    onError: (err) => {
+      if (err instanceof ApiClientError) {
+        if (err.code === "INVALID_RESET_TOKEN") {
+          setTokenInvalid(true);
+          setError(null);
+        } else if (err.status === 0) {
+          setTokenInvalid(false);
+          setError(t("errors.network"));
+        } else if (err.code === "RATE_LIMITED") {
+          setTokenInvalid(false);
+          setError(t("errors.rateLimited"));
+        } else {
+          setTokenInvalid(false);
+          setError(t("errors.generic"));
+        }
+      } else {
+        setTokenInvalid(false);
+        setError(t("errors.generic"));
+      }
+    },
+  });
+
+  return (
+    <Card className="w-full max-w-md shadow-sm">
+      <CardHeader className="space-y-1.5">
+        <CardTitle className="text-2xl">
+          {doneMessage ? t("resetSuccessTitle") : t("resetTitle")}
+        </CardTitle>
+        {doneMessage ? null : <CardDescription>{t("resetSubtitle")}</CardDescription>}
+      </CardHeader>
+      <CardContent>
+        {doneMessage ? (
+          <div className="space-y-5 py-2 text-center">
+            <div
+              className="bg-primary/10 mx-auto flex size-12 items-center justify-center rounded-full"
+              aria-hidden="true"
+            >
+              <KeyRound className="text-primary size-6" />
+            </div>
+            <p className="text-foreground text-sm" role="status">
+              {doneMessage}
+            </p>
+            <Button type="button" className="w-full" onClick={onGoToSignIn}>
+              <LogIn className="size-4" aria-hidden="true" />
+              {t("goToSignIn")}
+            </Button>
+          </div>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setError(null);
+              setTokenInvalid(false);
+              if (newPassword !== confirmPassword) {
+                setError(t("errors.passwordMismatch"));
+                return;
+              }
+              resetMutation.mutate();
+            }}
+            className="space-y-4"
+            noValidate
+          >
+            <div className="space-y-2">
+              <Label htmlFor="reset-password">{t("newPassword")}</Label>
+              <Input
+                id="reset-password"
+                type="password"
+                autoComplete="new-password"
+                dir="ltr"
+                placeholder={t("passwordPlaceholder")}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                required
+                minLength={8}
+              />
+              <p className="text-muted-foreground text-xs">{t("passwordHint")}</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="reset-confirm">{t("confirmNewPassword")}</Label>
+              <Input
+                id="reset-confirm"
+                type="password"
+                autoComplete="new-password"
+                dir="ltr"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+              />
+            </div>
+
+            {tokenInvalid ? (
+              <div className={errorBoxClass} role="alert">
+                <p>{t("errors.invalidResetToken")}</p>
+                <button
+                  type="button"
+                  className="text-primary mt-1.5 font-medium underline-offset-4 hover:underline"
+                  onClick={onRequestNewLink}
+                >
+                  {t("sendResetLink")}
+                </button>
+              </div>
+            ) : error ? (
+              <p className={errorBoxClass} role="alert">
+                {error}
+              </p>
+            ) : null}
+
+            <Button type="submit" className="w-full" disabled={resetMutation.isPending}>
+              {resetMutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <KeyRound className="size-4" aria-hidden="true" />
+              )}
+              {t("resetSubmit")}
+            </Button>
+          </form>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function AuthView() {
   const t = useTranslations("auth");
   const tCommon = useTranslations("common");
+  const view = useAppStore((s) => s.view);
+  const navigate = useAppStore((s) => s.navigate);
   // next-intl's t is a function — nested property access (t.errors) is
   // undefined at runtime, which crashed the onError handlers. Build the
   // message map with explicit t() calls instead (BUGFIX r8).
@@ -103,6 +391,14 @@ export function AuthView() {
 
   const busy = signInMutation.isPending || registerMutation.isPending || status === "loading";
 
+  // Store-driven mode switches (hash updates): password flows always route
+  // through navigate() so deep links, back/forward and refresh all work.
+  function goBackToSignIn() {
+    setMode("signin");
+    setError(null);
+    navigate({ kind: "dashboard" });
+  }
+
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -134,14 +430,16 @@ export function AuthView() {
             <img src="/logo.svg" alt="" className="size-6" aria-hidden="true" />
           </div>
           <div>
-            <p className="text-lg font-semibold tracking-tight">{tCommon("appName")}</p>
+            <p className="text-lg font-semibold tracking-tight gradient-text">
+              {tCommon("appName")}
+            </p>
             <p className="text-muted-foreground text-xs">{tCommon("tagline")}</p>
           </div>
         </div>
 
         <div className="relative mx-auto w-full max-w-md space-y-8 py-12">
           <div className="space-y-3">
-            <h2 className="text-3xl font-semibold tracking-tight lg:text-4xl">
+            <h2 className="text-3xl font-semibold tracking-tight gradient-text gradient-shimmer lg:text-4xl">
               {tCommon("tagline")}
             </h2>
             <p className="text-muted-foreground text-base">
@@ -153,7 +451,7 @@ export function AuthView() {
             {[
               { icon: ShieldCheck, text: "Per-business data isolation with server-enforced roles" },
               { icon: TrendingUp, text: "Deterministic financial math — integer minor units, never floats" },
-              { icon: Sparkles, text: "AI copilot that never invents your numbers (Phase 05)" },
+              { icon: Sparkles, text: "AI copilot that calculates from your recorded business data" },
             ].map(({ icon: Icon, text }) => (
               <li key={text} className="flex items-center gap-3">
                 <span className="bg-background text-primary flex size-9 shrink-0 items-center justify-center rounded-lg border shadow-sm">
@@ -170,8 +468,21 @@ export function AuthView() {
         </p>
       </div>
 
-      {/* Form panel */}
+      {/* Form panel — password flows (forgot/reset) swap the card; the
+          sign-in/sign-up card is unchanged apart from the reset link. */}
       <div className="flex flex-1 items-center justify-center p-6 lg:p-10">
+        {view.kind === "forgot-password" ? (
+          <ForgotPasswordCard onBackToSignIn={goBackToSignIn} />
+        ) : view.kind === "reset-password" ? (
+          <ResetPasswordCard
+            token={view.token}
+            onGoToSignIn={goBackToSignIn}
+            onRequestNewLink={() => {
+              setError(null);
+              navigate({ kind: "forgot-password" });
+            }}
+          />
+        ) : (
         <Card className="w-full max-w-md shadow-sm">
           <CardHeader className="space-y-1.5">
             <CardTitle className="text-2xl">
@@ -230,6 +541,21 @@ export function AuthView() {
                   <p className="text-muted-foreground text-xs">{t("passwordHint")}</p>
                 ) : null}
               </div>
+
+              {mode === "signin" ? (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    className="text-primary text-sm underline-offset-4 hover:underline"
+                    onClick={() => {
+                      setError(null);
+                      navigate({ kind: "forgot-password" });
+                    }}
+                  >
+                    {t("forgotPassword")}
+                  </button>
+                </div>
+              ) : null}
 
               {mode === "signup" ? (
                 <div className="space-y-2">
@@ -290,6 +616,7 @@ export function AuthView() {
             </form>
           </CardContent>
         </Card>
+        )}
       </div>
     </div>
   );

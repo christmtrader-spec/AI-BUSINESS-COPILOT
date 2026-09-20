@@ -158,6 +158,7 @@ async function main() {
     ["receivables", `/api/v1/receivables`],
     ["payables", `/api/v1/payables`],
     ["reports/summary", `/api/v1/reports/summary?days=30`],
+    ["reports/monthly", `/api/v1/reports/monthly?months=6`],
     ["audit", `/api/v1/audit?take=50`],
     ["members", `/api/v1/businesses/${BID}/members`],
     ["business", `/api/v1/businesses/${BID}`],
@@ -493,7 +494,565 @@ async function main() {
     }
   }
 
+  // 9. INVITE LINKS — self-contained lifecycle on a throwaway business:
+  // create business → mint invite → OWNER-role rejected → preview/accept
+  // as a FRESHLY registered user → membership created → re-accept 410 →
+  // delete the throwaway business (cascades invite + membership away).
+  {
+    const created = await api(sara, "/api/v1/businesses", undefined, {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Smoke Invite Business",
+        currencyCode: "USD",
+        locale: "en",
+        timezone: "UTC",
+      }),
+    });
+    const invBiz = created.body?.data?.business;
+    record(
+      "invites: create throwaway business",
+      (created.status === 200 || created.status === 201) && !!invBiz?.id,
+      `status ${created.status}`,
+    );
+
+    if (invBiz?.id) {
+      const IB = invBiz.id as string;
+
+      // OWNER role must never be mintable through an invite.
+      const ownerInvite = await api(sara, `/api/v1/businesses/${IB}/invites`, IB, {
+        method: "POST",
+        body: JSON.stringify({ role: "OWNER", expiresInDays: 7 }),
+      });
+      record(
+        "invites: OWNER role rejected (422 ROLE_NOT_INVITABLE)",
+        ownerInvite.status === 422,
+        `status ${ownerInvite.status}`,
+      );
+
+      // Mint a real invite (24h expiry).
+      const mint = await api(sara, `/api/v1/businesses/${IB}/invites`, IB, {
+        method: "POST",
+        body: JSON.stringify({ role: "MANAGER", expiresInDays: 1 }),
+      });
+      const token = mint.body?.data?.token as string | undefined;
+      record(
+        "invites: mint link (201, 48-char token, expiry)",
+        mint.status === 201 && typeof token === "string" && token.length >= 40,
+        `status ${mint.status}, len ${token?.length}`,
+      );
+
+      // List must NOT leak the full token.
+      const listInv = await api(sara, `/api/v1/businesses/${IB}/invites`, IB);
+      const leaksToken =
+        listInv.status === 200 && JSON.stringify(listInv.body?.data ?? {}).includes(token ?? "\\u0000");
+      record(
+        "invites: list never leaks full token",
+        listInv.status === 200 && !leaksToken,
+        `items ${Array.isArray(listInv.body?.data) ? listInv.body.data.length : "?"}`,
+      );
+
+      if (token) {
+        // Unknown token → 404 (never a stack trace).
+        const badToken = await api(sara, "/api/v1/invites/not-a-real-token");
+        record(
+          "invites: unknown token 404",
+          badToken.status === 404 && badToken.body?.error?.code === "NOT_FOUND",
+          `status ${badToken.status}`,
+        );
+
+        // Fresh user registers (no business), signs in, previews + accepts.
+        const stamp = Date.now();
+        const email = `inv${stamp}@t.dev`;
+        const reg = await fetch(`${BASE}/api/v1/auth/register`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: "Smoke Invitee", email, password: PASS }),
+        });
+        record("invites: register invitee (201)", reg.status === 201, `status ${reg.status}`);
+
+        const invitee = await login(email);
+
+        const preview = await api(invitee, `/api/v1/invites/${token}`);
+        record(
+          "invites: preview (PENDING, not member)",
+          preview.status === 200 &&
+            preview.body?.data?.status === "PENDING" &&
+            preview.body?.data?.callerIsMember === false &&
+            preview.body?.data?.role === "MANAGER",
+          `status ${preview.status}`,
+        );
+
+        const accept = await api(invitee, `/api/v1/invites/${token}`, undefined, {
+          method: "POST",
+        });
+        record(
+          "invites: accept (201, business + role)",
+          accept.status === 201 &&
+            accept.body?.data?.business?.id === IB &&
+            accept.body?.data?.role === "MANAGER",
+          `status ${accept.status}`,
+        );
+
+        // Re-accept → 410 INVITE_ACCEPTED (one-time token).
+        const reAccept = await api(invitee, `/api/v1/invites/${token}`, undefined, {
+          method: "POST",
+        });
+        record(
+          "invites: re-accept blocked (410)",
+          reAccept.status === 410 && reAccept.body?.error?.code === "INVITE_ACCEPTED",
+          `status ${reAccept.status}`,
+        );
+
+        // Membership row really exists with the invited role.
+        const members = await api(invitee, `/api/v1/businesses/${IB}/members`, IB);
+        const rows = Array.isArray(members.body?.data) ? members.body.data : [];
+        record(
+          "invites: membership row created (MANAGER)",
+          members.status === 200 && rows.some((m: { role?: string; user?: { email?: string } }) => m.role === "MANAGER" && m.user?.email === email),
+          `members ${rows.length}`,
+        );
+
+        // VIEWER (eve) must NOT be able to mint invites.
+        const eveMint = await api(eve, `/api/v1/businesses/${BID}/invites`, BID, {
+          method: "POST",
+          body: JSON.stringify({ role: "VIEWER", expiresInDays: 7 }),
+        });
+        record(
+          "RBAC: VIEWER blocked from minting invites",
+          eveMint.status === 403,
+          `status ${eveMint.status}`,
+        );
+      }
+
+      // Cleanup: delete the throwaway business (cascades invite + member).
+      const delInvBiz = await api(sara, `/api/v1/businesses/${IB}`, IB, {
+        method: "DELETE",
+        body: JSON.stringify({ confirmName: "Smoke Invite Business" }),
+      });
+      record(
+        "invites: cleanup delete throwaway business",
+        delInvBiz.status === 200,
+        `status ${delInvBiz.status}`,
+      );
+    }
+  }
+
+  // 10. MONTH DETAIL — drill-down matches the monthly bucket discipline.
+  {
+    const monthly = await api(sara, "/api/v1/reports/monthly?months=6", BID);
+    const series = monthly.body?.data?.series;
+    const firstMonth = Array.isArray(series) ? series[0]?.month : null;
+    if (typeof firstMonth === "string") {
+      const detail = await api(sara, `/api/v1/reports/monthly/${firstMonth}`, BID);
+      const d = detail.body?.data;
+      const consistent =
+        detail.status === 200 &&
+        d?.month === firstMonth &&
+        typeof d?.totals?.revenueMinor === "number" &&
+        Number.isInteger(d.totals.revenueMinor) &&
+        Array.isArray(d.sales) &&
+        Array.isArray(d.expenses);
+      record(
+        "month detail: totals integer + lists present",
+        consistent,
+        `month ${firstMonth}`,
+      );
+
+      const bad = await api(sara, "/api/v1/reports/monthly/9999-99", BID);
+      record(
+        "month detail: invalid key rejected",
+        bad.status === 404 || bad.status === 422,
+        `status ${bad.status}`,
+      );
+    } else {
+      record("month detail: monthly series available", false, "no months returned");
+    }
+  }
+
+  // 11. COPILOT TRANSCRIPT PERSISTENCE (Phase 07) — lifecycle, caps, RBAC,
+  //     per-user scoping, on a THROWAWAY business so Sara's real transcripts
+  //     are never touched.
+  {
+    const created = await api(sara, "/api/v1/businesses", undefined, {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Smoke Chat Business",
+        currencyCode: "USD",
+        locale: "en",
+        timezone: "UTC",
+      }),
+    });
+    const chatBiz = created.body?.data?.business;
+    record(
+      "chat: create throwaway business",
+      (created.status === 200 || created.status === 201) && !!chatBiz?.id,
+      `status ${created.status}`,
+    );
+
+    if (chatBiz?.id) {
+      const CB = chatBiz.id as string;
+      const SID = "s-smoketest000000"; // valid client-format session id
+
+      // First append AUTO-CREATES the session (with title).
+      const m1 = await api(sara, `/api/v1/copilot/sessions/${SID}/messages`, CB, {
+        method: "POST",
+        body: JSON.stringify({
+          role: "user",
+          content: "How did sales do?",
+          title: "How did sales do?",
+        }),
+      });
+      record(
+        "chat: append user message (201, creates session)",
+        m1.status === 201 && typeof m1.body?.data?.message?.id === "string",
+        `status ${m1.status}`,
+      );
+
+      const m2 = await api(sara, `/api/v1/copilot/sessions/${SID}/messages`, CB, {
+        method: "POST",
+        body: JSON.stringify({
+          role: "assistant",
+          content: "Revenue was computed from your records.",
+          meta: { days: 30, sections: ["kpis"], counts: { sales: 1 } },
+        }),
+      });
+      record(
+        "chat: append assistant message with meta (201)",
+        m2.status === 201,
+        `status ${m2.status}`,
+      );
+
+      // List returns the session with both messages + title + parsed meta.
+      const list = await api(sara, "/api/v1/copilot/sessions", CB);
+      const sessions = Array.isArray(list.body?.data?.sessions)
+        ? list.body.data.sessions
+        : [];
+      const found = sessions.find((s: { id?: string }) => s.id === SID);
+      const metaOk =
+        !!found?.messages?.[1]?.meta &&
+        typeof found.messages[1].meta === "object" &&
+        found.messages[1].meta.days === 30;
+      record(
+        "chat: list returns session (title, 2 messages, meta parsed)",
+        list.status === 200 &&
+          sessions.length === 1 &&
+          found?.title === "How did sales do?" &&
+          found?.messages?.length === 2 &&
+          metaOk,
+        `status ${list.status}, sessions ${sessions.length}`,
+      );
+
+      // r12 — PATCH rename: title changes, titleEdited flag set, auto-title
+      // must never override it afterwards.
+      const rename = await api(sara, `/api/v1/copilot/sessions/${SID}`, CB, {
+        method: "PATCH",
+        body: JSON.stringify({ title: "My renamed Q&A" }),
+      });
+      record(
+        "chat: rename session (200, titleEdited)",
+        rename.status === 200 &&
+          rename.body?.data?.session?.title === "My renamed Q&A" &&
+          rename.body?.data?.session?.titleEdited === true,
+        `status ${rename.status}`,
+      );
+
+      // r12 — PATCH pin: pinned flag returned; list mirrors it.
+      const pin = await api(sara, `/api/v1/copilot/sessions/${SID}`, CB, {
+        method: "PATCH",
+        body: JSON.stringify({ pinned: true }),
+      });
+      const listPinned = await api(sara, "/api/v1/copilot/sessions", CB);
+      const pinnedFound = (listPinned.body?.data?.sessions ?? []).find(
+        (s: { id?: string }) => s.id === SID,
+      );
+      record(
+        "chat: pin session (200, list shows pinned)",
+        pin.status === 200 &&
+          pin.body?.data?.session?.pinned === true &&
+          pinnedFound?.pinned === true,
+        `status ${pin.status}, pinned ${String(pinnedFound?.pinned)}`,
+      );
+
+      // Append AFTER rename — the user-set title must survive (no auto-takeover).
+      await api(sara, `/api/v1/copilot/sessions/${SID}/messages`, CB, {
+        method: "POST",
+        body: JSON.stringify({ role: "user", content: "One more question" }),
+      });
+      const listAfterAppend = await api(sara, "/api/v1/copilot/sessions", CB);
+      const afterFound = (listAfterAppend.body?.data?.sessions ?? []).find(
+        (s: { id?: string }) => s.id === SID,
+      );
+      record(
+        "chat: renamed title survives later appends",
+        afterFound?.title === "My renamed Q&A" && afterFound?.messages?.length === 3,
+        `title ${String(afterFound?.title)}, msgs ${String(afterFound?.messages?.length)}`,
+      );
+
+      // Validation negatives.
+      const patchEmpty = await api(sara, `/api/v1/copilot/sessions/${SID}`, CB, {
+        method: "PATCH",
+        body: JSON.stringify({}),
+      });
+      record(
+        "chat: PATCH with nothing to update rejected (422)",
+        patchEmpty.status === 422,
+        `status ${patchEmpty.status}`,
+      );
+      const patchEmptyTitle = await api(sara, `/api/v1/copilot/sessions/${SID}`, CB, {
+        method: "PATCH",
+        body: JSON.stringify({ title: "   " }),
+      });
+      record(
+        "chat: PATCH blank title rejected (422)",
+        patchEmptyTitle.status === 422,
+        `status ${patchEmptyTitle.status}`,
+      );
+      const patchBad = await api(sara, `/api/v1/copilot/sessions/x`, CB, {
+        method: "PATCH",
+        body: JSON.stringify({ pinned: true }),
+      });
+      record(
+        "chat: PATCH malformed session id rejected (422)",
+        patchBad.status === 422,
+        `status ${patchBad.status}`,
+      );
+      const aliPatch = await api(ali, `/api/v1/copilot/sessions/${SID}`, CB, {
+        method: "PATCH",
+        body: JSON.stringify({ pinned: true }),
+      });
+      record(
+        "chat: non-member admin blocked from PATCH (403)",
+        aliPatch.status === 403,
+        `status ${aliPatch.status}`,
+      );
+
+      // Per-user scoping: ADMIN ali (same app, NOT a member of this
+      // business) can never see or write Sara's transcripts.
+      const aliList = await api(ali, "/api/v1/copilot/sessions", CB);
+      record(
+        "chat: non-member admin blocked from listing (403)",
+        aliList.status === 403,
+        `status ${aliList.status}`,
+      );
+      const aliAppend = await api(ali, `/api/v1/copilot/sessions/${SID}/messages`, CB, {
+        method: "POST",
+        body: JSON.stringify({ role: "user", content: "intrusion?" }),
+      });
+      record(
+        "chat: non-member admin blocked from appending (403)",
+        aliAppend.status === 403,
+        `status ${aliAppend.status}`,
+      );
+
+      // VIEWER excluded (RBAC matrix — copilot:use).
+      const eveList = await api(eve, "/api/v1/copilot/sessions", BID);
+      record(
+        "RBAC: VIEWER blocked from chat transcripts (403)",
+        eveList.status === 403,
+        `status ${eveList.status}`,
+      );
+
+      // Malformed session id rejected before any DB touch.
+      const badId = await api(sara, "/api/v1/copilot/sessions/bad-id!@/messages", CB, {
+        method: "POST",
+        body: JSON.stringify({ role: "user", content: "x" }),
+      });
+      record(
+        "chat: malformed session id rejected (422)",
+        badId.status === 422,
+        `status ${badId.status}`,
+      );
+
+      // Delete the session; second delete → 404 (gone).
+      const del = await api(sara, `/api/v1/copilot/sessions/${SID}`, CB, {
+        method: "DELETE",
+      });
+      record("chat: delete session (200)", del.status === 200, `status ${del.status}`);
+      const reDel = await api(sara, `/api/v1/copilot/sessions/${SID}`, CB, {
+        method: "DELETE",
+      });
+      record(
+        "chat: re-delete session (404 NOT_FOUND)",
+        reDel.status === 404 && reDel.body?.error?.code === "NOT_FOUND",
+        `status ${reDel.status}`,
+      );
+
+      // Clear-all on empty store still succeeds (idempotent).
+      const clear = await api(sara, "/api/v1/copilot/sessions", CB, { method: "DELETE" });
+      record(
+        "chat: clear-all (200, idempotent)",
+        clear.status === 200 && typeof clear.body?.data?.deleted === "number",
+        `status ${clear.status}`,
+      );
+
+      // Cleanup throwaway business (cascades any remaining chat rows).
+      const delChatBiz = await api(sara, `/api/v1/businesses/${CB}`, CB, {
+        method: "DELETE",
+        body: JSON.stringify({ confirmName: "Smoke Chat Business" }),
+      });
+      record(
+        "chat: cleanup delete throwaway business",
+        delChatBiz.status === 200,
+        `status ${delChatBiz.status}`,
+      );
+    }
+  }
+
+  // 12. MONTH CSV EXPORT (Phase 07) — the drill-down dialog's export button
+  //     speaks the same CSV contract as reports/export.
+  {
+    const monthly = await api(sara, "/api/v1/reports/monthly?months=6", BID);
+    const series = monthly.body?.data?.series;
+    const firstMonth = Array.isArray(series) ? series[0]?.month : null;
+    if (typeof firstMonth === "string") {
+      const res = await jarFetchRaw(sara, `/api/v1/reports/monthly/${firstMonth}/export?X=x`, BID);
+      const csv = (await res.text()).replace(/^\uFEFF/, ""); // Response.text() strips the BOM
+      const headerOk = csv.startsWith("section,field,value");
+      const monthOk = csv.includes(`meta,month,${firstMonth}`);
+      record(
+        "month CSV export: 200 text/csv + meta month",
+        res.status === 200 &&
+          (res.headers.get("content-type") ?? "").includes("text/csv") &&
+          headerOk &&
+          monthOk,
+        `status ${res.status}, bytes ${csv.length}`,
+      );
+
+      const bad = await jarFetchRaw(sara, "/api/v1/reports/monthly/9999-99/export", BID);
+      record(
+        "month CSV export: invalid month rejected (404)",
+        bad.status === 404,
+        `status ${bad.status}`,
+      );
+    } else {
+      record("month CSV export: monthly series available", false, "no months returned");
+    }
+  }
+
+  // 13. MONTH-FILTERED SALES/EXPENSES LISTS (r12) — "Open in Sales/Expenses"
+  //     from the reports month dialog. The list ?month= filter must bucket
+  //     rows with the SAME business-timezone month key as the drill-down.
+  {
+    const created = await api(sara, "/api/v1/businesses", undefined, {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Smoke Month Business",
+        currencyCode: "USD",
+        locale: "en",
+        timezone: "UTC",
+      }),
+    });
+    const mb = created.body?.data?.business;
+    record(
+      "month list: create throwaway business",
+      (created.status === 200 || created.status === 201) && !!mb?.id,
+      `status ${created.status}`,
+    );
+
+    if (mb?.id) {
+      const MB = mb.id as string;
+      // One sale + one expense inside 2026-03, one sale in 2026-04.
+      const saleMar = await api(sara, "/api/v1/sales", MB, {
+        method: "POST",
+        body: JSON.stringify({
+          items: [{ name: "Smoke item", unit: "pcs", qty: 2, unitPriceMinor: 1500 }],
+          issueDate: "2026-03-15T12:00:00.000Z",
+        }),
+      });
+      record(
+        "month list: seed March sale (201)",
+        saleMar.status === 201,
+        `status ${saleMar.status}`,
+      );
+      await api(sara, "/api/v1/sales", MB, {
+        method: "POST",
+        body: JSON.stringify({
+          items: [{ name: "Smoke item April", unit: "pcs", qty: 1, unitPriceMinor: 999 }],
+          issueDate: "2026-04-02T09:00:00.000Z",
+        }),
+      });
+      const expMar = await api(sara, "/api/v1/expenses", MB, {
+        method: "POST",
+        body: JSON.stringify({
+          category: "Rent",
+          amountMinor: 7000,
+          spentAt: "2026-03-20T10:00:00.000Z",
+        }),
+      });
+      record(
+        "month list: seed March expense (201)",
+        expMar.status === 201,
+        `status ${expMar.status}`,
+      );
+
+      // March filter: exactly the one March sale.
+      const salesMar = await api(sara, "/api/v1/sales?month=2026-03&page=1&pageSize=10", MB);
+      const smItems = salesMar.body?.data?.items ?? [];
+      record(
+        "month list: sales ?month=2026-03 returns only March rows",
+        salesMar.status === 200 &&
+          salesMar.body?.data?.total === 1 &&
+          smItems.length === 1 &&
+          String(smItems[0]?.issueDate ?? "").startsWith("2026-03"),
+        `status ${salesMar.status}, total ${String(salesMar.body?.data?.total)}`,
+      );
+
+      // Empty month: zero rows, still 200 (drives the localized empty state).
+      const salesEmpty = await api(sara, "/api/v1/sales?month=2099-01&page=1&pageSize=10", MB);
+      record(
+        "month list: sales ?month=2099-01 → total 0",
+        salesEmpty.status === 200 && salesEmpty.body?.data?.total === 0,
+        `status ${salesEmpty.status}, total ${String(salesEmpty.body?.data?.total)}`,
+      );
+
+      // Malformed month: rejected.
+      const salesBad = await api(sara, "/api/v1/sales?month=2026-13&page=1&pageSize=10", MB);
+      record(
+        "month list: invalid month rejected (422)",
+        salesBad.status === 422,
+        `status ${salesBad.status}`,
+      );
+
+      // Money fields stay integer minors in the filtered payload (A08).
+      const moneyOk = assertMoneyInts(salesMar.body) === null;
+      record("month list: filtered sales money integers (A08)", moneyOk);
+
+      // Expenses mirror the same discipline.
+      const expFiltered = await api(sara, "/api/v1/expenses?month=2026-03&page=1&pageSize=10", MB);
+      record(
+        "month list: expenses ?month=2026-03 returns only March rows",
+        expFiltered.status === 200 &&
+          expFiltered.body?.data?.total === 1 &&
+          String(expFiltered.body?.data?.items?.[0]?.spentAt ?? "").startsWith("2026-03"),
+        `status ${expFiltered.status}, total ${String(expFiltered.body?.data?.total)}`,
+      );
+
+      // Cleanup throwaway business (cascades sale/expense rows).
+      const delMb = await api(sara, `/api/v1/businesses/${MB}`, MB, {
+        method: "DELETE",
+        body: JSON.stringify({ confirmName: "Smoke Month Business" }),
+      });
+      record(
+        "month list: cleanup delete throwaway business",
+        delMb.status === 200,
+        `status ${delMb.status}`,
+      );
+    }
+  }
+
   finish();
+}
+
+/** Barebones authenticated fetch that returns the raw Response (non-JSON). */
+async function jarFetchRaw(
+  jar: Map<string, string>,
+  path: string,
+  businessId?: string,
+): Promise<Response> {
+  const f = jarFetch(jar);
+  const headers: Record<string, string> = {};
+  if (businessId) headers["x-business-id"] = businessId;
+  return f(path, { headers });
 }
 
 function finish() {

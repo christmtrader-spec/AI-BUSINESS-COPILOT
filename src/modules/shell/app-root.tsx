@@ -3,11 +3,13 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { useSession } from "next-auth/react";
 import { useTranslations } from "next-intl";
-import { useAppStore, hashToView, viewKeyOf } from "@/store/app-store";
+import { useAppStore, hashToView, sameView } from "@/store/app-store";
 import { dirOf } from "@/i18n/config";
 import { Splash } from "@/components/shared/primitives";
 import { AuthView } from "@/modules/auth/auth-view";
+import { ProfileView } from "@/modules/settings/profile-view";
 import { OnboardingView, type CreatedBusiness } from "@/modules/onboarding/onboarding-view";
+import { JoinInviteView } from "@/modules/settings/join-invite-view";
 import { AppShell, useMembershipsQuery } from "./app-shell";
 
 /**
@@ -48,8 +50,20 @@ export function AppRoot() {
     const applyHash = () => {
       const next = hashToView(window.location.hash);
       const current = useAppStore.getState().view;
-      if (viewKeyOf(current) !== viewKeyOf(next)) {
+      // Structural compare (sameView, not viewKeyOf): a hash change that
+      // only swaps the module sub-state (e.g. #/reports?month=…) must reach
+      // the store WITHOUT remounting the module.
+      if (!sameView(current, next)) {
         useAppStore.getState().replaceView(next);
+      }
+      // Invite links opened while signed OUT: park the token so we can
+      // re-enter the join flow right after authentication.
+      if (next.kind === "join") {
+        try {
+          window.localStorage.setItem("abc:pendingInvite", next.token);
+        } catch {
+          // storage unavailable — the user can reopen the link
+        }
       }
     };
     applyHash();
@@ -60,6 +74,22 @@ export function AppRoot() {
       window.removeEventListener("hashchange", applyHash);
     };
   }, []);
+
+  // Post-auth invite re-entry: once authenticated, a parked invite token
+  // takes priority over the default landing view (exactly once).
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    let token: string | null = null;
+    try {
+      token = window.localStorage.getItem("abc:pendingInvite");
+      window.localStorage.removeItem("abc:pendingInvite");
+    } catch {
+      return;
+    }
+    if (token && useAppStore.getState().view.kind !== "join") {
+      useAppStore.getState().navigate({ kind: "join", token }, { replace: true });
+    }
+  }, [status]);
 
   const authenticated = status === "authenticated";
 
@@ -78,12 +108,25 @@ export function AppRoot() {
     return <Splash label={tShell("loadingWorkspace")} />;
   }
 
+  // Password-flow views render EARLY and regardless of session state: a
+  // signed-in user may open a reset link sent to another device, and after
+  // a successful reset (or password change) every session dies anyway.
+  if (view.kind === "forgot-password" || view.kind === "reset-password") {
+    return <AuthView />;
+  }
+
   if (!authenticated) {
     return <AuthView />;
   }
 
   if (businessesLoading) {
     return <Splash label={tShell("loadingWorkspace")} />;
+  }
+
+  // Join-by-invite renders OUTSIDE the membership-gated shell — an invitee
+  // may have zero businesses yet (that is the whole point of the link).
+  if (view.kind === "join") {
+    return <JoinInviteView token={view.token} />;
   }
 
   if (isError) {
@@ -93,6 +136,19 @@ export function AppRoot() {
   }
 
   const list = memberships ?? [];
+
+  // Prompt 18 §35 — account lifecycle operations (profile → change password /
+  // delete account) must NEVER require an active business: a user with zero
+  // businesses can still manage their own account standalone.
+  if (list.length === 0 && view.kind === "profile") {
+    return (
+      <main className="bg-background min-h-svh">
+        <div className="mx-auto w-full max-w-2xl px-4 py-8">
+          <ProfileView />
+        </div>
+      </main>
+    );
+  }
 
   if (list.length === 0 || view.kind === "onboarding") {
     return (

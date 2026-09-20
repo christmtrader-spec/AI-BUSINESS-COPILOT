@@ -1,26 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
-import { Banknote, Pencil, Plus, Trash2, Wallet } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
+import { Banknote, CalendarDays, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
 import { can, asRole, type Role } from "@/lib/rbac";
+import { useAppStore } from "@/store/app-store";
 import { MoneyInput, moneyToMinorOrNull } from "@/components/shared/table-kit";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,6 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
+import { DataTable, DataTableToolbar, Ltr } from "@/components/shared/data-table";
 import { FormDialog, Pagination, SearchInput } from "@/components/shared/table-kit";
 import {
   FinanceStatusBadge,
@@ -78,6 +72,21 @@ const CATEGORY_SUGGESTIONS = [
 
 const STATUS_FILTERS = ["ALL", "UNPAID", "PARTIAL", "PAID"] as const;
 
+const MONTH_RE = /^\d{4}-\d{2}$/;
+
+/** Localized short month label for a YYYY-MM key ("Sep 2026" / "شهریور ۱۴۰۵"). */
+function fmtMonthLabel(key: string, locale: string): string {
+  try {
+    return new Intl.DateTimeFormat(locale === "fa" ? "fa-IR" : "en-GB", {
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(new Date(`${key}-01T00:00:00Z`));
+  } catch {
+    return key;
+  }
+}
+
 // Radix Select forbids empty-string item values — sentinel maps to "".
 const NONE = "__none__";
 
@@ -92,7 +101,10 @@ export function ExpensesView({
   const t = useTranslations("finance.expenses");
   const tCommon = useTranslations("common");
   const tErrors = useTranslations("errors");
+  const uiLocale = useLocale();
   const invalidate = useInvalidateFinance();
+  const view = useAppStore((s) => s.view);
+  const navigate = useAppStore((s) => s.navigate);
 
   const writable = can(asRole(role), "data:write");
   const canPay = can(asRole(role), "finance:manage");
@@ -110,12 +122,33 @@ export function ExpensesView({
     note: "",
   });
 
+  // Month drill-down deep link (#/expenses?month=YYYY-MM, "Open in Expenses"
+  // from the reports month dialog) — same bucket as the MoM table.
+  const month =
+    view.kind === "module" && view.module === "expenses" && view.param && MONTH_RE.test(view.param)
+      ? view.param
+      : null;
+
+  // Render-time reset (React docs "adjusting state when a prop changes"):
+  // a new month deep link/page param flips back to page 1 without an effect.
+  const [pageKey, setPageKey] = useState(month ?? "");
+  if ((month ?? "") !== pageKey) {
+    setPageKey(month ?? "");
+    setPage(1);
+  }
+
   const statusQs = status === "ALL" ? "" : `&status=${status}`;
-  const { data, isLoading, error, refetch } = useQuery<ExpensesPage>({
-    queryKey: [...txKeys.expenses, q, page, status],
+  const monthQs = month ? `&month=${month}` : "";
+  const { data, isLoading, isFetching, error, refetch } = useQuery<ExpensesPage>({
+    queryKey: [...txKeys.expenses, q, page, status, month],
     queryFn: () =>
-      api(`/api/v1/expenses?q=${encodeURIComponent(q)}&page=${page}&pageSize=10${statusQs}`),
+      api(`/api/v1/expenses?q=${encodeURIComponent(q)}&page=${page}&pageSize=10${statusQs}${monthQs}`),
   });
+
+  const monthLabel = useMemo(
+    () => (month ? fmtMonthLabel(month, uiLocale) : null),
+    [month, uiLocale],
+  );
 
   const { data: suppliers } = useQuery<{ id: string; name: string }[]>({
     queryKey: ["suppliers", "options"],
@@ -215,9 +248,30 @@ export function ExpensesView({
         </div>
       ) : null}
 
+      {month ? (
+        <div
+          className="border-amber-500/30 bg-amber-500/5 text-amber-800 dark:text-amber-300 inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium"
+          data-testid="expenses-month-chip"
+        >
+          <CalendarDays className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="truncate">
+            {t("monthFiltered", { month: monthLabel ?? month })}
+          </span>
+          <button
+            type="button"
+            onClick={() => navigate({ kind: "module", module: "expenses" })}
+            aria-label={t("monthFilterClear")}
+            title={t("monthFilterClear")}
+            className="hover:bg-amber-500/15 -me-1 rounded-full p-0.5 transition-colors"
+          >
+            <X className="size-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
+
       <Card>
         <CardContent className="pt-6">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <DataTableToolbar>
             <SearchInput
               value={q}
               onChange={(v) => {
@@ -244,156 +298,209 @@ export function ExpensesView({
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </DataTableToolbar>
 
-          {isLoading ? (
-            <div className="space-y-2" aria-busy="true">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="bg-muted/50 h-12 animate-pulse rounded-md" />
-              ))}
-            </div>
-          ) : items.length === 0 && !q && status === "ALL" ? (
-            <EmptyState
-              icon={Wallet}
-              title={t("empty")}
-              description={t("emptyDesc")}
-              action={
-                writable ? (
-                  <Button size="sm" variant="outline" onClick={openCreate}>
-                    <Plus className="size-4" aria-hidden="true" />
-                    {t("addExpense")}
-                  </Button>
-                ) : null
-              }
-            />
-          ) : items.length === 0 ? (
-            <EmptyState icon={Wallet} title={tCommon("search")} description={t("searchPlaceholder")} />
-          ) : (
-            <>
-              <div className="overflow-x-auto rounded-md border">
-                <Table>
-                  <TableHeader className="bg-muted/50">
-                    <TableRow>
-                      <TableHead>{t("colCategory")}</TableHead>
-                      <TableHead className="hidden md:table-cell">{t("colSupplier")}</TableHead>
-                      <TableHead className="hidden sm:table-cell">{t("colDate")}</TableHead>
-                      <TableHead className="text-end">{t("colAmount")}</TableHead>
-                      <TableHead className="hidden text-end md:table-cell">{t("colBalance")}</TableHead>
-                      <TableHead>{t("colStatus")}</TableHead>
-                      <TableHead className="text-end">{tCommon("actions")}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {items.map((e) => (
-                      <TableRow key={e.id} className="hover:bg-muted/40">
-                        <TableCell dir="auto">
-                          <span className="font-medium">{e.category}</span>
-                          {e.note ? (
-                            <p className="text-muted-foreground max-w-40 truncate text-xs" dir="auto">
-                              {e.note}
-                            </p>
+          <DataTable<ExpenseRow>
+            ariaLabel={t("title")}
+            sortLocale={business.locale}
+            refreshing={isFetching && !isLoading}
+            columns={[
+              {
+                id: "category",
+                header: t("colCategory"),
+                cell: (e) => (
+                  <div>
+                    <span className="font-medium">{e.category}</span>
+                    {e.note ? (
+                      <p className="text-muted-foreground max-w-40 truncate text-xs">
+                        {e.note}
+                      </p>
+                    ) : null}
+                  </div>
+                ),
+              },
+              {
+                id: "supplier",
+                header: t("colSupplier"),
+                hideBelow: "md",
+                cell: (e) =>
+                  e.supplierName ? (
+                    <div className="max-w-36 truncate text-sm">{e.supplierName}</div>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  ),
+              },
+              {
+                id: "date",
+                header: t("colDate"),
+                hideBelow: "sm",
+                sortValue: (e) => e.spentAt,
+                defaultSortDir: "desc",
+                cell: (e) => (
+                  <span className="text-muted-foreground text-sm tabular-nums whitespace-nowrap">
+                    {fmtDate(business, e.spentAt)}
+                  </span>
+                ),
+              },
+              {
+                id: "amount",
+                header: t("colAmount"),
+                align: "end",
+                sortValue: (e) => e.amountMinor,
+                cell: (e) => (
+                  <Ltr className="font-medium">{fmtMoney(business, e.amountMinor)}</Ltr>
+                ),
+              },
+              {
+                id: "balance",
+                header: t("colBalance"),
+                align: "end",
+                hideBelow: "md",
+                cell: (e) => (
+                  <Ltr
+                    className={
+                      e.balanceMinor > 0
+                        ? "text-amber-700 dark:text-amber-400"
+                        : "text-emerald-700 dark:text-emerald-400"
+                    }
+                  >
+                    {fmtMoney(business, e.balanceMinor)}
+                  </Ltr>
+                ),
+              },
+              {
+                id: "status",
+                header: t("colStatus"),
+                cell: (e) => <FinanceStatusBadge status={e.status} />,
+              },
+              ...(writable || canPay
+                ? [
+                    {
+                      id: "actions",
+                      header: tCommon("actions"),
+                      align: "end" as const,
+                      cell: (e: ExpenseRow) => (
+                        <div className="flex items-center justify-end gap-1">
+                          {canPay && e.balanceMinor > 0 ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8"
+                              onClick={() =>
+                                setPayTarget({
+                                  kind: "expense",
+                                  id: e.id,
+                                  category: e.category,
+                                  supplierName: e.supplierName,
+                                  balanceMinor: e.balanceMinor,
+                                })
+                              }
+                              aria-label={t("pay")}
+                            >
+                              <Banknote className="size-4" aria-hidden="true" />
+                            </Button>
                           ) : null}
-                        </TableCell>
-                        <TableCell className="hidden max-w-36 truncate md:table-cell" dir="auto">
-                          {e.supplierName ?? <span className="text-muted-foreground">—</span>}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground hidden whitespace-nowrap text-sm sm:table-cell">
-                          {fmtDate(business, e.spentAt)}
-                        </TableCell>
-                        <TableCell className="text-end font-medium tabular-nums" dir="ltr">
-                          {fmtMoney(business, e.amountMinor)}
-                        </TableCell>
-                        <TableCell
-                          className={`hidden text-end tabular-nums md:table-cell ${
-                            e.balanceMinor > 0 ? "text-amber-700 dark:text-amber-400" : "text-emerald-700 dark:text-emerald-400"
-                          }`}
-                          dir="ltr"
-                        >
-                          {fmtMoney(business, e.balanceMinor)}
-                        </TableCell>
-                        <TableCell>
-                          <FinanceStatusBadge status={e.status} />
-                        </TableCell>
-                        <TableCell className="text-end">
-                          <div className="flex items-center justify-end gap-1">
-                            {canPay && e.balanceMinor > 0 ? (
+                          {writable ? (
+                            <>
                               <Button
                                 variant="ghost"
                                 size="icon"
                                 className="size-8"
-                                onClick={() =>
-                                  setPayTarget({
-                                    kind: "expense",
-                                    id: e.id,
-                                    category: e.category,
-                                    supplierName: e.supplierName,
-                                    balanceMinor: e.balanceMinor,
-                                  })
-                                }
-                                aria-label={t("pay")}
+                                onClick={() => openEdit(e)}
+                                aria-label={tCommon("edit")}
                               >
-                                <Banknote className="size-4" />
+                                <Pencil className="size-4" aria-hidden="true" />
                               </Button>
-                            ) : null}
-                            {writable ? (
-                              <>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-8"
-                                  onClick={() => openEdit(e)}
-                                  aria-label={tCommon("edit")}
-                                >
-                                  <Pencil className="size-4" />
-                                </Button>
-                                <AlertDialog>
-                                  <AlertDialogTrigger asChild>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="text-destructive hover:text-destructive size-8"
-                                      aria-label={tCommon("delete")}
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="text-destructive hover:text-destructive size-8"
+                                    aria-label={tCommon("delete")}
+                                  >
+                                    <Trash2 className="size-4" aria-hidden="true" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>{t("deleteTitle")}</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      {t("deleteDesc")}
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                      onClick={() => deleteMutation.mutate(e.id)}
                                     >
-                                      <Trash2 className="size-4" />
-                                    </Button>
-                                  </AlertDialogTrigger>
-                                  <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                      <AlertDialogTitle>{t("deleteTitle")}</AlertDialogTitle>
-                                      <AlertDialogDescription>{t("deleteDesc")}</AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                      <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
-                                      <AlertDialogAction
-                                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                        onClick={() => deleteMutation.mutate(e.id)}
-                                      >
-                                        {tCommon("delete")}
-                                      </AlertDialogAction>
-                                    </AlertDialogFooter>
-                                  </AlertDialogContent>
-                                </AlertDialog>
-                              </>
-                            ) : null}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <Pagination
-                page={page}
-                pageSize={10}
-                total={data?.total ?? 0}
-                onPage={setPage}
-                labels={{
-                  prev: tCommon("previous"),
-                  next: tCommon("next")
-                }}
-              />
-            </>
-          )}
+                                      {tCommon("delete")}
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </>
+                          ) : null}
+                        </div>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+            rows={items}
+            getRowId={(e) => e.id}
+            loading={isLoading}
+            skeletonRows={5}
+            empty={
+              !q && status === "ALL" && !month ? (
+                <EmptyState
+                  icon={Wallet}
+                  title={t("empty")}
+                  description={t("emptyDesc")}
+                  action={
+                    writable ? (
+                      <Button size="sm" variant="outline" onClick={openCreate}>
+                        <Plus className="size-4" aria-hidden="true" />
+                        {t("addExpense")}
+                      </Button>
+                    ) : null
+                  }
+                />
+              ) : month ? (
+                <EmptyState
+                  icon={CalendarDays}
+                  title={t("monthEmptyTitle")}
+                  description={t("monthEmptyDesc", { month: monthLabel ?? month })}
+                  action={
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => navigate({ kind: "module", module: "expenses" })}
+                    >
+                      {t("monthFilterClear")}
+                    </Button>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  icon={Wallet}
+                  title={tCommon("search")}
+                  description={t("searchPlaceholder")}
+                />
+              )
+            }
+          />
+          <Pagination
+            page={page}
+            pageSize={10}
+            total={data?.total ?? 0}
+            onPage={setPage}
+            labels={{
+              prev: tCommon("previous"),
+              next: tCommon("next")
+            }}
+          />
         </CardContent>
       </Card>
 
