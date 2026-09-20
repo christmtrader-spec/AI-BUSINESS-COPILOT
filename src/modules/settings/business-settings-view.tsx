@@ -1,14 +1,34 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { Check, Coins, DatabaseBackup, Globe2, Loader2, Save, Settings2 } from "lucide-react";
+import {
+  Check,
+  Coins,
+  DatabaseBackup,
+  FileJson,
+  Globe2,
+  Loader2,
+  Save,
+  ScanSearch,
+  Settings2,
+  ShieldAlert,
+  TriangleAlert,
+  UploadCloud,
+} from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
 import { CURRENCIES, findCurrency } from "@/lib/currencies";
 import { formatMoney, toMinor } from "@/lib/money";
 import { asRole, can, type Role } from "@/lib/rbac";
+import { cn } from "@/lib/utils";
+import {
+  BACKUP_SCHEMA_ID,
+  IMPORT_ENTITIES,
+  type ImportConflict,
+  type ImportReport,
+} from "@/lib/backup-schema";
 import { useAppStore } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +36,17 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/shared/primitives";
 import type { BusinessSummary } from "../shell/types";
 
@@ -160,6 +191,124 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
     } finally {
       setExporting(false);
     }
+  }
+
+  // ---- Restore from backup (OWNER-only) ------------------------------------
+  const isOwner = role === "OWNER";
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [restoreFile, setRestoreFile] = useState<{
+    name: string;
+    size: number;
+    body: unknown;
+    currencyCode: string;
+  } | null>(null);
+  const [restoreBusy, setRestoreBusy] = useState<"dry_run" | "merge" | null>(null);
+  const [restoreReport, setRestoreReport] = useState<ImportReport | null>(null);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [restoreIdMode, setRestoreIdMode] = useState<"keep" | "new">("keep");
+
+  const resetRestore = () => {
+    setRestoreFile(null);
+    setRestoreReport(null);
+    setRestoreError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  async function onRestoreFileChange(file: File | undefined) {
+    setRestoreReport(null);
+    setRestoreError(null);
+    if (!file) {
+      setRestoreFile(null);
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      setRestoreFile(null);
+      setRestoreError(t("restoreFileError"));
+      return;
+    }
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text) as {
+        $schema?: string;
+        business?: { currencyCode?: string };
+      };
+      if (json?.$schema !== BACKUP_SCHEMA_ID) {
+        setRestoreFile(null);
+        setRestoreError(t("restoreInvalidFile"));
+        return;
+      }
+      setRestoreFile({
+        name: file.name,
+        size: file.size,
+        body: json,
+        currencyCode: json.business?.currencyCode ?? "?",
+      });
+    } catch {
+      setRestoreFile(null);
+      setRestoreError(t("restoreInvalidFile"));
+    }
+  }
+
+  async function runRestore(mode: "dry_run" | "merge") {
+    if (!restoreFile || !activeId) return;
+    setRestoreBusy(mode);
+    setRestoreError(null);
+    try {
+      const res = await fetch(
+        `/api/v1/businesses/${activeId}/import?mode=${mode}&ids=${restoreIdMode}`,
+        {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json", "x-business-id": activeId },
+        body: JSON.stringify(restoreFile.body),
+      });
+      const body = (await res.json()) as {
+        ok?: boolean;
+        data?: { report: ImportReport };
+        error?: { code?: string; message?: string };
+      };
+      if (!res.ok || !body?.ok || !body.data) {
+        setRestoreReport(null);
+        if (body?.error?.code === "INVALID_BACKUP") setRestoreError(t("restoreInvalidFile"));
+        else if (body?.error?.code === "PERMISSION_DENIED") setRestoreError(t("restoreOwnerOnly"));
+        else if (body?.error?.code === "RATE_LIMITED") setRestoreError(t("exportRateLimited"));
+        else setRestoreError(t("restoreFailed"));
+        return;
+      }
+      setRestoreReport(body.data.report);
+      if (mode === "merge") {
+        toast({ title: t("restoreDone") });
+        void queryClient.invalidateQueries();
+        resetRestore();
+      }
+    } catch {
+      setRestoreError(t("restoreFailed"));
+    } finally {
+      setRestoreBusy(null);
+      setConfirmOpen(false);
+    }
+  }
+
+  const entityLabelKey: Record<(typeof IMPORT_ENTITIES)[number], string> = {
+    customers: "entityCustomers",
+    suppliers: "entitySuppliers",
+    products: "entityProducts",
+    inventoryAdjustments: "entityAdjustments",
+    sales: "entitySales",
+    expenses: "entityExpenses",
+    payments: "entityPayments",
+  };
+
+  function renderConflict(c: ImportConflict) {
+    return (
+      <li key={`${c.entity}-${c.reason}-${c.ref}`} className="flex items-start gap-1.5">
+        <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+        <span dir="ltr">
+          <span className="font-medium">{c.ref}</span> — {t(`restoreReason_${c.reason}` as "restoreReason_DUPLICATE_ID")}
+        </span>
+      </li>
+    );
   }
 
   return (
@@ -363,6 +512,279 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
           </CardContent>
         </Card>
       ) : null}
+
+      {isOwner ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <UploadCloud className="text-primary size-4" aria-hidden="true" />
+              {t("restoreSection")}
+            </CardTitle>
+            <CardDescription>{t("restoreSectionDesc")}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {/* File picker */}
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed bg-muted/30 px-4 py-4">
+              <div
+                className={cn(
+                  "flex size-10 shrink-0 items-center justify-center rounded-lg border",
+                  restoreFile ? "border-emerald-500/30 bg-emerald-500/10" : "bg-background",
+                )}
+                aria-hidden="true"
+              >
+                {restoreFile ? (
+                  <FileJson className="size-5 text-emerald-600 dark:text-emerald-400" />
+                ) : (
+                  <FileJson className="text-muted-foreground size-5" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium" dir="auto">
+                  {restoreFile ? restoreFile.name : t("restoreFileHint")}
+                </p>
+                {restoreFile ? (
+                  <p className="text-muted-foreground text-xs tabular-nums" dir="ltr">
+                    {(restoreFile.size / 1024).toFixed(1)} KB
+                  </p>
+                ) : null}
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="sr-only"
+                id="restore-file-input"
+                onChange={(e) => void onRestoreFileChange(e.target.files?.[0])}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {restoreFile ? t("restoreChangeFile") : t("restoreChooseFile")}
+              </Button>
+            </div>
+
+            {restoreError ? (
+              <div
+                className="border-destructive/30 bg-destructive/5 text-destructive flex items-start gap-2 rounded-lg border px-3.5 py-2.5 text-sm"
+                role="alert"
+              >
+                <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                <span>{restoreError}</span>
+              </div>
+            ) : null}
+
+            {/* ID handling mode */}
+            <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t("restoreIdMode")}>
+              {(
+                [
+                  { value: "keep", label: t("restoreIdKeep"), hint: t("restoreIdKeepHint") },
+                  { value: "new", label: t("restoreIdNew"), hint: t("restoreIdNewHint") },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={restoreIdMode === opt.value}
+                  onClick={() => {
+                    setRestoreIdMode(opt.value);
+                    setRestoreReport(null);
+                  }}
+                  className={cn(
+                    "rounded-lg border p-3 text-start transition-colors",
+                    restoreIdMode === opt.value
+                      ? "border-primary bg-primary/5 ring-primary/20 ring-1"
+                      : "hover:bg-muted/40 border-border",
+                  )}
+                >
+                  <span className="flex items-center gap-2 text-sm font-medium">
+                    <span
+                      className={cn(
+                        "flex size-4 shrink-0 items-center justify-center rounded-full border",
+                        restoreIdMode === opt.value ? "border-primary" : "border-muted-foreground/40",
+                      )}
+                      aria-hidden="true"
+                    >
+                      {restoreIdMode === opt.value ? (
+                        <span className="bg-primary size-2 rounded-full" />
+                      ) : null}
+                    </span>
+                    {opt.label}
+                  </span>
+                  <span className="text-muted-foreground mt-1 block text-xs">{opt.hint}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Actions */}
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/30 px-4 py-3">
+              <p className="text-muted-foreground max-w-md text-xs">{t("restoreIgnoredNote")}</p>
+              <div className="flex shrink-0 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void runRestore("dry_run")}
+                  disabled={!restoreFile || restoreBusy !== null}
+                >
+                  {restoreBusy === "dry_run" ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <ScanSearch className="size-4" aria-hidden="true" />
+                  )}
+                  {restoreBusy === "dry_run" ? t("restoreAnalyzing") : t("restoreAnalyze")}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => setConfirmOpen(true)}
+                  disabled={!restoreReport || restoreReport.mode !== "dry_run" || restoreBusy !== null || restoreReport.wouldCreate === 0}
+                >
+                  {restoreBusy === "merge" ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <UploadCloud className="size-4" aria-hidden="true" />
+                  )}
+                  {restoreBusy === "merge" ? t("restoreImporting") : t("restoreImport")}
+                </Button>
+              </div>
+            </div>
+
+            {/* Analysis report */}
+            {restoreReport ? (
+              <div className="space-y-3 rounded-lg border p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold">{t("restoreReportTitle")}</p>
+                    {restoreReport.exportedAt ? (
+                      <p className="text-muted-foreground text-xs tabular-nums" dir="ltr">
+                        {new Date(restoreReport.exportedAt).toLocaleString(locale === "fa" ? "fa-IR" : "en-GB", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })}
+                      </p>
+                    ) : null}
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className={
+                      restoreReport.mode === "dry_run"
+                        ? "border-border text-muted-foreground bg-muted/40"
+                        : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                    }
+                  >
+                    {restoreReport.mode === "dry_run"
+                      ? t("restoreReportWouldCreate", { count: restoreReport.wouldCreate })
+                      : t("restoreReportCreated", { count: restoreReport.created })}
+                  </Badge>
+                </div>
+
+                {!restoreReport.businessMatch ? (
+                  <p className="text-amber-700 dark:text-amber-400 flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
+                    <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                    {t("restoreBusinessMismatch")}
+                  </p>
+                ) : null}
+                {!restoreReport.currencyMatch ? (
+                  <p className="text-amber-700 dark:text-amber-400 flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
+                    <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                    {t("restoreCurrencyMismatch", {
+                      backup: restoreFile?.currencyCode ?? "?",
+                      current: current.currencyCode,
+                    })}
+                  </p>
+                ) : null}
+
+                <ul className="grid gap-x-4 gap-y-1.5 text-xs sm:grid-cols-2">
+                  {IMPORT_ENTITIES.map((entity) => {
+                    const r = restoreReport.entities[entity];
+                    return (
+                      <li
+                        key={entity}
+                        className="bg-muted/40 flex items-center justify-between gap-2 rounded-md border px-3 py-2"
+                      >
+                        <span className="font-medium">{t(entityLabelKey[entity] as "entityCustomers")}</span>
+                        <span className="flex shrink-0 items-center gap-1.5 tabular-nums">
+                          {r.toCreate > 0 ? (
+                            <Badge variant="outline" className="h-5 border-emerald-500/40 bg-emerald-500/10 px-1.5 text-[10px] text-emerald-700 dark:text-emerald-400">
+                              +{r.toCreate} {t("restoreNew")}
+                            </Badge>
+                          ) : null}
+                          {r.existing > 0 ? (
+                            <Badge variant="outline" className="text-muted-foreground h-5 px-1.5 text-[10px]">
+                              {r.existing} {t("restoreExisting")}
+                            </Badge>
+                          ) : null}
+                          {r.invalid > 0 ? (
+                            <Badge variant="outline" className="h-5 border-amber-500/40 bg-amber-500/10 px-1.5 text-[10px] text-amber-700 dark:text-amber-400">
+                              {r.invalid} {t("restoreSkipped")}
+                            </Badge>
+                          ) : null}
+                          {r.total === 0 ? (
+                            <span className="text-muted-foreground text-[10px]">—</span>
+                          ) : null}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+
+                {restoreReport.conflicts.length > 0 ? (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-semibold">
+                      {t("restoreConflicts")} ({restoreReport.conflicts.length})
+                    </p>
+                    <ul className="space-y-1 text-xs">
+                      {restoreReport.conflicts.slice(0, 12).map(renderConflict)}
+                    </ul>
+                    {restoreReport.conflicts.length > 12 ? (
+                      <p className="text-muted-foreground text-[11px] tabular-nums" dir="ltr">
+                        +{restoreReport.conflicts.length - 12}…
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="text-muted-foreground flex items-center gap-2 px-4 py-3 text-xs">
+            <ShieldAlert className="size-4 shrink-0" aria-hidden="true" />
+            {t("restoreOwnerOnly")}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Import confirmation */}
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("restoreConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("restoreConfirmDesc", {
+                count: restoreReport?.wouldCreate ?? 0,
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void runRestore("merge")}>
+              {restoreBusy === "merge" ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <UploadCloud className="size-4" aria-hidden="true" />
+              )}
+              {t("restoreConfirmAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

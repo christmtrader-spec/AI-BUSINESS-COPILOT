@@ -24,11 +24,12 @@ import {
   RefreshCcw,
   SendHorizontal,
   ShieldCheck,
+  Square,
   TriangleAlert,
   UserRound,
   Wallet,
 } from "lucide-react";
-import { api, ApiClientError } from "@/lib/api-client";
+import { ApiClientError } from "@/lib/api-client";
 import { can, type Role } from "@/lib/rbac";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -42,9 +43,13 @@ import { PageHeader } from "@/components/shared/primitives";
 import type { BusinessSummary } from "../shell/types";
 
 /**
- * AI Copilot — Phase 05. Read-only Q&A over deterministic, server-computed
+ * AI Copilot — Phase 05/06. Read-only Q&A over deterministic, server-computed
  * figures (A11-A13). The client sends ONLY the question + conversation
  * history; all authoritative data is injected server-side.
+ *
+ * Phase 06: answers stream token-by-token over SSE
+ * (`POST /api/v1/copilot/stream`), with a Stop control that aborts the
+ * stream and keeps the partial answer.
  */
 
 type ChatMessage = {
@@ -94,7 +99,7 @@ function inline(text: string, keyPrefix: string): ReactNode[] {
   });
 }
 
-function MarkdownLite({ text }: { text: string }) {
+function MarkdownLite({ text, streaming }: { text: string; streaming?: boolean }) {
   const nodes: ReactNode[] = [];
   let bullets: string[] = [];
   let para: string[] = [];
@@ -139,7 +144,17 @@ function MarkdownLite({ text }: { text: string }) {
   flushBullets();
   flushPara();
 
-  return <div className="space-y-1.5 text-sm">{nodes}</div>;
+  return (
+    <div className="space-y-1.5 text-sm">
+      {nodes}
+      {streaming ? (
+        <span
+          aria-hidden="true"
+          className="ml-0.5 inline-block h-4 w-0.5 animate-pulse rounded-full bg-emerald-600 align-middle dark:bg-emerald-400"
+        />
+      ) : null}
+    </div>
+  );
 }
 
 // ---- View -------------------------------------------------------------------
@@ -157,16 +172,18 @@ export function CopilotView({
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [pending, setPending] = useState(false);
+  const [activeStreamId, setActiveStreamId] = useState<string | null>(null);
   const [days, setDays] = useState<7 | 30 | 90>(30);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [dataOpen, setDataOpen] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const lastQuestionRef = useRef<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const canUse = can(role, "copilot:use");
+  const pending = activeStreamId !== null;
 
   const suggestions = useMemo(
     () => [
@@ -190,55 +207,170 @@ export function CopilotView({
     }
   }, [messages, pending, atBottom]);
 
+  // Abort any in-flight stream when the module unmounts.
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
+
+  const patchAssistant = useCallback(
+    (id: string, patch: (m: ChatMessage) => ChatMessage) => {
+      setMessages((prev) => prev.map((m) => (m.id === id ? patch(m) : m)));
+    },
+    [],
+  );
+
+  const localizedError = useCallback(
+    (code: string, retryAfterMs?: number) => {
+      switch (code) {
+        case "RATE_LIMITED":
+          return t("errorRateLimited", {
+            seconds: String(Math.max(1, Math.ceil((retryAfterMs ?? 0) / 1000))),
+          });
+        case "PERMISSION_DENIED":
+          return t("errorForbidden");
+        case "AI_UNAVAILABLE":
+          return t("errorAiUnavailable");
+        default:
+          return tErrors("generic");
+      }
+    },
+    [t, tErrors],
+  );
+
   const send = useCallback(
     async (question: string, history: ChatMessage[]) => {
       const trimmed = question.trim();
-      if (!trimmed || trimmed.length > 500) return;
+      if (!trimmed || trimmed.length > 500 || activeStreamId !== null) return;
       lastQuestionRef.current = trimmed;
-      setPending(true);
       setAtBottom(true);
+
+      const assistantId = nextId();
+      setMessages((prev) => [
+        ...prev,
+        { id: assistantId, role: "assistant", content: "" },
+      ]);
+      setActiveStreamId(assistantId);
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       try {
-        const res = await api<{ answer: string; meta: CopilotMeta }>(
-          "/api/v1/copilot",
-          {
-            method: "POST",
-            body: JSON.stringify({
-              question: trimmed,
-              history: history
-                .filter((m) => !m.failed)
-                .slice(-6)
-                .map((m) => ({ role: m.role, content: m.content })),
-              days,
-            }),
+        const res = await fetch("/api/v1/copilot/stream", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "content-type": "application/json",
+            "x-business-id": business.id,
           },
-        );
-        setMessages((prev) => [
-          ...prev,
-          { id: nextId(), role: "assistant", content: res.answer },
-        ]);
+          body: JSON.stringify({
+            question: trimmed,
+            history: history
+              .filter((m) => !m.failed)
+              .slice(-6)
+              .map((m) => ({ role: m.role, content: m.content })),
+            days,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!res.ok || !res.body) {
+          let code = "INTERNAL_ERROR";
+          let retryAfterMs: number | undefined;
+          try {
+            const body = (await res.json()) as {
+              error?: { code?: string; details?: { retryAfterMs?: number } };
+            };
+            if (body?.error?.code) code = body.error.code;
+            retryAfterMs = body?.error?.details?.retryAfterMs;
+          } catch {
+            // keep defaults
+          }
+          patchAssistant(assistantId, (m) => ({
+            ...m,
+            content: localizedError(code, retryAfterMs),
+            failed: true,
+          }));
+          return;
+        }
+
+        // Parse the SSE stream incrementally.
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let streamError: { code?: string; message?: string } | null = null;
+        let sawDone = false;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split("\n\n");
+          buffer = events.pop() ?? "";
+          for (const evt of events) {
+            for (const line of evt.split("\n")) {
+              if (!line.startsWith("data: ")) continue;
+              let payload: {
+                delta?: string;
+                done?: boolean;
+                error?: { code?: string; message?: string };
+              };
+              try {
+                payload = JSON.parse(line.slice(6));
+              } catch {
+                continue;
+              }
+              if (typeof payload.delta === "string" && payload.delta.length > 0) {
+                const delta = payload.delta;
+                patchAssistant(assistantId, (m) => ({
+                  ...m,
+                  content: m.content + delta,
+                }));
+              } else if (payload.error) {
+                streamError = payload.error;
+              } else if (payload.done) {
+                sawDone = true;
+              }
+            }
+          }
+        }
+
+        if (streamError) {
+          const code = streamError.code ?? "INTERNAL_ERROR";
+          if (code === "RATE_LIMITED" || code === "AI_UNAVAILABLE" || !sawDone) {
+            patchAssistant(assistantId, (m) =>
+              m.content.trim().length === 0
+                ? { ...m, content: localizedError(code), failed: true }
+                : { ...m, content: `${m.content}\n\n⚠ ${localizedError(code)}` },
+            );
+          }
+        }
       } catch (error) {
-        const code =
-          error instanceof ApiClientError ? error.code : "INTERNAL_ERROR";
-        const retryAfterMs =
-          (error as { details?: { retryAfterMs?: number } })?.details
-            ?.retryAfterMs ?? 0;
-        const fallback =
-          code === "RATE_LIMITED"
-            ? t("errorRateLimited", {
-                seconds: String(Math.max(1, Math.ceil(retryAfterMs / 1000))),
-              })
-            : code === "PERMISSION_DENIED"
-              ? t("errorForbidden")
-              : tErrors("generic");
-        setMessages((prev) => [
-          ...prev,
-          { id: nextId(), role: "assistant", content: fallback, failed: true },
-        ]);
+        if ((error as Error)?.name === "AbortError") {
+          // User pressed Stop — keep the partial answer, drop it if empty.
+          setMessages((prev) =>
+            prev.flatMap((m) =>
+              m.id === assistantId ? (m.content.trim() ? [m] : []) : [m],
+            ),
+          );
+        } else if (error instanceof ApiClientError) {
+          patchAssistant(assistantId, (m) => ({
+            ...m,
+            content: localizedError(error.code),
+            failed: true,
+          }));
+        } else {
+          patchAssistant(assistantId, (m) => ({
+            ...m,
+            content: localizedError("NETWORK_ERROR"),
+            failed: true,
+          }));
+        }
       } finally {
-        setPending(false);
+        abortRef.current = null;
+        setActiveStreamId((cur) => (cur === assistantId ? null : cur));
       }
     },
-    [days, t, tErrors],
+    [activeStreamId, business.id, days, localizedError, patchAssistant],
   );
 
   const handleSubmit = () => {
@@ -248,6 +380,10 @@ export function CopilotView({
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     setMessages((prev) => [...prev, { id: nextId(), role: "user", content: trimmed }]);
     void send(trimmed, messages);
+  };
+
+  const handleStop = () => {
+    abortRef.current?.abort();
   };
 
   const handleRetry = () => {
@@ -284,6 +420,8 @@ export function CopilotView({
 
   const empty = messages.length === 0;
   const lastFailed = !pending && messages[messages.length - 1]?.failed === true;
+  const waitingForFirstToken =
+    pending && (messages[messages.length - 1]?.content ?? "").length === 0;
 
   return (
     <div className="space-y-4" data-view="copilot">
@@ -454,8 +592,21 @@ export function CopilotView({
                           : "bg-muted/50",
                       )}
                     >
-                      <MarkdownLite text={m.content} />
-                      {!m.failed ? (
+                      {m.content.length === 0 && m.id === activeStreamId ? (
+                        <div className="flex items-center gap-1.5 px-1 py-1">
+                          {[0, 1, 2].map((i) => (
+                            <span
+                              key={i}
+                              className="bg-muted-foreground/60 size-1.5 animate-bounce rounded-full"
+                              style={{ animationDelay: `${i * 150}ms` }}
+                            />
+                          ))}
+                          <span className="text-muted-foreground ms-1.5 text-xs">{t("thinking")}</span>
+                        </div>
+                      ) : (
+                        <MarkdownLite text={m.content} streaming={m.id === activeStreamId} />
+                      )}
+                      {!m.failed && m.content.length > 0 && m.id !== activeStreamId ? (
                         <button
                           type="button"
                           onClick={() => void copyAnswer(m)}
@@ -474,26 +625,7 @@ export function CopilotView({
                 ),
               )}
 
-              {pending ? (
-                <div className="flex items-start gap-2.5" aria-live="polite">
-                  <div
-                    className="border-emerald-500/20 from-emerald-500/15 to-teal-500/10 text-emerald-700 mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border bg-gradient-to-br dark:text-emerald-400"
-                    aria-hidden="true"
-                  >
-                    <Bot className="size-3.5" />
-                  </div>
-                  <div className="bg-muted/50 flex items-center gap-1.5 rounded-2xl rounded-ss-sm border px-4 py-3">
-                    {[0, 1, 2].map((i) => (
-                      <span
-                        key={i}
-                        className="bg-muted-foreground/60 size-1.5 animate-bounce rounded-full"
-                        style={{ animationDelay: `${i * 150}ms` }}
-                      />
-                    ))}
-                    <span className="text-muted-foreground ms-1.5 text-xs">{t("thinking")}</span>
-                  </div>
-                </div>
-              ) : null}
+              {waitingForFirstToken ? null : null}
 
               {lastFailed ? (
                 <div className="ps-9.5">
@@ -531,15 +663,28 @@ export function CopilotView({
               disabled={pending}
               className="placeholder:text-muted-foreground max-h-[120px] min-h-[38px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none disabled:opacity-50"
             />
-            <Button
-              size="icon"
-              className="size-9 shrink-0 rounded-xl"
-              onClick={handleSubmit}
-              disabled={pending || input.trim().length === 0}
-              aria-label={t("send")}
-            >
-              <SendHorizontal className="size-4" aria-hidden="true" />
-            </Button>
+            {pending ? (
+              <Button
+                size="icon"
+                variant="secondary"
+                className="border-destructive/30 text-destructive hover:bg-destructive/10 size-9 shrink-0 rounded-xl border"
+                onClick={handleStop}
+                aria-label={t("stop")}
+                title={t("stop")}
+              >
+                <Square className="size-3.5 fill-current" aria-hidden="true" />
+              </Button>
+            ) : (
+              <Button
+                size="icon"
+                className="size-9 shrink-0 rounded-xl"
+                onClick={handleSubmit}
+                disabled={input.trim().length === 0}
+                aria-label={t("send")}
+              >
+                <SendHorizontal className="size-4" aria-hidden="true" />
+              </Button>
+            )}
           </div>
           <p className="text-muted-foreground mt-2 flex items-center justify-between gap-2 text-[11px]">
             <span className="truncate">{t("groundedNote")}</span>

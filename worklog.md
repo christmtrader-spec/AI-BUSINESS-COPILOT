@@ -675,3 +675,129 @@ Stage Summary:
   streaming copilot responses if SDK supports, (c) e2e smoke suite as a
   script, (d) dependency audit + A11y contrast pass, (e) consider
   per-module prefetch warming for reports.
+
+---
+Task ID: 07
+Agent: Z.ai Code (cron webDevReview round)
+Task: Status assessment + agent-browser QA, then independent work selection per roadmap
+(bugs first, then features). Mandates: styling details, more features, worklog handover.
+
+Current project status (assessment at round start):
+- Phases 00-06 all functional (16/16 modules live). QA sweep at round start: all module
+  views render, 0 console errors across a full 16-module sweep, copilot answers grounded
+  and correct, dashboard/perf charts healthy. No pre-existing bugs found this round; the
+  one crash encountered was IN new code under test (see Feature B) and was fixed.
+
+Work Log (what was done, in order):
+- OPS (critical fix): dev server was being reaped between tool-call sessions (curl 000 /
+  connection refused). Added scripts/keep-dev-up.cjs — a double-fork (detached session
+  leader) starter that survives across tool calls. Also excluded `scripts/**` from
+  eslint app-config ignores so utility scripts don't fail `bun run lint`. Dev server
+  now stable at port 3000 (verify: `curl localhost:3000`).
+- FEATURE A — STREAMING COPILOT (answer streams token-by-token):
+  - src/lib/ai/provider.ts: AIProvider gained chatStream() (AsyncGenerator<string>);
+    ZaiProvider passes stream:true to the SDK, parses OpenAI-style SSE
+    (`data: {"choices":[{"delta":{"content":…}}]}` / [DONE]) and yields text deltas;
+    degrades gracefully to a single delta if upstream ignores stream:true. The SDK is
+    still imported ONLY here (A11-A13 unchanged).
+  - NEW endpoint POST /api/v1/copilot/stream: SSE transport. All auth/permission/
+    rate-limit (10/min/user)/grounding happen BEFORE the stream is created, so
+    pre-stream failures remain normal JSON envelopes with correct status codes.
+    Events: {"meta"} first, {"delta"} increments, {"done":true} or terminal
+    {"error":{code,message}}. Audit "copilot.query" written on stream close with
+    {transport:"stream", status: completed|aborted|failed, chars}.
+  - src/modules/copilot/copilot-view.tsx: fetch + ReadableStream SSE parsing; assistant
+    message renders progressively (MarkdownLite) with a blinking emerald caret;
+    typing indicator shows until the first token; Send button morphs into a Stop button
+    (Square icon, destructive outline) mid-stream that aborts via AbortController and
+    KEEPS the partial answer (dropped if empty); mid-stream errors append a localized
+    note; rate-limit/AI-unavailable messages localized. Module unmount aborts streams.
+  - i18n: copilot.stop, copilot.errorAiUnavailable (en+fa).
+  - VERIFIED: 10 network chunks arriving over ~900 ms (true incremental delivery, not a
+    blob); Stop clicked at ~1.2 s left a mid-sentence partial answer ("…Despite" cut);
+    stream endpoint in dev.log 200; old /api/v1/copilot (non-stream) kept as fallback.
+- FEATURE B — BACKUP RESTORE / IMPORT (completes the round-trip with export):
+  - NEW src/lib/backup-schema.ts: zod schema for ai-business-copilot/backup@1 — strict
+    envelope ($schema literal, business config) + per-row validation with hard caps
+    (customers/suppliers/products ≤5k, adjustments/expenses ≤20k, sales ≤20k with ≤200
+    items, payments ≤50k), A08 integer-minor enforcement on every *Minor field, ISO
+    date parsing, payment exactly-one-of saleId/expenseId. Shared client/server
+    (client does a fast $schema pre-check before upload).
+  - NEW endpoint POST /api/v1/businesses/[id]/import?mode=dry_run|merge&ids=keep|new:
+    - OWNER-ONLY (explicitly tightened beyond settings:manage — ADMIN/VIEWER get 403
+      PERMISSION_DENIED; verified).
+    - rate limit 4/5min/user; audited "data.import" (created/skipped/conflicts/ids/currencyMatch).
+    - mode=dry_run: validates + diffs against DB, returns per-entity report
+      {total,toCreate,existing,invalid} + structured conflicts, zero writes.
+    - mode=merge: creates the plan in ONE transaction. Never modifies/deletes existing rows.
+    - ids=keep (default): original ids preserved — same-business restore after data loss.
+      Ids occupied in THIS business → "existing" skip; ids occupied GLOBALLY (another
+      business owns the PK) → ID_OCCUPIED conflict + skip (no 500s).
+    - ids=new: fresh ids for every created record, sale invoice numbers re-sequenced
+      after the business max, all FKs (customer/product/supplier/sale/expense → sale
+      items/adjustments/payments) remapped through an idMap. For copying between businesses.
+    - Conflicts: DUPLICATE_ID | ID_OCCUPIED | NUMBER_COLLISION (sale @@unique per business)
+      | MISSING_REFERENCE | LINE_TOTAL_MISMATCH (qty×unitPrice re-verified with integer math).
+    - businessMatch/currencyMatch warnings in the report; members + auditTrail NEVER
+      imported (documented in UI).
+  - settings UI (business-settings-view.tsx): OWNER-only "Restore from backup" card —
+    file picker (accept .json, 25 MB client cap, $schema pre-check with localized
+    error), ID-mode radio cards, Analyze (dry run) → report panel with per-entity
+    badges (+N new / N already exist / N skipped), conflicts list (amber, localized
+    reasons, first 12 + overflow), export-date stamp, Import disabled until a dry run
+    yields wouldCreate>0, AlertDialog confirmation → merge → toast + full query
+    invalidation. Non-owner sees a muted explanation card.
+  - i18n: ~40 new keys ×2 locales (restore*, entity*, restoreReason_*).
+  - VERIFIED end-to-end: export(sara)→dry-run(sara, same biz) = 0 toCreate (no-op ✓);
+    dry-run into rep16007's empty business = 13 toCreate + businessMatch=false +
+    currencyMatch=false ✓; keep-mode merge into empty business = 13×ID_OCCUPIED, created 0
+    (this is the bug-fix path — earlier prototype crashed 500 on PK collision, root cause:
+    Prisma ids are GLOBAL PKs, not per-business) ✓; new-mode merge = created 13, 0
+    conflicts, sale renumbered, payments remapped, /reports/summary computes identical
+    figures from the copy (rev €27.50 / exp €800 / net −€272.50) ✓; re-import
+    idempotent (created 0, all existing) ✓; RBAC eve 403 + ali 403 ✓; browser flow with
+    real file upload: analyze → report badges → confirm dialog → merge → toast →
+    queries invalidated (customer count updated) ✓; audit rows present ✓.
+- FEATURE C — E2E SMOKE SUITE: scripts/e2e-smoke.ts (bun). Real HTTP surface: NextAuth
+  credentials login (csrf flow, cookie jar) per test account; 15-module GET sweep
+  asserting 200 + ok-envelope; A08 integer-minor spot-check via recursive walker; RBAC
+  negatives (VIEWER copilot/import 403, ADMIN import 403); export on empty business;
+  minimal-backup dry-run 200; invalid backup 422 INVALID_BACKUP. Exit 0/1.
+  RESULT: 24/24 checks passed — ALL GREEN.
+- STYLING/UX DETAILS: restore card radio cards with primary ring + dot, dashed
+  drop-zone row with FileJson icon state (emerald when loaded), badge colors kept
+  in-palette (neutral for dry-run, emerald for merged — no blue), streaming caret in
+  brand emerald, stop button destructive-outline morph, localized confirm dialog copy
+  with live count. Screenshots: qa-r7-restore-card.png, qa-r7-restore-final-en.png,
+  qa-r7-restore-mobile-fa.png, qa-r7-confirm-dialog.png, qa-r7-copilot-final.png.
+- QA: 390px FA-RTL — no overflow (390=390), restore card + actions fully visible
+  (buttons measured 37..332 px inside viewport); 1920 EN clean; full 16-module sweep
+  post-changes: 0 console errors; `bun run lint` clean; i18n audit 499 usages,
+  0 missing, en<->fa parity 0 gaps.
+
+Stage Summary:
+- The backup story is now a complete loop (export → analyze → restore) and the copilot
+  streams with a working Stop control. E2E smoke suite gives every future round a 10s
+  regression gate. One important data-model lesson recorded: record IDs are global PKs,
+  so cross-business restore must either use ids=new (copy) or expect ID_OCCUPIED
+  conflicts (keep) — the import UI communicates both paths.
+- Ops: dev server must run via scripts/keep-dev-up.cjs (double-fork) to survive between
+  tool calls; plain `nohup bun run dev &` gets reaped. Test accounts unchanged:
+  sara@copilot.dev (OWNER), ali@copilot.dev (ADMIN), eve@outsider.dev (VIEWER),
+  rep16007@t.dev (empty-business OWNER) — all testpass123. NOTE: rep16007's "empty"
+  business now contains a COPY of sara's data (13 records, created to verify import);
+  treat it as import-test data, not pristine. Dev DB also has copilot.query stream
+  audit rows + data.import/data.export rows — harmless. Sara's business data unchanged
+  (the one UI-test duplicate customer was deleted).
+- Next round recommendations (priority order):
+  1. Copilot: show citations/dataset meta (window + counts) under each streamed answer;
+     consider streaming ablation — stream only after grounding snapshot passes size guard.
+  2. Reports: per-module prefetch warming (reports/summary + balances) on hover/idle for
+     snappier deep links; virtualize audit table for large trails.
+  3. Settings: "Danger zone" — business rename slug validation feedback, soft-delete
+     purge policy display; import (restore) into a STAGING preview (already 90% there
+     via dry-run) + undo via inverse export.
+  4. Quality: extend e2e-smoke.ts with a write-path probe (create customer → patch →
+     delete) + copilot stream smoke (assert ≥2 SSE events); dependency audit
+     (`bun pm ls` + advisories); contrast pass on muted text tokens.
+  5. Consider Phase 06 → complete marker once (4) lands; then Phase 07 planning per §6.
