@@ -192,7 +192,7 @@ export function AppSidebar({
       </SidebarContent>
       <SidebarFooter>
         <div className="text-muted-foreground group-data-[collapsible=icon]:hidden px-3 py-1 text-[11px]">
-          Phase 05 · AI Copilot
+          Phase 06 · Hardening &amp; polish
         </div>
       </SidebarFooter>
       <SidebarRail />

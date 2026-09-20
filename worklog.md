@@ -551,3 +551,127 @@ Stage Summary:
   (ADMIN), eve@outsider.dev (VIEWER), rep16007@t.dev (Empty Co owner,
   testpass123) — dev-only DB. Dev DB now also contains copilot.query
   audit rows (incl. 10 rate-limit probe "test N" questions) — harmless.
+
+---
+Task ID: 06
+Agent: Z.ai Code (cron webDevReview round)
+Task: Status assessment + agent-browser QA, then Phase 06 — Hardening & polish
+per roadmap §6 (bugs first, then features). Mandates: styling details, more
+features, worklog handover.
+
+Current project status (assessment at round start):
+- Phases 00-05 COMPLETE: all 16 MVP modules functional (dashboard, parties,
+  products, inventory, sales, expenses, payments, balances, reports, AI
+  copilot, audit, members, settings, profile, onboarding, auth).
+- Baseline: server 200, lint clean, dev.log clean. agent-browser E2E sweep
+  over all modules found ONE real bug (below); everything else healthy.
+
+Work Log (bugs found & fixed first):
+- BUG 1 (i18n, fixed): `MISSING_MESSAGE: inventory.stockLow in en` console
+  error — inventory-view.tsx binds useTranslations("inventory") but used
+  stockLow/stockOut keys that only existed in the `products` namespace.
+  Added both keys to inventory namespace in en.ts + fa.ts. Verified 0 errors
+  in a fresh browser session.
+- TOOLING (new): scripts/i18n-audit.ts — static audit scanning every module
+  tsx for useTranslations bindings + t("key") usages, verifying each exists
+  in en AND fa, plus full en<->fa key parity per namespace. Run:
+  `bun scripts/i18n-audit.ts`. Current state: 30 files, 465 usages, 0
+  missing, 0 parity gaps.
+- BUG 2 (dev DB, fixed): sign-in 401 — sara@copilot.dev password hash did
+  not match documented `testpass123` (dev-DB drift from an earlier round).
+  Reset hashes for all 4 documented test accounts (sara/ali/eve/rep16007)
+  to bcrypt(12, testpass123) via one-off bun script (deleted after use).
+  Sign-in now works with documented credentials.
+- BUG 3 (mobile RTL overflow, fixed): at 390px the header (new palette
+  trigger added) overflowed to 418px scrollWidth, pushing the user menu
+  off-screen in RTL. Fix: BusinessSwitcher trigger `min-w-0 max-w-[150px]
+  flex-1 sm:max-w-[240px] sm:flex-initial` (shrinkable), palette button +
+  controls group `shrink-0`, palette label hidden <md. Verified
+  390=390 in FA-RTL-dark mobile.
+
+Phase 06 features implemented:
+- HASH ROUTER (deep links + history): app-store.ts now has KNOWN_MODULES,
+  viewToHash/hashToView/viewKeyOf; navigate() mirrors the view to the URL
+  hash (#/sales, #/settings/members, ...) via history.pushState/replaceState;
+  replaceView() applies back/forward without pushing. app-root.tsx mounts
+  popstate+hashchange listeners and deep-links on load (unknown hash ->
+  dashboard). Verified: click->hash+title sync, reload persistence on
+  #/reports, browser back -> #/sales, forward -> #/reports, direct hash
+  entry -> correct module, #/nonsense -> dashboard fallback. (Sandbox
+  constraint: only "/" is exposed, so hash routing was the correct seam.)
+- COMMAND PALETTE (Cmd/Ctrl+K): src/modules/shell/command-palette.tsx using
+  shadcn CommandDialog. Groups: "Go to" (16 nav targets, audit gated by
+  audit:read — UI mirror of RBAC, server still authoritative), Preferences
+  (light/dark/system, en/fa), Session (sign out). Global keydown listener;
+  header trigger button (icon-only <md, label+kbd >=md) with
+  aria-keyshortcuts. Verified EN + FA(RTL mirrored) + navigation.
+- PER-MODULE DOCUMENT TITLES: app-shell effect sets
+  `${module} · ${business} · AI Business Copilot` localized per active
+  locale (verified: "Sales · Sara's Handmade Shop · AI Business Copilot",
+  FA "تنظیمات · ... · دستیار هوشمند کسب‌وکار").
+- ERROR CONTAINMENT: (1) src/modules/shell/module-boundary.tsx — per-module
+  React class boundary wrapping the module switch in app-shell; localized
+  fallback card with Retry + Back-to-dashboard; switching module auto-
+  clears; (2) src/app/error.tsx route-level boundary (bilingual static
+  copy + digest display + reset); (3) src/app/global-error.tsx root
+  boundary (own html/body per Next requirements, inline styles).
+- DATA & BACKUPS (backup story): GET /api/v1/businesses/[id]/export —
+  full-tenant JSON export ($schema ai-business-copilot/backup@1) with
+  business config, members, customers, suppliers, products, inventory
+  adjustments, sales+line items, expenses, payments, FULL audit trail;
+  A08 note embedded (all *Minor = integer minor units). Guards:
+  getAuthContext + URL-id match + settings:manage (OWNER/ADMIN),
+  rate limit 4/5min/user, audited "data.export" (counts in `after`),
+  no password hashes / minimal PII, Content-Disposition attachment
+  `backup-<slug>-<date>.json`, no-store. UI: "Data & backups" card in
+  Business settings (OWNER/ADMIN only) with checkmark feature bullets,
+  blob download + toast; verified via curl (200, 22KB valid JSON, audit
+  row) AND browser click ("Backup downloaded" toast, 0 console errors)
+  AND RBAC (eve VIEWER -> 403 PERMISSION_DENIED).
+- a11y/styling details: skip-to-content link (sr-only -> focus reveal)
+  before header; subtle view transition (animate-in fade + slide, keyed
+  by view) on module change; "Toggle theme" aria-label now localized
+  (shell.toggleTheme en/fa — was hardcoded); phase strings updated to
+  "Phase 06 · Hardening & polish" (sidebar footer + app footer);
+  dashboard roadmap p6 -> "(in progress)" + phaseNoticeDesc updated
+  (en+fa); settings Data card uses emerald check accents consistent
+  with brand.
+
+Verification (agent-browser + curl + static):
+- Full module sweep (16 modules, exact button locators): 0 console
+  errors/warnings in fresh session; all hash routes verified.
+- Router: deep link, reload persistence, back/forward, unknown fallback,
+  direct hash entry — all verified via browser eval.
+- Palette: Ctrl+K opens, filter "invent" -> Enter navigates to
+  #/inventory; FA RTL mirrored correctly; footer hint shows Ctrl (not Mac).
+- Export: browser click flow + curl (login 302 -> export 200, counts
+  match DB, 2 sale items, audit trail included) + VIEWER 403.
+- Responsive: 390px FA-RTL-dark no overflow (390=390), header fully
+  visible; 1920 desktop EN light verified; screenshots saved:
+  qa-r6-palette.png, qa-r6-palette-fa.png, qa-r6-export-card.png,
+  qa-r6-export-fa.png, qa-r6-export-dark-fa.png,
+  qa-r6-mobile-fa-fixed.png, qa-r6-mobile-sales-en.png,
+  qa-r6-desktop-dash-light.png (+qa-r6-baseline.png).
+- i18n audit: 465 usages, 0 missing, en<->fa parity 0 gaps.
+- `bun run lint` clean; dev.log tail clean (0 errors).
+
+Stage Summary:
+- Phase 06 substantially advanced: error containment (module + route +
+  root), URL hash routing with full history support, command palette,
+  localized document titles, portable JSON backup story, mobile header
+  overflow fix, a11y touches (skip link, localized aria labels), i18n
+  audit tooling. MVP roadmap §6 hardening items still open for future
+  rounds: e2e test automation, dependency audit, admin ops views,
+  streaming copilot answers, import (restore) side of the backup story.
+- Ops notes: dev server running (double-fork pattern from round 04 —
+  survives across tool calls). No schema changes this round; db untouched
+  except password reset for the 4 documented dev test accounts.
+- Test accounts (restored to docs): sara@copilot.dev (OWNER),
+  ali@copilot.dev (ADMIN), eve@outsider.dev (VIEWER),
+  rep16007@t.dev (empty-business OWNER) — all `testpass123`. Dev DB also
+  contains 2 harmless data.export audit rows.
+- Next round recommendation: finish Phase 06 — (a) restore/import side of
+  backup (JSON upload with zod validation, OWNER-only, dry-run diff), (b)
+  streaming copilot responses if SDK supports, (c) e2e smoke suite as a
+  script, (d) dependency audit + A11y contrast pass, (e) consider
+  per-module prefetch warming for reports.

@@ -3,7 +3,7 @@
 import { signOut, useSession } from "next-auth/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { Check, ChevronsUpDown, Languages, LogOut, Moon, Plus, Settings, Sun, UserRound } from "lucide-react";
+import { Check, ChevronsUpDown, Languages, LogOut, Moon, Plus, Search, Settings, Sun, UserRound } from "lucide-react";
 import { useTheme } from "next-themes";
 import { api } from "@/lib/api-client";
 import { isLocale, localeLabel, LOCALES } from "@/i18n/config";
@@ -52,10 +52,11 @@ export function LocaleSwitcher() {
 
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
+  const tShell = useTranslations("shell");
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label="Toggle theme">
+        <Button variant="ghost" size="icon" aria-label={tShell("toggleTheme")}>
           <Sun className="size-4 dark:hidden" />
           <Moon className="hidden size-4 dark:block" />
         </Button>
@@ -94,7 +95,7 @@ export function BusinessSwitcher({ memberships }: { memberships: BusinessListIte
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="max-w-[180px] gap-1.5 sm:max-w-[240px]">
+        <Button variant="outline" size="sm" className="min-w-0 max-w-[150px] flex-1 gap-1.5 sm:max-w-[240px] sm:flex-initial">
           <span className="truncate font-medium">{active?.business.name ?? tShell("noBusinessYet")}</span>
           <ChevronsUpDown className="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />
         </Button>
@@ -175,6 +176,8 @@ export function UserMenu() {
 
 export function AppHeader() {
   const tShell = useTranslations("shell");
+  const tCommon = useTranslations("common");
+  const setCommandOpen = useAppStore((s) => s.setCommandOpen);
 
   // Memberships for the switcher are cached by AppRoot via the same key.
   const { data: memberships } = useQuery<BusinessListItem[]>({
@@ -190,7 +193,21 @@ export function AppHeader() {
       <SidebarTrigger aria-label={tShell("toggleSidebar")} />
       <Separator orientation="vertical" className="h-5" />
       <BusinessSwitcher memberships={list} />
-      <div className="ms-auto flex items-center gap-1">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setCommandOpen(true)}
+        className="text-muted-foreground h-8 shrink-0 gap-2 ps-2.5 font-normal"
+        aria-label={tCommon("palette.title")}
+        aria-keyshortcuts="Meta+K Control+K"
+      >
+        <Search className="size-3.5" aria-hidden="true" />
+        <span className="hidden md:inline">{tCommon("palette.title")}</span>
+        <kbd className="bg-muted pointer-events-none hidden rounded border px-1.5 font-mono text-[10px] font-medium lg:inline" dir="ltr">
+          ⌘K
+        </kbd>
+      </Button>
+      <div className="ms-auto flex shrink-0 items-center gap-1">
         <LocaleSwitcher />
         <ThemeToggle />
         <Separator orientation="vertical" className="mx-1 h-5" />

@@ -3,7 +3,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { useSession } from "next-auth/react";
 import { useTranslations } from "next-intl";
-import { useAppStore } from "@/store/app-store";
+import { useAppStore, hashToView, viewKeyOf } from "@/store/app-store";
 import { dirOf } from "@/i18n/config";
 import { Splash } from "@/components/shared/primitives";
 import { AuthView } from "@/modules/auth/auth-view";
@@ -40,6 +40,26 @@ export function AppRoot() {
     document.documentElement.dir = dir;
     document.documentElement.lang = locale;
   }, [locale]);
+
+  // Hash router: deep link on first mount + browser back/forward support.
+  // navigate() pushes history entries; popstate/hashchange (user gestures)
+  // mirror the URL back into the store without pushing again.
+  useEffect(() => {
+    const applyHash = () => {
+      const next = hashToView(window.location.hash);
+      const current = useAppStore.getState().view;
+      if (viewKeyOf(current) !== viewKeyOf(next)) {
+        useAppStore.getState().replaceView(next);
+      }
+    };
+    applyHash();
+    window.addEventListener("popstate", applyHash);
+    window.addEventListener("hashchange", applyHash);
+    return () => {
+      window.removeEventListener("popstate", applyHash);
+      window.removeEventListener("hashchange", applyHash);
+    };
+  }, []);
 
   const authenticated = status === "authenticated";
 
@@ -79,7 +99,7 @@ export function AppRoot() {
       <OnboardingView
         onCreated={(b: CreatedBusiness) => {
           setActiveBusiness(b.business.id);
-          useAppStore.getState().navigate({ kind: "dashboard" });
+          useAppStore.getState().navigate({ kind: "dashboard" }, { replace: true });
         }}
       />
     );

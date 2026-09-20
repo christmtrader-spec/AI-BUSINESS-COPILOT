@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { Coins, Globe2, Loader2, Save, Settings2 } from "lucide-react";
+import { Check, Coins, DatabaseBackup, Globe2, Loader2, Save, Settings2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
 import { CURRENCIES, findCurrency } from "@/lib/currencies";
@@ -117,6 +117,50 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
       return "—";
     }
   }, [precision, currencyCode, symbol, locale]);
+
+  const [exporting, setExporting] = useState(false);
+
+  async function exportData() {
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/v1/businesses/${activeId}/export`, {
+        credentials: "same-origin",
+        headers: activeId ? { "x-business-id": activeId } : undefined,
+      });
+      if (!res.ok) {
+        let message = t("exportError");
+        try {
+          const body = (await res.json()) as {
+            error?: { message?: string; code?: string };
+          };
+          if (body.error?.code === "RATE_LIMITED") message = t("exportRateLimited");
+          else if (body.error?.message) message = body.error.message;
+        } catch {
+          // keep default
+        }
+        throw new Error(message);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const dispo = res.headers.get("content-disposition") ?? "";
+      const match = /filename="([^"]+)"/.exec(dispo);
+      a.download = match?.[1] ?? `backup-${Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast({ title: t("exportedToast") });
+    } catch (err) {
+      toast({
+        title: err instanceof Error ? err.message : t("exportError"),
+        variant: "destructive",
+      });
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return (
     <div className="mx-auto max-w-3xl space-y-6" data-view="settings:business">
@@ -278,6 +322,47 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
           </Button>
         </div>
       </form>
+
+      {editable ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <DatabaseBackup className="text-primary size-4" aria-hidden="true" />
+              {t("dataSection")}
+            </CardTitle>
+            <CardDescription>{t("dataSectionDesc")}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="text-muted-foreground grid gap-2 text-xs sm:grid-cols-2">
+              <p className="flex items-start gap-2">
+                <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                {t("dataIncludes1")}
+              </p>
+              <p className="flex items-start gap-2">
+                <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                {t("dataIncludes2")}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/30 px-4 py-3">
+              <p className="text-muted-foreground text-xs">{t("dataNote")}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void exportData()}
+                disabled={exporting}
+              >
+                {exporting ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <DatabaseBackup className="size-4" aria-hidden="true" />
+                )}
+                {exporting ? t("exporting") : t("exportAction")}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 }
