@@ -1,8 +1,6 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// AI Business Copilot — Schema v1 (Phase 01: Foundation)
+// Constitution: A01 multi-tenant, A02 RBAC, A04 currency, A07 UTC dates,
+// A08 money as integer minor units (Int), A09 auditability.
 
 generator client {
   provider = "prisma-client-js"
@@ -13,20 +11,78 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// NOTE: SQLite connector does not support Prisma enums.
+// Roles are stored as strings; the authoritative set lives in
+// src/lib/rbac.ts and is validated with zod at every boundary.
+
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String           @id @default(cuid())
+  email        String           @unique
+  name         String?
+  passwordHash String
+  locale       String           @default("en") // user display preference (A05)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  memberships BusinessMember[]
+  ownedBusinesses Business[]   @relation("BusinessOwner")
+  auditLogs   AuditLog[]
 }
 
-model Post {
-  id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
+model Business {
+  id               String   @id @default(cuid())
+  name             String
+  slug             String   @unique
+  // A04 — currency is configuration, never hard-coded
+  currencyCode     String   @default("USD")
+  currencySymbol   String   @default("$")
+  decimalPrecision Int      @default(2) // 0..4
+  // A05/A07 — locale & timezone are business configuration
+  locale           String   @default("en")
+  timezone         String   @default("UTC")
+
+  ownerId String
+  owner   User   @relation("BusinessOwner", fields: [ownerId], references: [id])
+
+  members   BusinessMember[]
+  auditLogs AuditLog[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([ownerId])
+}
+
+model BusinessMember {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // One of: OWNER | ADMIN | MANAGER | STAFF | ACCOUNTANT | VIEWER (rbac.ts)
+  role       String   @default("VIEWER")
+  createdAt  DateTime @default(now())
+
+  @@unique([businessId, userId])
+  @@index([userId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String // e.g. "business.update", "member.role_change"
+  entityType String // e.g. "Business", "BusinessMember"
+  entityId   String?
+  beforeJson String?
+  afterJson  String?
+  ip         String?
+  userAgent  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([entityType, entityId])
 }

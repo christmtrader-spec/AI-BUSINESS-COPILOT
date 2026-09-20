@@ -119,4 +119,41 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* A05/A06 — Persian-first typography when the document is RTL. */
+  html[dir="rtl"] body {
+    font-family:
+      "Vazirmatn",
+      "IRANSans",
+      Tahoma,
+      "Segoe UI",
+      var(--font-geist-sans),
+      system-ui,
+      sans-serif;
+  }
+  /* Improve number legibility for financial data */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--primary) 18%, transparent);
+  }
+  /* Custom scrollbars for long lists (per UI standards) */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--foreground) 25%, transparent) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--foreground) 22%, transparent);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--foreground) 35%, transparent);
+  }
 }
