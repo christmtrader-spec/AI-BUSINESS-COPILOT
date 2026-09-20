@@ -3,7 +3,6 @@
 import {
   Bot,
   CheckCircle2,
-  Circle,
   ClipboardList,
   Map,
   Settings2,
@@ -11,14 +10,17 @@ import {
   Sparkles,
   Users,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useAppStore } from "@/store/app-store";
 import { asRole, can, type Role } from "@/lib/rbac";
+import { api } from "@/lib/api-client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/shared/primitives";
 import { useSession } from "next-auth/react";
+import { fmtMoney } from "../finance-shared/finance-kit";
 import type { BusinessListItem } from "../shell/types";
 
 export function DashboardView({ membership }: { membership: BusinessListItem }) {
@@ -28,13 +30,30 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
   const navigate = useAppStore((s) => s.navigate);
   const { data: session } = useSession();
 
+  // Real, derived numbers from transaction modules (no placeholder figures).
+  const { data: recv } = useQuery({
+    queryKey: ["receivables", "dashboard"],
+    queryFn: () => api<{ totalOutstandingMinor: number; openCount: number }>("/api/v1/receivables"),
+    staleTime: 30_000,
+  });
+  const { data: pay } = useQuery({
+    queryKey: ["payables", "dashboard"],
+    queryFn: () => api<{ totalOutstandingMinor: number; openCount: number }>("/api/v1/payables"),
+    staleTime: 30_000,
+  });
+  const { data: payStats } = useQuery({
+    queryKey: ["payments", "dashboard"],
+    queryFn: () => api<{ total: number }>("/api/v1/payments?page=1&pageSize=1"),
+    staleTime: 30_000,
+  });
+
   const role: Role = asRole(membership.role);
 
   const steps = [
     { done: true, icon: CheckCircle2, label: t("stepBusinessDone"), action: null as null | { label: string; view: Parameters<typeof navigate>[0] } },
     { done: false, icon: Settings2, label: t("stepSettings"), action: { label: t("openSettings"), view: { kind: "settings:business" } as const } },
     { done: false, icon: Users, label: t("stepInvite"), action: can(role, "members:manage") ? { label: t("openMembers"), view: { kind: "settings:members" } as const } : null },
-    { done: false, icon: ClipboardList, label: t("stepComing"), action: null },
+    { done: false, icon: ClipboardList, label: t("stepSales"), action: { label: t("openSales"), view: { kind: "module", module: "sales" } as const } },
   ];
 
   return (
@@ -111,16 +130,36 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {/* At a glance — honest empty state (Rule 05: no fake numbers) */}
+        {/* At a glance — real derived figures (Rule 05: no fake numbers) */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base">{t("atAGlance")}</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-muted-foreground flex items-start gap-3 text-sm">
-              <Circle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              <p>{t("metricsComing")}</p>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-lg border p-3">
+                <p className="text-muted-foreground text-xs font-medium uppercase">{t("statReceivable")}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums text-amber-700 dark:text-amber-400" dir="ltr">
+                  {fmtMoney(membership.business, recv?.totalOutstandingMinor ?? 0)}
+                </p>
+                <p className="text-muted-foreground text-xs">{t("statReceivableHint", { count: recv?.openCount ?? 0 })}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-muted-foreground text-xs font-medium uppercase">{t("statPayable")}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums text-rose-700 dark:text-rose-400" dir="ltr">
+                  {fmtMoney(membership.business, pay?.totalOutstandingMinor ?? 0)}
+                </p>
+                <p className="text-muted-foreground text-xs">{t("statPayableHint", { count: pay?.openCount ?? 0 })}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-muted-foreground text-xs font-medium uppercase">{t("statPayments")}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums text-emerald-700 dark:text-emerald-400" dir="ltr">
+                  {payStats?.total ?? 0}
+                </p>
+                <p className="text-muted-foreground text-xs">{t("statPaymentsHint")}</p>
+              </div>
             </div>
+            <p className="text-muted-foreground mt-3 text-xs">{t("metricsNote")}</p>
           </CardContent>
         </Card>
 
@@ -138,10 +177,17 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
                 <li
                   key={k}
                   className={`rounded-md border px-3 py-2 ${
-                    k === "p1" ? "border-primary/30 bg-primary/5 font-medium" : "text-muted-foreground"
+                    k === "p3"
+                      ? "border-primary/30 bg-primary/5 font-medium"
+                      : k === "p1" || k === "p2"
+                        ? "text-muted-foreground border-emerald-500/20 bg-emerald-500/5"
+                        : "text-muted-foreground"
                   }`}
                 >
                   {t(`roadmapItems.${k}`)}
+                  {k === "p1" || k === "p2" ? (
+                    <CheckCircle2 className="ms-1.5 inline size-3.5 text-emerald-600" aria-hidden="true" />
+                  ) : null}
                 </li>
               ))}
             </ul>

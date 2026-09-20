@@ -70,11 +70,11 @@ const OPERATIONS: NavItem[] = [
   { view: { kind: "module", module: "suppliers" }, labelKey: "suppliers", icon: Truck },
   { view: { kind: "module", module: "products" }, labelKey: "products", icon: Package },
   { view: { kind: "module", module: "inventory" }, labelKey: "inventory", icon: Warehouse },
-  { view: { kind: "module", module: "sales" }, labelKey: "sales", icon: ShoppingCart, soon: true },
-  { view: { kind: "module", module: "expenses" }, labelKey: "expenses", icon: Wallet, soon: true },
-  { view: { kind: "module", module: "payments" }, labelKey: "payments", icon: CreditCard, soon: true },
-  { view: { kind: "module", module: "receivables" }, labelKey: "receivables", icon: HandCoins, soon: true },
-  { view: { kind: "module", module: "payables" }, labelKey: "payables", icon: ArrowUpRight, soon: true },
+  { view: { kind: "module", module: "sales" }, labelKey: "sales", icon: ShoppingCart },
+  { view: { kind: "module", module: "expenses" }, labelKey: "expenses", icon: Wallet },
+  { view: { kind: "module", module: "payments" }, labelKey: "payments", icon: CreditCard },
+  { view: { kind: "module", module: "receivables" }, labelKey: "receivables", icon: HandCoins },
+  { view: { kind: "module", module: "payables" }, labelKey: "payables", icon: ArrowUpRight },
 ];
 
 const INTELLIGENCE: NavItem[] = [
@@ -192,7 +192,7 @@ export function AppSidebar({
       </SidebarContent>
       <SidebarFooter>
         <div className="text-muted-foreground group-data-[collapsible=icon]:hidden px-3 py-1 text-[11px]">
-          Phase 01 · Foundation
+          Phase 03 · Transactions
         </div>
       </SidebarFooter>
       <SidebarRail />

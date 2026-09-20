@@ -28,6 +28,7 @@ model User {
   ownedBusinesses Business[]   @relation("BusinessOwner")
   auditLogs   AuditLog[]
   inventoryAdjustments InventoryAdjustment[]
+  payments    Payment[]
 }
 
 model Business {
@@ -51,6 +52,9 @@ model Business {
   suppliers Supplier[]
   products  Product[]
   inventoryAdjustments InventoryAdjustment[]
+  sales     Sale[]
+  expenses  Expense[]
+  payments  Payment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -110,6 +114,8 @@ model Customer {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
+  sales Sale[]
+
   @@index([businessId, deletedAt])
   @@index([businessId, name])
 }
@@ -126,6 +132,8 @@ model Supplier {
   deletedAt  DateTime?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
+
+  expenses Expense[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -150,6 +158,7 @@ model Product {
   updatedAt      DateTime  @updatedAt
 
   adjustments InventoryAdjustment[]
+  saleItems   SaleItem[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -169,4 +178,103 @@ model InventoryAdjustment {
 
   @@index([businessId, createdAt])
   @@index([productId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Phase 03 — Transactions (Constitution MVP scope items 8-12)
+// Money = Int minor units (A08). `paidMinor` + `status` on Sale/Expense are
+// denormalized summaries maintained transactionally with every Payment write
+// (single writer path: the payments pipeline). Status values:
+// UNPAID | PARTIAL | PAID — computed by lib/money.statusOf, never client input.
+// ---------------------------------------------------------------------------
+
+model Sale {
+  id         String    @id @default(cuid())
+  businessId String
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Per-business sequential invoice number (displayed as INV-0001)
+  number     Int
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  // Totals computed server-side with integer math at creation (A08)
+  subtotalMinor Int
+  discountMinor Int     @default(0)
+  totalMinor    Int
+  // Payment summary — updated in the same tx as every Payment create/delete
+  paidMinor  Int       @default(0)
+  status     String    @default("UNPAID")
+  issueDate  DateTime  @default(now())
+  note       String?
+  deletedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  items    SaleItem[]
+  payments Payment[]
+
+  @@unique([businessId, number])
+  @@index([businessId, deletedAt, createdAt])
+  @@index([businessId, status])
+  @@index([customerId])
+}
+
+model SaleItem {
+  id             String   @id @default(cuid())
+  saleId         String
+  sale           Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId      String?
+  product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  name           String // snapshot of product/custom item name at sale time
+  unit           String? // snapshot
+  qty            Int // whole units (MVP contract)
+  unitPriceMinor Int
+  lineTotalMinor Int // qty * unitPriceMinor, integer math
+
+  @@index([saleId])
+}
+
+model Expense {
+  id          String    @id @default(cuid())
+  businessId  String
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  supplierId  String?
+  supplier    Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  category    String
+  amountMinor Int
+  paidMinor   Int       @default(0)
+  status      String    @default("UNPAID")
+  spentAt     DateTime  @default(now())
+  note        String?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  payments Payment[]
+
+  @@index([businessId, deletedAt, createdAt])
+  @@index([businessId, status])
+  @@index([supplierId])
+}
+
+model Payment {
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Exactly one of saleId / expenseId (validated in the API schema)
+  saleId      String?
+  sale        Sale?    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  expenseId   String?
+  expense     Expense? @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  direction   String // IN (customer pays us) | OUT (we pay supplier)
+  amountMinor Int
+  method      String // CASH | BANK_TRANSFER | CARD | OTHER
+  note        String?
+  paidAt      DateTime @default(now())
+  actorId     String?
+  actor       User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@index([businessId, paidAt])
+  @@index([saleId])
+  @@index([expenseId])
 }

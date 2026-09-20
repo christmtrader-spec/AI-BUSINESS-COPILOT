@@ -236,3 +236,115 @@ Stage Summary:
   expenses, payments; receivables/payables derived views. Reuse
   money.ts + table-kit; keep everything audited. Phase 04 afterwards
   (dashboard KPIs + reports from real data).
+
+---
+Task ID: 03
+Agent: Z.ai Code (cron webDevReview round)
+Task: Status assessment + QA, then Phase 03 — Transactions (sales invoices +
+items, expenses, payments, receivables/payables derived views) per roadmap §6.
+Mandates: styling details, more features, worklog handover.
+
+Work Log:
+- Baseline verified: server 200, lint clean, Phase 01/02 flows intact
+  (agent-browser snapshot + console: zero errors).
+- DB: added Sale (per-business sequential `number`, customerId?, denormalized
+  subtotalMinor/discountMinor/totalMinor + paidMinor/status maintained by the
+  payments pipeline), SaleItem (product snapshot: name/unit/qty/unitPrice/
+  lineTotalMinor), Expense (supplierId?, category, amountMinor + paidMinor/
+  status), Payment (exactly one of saleId/expenseId, direction IN|OUT, method
+  CASH|BANK_TRANSFER|CARD|OTHER, paidAt, actor). All money = Int minor units
+  (A08). db:push OK; dev server restarted (Phase 02 lesson applied).
+- Server: money.ts gained statusOf() (single source of truth for
+  UNPAID/PARTIAL/PAID); finance.ts (formatInvoiceNumber); schemas.ts gained
+  sale/expense/payment zod contracts (payment refine: exactly one target;
+  totals recomputed SERVER-side — client values never trusted).
+  Routes (all tenant-scoped + RBAC + audited):
+  /api/v1/sales (GET list w/ q+status+pagination, POST create w/ items —
+  validates customer/products per business, computes totals, decrements
+  stock + writes InventoryAdjustment "Sale INV-xxxx" in ONE tx),
+  /api/v1/sales/[id] (GET detail w/ items+payments, DELETE soft — blocked
+  while payments exist, restores stock with reversal adjustments),
+  /api/v1/expenses (GET/POST), /api/v1/expenses/[id] (PATCH — amount may
+  never drop below paid; DELETE blocked while payments exist),
+  /api/v1/payments (GET w/ direction filter; POST — finance:manage,
+  overpayment → 422, updates paidMinor+status in same tx),
+  /api/v1/payments/[id] (DELETE — reverses balances),
+  /api/v1/receivables + /api/v1/payables (derived views: totals, open counts,
+  oldest-first items, per-party aggregation).
+- Frontend: finance-kit.tsx (FinanceStatusBadge color-coded, StatCard,
+  fmtMoney/fmtDate, txKeys + useInvalidateFinance); sale-form-dialog (customer
+  picker, line items w/ product autofill + custom items, discount, live
+  integer-math totals preview); sale-detail-dialog (items, totals, payment
+  history w/ delete, record-payment inline); payments/payment-form-dialog
+  (shared by payments module + receivables/payables quick actions + invoice
+  detail; groups open invoices/expenses, defaults amount to outstanding
+  balance); sales/expenses/payments views (search, status/direction filters,
+  pagination, empty states); balances-view (shared receivables/payables:
+  stat cards, per-party badges, Pay action per row). Sidebar: 5 modules now
+  live (only Copilot/Reports "coming soon"). Footer + sidebar badge →
+  "Phase 03 · Transactions". Dashboard: getting-started step 4 now links to
+  Sales; roadmap p1/p2 marked done (emerald + check); "At a glance" now shows
+  REAL derived numbers (receivable, payable, payments count) — no fake data.
+  i18n: complete `finance` namespace in en + fa (RTL), dashboard strings
+  updated both languages.
+- FIXED DURING QA (agent-browser found real bugs):
+  1) CRITICAL money bug (Constitution risk R2): toMinor() used the scale
+     multiplier (100) as the decimal digit count → ANY decimal input ("12.5")
+     threw "Amount out of safe range"; whole numbers silently worked.
+     Fixed (digits vs scale split) + verified with an 11-case sanity suite
+     incl. half-up rounding, precision 0/4, thousands separators.
+  2) Radix SelectItem crash with empty-string value (walk-in/custom/no-
+     supplier options) → sentinel values mapped back to "".
+  3) TanStack Query invalidation never matched: query keys were nested
+     ([["sales"], ...]) while invalidate used ["sales"] → lists went stale
+     after mutations. Flattened to [...txKeys.x, ...] / ["sales","detail",id].
+  4) Sale dialog kept stale draft on reopen → render-adjust reset pattern.
+  5) Removed unused prop/leftovers; a11y DialogTitle warnings verified as
+     stale HMR history (all dialogs have Title+Description).
+- Styling details: monospace tracking-tight invoice numbers (list + detail),
+  color-coded status badges (amber UNPAID / sky PARTIAL / emerald PAID),
+  signed +/− colored amounts in the payments ledger, per-party outstanding
+  badges, responsive line-item grid (stacked cards on mobile, inline on
+  sm+), consistent FormDialog footers, custom scrollbars already global.
+
+Verification (agent-browser E2E + API):
+- Invoice INV-0001 (Gift wrap €2.50 + Handmade Candle 2×€12.50 = €27.50)
+  created via UI; stock 13→11; InventoryAdjustment "Sale INV-0001"; audit
+  sale.create + inventory.adjust. OK
+- Partial payment €10 (detail dialog) → PARTIAL, balance €17.50; receivables
+  showed €17.50; full payment €17.50 (receivables quick action, amount
+  auto-defaulted) → PAID, receivables "Everything is settled", balance €0.00.
+  OK
+- Expense Rent €800 → payables €800; paid €300 (payables quick action) →
+  PARTIAL, payables €500. OK
+- Payments ledger shows IN/OUT with signed colored amounts; direction filter
+  works. OK
+- Dashboard at-a-glance: receivable €0.00, payable €500.00, payments 3 —
+  exact real values. OK
+- SECURITY: unauth → 401; fake business id → FORBIDDEN; overpayment → 422
+  OVERPAYMENT; eve added as VIEWER: read 200, POST sale 403
+  PERMISSION_DENIED, POST payment 403; UI hides write buttons for VIEWER;
+  DELETE paid invoice → 422 SALE_HAS_PAYMENTS; audit trail complete
+  (member.add, payment.create×3, expense.create, sale.create, ...). OK
+- فارسی RTL: dir=rtl lang=fa, sidebar mirrored right, sales module fully
+  translated, mixed-content cells dir=auto. Mobile 390×844: no horizontal
+  overflow (scrollW=clientW=390). Dark + light themes verified. Screenshots:
+  download/qa-final-sales.png, qa-final-detail.png,
+  qa-final-receivables-light.png, qa-sales-rtl.png, qa-sales-mobile-fa.png.
+- `bun run lint` clean; dev.log clean (no runtime errors).
+
+Stage Summary:
+- Phase 03 COMPLETE: MVP items 8-12 (sales, expenses, payments, receivables,
+  payables) live with deterministic integer money math, transactional stock
+  integration, full audit coverage, en/fa + RTL.
+- Data model note: paidMinor/status are denormalized; single writer is the
+  payments pipeline (create/delete + expense PATCH recompute) — keep it that
+  way (documented in schema comments).
+- Known minor: payments ledger pagination only (no search yet); sale detail
+  dialog opens from list only; invoice PDF export deferred to Phase 04/06.
+- Next (Phase 04 per roadmap): dashboard KPIs + reports from real data
+  (Recharts; revenue vs expenses timeline, top products, cash collected),
+  sales summary endpoint; then Phase 05 AI Copilot (read-only, grounded in
+  these deterministic metrics).
+- Test accounts unchanged: sara@copilot.dev (OWNER), ali@copilot.dev (ADMIN),
+  eve@outsider.dev (now VIEWER member) — dev-only DB.

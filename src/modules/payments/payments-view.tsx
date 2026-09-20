@@ -1,0 +1,290 @@
+"use client";
+
+import { useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useTranslations } from "next-intl";
+import { ArrowDownToLine, Plus, Trash2 } from "lucide-react";
+import { toast } from "@/hooks/use-toast";
+import { api, ApiClientError } from "@/lib/api-client";
+import { can, asRole, type Role } from "@/lib/rbac";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { EmptyState, PageHeader } from "@/components/shared/primitives";
+import { Pagination } from "@/components/shared/table-kit";
+import { fmtDate, fmtMoney, txKeys, useInvalidateFinance } from "../finance-shared/finance-kit";
+import { PaymentFormDialog } from "./payment-form-dialog";
+import type { BusinessSummary } from "../shell/types";
+
+type PaymentRow = {
+  id: string;
+  direction: "IN" | "OUT";
+  saleNumber: number | null;
+  customerName: string | null;
+  expenseCategory: string | null;
+  supplierName: string | null;
+  amountMinor: number;
+  method: string;
+  note: string | null;
+  paidAt: string;
+  actorName: string | null;
+};
+
+type PaymentsPage = { items: PaymentRow[]; total: number; page: number; pageSize: number };
+
+const DIRECTIONS = ["ALL", "IN", "OUT"] as const;
+
+/** Payments module — unified money-in/money-out ledger. */
+export function PaymentsView({
+  business,
+  role,
+}: {
+  business: BusinessSummary;
+  role: Role;
+}) {
+  const t = useTranslations("finance.payments");
+  const tCommon = useTranslations("common");
+  const tErrors = useTranslations("errors");
+  const invalidate = useInvalidateFinance();
+
+  const canPay = can(asRole(role), "finance:manage");
+
+  const [page, setPage] = useState(1);
+  const [direction, setDirection] = useState<(typeof DIRECTIONS)[number]>("ALL");
+  const [formOpen, setFormOpen] = useState(false);
+
+  const dirQs = direction === "ALL" ? "" : `&direction=${direction}`;
+  const { data, isLoading, error, refetch } = useQuery<PaymentsPage>({
+    queryKey: [...txKeys.payments, page, direction],
+    queryFn: () => api(`/api/v1/payments?page=${page}&pageSize=15${dirQs}`),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => api(`/api/v1/payments/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast({ title: t("deletedToast") });
+      invalidate();
+    },
+    onError: (err) => {
+      toast({
+        title: err instanceof ApiClientError ? err.message : tErrors("generic"),
+        variant: "destructive",
+      });
+    },
+  });
+
+  const items = data?.items ?? [];
+  const tPay = useTranslations("finance.paymentForm");
+
+  function partyLabel(p: PaymentRow): string {
+    if (p.direction === "IN") {
+      return `${t("invoiceShort")} ${p.saleNumber != null ? `INV-${String(p.saleNumber).padStart(4, "0")}` : "—"}${p.customerName ? ` · ${p.customerName}` : ""}`;
+    }
+    return `${p.expenseCategory ?? "—"}${p.supplierName ? ` · ${p.supplierName}` : ""}`;
+  }
+
+  return (
+    <div className="space-y-6" data-view="module:payments">
+      <PageHeader
+        title={t("title")}
+        subtitle={t("subtitle")}
+        actions={
+          canPay ? (
+            <Button onClick={() => setFormOpen(true)} size="sm">
+              <Plus className="size-4" aria-hidden="true" />
+              {t("recordPayment")}
+            </Button>
+          ) : null
+        }
+      />
+
+      {error ? (
+        <div className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm">
+          {tErrors("loadFailed")}{" "}
+          <button className="underline" onClick={() => void refetch()}>
+            {tCommon("retry")}
+          </button>
+        </div>
+      ) : null}
+
+      <Card>
+        <CardContent className="pt-6">
+          <div className="mb-4">
+            <Select
+              value={direction}
+              onValueChange={(v) => {
+                setDirection(v as (typeof DIRECTIONS)[number]);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-48" aria-label={t("directionFilter")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DIRECTIONS.map((d) => (
+                  <SelectItem key={d} value={d}>
+                    {d === "ALL" ? t("allDirections") : t(`dir_${d}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {isLoading ? (
+            <div className="space-y-2" aria-busy="true">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="bg-muted/50 h-12 animate-pulse rounded-md" />
+              ))}
+            </div>
+          ) : items.length === 0 && direction === "ALL" ? (
+            <EmptyState
+              icon={ArrowDownToLine}
+              title={t("empty")}
+              description={t("emptyDesc")}
+              action={
+                canPay ? (
+                  <Button size="sm" variant="outline" onClick={() => setFormOpen(true)}>
+                    <Plus className="size-4" aria-hidden="true" />
+                    {t("recordPayment")}
+                  </Button>
+                ) : null
+              }
+            />
+          ) : items.length === 0 ? (
+            <EmptyState icon={ArrowDownToLine} title={t("emptyFiltered")} />
+          ) : (
+            <>
+              <div className="overflow-x-auto rounded-md border">
+                <Table>
+                  <TableHeader className="bg-muted/50">
+                    <TableRow>
+                      <TableHead>{t("colDate")}</TableHead>
+                      <TableHead>{t("colDirection")}</TableHead>
+                      <TableHead>{t("colTarget")}</TableHead>
+                      <TableHead className="hidden md:table-cell">{t("colMethod")}</TableHead>
+                      <TableHead className="text-end">{t("colAmount")}</TableHead>
+                      {canPay ? (
+                        <TableHead className="text-end">{tCommon("actions")}</TableHead>
+                      ) : null}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {items.map((p) => (
+                      <TableRow key={p.id} className="hover:bg-muted/40">
+                        <TableCell className="text-muted-foreground whitespace-nowrap text-sm">
+                          {fmtDate(business, p.paidAt)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={
+                              p.direction === "IN"
+                                ? "border-emerald-300/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                : "border-rose-300/60 bg-rose-500/10 text-rose-700 dark:text-rose-400"
+                            }
+                          >
+                            {p.direction === "IN" ? t("dir_IN") : t("dir_OUT")}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="max-w-44 truncate text-sm" dir="auto">
+                          {partyLabel(p)}
+                          {p.note ? (
+                            <p className="text-muted-foreground truncate text-xs" dir="auto">{p.note}</p>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground hidden text-sm md:table-cell">
+                          {tPay(`methods.${p.method}`)}
+                        </TableCell>
+                        <TableCell
+                          className={`text-end font-medium tabular-nums ${
+                            p.direction === "IN"
+                              ? "text-emerald-700 dark:text-emerald-400"
+                              : "text-rose-700 dark:text-rose-400"
+                          }`}
+                          dir="ltr"
+                        >
+                          {p.direction === "IN" ? "+" : "−"}
+                          {fmtMoney(business, p.amountMinor)}
+                        </TableCell>
+                        {canPay ? (
+                          <TableCell className="text-end">
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-destructive hover:text-destructive size-8"
+                                  aria-label={tCommon("delete")}
+                                >
+                                  <Trash2 className="size-4" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>{t("deleteTitle")}</AlertDialogTitle>
+                                  <AlertDialogDescription>{t("deleteDesc")}</AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                    onClick={() => deleteMutation.mutate(p.id)}
+                                  >
+                                    {tCommon("delete")}
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </TableCell>
+                        ) : null}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <Pagination
+                page={page}
+                pageSize={15}
+                total={data?.total ?? 0}
+                onPage={setPage}
+                labels={{
+                  prev: tCommon("previous"),
+                  next: tCommon("next"),
+                  of: business.locale === "fa" ? "از" : "of",
+                }}
+              />
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <PaymentFormDialog open={formOpen} onOpenChange={setFormOpen} business={business} />
+    </div>
+  );
+}

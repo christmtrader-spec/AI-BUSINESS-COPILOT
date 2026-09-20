@@ -13,6 +13,10 @@ import { DashboardView } from "../dashboard/dashboard-view";
 import { PartyView } from "../parties/party-view";
 import { ProductsView } from "../products/products-view";
 import { InventoryView } from "../inventory/inventory-view";
+import { SalesView } from "../sales/sales-view";
+import { ExpensesView } from "../expenses/expenses-view";
+import { PaymentsView } from "../payments/payments-view";
+import { BalancesView } from "../balances/balances-view";
 import { BusinessSettingsView } from "../settings/business-settings-view";
 import { MembersView } from "../settings/members-view";
 import { ProfileView } from "../settings/profile-view";
@@ -57,6 +61,16 @@ export function AppShell({
                 <ProductsView business={membership!.business} role={role} />
               ) : view.module === "inventory" ? (
                 <InventoryView business={membership!.business} role={role} />
+              ) : view.module === "sales" ? (
+                <SalesView business={membership!.business} role={role} />
+              ) : view.module === "expenses" ? (
+                <ExpensesView business={membership!.business} role={role} />
+              ) : view.module === "payments" ? (
+                <PaymentsView business={membership!.business} role={role} />
+              ) : view.module === "receivables" ? (
+                <BalancesView kind="receivables" business={membership!.business} role={role} />
+              ) : view.module === "payables" ? (
+                <BalancesView kind="payables" business={membership!.business} role={role} />
               ) : (
                 <ComingSoonView module={view.module} />
               )
@@ -66,7 +80,7 @@ export function AppShell({
         <footer className="border-t">
           <div className="text-muted-foreground mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-1 px-4 py-3 text-xs sm:flex-row">
             <p>
-              {tCommon("appName")} · Phase 01 Foundation
+              {tCommon("appName")} · Phase 03 · Transactions
             </p>
             <p>© {new Date().getFullYear()} — {tCommon("tagline")}</p>
           </div>

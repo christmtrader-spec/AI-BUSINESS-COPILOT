@@ -30,7 +30,8 @@ export function minorScale(precision: number): number {
  * never introduce float drift. Rounds half-up at sub-minor digits.
  */
 export function toMinor(amount: number | string, precision: number): number {
-  const scale = minorScale(precision);
+  const digits = clampPrecision(precision); // decimal digit count (e.g. 2)
+  const scale = minorScale(precision); // multiplier (e.g. 100)
   const str = String(amount).trim().replace(/,/g, "");
   if (!/^-?\d*(\.\d*)?$/.test(str) || str === "" || str === "-" || str === ".") {
     throw new Error(`Invalid amount: ${amount}`);
@@ -38,11 +39,12 @@ export function toMinor(amount: number | string, precision: number): number {
   const negative = str.startsWith("-");
   const unsigned = negative ? str.slice(1) : str;
   const [intPart = "0", fracPartRaw = ""] = unsigned.split(".");
-  const fracPart = (fracPartRaw + "0".repeat(scale + 1)).slice(0, scale + 1);
+  // Keep digits+1 fraction chars: `digits` kept + 1 rounding witness.
+  const fracPart = (fracPartRaw + "0".repeat(digits + 1)).slice(0, digits + 1);
   const whole = BigInt(intPart || "0") * BigInt(scale);
-  const frac = BigInt(fracPart.slice(0, scale) || "0");
+  const frac = BigInt(fracPart.slice(0, digits) || "0");
   // round half-up on the first discarded digit
-  const firstDiscarded = Number(fracPart[scale] ?? "0");
+  const firstDiscarded = Number(fracPart[digits] ?? "0");
   let minor = whole + frac + (firstDiscarded >= 5 ? BigInt(1) : BigInt(0));
   if (negative) minor = -minor;
   const n = Number(minor);
@@ -95,4 +97,19 @@ export function formatMoney(
 /** Zero in minor units. */
 export function zeroMinor(): number {
   return 0;
+}
+
+/**
+ * Derive payment status from integer totals (single source of truth).
+ * Used by the payments pipeline; never accepted from client input.
+ */
+export type PaymentStatus = "UNPAID" | "PARTIAL" | "PAID";
+
+export function statusOf(totalMinor: number, paidMinor: number): PaymentStatus {
+  if (!Number.isInteger(totalMinor) || !Number.isInteger(paidMinor)) {
+    throw new Error("Minor units must be integers");
+  }
+  if (paidMinor <= 0) return "UNPAID";
+  if (paidMinor >= totalMinor) return "PAID";
+  return "PARTIAL";
 }
