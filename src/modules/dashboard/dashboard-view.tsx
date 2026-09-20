@@ -182,7 +182,7 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Getting started */}
-        <Card className="lg:col-span-2">
+        <Card className="transition-shadow duration-200 hover:shadow-md lg:col-span-2">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Map className="text-primary size-4" aria-hidden="true" />
@@ -223,7 +223,7 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
         </Card>
 
         {/* Copilot — live in Phase 05 */}
-        <Card className="from-primary/5 border-primary/20 bg-gradient-to-br to-transparent">
+        <Card className="from-primary/5 border-primary/20 bg-gradient-to-br to-transparent transition-shadow duration-200 hover:shadow-md">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Bot className="text-primary size-4" aria-hidden="true" />

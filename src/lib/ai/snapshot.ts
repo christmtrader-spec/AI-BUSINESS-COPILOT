@@ -23,6 +23,23 @@ export type CopilotSnapshotMeta = {
   rangeFrom: string;
   rangeTo: string;
   sections: string[];
+  /**
+   * Record counts behind this answer — surfaced in the UI as citation chips
+   * so users can see exactly how much data the copilot is grounded in.
+   * Counts are computed server-side (deterministic), never model-derived.
+   */
+  counts: {
+    sales: number;
+    expenses: number;
+    openInvoices: number;
+    openBills: number;
+    activeProducts: number;
+    lowStock: number;
+    topProducts: number;
+    expenseCategories: number;
+    timelineDays: number;
+    recentPayments: number;
+  };
 };
 
 export type CopilotGrounding = {
@@ -203,6 +220,18 @@ export async function buildCopilotGrounding(opts: {
       "inventory",
       "recentPayments",
     ],
+    counts: {
+      sales: k.salesCount,
+      expenses: k.expensesCount,
+      openInvoices: report.outstanding.receivableCount,
+      openBills: report.outstanding.payableCount,
+      activeProducts: report.inventory.productCount,
+      lowStock: report.inventory.lowStockCount,
+      topProducts: report.topProducts.length,
+      expenseCategories: report.expensesByCategory.length,
+      timelineDays: report.timeline.length,
+      recentPayments: recentPayments.length,
+    },
   };
 
   const systemPrompt = [

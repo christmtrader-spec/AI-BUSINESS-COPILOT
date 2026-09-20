@@ -801,3 +801,128 @@ Stage Summary:
      delete) + copilot stream smoke (assert ≥2 SSE events); dependency audit
      (`bun pm ls` + advisories); contrast pass on muted text tokens.
   5. Consider Phase 06 → complete marker once (4) lands; then Phase 07 planning per §6.
+
+---
+Task ID: 08
+Agent: Z.ai Code (cron webDevReview round)
+Task: Status assessment + agent-browser QA, then independent work selection per roadmap
+(bugs first, then features). Mandates: styling details, more features, worklog handover.
+
+Current project status (assessment at round start):
+- Phases 00-06 all functional (16/16 modules live). Baseline at round start: server 200,
+  lint clean, e2e smoke 24/24 green, full 16-module browser sweep 0 errors.
+
+Work Log (bugs found & fixed first):
+- BUG 1 (auth, fixed): sign-in/sign-up failure handler crashed with
+  "TypeError: Cannot read properties of undefined (reading 'invalidCredentials')" —
+  auth-view.tsx passed `t.errors as AuthErrors` to the error mappers, but next-intl's
+  t is a FUNCTION (nested property access is undefined at runtime). Any failed
+  sign-in crashed the onError handler instead of showing a message. Fix: build the
+  AuthErrors map with explicit t("errors.…") calls. Verified live: wrong password now
+  shows the localized "Incorrect email or password." alert with ZERO page errors
+  (fresh browser session, error buffer clean).
+- BUG 2 (found by my own prefetch feature mid-round, fixed): receivables/payables
+  modules crashed with "Cannot read properties of undefined (reading '0')" —
+  BalancesView did `data?.byParty[0]` and the NEW prefetch had cached the RAW API
+  response under ["receivables"], while the view's queryFn caches a TRANSFORMED
+  shape (byParty + mapped items). TanStack served the raw entry to the view →
+  undefined.byParty → crash (ModuleBoundary caught it, as designed). Fix:
+  (a) new src/modules/balances/balances-data.ts exporting fetchBalancesData(kind)
+  with the shared fetch+transform; view queryFn and shell prefetch BOTH use it so
+  cached shape can never diverge; (b) prefetch.ts header comment documents the
+  rule: key AND shape must mirror the view. Verified: full 16-module sweep 0 errors.
+- BUG 3 (i18n/bidi, fixed): table pagination rendered scrambled in RTL
+  ("1-1- of 1") and used business.locale for the "of/از" word — Sara's en-locale
+  business showed "of" even in FA UI. Fix: table-kit Pagination wraps from–to and
+  total in dir=ltr spans (bidi-stable) and derives the word from next-intl
+  useLocale(); removed the stale business.locale override from all 6 callers
+  (sales/expenses/payments/balances/parties/inventory). Verified: FA now shows
+  "۱–۱ از ۱" (LTR spans intact), EN shows "1–1 of 1".
+
+Phase 06 features implemented (roadmap r7 recommendations 1+2+4):
+- FEATURE A — COPILOT ANSWER CITATIONS (dataset provenance per answer):
+  - Server: CopilotSnapshotMeta gained `counts` {sales, expenses, openInvoices,
+    openBills, activeProducts, lowStock, topProducts, expenseCategories,
+    timelineDays, recentPayments} — computed server-side alongside the snapshot
+    (deterministic; never model-derived).
+  - Client: copilot-view captures the first SSE `meta` event onto the assistant
+    message and renders a CitationStrip under every grounded answer: chips for
+    window (7/30/90), date range (dir=ltr tabular-nums), N sales, N expenses,
+    N open invoices (title="all-time outstanding"), N low-stock (only if >0),
+    N recent payments + "Computed at HH:MM". ICU plurals → native Persian digits
+    in fa (۱ فروش، ۳ پرداخت اخیر) via the NextIntlClientProvider locale.
+  - i18n: citationsTitle/Sales/Expenses/OpenInvoices/LowStock/Payments/AllTime/
+    Generated ×2 locales. Verified EN + FA(RTL mirrored, Persian numerals);
+    screenshots qa-r8-citations-en.png / qa-r8-citations-fa.png.
+- FEATURE B — E2E SMOKE EXTENSIONS (24 → 32 checks, all green):
+  - Write-path probe: create customer (201) → patch name (200, value asserted) →
+    delete (200) → list no longer contains id (soft-delete filtered).
+  - Copilot stream smoke: real SSE round-trip asserting (1) first meta event with
+    counts (sales=N integer), (2) ≥1 delta events (measured 103-110), (3) terminal
+    done event. One real AI call per suite run.
+  - Stream RBAC: VIEWER POST /api/v1/copilot/stream → 403 JSON BEFORE any SSE bytes.
+- FEATURE C — PREFETCH WARMING (deep links feel instant):
+  - New src/modules/shell/prefetch.ts: prefetchModuleData() + warmHeavyQueries() +
+    onIdle() (requestIdleCallback with setTimeout fallback, Safari<16).
+  - Sidebar hover/focus prefetch: onMouseEnter/onFocus on each nav button warms
+    that module's heavy queries. Idle warm-up in app-shell once per active
+    business (reports/summary?days=30 + receivables + payables, staleTime 20s).
+  - Targets mirror view query keys EXACTLY: ["reports","summary","30"] (raw api —
+    reports-view + dashboard both use that shape) and ["receivables"]/["payables"]
+    via the shared fetchBalancesData transform.
+- STYLING DETAILS (mandatory pass):
+  - Sidebar active accent: 3px brand-colored start-edge indicator on the active
+    nav item via [data-sidebar="menu-button"][data-active="true"]::before using
+    inset-inline-start (mirrors automatically in RTL). Verified LTR + RTL.
+  - Citation strip "Computed at" contrast bump muted-foreground/60 → /70; a
+    codebase scan found only 2 faint tokens total (both decorative, copilot).
+  - Pagination bidi + locale fix (see BUG 3).
+  - Dashboard cards (Getting started, AI Copilot teaser): subtle transition-shadow
+    hover:shadow-md lift.
+  - Note: audit table sticky header, custom scrollbars, tabular-nums money, table
+    row hover already existed from earlier rounds (verified, no change needed).
+- OPS/Troubleshooting note: Turbopack did NOT recompile globals.css on `touch`
+  (mtime-only change); a real content edit was required to invalidate the CSS
+  chunk. If CSS changes don't appear, make a real edit, don't just touch.
+
+Verification (agent-browser + curl + static):
+- Full 16-module sweep (exact button locators): 0 page errors, 0 console messages.
+- Auth: fresh-session bad login → localized alert, 0 errors (BUG 1 regression-proof).
+- Balances: receivables (0 open rows, correct) + payables (1 row) render; sweep
+  includes hover-prefetch on every nav item (BUG 2 regression-proof).
+- Prefetch live check: reports/summary + receivables requests fire on load/idle.
+- Mobile 390×844 dark copilot: no overflow (scrollW=390=cw); 1920 EN light +
+  1440 dark desktop clean. Screenshots: qa-r8-sales-before/after-fa.png,
+  qa-r8-accent-fa.png (+zoom), qa-r8-pag-zoom2.png, qa-r8-citations-en/fa.png,
+  qa-r8-mobile-copilot-dark.png, qa-r8-dashboard-en-light.png,
+  qa-r8-final-dark-copilot.png.
+- e2e smoke: 32/32 ALL GREEN. i18n audit: 512 usages, 0 missing, en<->fa parity
+  0 gaps. `bun run lint` clean. dev.log: Prisma query logs only, 0 errors.
+
+Stage Summary:
+- The copilot now SHOWS its evidence: every grounded answer carries server-computed
+  provenance chips (window, range, record counts) — a direct trust upgrade for the
+  "AI never invents numbers" guarantee. The smoke suite grew from a read-only sweep
+  to a 32-check gate covering a full CRUD cycle, the SSE stream contract, and
+  stream RBAC. Prefetch warming makes Reports/Balances deep links render from
+  cache — with the shape-mismatch lesson recorded (key AND shape must mirror).
+- All three bugs this round were caught BY the QA/tooling this project built in
+  earlier rounds (module boundary, fresh-session browser checks, i18n audit) —
+  the hardening stack is paying for itself.
+- Ops: dev server up via keep-dev-up double-fork (port 3000). No schema changes;
+  dev DB gained only smoke-probe audit rows + one soft-deleted "Smoke Probe
+  Customer" (harmless, filtered everywhere).
+- Test accounts unchanged: sara@copilot.dev (OWNER), ali@copilot.dev (ADMIN),
+  eve@outsider.dev (VIEWER), rep16007@t.dev (import-test business) — testpass123.
+- Next round recommendations (priority order):
+  1. Copilot: exportable transcript (download Q&A as markdown/PDF for sharing
+     with an accountant); suggested follow-up chips after each answer.
+  2. Reports: month-over-month comparison table + CSV export of report data
+     (same integer-minor discipline as the JSON backup).
+  3. Settings: danger zone (rename business w/ live slug feedback; delete
+     business with typed confirmation + final export reminder).
+  4. Quality: contrast audit automation (axe-core in smoke suite); audit-trail
+     filtering (by action/actor) + CSV export; rate-limit observability (429
+     counter in admin view).
+  5. Roadmap: consider marking Phase 06 complete and drafting Phase 07 (per §6:
+     integrations/public API or packaging) once item 3 lands.

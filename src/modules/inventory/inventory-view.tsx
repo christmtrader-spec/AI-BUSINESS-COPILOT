@@ -161,7 +161,7 @@ export function InventoryView({
                 pageSize={10}
                 total={products.data?.total ?? 0}
                 onPage={setPage}
-                labels={{ prev: tCommon("previous"), next: tCommon("next"), of: business.locale === "fa" ? "از" : "of" }}
+                labels={{ prev: tCommon("previous"), next: tCommon("next") }}
               />
             </>
           )}

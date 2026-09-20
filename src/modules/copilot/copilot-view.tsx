@@ -12,6 +12,7 @@ import { useTranslations } from "next-intl";
 import {
   ArrowDown,
   BarChart3,
+  BookMarked,
   Bot,
   CalendarClock,
   Check,
@@ -21,6 +22,7 @@ import {
   ListTree,
   Lock,
   Package,
+  ReceiptText,
   RefreshCcw,
   SendHorizontal,
   ShieldCheck,
@@ -57,6 +59,22 @@ type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   failed?: boolean;
+  /** Dataset provenance for this answer (first SSE event) — rendered as
+   *  citation chips under the bubble so every figure is traceable. */
+  meta?: CopilotMeta;
+};
+
+type CopilotMetaCounts = {
+  sales: number;
+  expenses: number;
+  openInvoices: number;
+  openBills: number;
+  activeProducts: number;
+  lowStock: number;
+  topProducts: number;
+  expenseCategories: number;
+  timelineDays: number;
+  recentPayments: number;
 };
 
 type CopilotMeta = {
@@ -65,6 +83,7 @@ type CopilotMeta = {
   rangeFrom: string;
   rangeTo: string;
   sections: string[];
+  counts?: CopilotMetaCounts;
 };
 
 const WINDOWS = [7, 30, 90] as const;
@@ -152,6 +171,96 @@ function MarkdownLite({ text, streaming }: { text: string; streaming?: boolean }
           aria-hidden="true"
           className="ml-0.5 inline-block h-4 w-0.5 animate-pulse rounded-full bg-emerald-600 align-middle dark:bg-emerald-400"
         />
+      ) : null}
+    </div>
+  );
+}
+
+// ---- Citation strip ----------------------------------------------------------
+
+/**
+ * Dataset provenance chips rendered under each grounded answer — the UI
+ * mirror of the server snapshot: which window, which date range, and how
+ * many records the answer is built from. Counts come from the server
+ * (deterministic), never from the model.
+ */
+function CitationStrip({ meta, locale }: { meta: CopilotMeta; locale: string }) {
+  const t = useTranslations("copilot");
+  const c = meta.counts;
+  const chips: { key: string; icon: typeof ReceiptText; label: string; title?: string }[] = [
+    {
+      key: "window",
+      icon: CalendarClock,
+      label: t(`window_${meta.days === 7 ? "7" : meta.days === 30 ? "30" : "90"}`),
+    },
+    { key: "range", icon: BookMarked, label: `${meta.rangeFrom} → ${meta.rangeTo}` },
+    ...(c
+      ? [
+          { key: "sales", icon: ReceiptText, label: t("citationsSales", { count: c.sales }) },
+          { key: "expenses", icon: Wallet, label: t("citationsExpenses", { count: c.expenses }) },
+          {
+            key: "openInvoices",
+            icon: HandCoins,
+            label: t("citationsOpenInvoices", { count: c.openInvoices }),
+            title: t("citationsAllTime"),
+          },
+          ...(c.lowStock > 0
+            ? [
+                {
+                  key: "lowStock",
+                  icon: Package,
+                  label: t("citationsLowStock", { count: c.lowStock }),
+                },
+              ]
+            : []),
+          {
+            key: "payments",
+            icon: ArrowDown,
+            label: t("citationsPayments", { count: c.recentPayments }),
+          },
+        ]
+      : []),
+  ];
+
+  const generatedLabel = (() => {
+    try {
+      const time = new Intl.DateTimeFormat(locale === "fa" ? "fa-IR" : "en-GB", {
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(new Date(meta.generatedAt));
+      return t("citationsGenerated", { time });
+    } catch {
+      return null;
+    }
+  })();
+
+  return (
+    <div
+      className="animate-in fade-in slide-in-from-bottom-1 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 ps-1"
+      data-testid="copilot-citations"
+    >
+      <span className="text-muted-foreground/80 inline-flex items-center gap-1 text-[11px] font-medium">
+        <BookMarked className="size-3" aria-hidden="true" />
+        {t("citationsTitle")}
+      </span>
+      {chips.map((chip) => (
+        <span
+          key={chip.key}
+          title={chip.title}
+          className="border-border/70 bg-background text-muted-foreground inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] leading-none"
+        >
+          <chip.icon className="size-3" aria-hidden="true" />
+          {chip.key === "range" ? (
+            <span dir="ltr" className="tabular-nums">
+              {chip.label}
+            </span>
+          ) : (
+            chip.label
+          )}
+        </span>
+      ))}
+      {generatedLabel ? (
+        <span className="text-muted-foreground/70 text-[11px]">· {generatedLabel}</span>
       ) : null}
     </div>
   );
@@ -310,6 +419,7 @@ export function CopilotView({
             for (const line of evt.split("\n")) {
               if (!line.startsWith("data: ")) continue;
               let payload: {
+                meta?: CopilotMeta;
                 delta?: string;
                 done?: boolean;
                 error?: { code?: string; message?: string };
@@ -319,7 +429,11 @@ export function CopilotView({
               } catch {
                 continue;
               }
-              if (typeof payload.delta === "string" && payload.delta.length > 0) {
+              if (payload.meta) {
+                // First event — dataset provenance for this answer.
+                const meta = payload.meta;
+                patchAssistant(assistantId, (m) => ({ ...m, meta }));
+              } else if (typeof payload.delta === "string" && payload.delta.length > 0) {
                 const delta = payload.delta;
                 patchAssistant(assistantId, (m) => ({
                   ...m,
@@ -584,14 +698,15 @@ export function CopilotView({
                         <Bot className="size-3.5" />
                       )}
                     </div>
-                    <div
-                      className={cn(
-                        "group relative max-w-[88%] rounded-2xl rounded-ss-sm border px-3.5 py-2.5 sm:max-w-[75%]",
-                        m.failed
-                          ? "border-destructive/30 bg-destructive/5"
-                          : "bg-muted/50",
-                      )}
-                    >
+                    <div className="flex min-w-0 max-w-[88%] flex-col sm:max-w-[75%]">
+                      <div
+                        className={cn(
+                          "group relative w-fit rounded-2xl rounded-ss-sm border px-3.5 py-2.5",
+                          m.failed
+                            ? "border-destructive/30 bg-destructive/5"
+                            : "bg-muted/50",
+                        )}
+                      >
                       {m.content.length === 0 && m.id === activeStreamId ? (
                         <div className="flex items-center gap-1.5 px-1 py-1">
                           {[0, 1, 2].map((i) => (
@@ -619,6 +734,10 @@ export function CopilotView({
                             <Copy className="size-3.5" aria-hidden="true" />
                           )}
                         </button>
+                      ) : null}
+                      </div>
+                      {!m.failed && m.meta ? (
+                        <CitationStrip meta={m.meta} locale={business.locale} />
                       ) : null}
                     </div>
                   </div>

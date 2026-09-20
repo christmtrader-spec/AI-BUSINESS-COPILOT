@@ -347,7 +347,7 @@ export function PartyView({
                 pageSize={10}
                 total={total}
                 onPage={setPage}
-                labels={{ prev: tCommon("previous"), next: tCommon("next"), of: business.locale === "fa" ? "از" : "of" }}
+                labels={{ prev: tCommon("previous"), next: tCommon("next") }}
               />
             </>
           )}

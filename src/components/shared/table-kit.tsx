@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, type ReactNode } from "react";
+import { useLocale } from "next-intl";
 import { ChevronLeft, ChevronRight, Loader2, Search } from "lucide-react";
 import { toMinor } from "@/lib/money";
 import { Button } from "@/components/ui/button";
@@ -68,10 +69,19 @@ export function Pagination({
   const pages = Math.max(Math.ceil(total / pageSize), 1);
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
+  // Interface chrome follows the UI locale (not the business data locale) —
+  // a Persian-UI user reads "از" even while managing an English business.
+  const uiLocale = useLocale();
+  const ofWord = labels?.of ?? (uiLocale === "fa" ? "از" : "of");
   return (
     <div className="flex items-center justify-between gap-2 pt-3">
       <p className="text-muted-foreground text-xs tabular-nums">
-        {from}–{to} {labels?.of ?? "of"} {total}
+        {/* LTR spans keep "from–to" and the total visually intact in RTL
+            locales — bidi would otherwise scramble the en-dash sequence. */}
+        <span dir="ltr">
+          {from}–{to}
+        </span>{" "}
+        {ofWord} <span dir="ltr">{total}</span>
       </p>
       <div className="flex items-center gap-1">
         <Button

@@ -38,6 +38,17 @@ function mapApiError(err: unknown, t: AuthErrors): string {
 export function AuthView() {
   const t = useTranslations("auth");
   const tCommon = useTranslations("common");
+  // next-intl's t is a function — nested property access (t.errors) is
+  // undefined at runtime, which crashed the onError handlers. Build the
+  // message map with explicit t() calls instead (BUGFIX r8).
+  const authErrorMessages: AuthErrors = {
+    invalidCredentials: t("errors.invalidCredentials"),
+    rateLimited: t("errors.rateLimited"),
+    emailTaken: t("errors.emailTaken"),
+    passwordMismatch: t("errors.passwordMismatch"),
+    network: t("errors.network"),
+    generic: t("errors.generic"),
+  };
   const { status } = useSession();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -61,8 +72,8 @@ export function AuthView() {
     onError: (err) => {
       setError(
         err instanceof ApiClientError
-          ? mapApiError(err, t.errors as AuthErrors)
-          : mapSignInError(err.message, t.errors as AuthErrors),
+          ? mapApiError(err, authErrorMessages)
+          : mapSignInError(err.message, authErrorMessages),
       );
     },
   });
@@ -84,8 +95,8 @@ export function AuthView() {
     onError: (err) => {
       setError(
         err instanceof ApiClientError
-          ? mapApiError(err, t.errors as AuthErrors)
-          : mapSignInError(err.message, t.errors as AuthErrors),
+          ? mapApiError(err, authErrorMessages)
+          : mapSignInError(err.message, authErrorMessages),
       );
     },
   });

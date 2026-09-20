@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { Banknote, HandCoins } from "lucide-react";
-import { api } from "@/lib/api-client";
 import { can, asRole, type Role } from "@/lib/rbac";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -27,25 +26,12 @@ import {
   txKeys,
 } from "../finance-shared/finance-kit";
 import { PaymentFormDialog, type PaymentTarget } from "../payments/payment-form-dialog";
+import {
+  fetchBalancesData,
+  type BalancesData,
+  type BalanceItem,
+} from "./balances-data";
 import type { BusinessSummary } from "../shell/types";
-
-type BalanceItem = {
-  id: string;
-  label1: string; // INV-0001 | category
-  label2: string | null; // customer | supplier
-  date: string;
-  amountMinor: number;
-  paidMinor: number;
-  balanceMinor: number;
-  status: string;
-};
-
-type BalancesData = {
-  totalOutstandingMinor: number;
-  openCount: number;
-  items: BalanceItem[];
-  byParty: { name: string; balanceMinor: number }[];
-};
 
 /**
  * Shared outstanding-balances view for receivables (who owes us) and
@@ -71,70 +57,9 @@ export function BalancesView({
 
   const { data, isLoading, error, refetch } = useQuery<BalancesData>({
     queryKey: kind === "receivables" ? txKeys.receivables : txKeys.payables,
-    queryFn: async () => {
-      if (kind === "receivables") {
-        const raw = await api<{
-          totalOutstandingMinor: number;
-          openCount: number;
-          items: {
-            id: string;
-            number: number;
-            customerName: string | null;
-            issueDate: string;
-            totalMinor: number;
-            paidMinor: number;
-            balanceMinor: number;
-            status: string;
-          }[];
-          byCustomer: { name: string; balanceMinor: number }[];
-        }>("/api/v1/receivables");
-        return {
-          totalOutstandingMinor: raw.totalOutstandingMinor,
-          openCount: raw.openCount,
-          byParty: raw.byCustomer,
-          items: raw.items.map<BalanceItem>((s) => ({
-            id: s.id,
-            label1: `INV-${String(s.number).padStart(4, "0")}`,
-            label2: s.customerName,
-            date: s.issueDate,
-            amountMinor: s.totalMinor,
-            paidMinor: s.paidMinor,
-            balanceMinor: s.balanceMinor,
-            status: s.status,
-          })),
-        };
-      }
-      const raw = await api<{
-        totalOutstandingMinor: number;
-        openCount: number;
-        items: {
-          id: string;
-          category: string;
-          supplierName: string | null;
-          spentAt: string;
-          amountMinor: number;
-          paidMinor: number;
-          balanceMinor: number;
-          status: string;
-        }[];
-        bySupplier: { name: string; balanceMinor: number }[];
-      }>("/api/v1/payables");
-      return {
-        totalOutstandingMinor: raw.totalOutstandingMinor,
-        openCount: raw.openCount,
-        byParty: raw.bySupplier,
-        items: raw.items.map<BalanceItem>((e) => ({
-          id: e.id,
-          label1: e.category,
-          label2: e.supplierName,
-          date: e.spentAt,
-          amountMinor: e.amountMinor,
-          paidMinor: e.paidMinor,
-          balanceMinor: e.balanceMinor,
-          status: e.status,
-        })),
-      };
-    },
+    // Shared fetch+transform — the shell prefetcher uses the same function,
+    // so a warmed cache entry always has this exact shape.
+    queryFn: () => fetchBalancesData(kind),
   });
 
   // Client-side filter over the (capped) open items list + local pagination.
@@ -297,8 +222,7 @@ export function BalancesView({
                 onPage={setPage}
                 labels={{
                   prev: tCommon("previous"),
-                  next: tCommon("next"),
-                  of: business.locale === "fa" ? "از" : "of",
+                  next: tCommon("next")
                 }}
               />
             </>

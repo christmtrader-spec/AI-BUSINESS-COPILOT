@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { api } from "@/lib/api-client";
 import { useAppStore, viewKeyOf, type AppView } from "@/store/app-store";
@@ -11,6 +11,7 @@ import { AppHeader } from "./header";
 import { AppSidebar } from "./app-sidebar";
 import { CommandPalette } from "./command-palette";
 import { ModuleBoundary } from "./module-boundary";
+import { warmHeavyQueries, onIdle } from "./prefetch";
 import type { BusinessListItem } from "./types";
 import { DashboardView } from "../dashboard/dashboard-view";
 import { PartyView } from "../parties/party-view";
@@ -91,6 +92,17 @@ export function AppShell({
     ].filter(Boolean);
     document.title = parts.join(" · ");
   }, [moduleLabel, membership?.business.name, tCommon]);
+
+  // Phase 06 — idle prefetch warming: reports/summary + balances are the
+  // heaviest deterministic queries; warm them once per business so deep
+  // links into Reports/Receivables/Payables render from cache instantly.
+  const queryClient = useQueryClient();
+  const activeBusinessId = membership?.business.id;
+  useEffect(() => {
+    if (!activeBusinessId) return;
+    const cancel = onIdle(() => warmHeavyQueries(queryClient));
+    return cancel;
+  }, [activeBusinessId, queryClient]);
 
   const viewKey = viewKeyOf(view);
 

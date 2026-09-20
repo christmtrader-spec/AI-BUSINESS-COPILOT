@@ -19,8 +19,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAppStore, type AppView } from "@/store/app-store";
 import { can, asRole, type Role } from "@/lib/rbac";
+import { prefetchModuleData } from "./prefetch";
 import {
   Sidebar,
   SidebarContent,
@@ -112,10 +114,18 @@ export function AppSidebar({
   const tCommon = useTranslations("common");
   const view = useAppStore((s) => s.view);
   const navigate = useAppStore((s) => s.navigate);
+  const queryClient = useQueryClient();
 
   const role = asRole(membership?.role);
   const canSeeAudit = can(role, "audit:read");
   const soonLabel = tCommon("comingSoon");
+
+  /** Hover/focus prefetch — warms heavy queries before the click lands. */
+  const prefetchOnHover = (target: AppView) => {
+    const moduleName =
+      target.kind === "module" ? target.module : target.kind === "dashboard" ? "dashboard" : null;
+    if (moduleName) prefetchModuleData(queryClient, moduleName);
+  };
 
   function renderGroup(label: string, items: NavItem[], id: string) {
     const filtered = items.filter((i) => i.view.kind !== "audit" || canSeeAudit);
@@ -133,6 +143,8 @@ export function AppSidebar({
                     isActive={active}
                     tooltip={t(item.labelKey)}
                     onClick={() => navigate(item.view)}
+                    onMouseEnter={() => prefetchOnHover(item.view)}
+                    onFocus={() => prefetchOnHover(item.view)}
                     aria-current={active ? "page" : undefined}
                   >
                     <item.icon />

@@ -186,3 +186,25 @@
     width: 100%;
   }
 }
+
+/* Phase 06 polish — active nav accent: a small brand-colored indicator on
+   the start edge of the active sidebar item (mirrors automatically in RTL
+   thanks to inset-inline-start). Decorative only; the accessible state
+   remains data-active + aria-current. */
+[data-sidebar="menu-button"] {
+  position: relative;
+}
+[data-sidebar="menu-button"][data-active="true"]::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  top: 50%;
+  translate: 0 -50%;
+  block-size: 62%;
+  inline-size: 3px;
+  border-radius: 999px;
+  background: var(--sidebar-primary, var(--primary));
+  pointer-events: none;
+}
+
+/* css touch 1789910297 */

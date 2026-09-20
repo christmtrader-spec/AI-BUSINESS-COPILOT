@@ -168,7 +168,7 @@ async function main() {
   }
   record("money fields are integer minor units", true, "A08 spot-check");
 
-  // 3. Copilot RBAC — VIEWER blocked (unauthenticated-free negative check)
+  // 3. Copilot RBAC — VIEWER blocked on BOTH copilot transports
   const eve = await login("eve@outsider.dev");
   {
     const { status, body } = await api(eve, "/api/v1/copilot", BID, {
@@ -177,6 +177,18 @@ async function main() {
     });
     record(
       "RBAC: VIEWER blocked from copilot",
+      status === 403 && body?.error?.code === "PERMISSION_DENIED",
+      `status ${status}`,
+    );
+  }
+  {
+    // Stream transport must also be JSON-403 BEFORE any SSE bytes flow.
+    const { status, body } = await api(eve, "/api/v1/copilot/stream", BID, {
+      method: "POST",
+      body: JSON.stringify({ question: "test", days: 30, history: [] }),
+    });
+    record(
+      "RBAC: VIEWER blocked from copilot stream",
       status === 403 && body?.error?.code === "PERMISSION_DENIED",
       `status ${status}`,
     );
@@ -266,6 +278,99 @@ async function main() {
     );
   } else {
     record("empty business account available", false, "rep16007 has no business — skipped");
+  }
+
+  // 5. WRITE-PATH PROBE — create → patch → delete a customer (full CRUD cycle).
+  // Leaves only audit rows behind (customer rows are soft-deleted + the row
+  // itself is removed from list scope by deletedAt filtering).
+  {
+    const createRes = await api(sara, "/api/v1/customers", BID, {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Smoke Probe Customer",
+        note: "created by e2e-smoke write-path probe — safe to ignore",
+      }),
+    });
+    const created = createRes.body?.data;
+    record(
+      "write: create customer",
+      (createRes.status === 200 || createRes.status === 201) && !!created?.id,
+      `status ${createRes.status}`,
+    );
+
+    if (created?.id) {
+      const CID: string = created.id;
+      const patchRes = await api(sara, `/api/v1/customers/${CID}`, BID, {
+        method: "PATCH",
+        body: JSON.stringify({ name: "Smoke Probe Customer (patched)" }),
+      });
+      record(
+        "write: patch customer",
+        patchRes.status === 200 && patchRes.body?.data?.name === "Smoke Probe Customer (patched)",
+        `status ${patchRes.status}`,
+      );
+
+      const delRes = await api(sara, `/api/v1/customers/${CID}`, BID, { method: "DELETE" });
+      record("write: delete customer", delRes.status === 200 || delRes.status === 204, `status ${delRes.status}`);
+
+      const listRes = await api(sara, "/api/v1/customers?page=1&pageSize=200", BID);
+      const rows = Array.isArray(listRes.body?.data)
+        ? listRes.body.data
+        : (listRes.body?.data?.items ?? listRes.body?.data?.customers ?? []);
+      const stillThere = Array.isArray(rows) && rows.some((r: { id?: string }) => r?.id === CID);
+      record("write: deleted customer gone from list", !stillThere, "soft-delete filtered");
+    }
+  }
+
+  // 6. COPILOT STREAM SMOKE — real SSE round-trip: meta → deltas → done.
+  // Asserts the grounding meta event (with counts) arrives first and at
+  // least one answer delta follows. This consumes one real AI call.
+  {
+    try {
+      const f = jarFetch(sara);
+      const res = await f("/api/v1/copilot/stream", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-business-id": BID },
+        body: JSON.stringify({
+          question: "How is my cash flow? (smoke probe)",
+          days: 30,
+          history: [],
+        }),
+      });
+      const text = res.status === 200 ? await res.text() : "";
+      const events = text
+        .split("\n\n")
+        .map((blk) => blk.split("\n").find((l) => l.startsWith("data: "))?.slice(6))
+        .filter(Boolean)
+        .map((s) => {
+          try {
+            return JSON.parse(s as string);
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean) as Array<Record<string, unknown>>;
+
+      const metaEvt = events.find((e) => e.meta);
+      const metaObj = metaEvt?.meta as
+        | { counts?: { sales?: number }; rangeFrom?: string; days?: number }
+        | undefined;
+      const deltaCount = events.filter((e) => typeof e.delta === "string" && e.delta).length;
+      const sawDone = events.some((e) => e.done === true);
+      record(
+        "copilot stream: meta event with counts",
+        res.status === 200 && !!metaObj && typeof metaObj.counts?.sales === "number",
+        `status ${res.status}, sales=${metaObj?.counts?.sales}`,
+      );
+      record(
+        "copilot stream: incremental deltas",
+        deltaCount >= 1,
+        `${deltaCount} delta events`,
+      );
+      record("copilot stream: terminal done event", sawDone);
+    } catch (err) {
+      record("copilot stream smoke", false, String(err));
+    }
   }
 
   finish();

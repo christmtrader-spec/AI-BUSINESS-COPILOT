@@ -295,8 +295,7 @@ export function SalesView({
                 onPage={setPage}
                 labels={{
                   prev: tCommon("previous"),
-                  next: tCommon("next"),
-                  of: business.locale === "fa" ? "از" : "of",
+                  next: tCommon("next")
                 }}
               />
             </>
