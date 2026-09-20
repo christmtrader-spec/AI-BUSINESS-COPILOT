@@ -20,15 +20,29 @@ export const GET = route(async (req: NextRequest) => {
   const ctx = await getAuthContext(req);
   requirePermission(ctx, "data:read");
 
-  const { page, pageSize } = listParams(new URL(req.url));
+  const { q, page, pageSize } = listParams(new URL(req.url));
   const directionRaw = (new URL(req.url).searchParams.get("direction") ?? "")
     .trim()
     .toUpperCase();
   const direction = directionRaw === "IN" || directionRaw === "OUT" ? directionRaw : null;
 
+  // Free-text search across note, method, invoice number, party and category.
+  // Invoice numbers are numeric — only attempt the numeric match for digits.
+  const numericQ = /^\d+$/.test(q) ? Number(q) : null;
+  const searchClauses: Array<Record<string, unknown>> = [
+    { note: { contains: q } },
+    { method: { contains: q } },
+    { sale: { customer: { name: { contains: q } } } },
+    { expense: { category: { contains: q } } },
+    { expense: { supplier: { name: { contains: q } } } },
+  ];
+  if (numericQ !== null) {
+    searchClauses.push({ sale: { number: numericQ } });
+  }
   const where = {
     businessId: ctx.businessId,
     ...(direction ? { direction } : {}),
+    ...(q ? { OR: searchClauses } : {}),
   };
 
   const [payments, total] = await Promise.all([

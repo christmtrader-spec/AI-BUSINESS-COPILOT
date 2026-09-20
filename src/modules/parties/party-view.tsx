@@ -3,9 +3,10 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { Pencil, Plus, Trash2, Users } from "lucide-react";
+import { Download, Pencil, Plus, Trash2, Users } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
+import { downloadCsv, exportStamp, toCsv } from "@/lib/csv";
 import { can, asRole, type Role } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
@@ -152,18 +153,51 @@ export function PartyView({
     dateStyle: "medium",
   });
 
+  // Export the full (soft-delete-aware) list — up to 500 rows — as CSV.
+  const exportMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api<PartyPage>(
+        `${API_BASE[kind]}?q=&page=1&pageSize=500`,
+      );
+      const csv = toCsv(
+        [t("colName"), t("colContact"), t("colNote"), t("colCreated")],
+        res.items.map((p) => [
+          p.name,
+          [p.phone, p.email].filter(Boolean).join(" "),
+          p.note ?? "",
+          dateFmt.format(new Date(p.createdAt)),
+        ]),
+      );
+      downloadCsv(`${kind}s-${exportStamp()}.csv`, csv);
+      return res.total;
+    },
+    onSuccess: (count) => toast({ title: t("exportedToast", { count }) }),
+    onError: () => toast({ title: tErrors("generic"), variant: "destructive" }),
+  });
+
   return (
     <div className="space-y-6" data-view={`module:${kind}s`}>
       <PageHeader
         title={typePlural}
         subtitle={t("subtitle", { type: typeLabel })}
         actions={
-          writable ? (
-            <Button onClick={openCreate} size="sm">
-              <Plus className="size-4" aria-hidden="true" />
-              {t("add", { type: typeLabel })}
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exportMutation.isPending}
+              onClick={() => exportMutation.mutate()}
+            >
+              <Download className="size-4" aria-hidden="true" />
+              {tCommon("exportCsv")}
             </Button>
-          ) : null
+            {writable ? (
+              <Button onClick={openCreate} size="sm">
+                <Plus className="size-4" aria-hidden="true" />
+                {t("add", { type: typeLabel })}
+              </Button>
+            ) : null}
+          </>
         }
       />
 

@@ -37,7 +37,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
-import { Pagination } from "@/components/shared/table-kit";
+import { Pagination, SearchInput } from "@/components/shared/table-kit";
 import { fmtDate, fmtMoney, txKeys, useInvalidateFinance } from "../finance-shared/finance-kit";
 import { PaymentFormDialog } from "./payment-form-dialog";
 import type { BusinessSummary } from "../shell/types";
@@ -77,12 +77,14 @@ export function PaymentsView({
 
   const [page, setPage] = useState(1);
   const [direction, setDirection] = useState<(typeof DIRECTIONS)[number]>("ALL");
+  const [search, setSearch] = useState("");
   const [formOpen, setFormOpen] = useState(false);
 
   const dirQs = direction === "ALL" ? "" : `&direction=${direction}`;
+  const qQs = search ? `&q=${encodeURIComponent(search)}` : "";
   const { data, isLoading, error, refetch } = useQuery<PaymentsPage>({
-    queryKey: [...txKeys.payments, page, direction],
-    queryFn: () => api(`/api/v1/payments?page=${page}&pageSize=15${dirQs}`),
+    queryKey: [...txKeys.payments, page, direction, search],
+    queryFn: () => api(`/api/v1/payments?page=${page}&pageSize=15${dirQs}${qQs}`),
   });
 
   const deleteMutation = useMutation({
@@ -135,7 +137,15 @@ export function PaymentsView({
 
       <Card>
         <CardContent className="pt-6">
-          <div className="mb-4">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <SearchInput
+              value={search}
+              onChange={(v) => {
+                setSearch(v);
+                setPage(1);
+              }}
+              placeholder={t("searchPlaceholder")}
+            />
             <Select
               value={direction}
               onValueChange={(v) => {
@@ -162,7 +172,7 @@ export function PaymentsView({
                 <div key={i} className="bg-muted/50 h-12 animate-pulse rounded-md" />
               ))}
             </div>
-          ) : items.length === 0 && direction === "ALL" ? (
+          ) : items.length === 0 && direction === "ALL" && !search ? (
             <EmptyState
               icon={ArrowDownToLine}
               title={t("empty")}

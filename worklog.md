@@ -348,3 +348,109 @@ Stage Summary:
   these deterministic metrics).
 - Test accounts unchanged: sara@copilot.dev (OWNER), ali@copilot.dev (ADMIN),
   eve@outsider.dev (now VIEWER member) — dev-only DB.
+
+---
+Task ID: 04
+Agent: Z.ai Code (cron webDevReview round)
+Task: Status assessment + QA, then Phase 04 — Dashboard & Reports (deterministic
+KPIs + charts from real data) per roadmap §6. Mandates: styling details, more
+features, worklog handover.
+
+Work Log:
+- Baseline verified: lint clean; agent-browser E2E of all Phase 01-03 modules
+  (dashboard, sales, expenses, payments, receivables, payables, products,
+  inventory, customers) — all rendering with real data, zero console errors.
+- INFRA FIX: dev server had a stale module graph (broken HMR after
+  "unrecoverable error" reloads) causing phantom MISSING_MESSAGE errors and an
+  empty main content on reload. pkill'd server could NOT be restarted by plain
+  `nohup ... &` — sandbox reaps it when the tool call ends. WORKING PATTERN:
+  double-fork `( setsid bun run dev >> dev.log 2>&1 < /dev/null & )` — the
+  next-server process survives across tool calls (verified PID across calls).
+  Recorded here because future rounds WILL need to restart the server after
+  db:push.
+- DB: no schema changes this round.
+- API: new GET /api/v1/reports/summary?days=7|30|90 (data:read, tenant-scoped):
+  KPIs (revenue issued, collected, expenses, paid out, net cash, net accrual,
+  sales count, avg sale), timezone-aware daily timeline (Intl en-CA bucketing
+  honoring Business.timezone per A04), top products (from SaleItems),
+  expenses by category, outstanding receivable/payable (aggregates),
+  inventory value at cost + low-stock items. All integer minor units (A08),
+  all computed server-side (Rule 05 / A11-A13).
+  FIX during QA: expense aggregate used totalMinor (doesn't exist on Expense)
+  → amountMinor; caught by API smoke test before UI wiring.
+- Frontend Reports view (src/modules/reports/reports-view.tsx) with Recharts
+  via shadcn ChartContainer: 4 KPI cards (icon chips, tone colors), income vs
+  spending gradient area chart, cash in/out bar chart, expenses-by-category
+  donut + % list, top products horizontal bars, inventory health card (value +
+  low-stock badges), outstanding balances as clickable nav cards. Range
+  selector 7/30/90. Empty state when zero activity. Loading skeletons. Error
+  retry. dir="ltr" inside chart containers for RTL safety; localized tooltips
+  via custom MoneyTooltip.
+- Dashboard upgrade: "Performance — last 30 days" card (mini area chart +
+  4 stat tiles + Open reports button, shared query cache with Reports);
+  low-stock amber alert banner (only when lowStockCount > 0 — no fake
+  urgency) with Review products action; getting-started step 4 now marked
+  done when at least one sale exists (sales probe query); roadmap p3 done /
+  p4 current in en+fa.
+- Styling details: rebranded chart palette (emerald/teal/amber/rose/orange —
+  removed default blue hues, light + dark); print stylesheet
+  (.invoice-print-sheet) in globals.css; recharts focus-visible outline.
+- New features: (1) Payments ledger search — API `q` filters note/method/
+  invoice number (numeric only)/customer/supplier/category + SearchInput in
+  view (closes Phase 03 known gap); (2) invoice PRINT from sale detail
+  dialog — self-contained printable HTML window (dir/lang aware, escaped,
+  items/totals/payments/footer) + window.print, verified in browser; (3) CSV
+  export for customers & suppliers (PartyView) — up to 500 rows, BOM for
+  Excel, RFC-4180 escaping (lib/csv.ts), toast on success; (4) i18n ICU
+  plurals for low-stock alert + Persian numerals via fmtCount
+  (۱ فاکتور، ۰ فقره باز) for counts in reports + dashboard.
+- i18n: new `reports` namespace en+fa; dashboard perf/alert strings en+fa;
+  payments searchPlaceholder en+fa; finance.saleDetail print labels en+fa;
+  common.exportCsv en+fa; parties.exportedToast en+fa. Sidebar/footer →
+  "Phase 04 · Reports".
+
+Verification (agent-browser E2E + curl):
+- API: days=30 aggregates match known test data exactly (€27.50 revenue,
+  €27.50 collected, €800.00 expenses, €300 paid out, net cash -€272.50);
+  topProducts (Candle 2×€12.50, Gift wrap €2.50); inventory value €77.00
+  (11×€7); outstanding payable €500. Empty business → clean zeros, no
+  division errors. Payments search: q=rent→1, q=1→2 (invoice number),
+  q=candle→0. OK
+- UI: Reports view EN + FA renders all sections; charts verified via DOM
+  (62 bar rectangles, 1 donut sector, area surfaces); range switcher 7/30/90
+  recomputes; outstanding cards navigate. OK
+- Dashboard: low-stock alert appears after stock adjusted to 3≤5 (amber,
+  fa singular "۱ کالا در آستانه اتمام است", en "1 product is running low" —
+  ICU plural verified both languages); step 4 struck-through (done).
+  OK
+- Print: invoice sheet renders items/totals/payments correctly (screenshot
+  download/qa-print-invoice.png). OK
+- CSV export click: no errors; button renders in EN/FA. OK
+- فارسی RTL: dir=rtl lang=fa, sidebar mirrored, reports fully Persian with
+  native numerals; screenshots qa-reports-fa-rtl.png, qa-reports-fa-final.png,
+  qa-reports-fa-bottom.png. OK
+- Dark + light themes verified (qa-dashboard-fa-dark.png,
+  qa-reports-en-light.png). Mobile 390×844: no horizontal overflow
+  (sw=cw=390), alert + steps stack (qa-dashboard-mobile.png). OK
+- Fresh console after reload: ZERO errors (earlier MISSING_MESSAGE +
+  exportCsv errors confirmed stale-history; exportCsv fixed by adding key).
+  `bun run lint` clean; dev.log clean (no runtime errors). OK
+
+Stage Summary:
+- Phase 04 COMPLETE: MVP item 14 (reports) live with deterministic
+  server-computed aggregates; dashboard upgraded from static cards to real
+  derived metrics. AI Copilot remains the only "coming soon" module.
+- Known minor: low-stock item badge count renders Western digit inside fa
+  badge (raw stockQty — cosmetic only); reports dates in tooltip use UI
+  locale while financial amounts follow business currency config (by design).
+- Ops note: dev server currently running (double-fork pattern above); no db
+  changes this round so no restart needed for next round.
+- Next (Phase 05 per roadmap): AI Copilot — read-only NL Q&A over deterministic
+  metrics via /api/v1/copilot (z-ai-web-dev-sdk server-side behind
+  AIProvider abstraction; prompt = serialized report/summary data, never raw
+  guesswork; A11-A13 guardrails; rate-limited; audited). Alternatively
+  security hardening (Phase 06) if AI skill docs unavailable.
+- Test accounts unchanged: sara@copilot.dev (OWNER, has business w/ data),
+  ali@copilot.dev (ADMIN), eve@outsider.dev (VIEWER), rep16007@t.dev
+  (fresh OWNER of empty "Empty Co", pwd testpass123) — dev-only DB.
+  Product "Handmade Candle" intentionally left at stock 3 (low-stock demo).

@@ -63,6 +63,14 @@ export function fmtDate(business: BusinessSummary, iso: string): string {
   }).format(new Date(iso));
 }
 
+/**
+ * Locale-aware count numerals (fa gets ۰۱۲۳…, en gets 0123…). Used for
+ * interpolated counts so RTL copy reads natively (A05/A06).
+ */
+export function fmtCount(uiLocale: string, n: number): string {
+  return new Intl.NumberFormat(uiLocale === "fa" ? "fa-IR" : "en-US").format(n);
+}
+
 export type TxStatus = "UNPAID" | "PARTIAL" | "PAID";
 
 /** Color-coded payment status badge (single visual language across modules). */
