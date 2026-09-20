@@ -29,6 +29,7 @@ export const PERMISSIONS = [
   "audit:read",
   "copilot:use",
   "finance:manage",
+  "business:delete",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -45,6 +46,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "audit:read",
     "copilot:use",
     "finance:manage",
+    // NOTE: no business:delete — deleting a whole business is OWNER-only.
   ],
   MANAGER: [
     "data:read",

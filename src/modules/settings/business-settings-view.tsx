@@ -15,6 +15,7 @@ import {
   Settings2,
   ShieldAlert,
   TriangleAlert,
+  Trash2,
   UploadCloud,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
@@ -207,6 +208,62 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [restoreIdMode, setRestoreIdMode] = useState<"keep" | "new">("keep");
+
+  // ---- Danger zone (OWNER-only): permanent business deletion ----------------
+  const [dangerOpen, setDangerOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+
+  type DangerCounts = {
+    customers: number;
+    suppliers: number;
+    products: number;
+    sales: number;
+    expenses: number;
+    payments: number;
+  };
+  const { data: dangerCounts, isLoading: countsLoading } = useQuery<DangerCounts>({
+    queryKey: ["business", activeId, "danger"],
+    queryFn: () => api(`/api/v1/businesses/${activeId}/danger`),
+    enabled: dangerOpen && isOwner,
+    staleTime: 0,
+  });
+
+  const deleteBusiness = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/v1/businesses/${activeId}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json", "x-business-id": activeId },
+        body: JSON.stringify({ confirmName: confirmText }),
+      });
+      const body = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: { code?: string };
+      } | null;
+      if (!res.ok || !body?.ok) {
+        if (body?.error?.code === "CONFIRM_MISMATCH") throw new Error(t("dangerMismatch"));
+        if (body?.error?.code === "RATE_LIMITED") throw new Error(t("exportRateLimited"));
+        throw new Error(t("dangerDeleteFailed"));
+      }
+      return true;
+    },
+    onSuccess: () => {
+      toast({ title: t("dangerDeletedToast") });
+      setDangerOpen(false);
+      // Everything this business owned is gone — drop all cached queries so
+      // no view can flash stale tenant data; AppRoot switches to another
+      // business (or onboarding) once the memberships list refetches.
+      void queryClient.invalidateQueries();
+      useAppStore.getState().navigate({ kind: "dashboard" }, { replace: true });
+    },
+    onError: (err) =>
+      toast({
+        title: err instanceof Error ? err.message : t("dangerDeleteFailed"),
+        variant: "destructive",
+      }),
+  });
+
+  const nameMatches = confirmText === current.name;
 
   const resetRestore = () => {
     setRestoreFile(null);
@@ -781,6 +838,112 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
                 <UploadCloud className="size-4" aria-hidden="true" />
               )}
               {t("restoreConfirmAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ---- Danger zone (OWNER-only) ---- */}
+      {isOwner ? (
+        <Card className="border-destructive/40 bg-destructive/5">
+          <CardHeader>
+            <CardTitle className="text-destructive flex items-center gap-2 text-base">
+              <ShieldAlert className="size-4" aria-hidden="true" />
+              {t("dangerSection")}
+            </CardTitle>
+            <CardDescription className="text-muted-foreground">{t("dangerDesc")}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button
+              type="button"
+              variant="destructive"
+              className="gap-2"
+              onClick={() => {
+                setConfirmText("");
+                setDangerOpen(true);
+              }}
+            >
+              <Trash2 className="size-4" aria-hidden="true" />
+              {t("dangerDeleteAction")}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* Delete confirmation — typed name + live record counts */}
+      <AlertDialog
+        open={dangerOpen}
+        onOpenChange={(open) => {
+          setDangerOpen(open);
+          if (!open) {
+            setConfirmText("");
+            deleteBusiness.reset();
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("dangerDialogTitle", { name: current.name })}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  {countsLoading || !dangerCounts
+                    ? t("dangerLoadingCounts")
+                    : t("dangerDialogDesc", {
+                        customers: dangerCounts.customers,
+                        suppliers: dangerCounts.suppliers,
+                        products: dangerCounts.products,
+                        sales: dangerCounts.sales,
+                        expenses: dangerCounts.expenses,
+                        payments: dangerCounts.payments,
+                      })}
+                </p>
+                <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                  <TriangleAlert className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+                  {t("dangerDialogExportHint")}
+                  <button
+                    type="button"
+                    onClick={() => void exportData()}
+                    className="text-foreground inline-flex items-center gap-1 font-medium underline underline-offset-2"
+                  >
+                    <DatabaseBackup className="size-3.5" aria-hidden="true" />
+                    {t("dangerDialogExportNow")}
+                  </button>
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="danger-confirm">{t("dangerTypePrompt", { name: current.name })}</Label>
+            <Input
+              id="danger-confirm"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              autoComplete="off"
+              maxLength={120}
+            />
+            {confirmText.length > 0 && !nameMatches ? (
+              <p className="text-destructive text-xs">{t("dangerMismatch")}</p>
+            ) : null}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90 text-white"
+              disabled={!nameMatches || deleteBusiness.isPending}
+              onClick={(e) => {
+                e.preventDefault(); // keep the dialog open until the DELETE resolves
+                deleteBusiness.mutate();
+              }}
+            >
+              {deleteBusiness.isPending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Trash2 className="size-4" aria-hidden="true" />
+              )}
+              {t("dangerConfirmAction")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

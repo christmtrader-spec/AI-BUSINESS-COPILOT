@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import {
   Area,
@@ -22,14 +22,18 @@ import {
   Boxes,
   ChartPie,
   Coins,
+  Download,
   HandCoins,
   Layers,
+  Loader2,
+  Minus,
   Package,
   ReceiptText,
   TrendingUp,
 } from "lucide-react";
-import { api } from "@/lib/api-client";
+import { api, ApiClientError } from "@/lib/api-client";
 import { useAppStore } from "@/store/app-store";
+import { toast } from "@/hooks/use-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,6 +45,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   ChartContainer,
   ChartTooltip,
@@ -100,6 +112,28 @@ type Summary = {
 
 const RANGES = ["7", "30", "90"] as const;
 
+// ---- Month-over-month --------------------------------------------------------
+
+type MonthlyRow = {
+  month: string; // YYYY-MM
+  revenueMinor: number;
+  salesCount: number;
+  expensesMinor: number;
+  expensesCount: number;
+  collectedMinor: number;
+  paidOutMinor: number;
+  netCashMinor: number;
+  netAccrualMinor: number;
+};
+
+type MonthlyData = { months: number; series: MonthlyRow[] };
+
+/** Percent change between two minor-unit totals; null when undefined (÷0). */
+function pctChange(cur: number, prev: number): number | null {
+  if (prev === 0) return null;
+  return Math.round(((cur - prev) / prev) * 100);
+}
+
 /** Category slice palette (brand hues, no blue). */
 const CATEGORY_COLORS = [
   "var(--chart-1)",
@@ -149,6 +183,7 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
   const t = useTranslations("reports");
   const uiLocale = useLocale();
   const navigate = useAppStore((s) => s.navigate);
+  const activeId = useAppStore((s) => s.activeBusinessId);
   const [days, setDays] = useState<string>("30");
 
   const fmt = (minor: number) => fmtMoney(business, minor);
@@ -159,12 +194,68 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
     staleTime: 30_000,
   });
 
+  // Month-over-month series (deterministic server buckets, oldest → newest).
+  const { data: monthly } = useQuery<MonthlyData>({
+    queryKey: ["reports", "monthly", 6],
+    queryFn: () => api("/api/v1/reports/monthly?months=6"),
+    staleTime: 60_000,
+  });
+
+  // CSV export — server-generated from the SAME aggregates (single source
+  // of truth); the client only streams the blob to a file.
+  const csvExport = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/v1/reports/export?days=${days}`, {
+        credentials: "same-origin",
+        headers: activeId ? { "x-business-id": activeId } : undefined,
+      });
+      if (!res.ok) {
+        let message = t("csvFailed");
+        try {
+          const body = (await res.json()) as { error?: { code?: string; message?: string } };
+          if (body.error?.code === "RATE_LIMITED") message = t("csvRateLimited");
+          else if (body.error?.message) message = body.error.message;
+        } catch {
+          // keep default
+        }
+        throw new Error(message);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const dispo = res.headers.get("content-disposition") ?? "";
+      const match = /filename="([^"]+)"/.exec(dispo);
+      a.download = match?.[1] ?? `report-${days}d.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+    onSuccess: () => toast({ title: t("csvExportedToast") }),
+    onError: (err) =>
+      toast({
+        title: err instanceof Error ? err.message : t("csvFailed"),
+        variant: "destructive",
+      }),
+  });
+
   const fmtDay = (key: string) => {
     // YYYY-MM-DD -> localized medium date for tooltips (UI locale, not
     // business locale — these are interface labels, not financial data).
     const d = new Date(`${key}T00:00:00Z`);
     return new Intl.DateTimeFormat(uiLocale === "fa" ? "fa-IR" : "en-US", {
       dateStyle: "medium",
+      timeZone: "UTC",
+    }).format(d);
+  };
+
+  const fmtMonth = (key: string) => {
+    // YYYY-MM -> localized short month label ("Sep 2026" / "شهریور ۱۴۰۵").
+    const d = new Date(`${key}-01T00:00:00Z`);
+    return new Intl.DateTimeFormat(uiLocale === "fa" ? "fa-IR" : "en-US", {
+      month: "short",
+      year: "numeric",
       timeZone: "UTC",
     }).format(d);
   };
@@ -228,18 +319,36 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
-          <Select value={days} onValueChange={setDays}>
-            <SelectTrigger className="w-full sm:w-44" aria-label={t("rangeLabel")}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {RANGES.map((r) => (
-                <SelectItem key={r} value={r}>
-                  {t(`range_${r}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
+            <Select value={days} onValueChange={setDays}>
+              <SelectTrigger className="h-9 min-w-0 flex-1 sm:w-44 sm:flex-none" aria-label={t("rangeLabel")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {RANGES.map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {t(`range_${r}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 gap-1.5"
+              onClick={() => csvExport.mutate()}
+              disabled={csvExport.isPending}
+              title={t("exportCsv")}
+            >
+              {csvExport.isPending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Download className="size-4" aria-hidden="true" />
+              )}
+              <span className="hidden sm:inline">{csvExport.isPending ? t("exportingCsv") : t("exportCsv")}</span>
+              <span className="sr-only">{csvExport.isPending ? t("exportingCsv") : t("exportCsv")}</span>
+            </Button>
+          </div>
         }
       />
 
@@ -375,9 +484,129 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
             </CardContent>
           </Card>
 
+          {/* Month-over-month comparison */}
+          {monthly && monthly.series.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <TrendingUp className="text-primary size-4" aria-hidden="true" />
+                  {t("momTitle")}
+                </CardTitle>
+                <CardDescription>
+                  {t("momDesc", { months: fmtCount(uiLocale, monthly.months) })}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>{t("momMonth")}</TableHead>
+                        <TableHead className="text-end">{t("momRevenue")}</TableHead>
+                        <TableHead className="text-end">{t("momExpenses")}</TableHead>
+                        <TableHead className="text-end">{t("momNetCash")}</TableHead>
+                        <TableHead className="w-20 text-end" title={t("momDeltaVsPrev", { prev: "" })}>
+                          <span aria-hidden="true">Δ</span>
+                          <span className="sr-only">{t("momTitle")}</span>
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {monthly.series.map((row, i) => {
+                        const prev = i > 0 ? monthly.series[i - 1] : null;
+                        const delta = prev ? pctChange(row.revenueMinor, prev.revenueMinor) : null;
+                        const isCurrent = i === monthly.series.length - 1;
+                        const deltaTitle = prev
+                          ? t("momDeltaVsPrev", { prev: fmtMonth(prev.month) })
+                          : undefined;
+                        return (
+                          <TableRow key={row.month} className={isCurrent ? "bg-muted/40" : ""}>
+                            <TableCell>
+                              <span className="font-medium">{fmtMonth(row.month)}</span>
+                              {isCurrent ? (
+                                <span className="text-muted-foreground ms-2 hidden text-[11px] md:inline">
+                                  · {t("momCurrentNote")}
+                                </span>
+                              ) : null}
+                            </TableCell>
+                            <TableCell className="text-end tabular-nums" dir="ltr">
+                              {fmt(row.revenueMinor)}
+                              <span className="text-muted-foreground ms-1.5 hidden text-xs lg:inline">
+                                ({fmtCount(uiLocale, row.salesCount)})
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-end tabular-nums" dir="ltr">
+                              {fmt(row.expensesMinor)}
+                            </TableCell>
+                            <TableCell
+                              className={`text-end tabular-nums ${
+                                row.netCashMinor >= 0
+                                  ? "text-emerald-700 dark:text-emerald-400"
+                                  : "text-rose-700 dark:text-rose-400"
+                              }`}
+                              dir="ltr"
+                            >
+                              {fmt(row.netCashMinor)}
+                            </TableCell>
+                            <TableCell className="text-end">
+                              {delta === null ? (
+                                prev && prev.revenueMinor === 0 && row.revenueMinor > 0 ? (
+                                  <Badge
+                                    variant="outline"
+                                    title={deltaTitle}
+                                    className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 gap-0.5 text-[11px] dark:text-emerald-400"
+                                  >
+                                    <ArrowUpRight className="size-3" aria-hidden="true" />
+                                    new
+                                  </Badge>
+                                ) : (
+                                  <span className="text-muted-foreground/60 inline-flex items-center">
+                                    <Minus className="size-3" aria-hidden="true" />
+                                    <span className="sr-only">—</span>
+                                  </span>
+                                )
+                              ) : delta > 0 ? (
+                                <Badge
+                                  variant="outline"
+                                  title={deltaTitle}
+                                  className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 gap-0.5 text-[11px] tabular-nums dark:text-emerald-400"
+                                >
+                                  <ArrowUpRight className="size-3" aria-hidden="true" />
+                                  +{delta}%
+                                </Badge>
+                              ) : delta < 0 ? (
+                                <Badge
+                                  variant="outline"
+                                  title={deltaTitle}
+                                  className="border-rose-500/30 bg-rose-500/10 text-rose-700 gap-0.5 text-[11px] tabular-nums dark:text-rose-400"
+                                >
+                                  <ArrowDownRight className="size-3" aria-hidden="true" />
+                                  {delta}%
+                                </Badge>
+                              ) : (
+                                <Badge
+                                  variant="outline"
+                                  title={deltaTitle}
+                                  className="text-muted-foreground gap-0.5 text-[11px] tabular-nums"
+                                >
+                                  <Minus className="size-3" aria-hidden="true" />
+                                  0%
+                                </Badge>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
           <div className="grid gap-4 lg:grid-cols-2">
             {/* Cash collected vs paid out */}
-            <Card>
+            <Card className="min-w-0">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Coins className="text-primary size-4" aria-hidden="true" />
@@ -412,7 +641,7 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
             </Card>
 
             {/* Expenses by category donut */}
-            <Card>
+            <Card className="min-w-0">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <ChartPie className="text-primary size-4" aria-hidden="true" />
@@ -475,7 +704,7 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
             </Card>
 
             {/* Top products */}
-            <Card>
+            <Card className="min-w-0">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Package className="text-primary size-4" aria-hidden="true" />

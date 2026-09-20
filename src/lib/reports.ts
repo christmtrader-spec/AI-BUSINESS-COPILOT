@@ -239,3 +239,131 @@ export async function buildReportSummary(businessId: string, days: ReportDays) {
     },
   };
 }
+
+// ---- Month-over-month breakdown ---------------------------------------------
+
+export const ALLOWED_REPORT_MONTHS = [3, 6, 12] as const;
+export type ReportMonths = (typeof ALLOWED_REPORT_MONTHS)[number];
+
+export function normalizeReportMonths(input: unknown): ReportMonths {
+  const n = Number(input ?? 6);
+  return (ALLOWED_REPORT_MONTHS as readonly number[]).includes(n) ? (n as ReportMonths) : 6;
+}
+
+/** YYYY-MM key in a given IANA timezone (falls back to UTC). */
+function localMonthKey(d: Date, timeZone: string): string {
+  try {
+    // "en-CA" year + month, e.g. 2026-09 for September 2026.
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+    }).formatToParts(d);
+    const year = parts.find((p) => p.type === "year")?.value;
+    const month = parts.find((p) => p.type === "month")?.value;
+    return year && month ? `${year}-${month}` : d.toISOString().slice(0, 7);
+  } catch {
+    return d.toISOString().slice(0, 7);
+  }
+}
+
+export type MonthlyBreakdown = Awaited<ReturnType<typeof buildMonthlyBreakdown>>;
+
+/**
+ * Month-over-month KPI series for the last `months` calendar months
+ * (including the current, partially-elapsed month). Deterministic: every
+ * figure is bucketed from recorded transactions in the business timezone.
+ * Ordered oldest → newest.
+ */
+export async function buildMonthlyBreakdown(businessId: string, months: ReportMonths) {
+  const business = await db.business.findUnique({
+    where: { id: businessId },
+    select: { timezone: true },
+  });
+  const tz = business?.timezone || "UTC";
+
+  // Month keys oldest → newest, ending with the current month.
+  const monthKeys: string[] = [];
+  {
+    const cursor = new Date();
+    cursor.setUTCDate(1); // anchor: shifting month on the 1st is DST-safe
+    for (let i = 0; i < months; i++) {
+      monthKeys.unshift(localMonthKey(cursor, tz));
+      cursor.setUTCMonth(cursor.getUTCMonth() - 1);
+    }
+  }
+
+  // Fetch a widened window (start of the oldest month minus 2 days for tz).
+  const [y, m] = monthKeys[0].split("-").map(Number);
+  const fetchFrom = new Date(Date.UTC(y, m - 1, 1));
+  fetchFrom.setUTCDate(fetchFrom.getUTCDate() - 2);
+
+  const [sales, payments, expenses] = await Promise.all([
+    db.sale.findMany({
+      where: { businessId, deletedAt: null, issueDate: { gte: fetchFrom } },
+      select: { issueDate: true, totalMinor: true },
+    }),
+    db.payment.findMany({
+      where: { businessId, paidAt: { gte: fetchFrom } },
+      select: { paidAt: true, direction: true, amountMinor: true },
+    }),
+    db.expense.findMany({
+      where: { businessId, deletedAt: null, spentAt: { gte: fetchFrom } },
+      select: { spentAt: true, amountMinor: true },
+    }),
+  ]);
+
+  type MonthBucket = {
+    revenueMinor: number;
+    salesCount: number;
+    expensesMinor: number;
+    expensesCount: number;
+    collectedMinor: number;
+    paidOutMinor: number;
+  };
+  const bucket = new Map<string, MonthBucket>();
+  for (const key of monthKeys) {
+    bucket.set(key, {
+      revenueMinor: 0,
+      salesCount: 0,
+      expensesMinor: 0,
+      expensesCount: 0,
+      collectedMinor: 0,
+      paidOutMinor: 0,
+    });
+  }
+  const add = (iso: Date, field: keyof MonthBucket, amount: number) => {
+    const mk = localMonthKey(iso, tz);
+    const b = bucket.get(mk);
+    if (b) (b[field] as number) += amount;
+  };
+  for (const s of sales) add(s.issueDate, "revenueMinor", s.totalMinor);
+  for (const s of sales) add(s.issueDate, "salesCount", 1);
+  for (const e of expenses) add(e.spentAt, "expensesMinor", e.amountMinor);
+  for (const e of expenses) add(e.spentAt, "expensesCount", 1);
+  for (const p of payments) {
+    add(
+      p.paidAt,
+      p.direction === "IN" ? "collectedMinor" : "paidOutMinor",
+      p.amountMinor,
+    );
+  }
+
+  return {
+    months: monthKeys.length,
+    series: monthKeys.map((month) => {
+      const b = bucket.get(month)!;
+      return {
+        month, // YYYY-MM (display label is a client/UI concern)
+        revenueMinor: b.revenueMinor,
+        salesCount: b.salesCount,
+        expensesMinor: b.expensesMinor,
+        expensesCount: b.expensesCount,
+        collectedMinor: b.collectedMinor,
+        paidOutMinor: b.paidOutMinor,
+        netCashMinor: b.collectedMinor - b.paidOutMinor,
+        netAccrualMinor: b.revenueMinor - b.expensesMinor,
+      };
+    }),
+  };
+}

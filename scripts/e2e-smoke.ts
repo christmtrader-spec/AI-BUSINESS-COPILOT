@@ -6,10 +6,14 @@
  *   1. every business module GET returns 200 + ok-envelope
  *   2. money fields are integer minor units (A08) where present
  *   3. RBAC negatives (VIEWER blocked from copilot/import; ADMIN blocked
- *      from OWNER-only import)
+ *      from OWNER-only import AND OWNER-only business delete)
  *   4. export → dry-run import round-trip on the empty business reports
  *      consistent counts
  *   5. root page renders
+ *   6. reports/monthly deterministic series + reports/export CSV
+ *   7. copilot SSE stream contract (meta → deltas → done)
+ *   8. danger zone: business delete cycle (create → RBAC → mismatch →
+ *      delete → gone)
  *
  * Run:  bun scripts/e2e-smoke.ts [--base http://localhost:3000]
  * Exit: 0 = all green, 1 = at least one failure.
@@ -322,7 +326,49 @@ async function main() {
     }
   }
 
-  // 6. COPILOT STREAM SMOKE — real SSE round-trip: meta → deltas → done.
+  // 6. MONTH-OVER-MONTH + CSV EXPORT — deterministic aggregates + accountant
+  // export. Monthly: series array, integer minors (A08). CSV: text/csv with
+  // the standard section header and a money row.
+  {
+    const monthly = await api(sara, "/api/v1/reports/monthly?months=6", BID);
+    const series = monthly.body?.data?.series;
+    const moneyErr = assertMoneyInts(monthly.body?.data);
+    record(
+      "GET reports/monthly",
+      monthly.status === 200 &&
+        monthly.body?.ok === true &&
+        Array.isArray(series) &&
+        series.length === 6 &&
+        typeof series[series.length - 1]?.month === "string" &&
+        series[series.length - 1].month.length === 7,
+      `status ${monthly.status}, months=${series?.length}`,
+    );
+    if (moneyErr) record("  money ints (monthly)", false, moneyErr);
+
+    const f = jarFetch(sara);
+    const csvRes = await f("/api/v1/reports/export?days=30", {
+      headers: { "x-business-id": BID },
+    });
+    const csvText = csvRes.status === 200 ? await csvRes.text() : "";
+    record(
+      "GET reports/export (CSV)",
+      csvRes.status === 200 &&
+        (csvRes.headers.get("content-type") ?? "").includes("text/csv") &&
+        csvText.includes("section,field,value") &&
+        csvText.includes("kpi"),
+      `status ${csvRes.status}`,
+    );
+
+    // RBAC: reports are data:read — VIEWER may read/export (mirrors UI).
+    const eveCsv = await api(eve, "/api/v1/reports/monthly?months=6", BID);
+    record(
+      "RBAC: VIEWER may read reports/monthly (data:read)",
+      eveCsv.status === 200,
+      `status ${eveCsv.status}`,
+    );
+  }
+
+  // 7. COPILOT STREAM SMOKE — real SSE round-trip: meta → deltas → done.
   // Asserts the grounding meta event (with counts) arrives first and at
   // least one answer delta follows. This consumes one real AI call.
   {
@@ -370,6 +416,80 @@ async function main() {
       record("copilot stream: terminal done event", sawDone);
     } catch (err) {
       record("copilot stream smoke", false, String(err));
+    }
+  }
+
+  // 8. DANGER ZONE — self-contained business delete cycle: create a
+  // throwaway business, assert role enforcement + confirm-mismatch, delete
+  // it for real, verify it is gone from the membership list.
+  {
+    const created = await api(sara, "/api/v1/businesses", undefined, {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Smoke Delete Business",
+        currencyCode: "USD",
+        locale: "en",
+        timezone: "UTC",
+      }),
+    });
+    const throwBiz = created.body?.data?.business;
+    record(
+      "danger: create throwaway business",
+      (created.status === 200 || created.status === 201) && !!throwBiz?.id,
+      `status ${created.status}, id=${throwBiz?.id}`,
+    );
+
+    if (throwBiz?.id) {
+      const TB = throwBiz.id as string;
+
+      // Role enforcement on a business where ali IS a member (ADMIN).
+      const aliDel = await api(ali, `/api/v1/businesses/${BID}`, BID, {
+        method: "DELETE",
+        body: JSON.stringify({ confirmName: "whatever" }),
+      });
+      record(
+        "RBAC: ADMIN blocked from business delete (OWNER-only)",
+        aliDel.status === 403 && aliDel.body?.error?.code === "PERMISSION_DENIED",
+        `status ${aliDel.status}`,
+      );
+
+      // Danger counts endpoint — OWNER allowed on the throwaway.
+      const counts = await api(sara, `/api/v1/businesses/${TB}/danger`, TB);
+      record(
+        "danger: counts endpoint (OWNER)",
+        counts.status === 200 && typeof counts.body?.data?.customers === "number",
+        `status ${counts.status}`,
+      );
+
+      // Wrong typed name → 422 CONFIRM_MISMATCH.
+      const mismatch = await api(sara, `/api/v1/businesses/${TB}`, TB, {
+        method: "DELETE",
+        body: JSON.stringify({ confirmName: "Wrong Name" }),
+      });
+      record(
+        "danger: wrong confirm name rejected (422)",
+        mismatch.status === 422 && mismatch.body?.error?.code === "CONFIRM_MISMATCH",
+        `status ${mismatch.status}`,
+      );
+
+      // Correct typed name → business hard-deleted.
+      const del = await api(sara, `/api/v1/businesses/${TB}`, TB, {
+        method: "DELETE",
+        body: JSON.stringify({ confirmName: throwBiz.name ?? "Smoke Delete Business" }),
+      });
+      record(
+        "danger: delete business (correct confirm)",
+        del.status === 200 && del.body?.data?.deleted === true,
+        `status ${del.status}`,
+      );
+
+      // Gone from the membership list.
+      const listAfter = await api(sara, "/api/v1/businesses");
+      const afterList = Array.isArray(listAfter.body?.data)
+        ? listAfter.body.data
+        : listAfter.body?.data?.businesses ?? [];
+      const still = afterList.some((m: { business?: { id?: string } }) => m.business?.id === TB);
+      record("danger: deleted business gone from list", !still, "membership refetched");
     }
   }
 

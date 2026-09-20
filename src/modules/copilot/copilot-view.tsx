@@ -18,6 +18,7 @@ import {
   Check,
   ChevronDown,
   Copy,
+  Download,
   HandCoins,
   ListTree,
   Lock,
@@ -26,6 +27,7 @@ import {
   RefreshCcw,
   SendHorizontal,
   ShieldCheck,
+  Sparkles,
   Square,
   TriangleAlert,
   UserRound,
@@ -34,6 +36,7 @@ import {
 import { ApiClientError } from "@/lib/api-client";
 import { can, type Role } from "@/lib/rbac";
 import { cn } from "@/lib/utils";
+import { toast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
@@ -266,6 +269,45 @@ function CitationStrip({ meta, locale }: { meta: CopilotMeta; locale: string }) 
   );
 }
 
+// ---- Follow-up suggestions ---------------------------------------------------
+
+/**
+ * Context-aware follow-up pool. The chips are UI suggestions only — they
+ * never touch data. Deterministic: keyword match on the answer text picks
+ * the lead chip; the rest rotate by conversation length so repeated
+ * answers surface different prompts.
+ */
+const FOLLOW_UP_KEYS = [
+  "followUpOutstanding",
+  "followUpLowStock",
+  "followUpExpenses",
+  "followUpSales",
+  "followUpCash",
+  "followUpProducts",
+  "followUpPayments",
+  "followUpSummary",
+] as const;
+
+type FollowUpKey = (typeof FOLLOW_UP_KEYS)[number];
+
+const FOLLOW_UP_MATCHERS: Array<{ key: FollowUpKey; re: RegExp }> = [
+  { key: "followUpOutstanding", re: /owe|outstanding|receivable|بدهکار|بدهی|طلب/i },
+  { key: "followUpLowStock", re: /low.?stock|restock|inventory|موجودی|انبار|شارژ/i },
+  { key: "followUpExpenses", re: /expense|spend|cost|هزینه|خرج/i },
+  { key: "followUpSales", re: /sale|revenue|invoice|فروش|درآمد|فاکتور/i },
+  { key: "followUpCash", re: /cash|payment|collected|نقد|پرداخت|دریافتی/i },
+  { key: "followUpProducts", re: /product|best.?seller|top|محصول|پرفروش/i },
+];
+
+function pickFollowUps(answer: string, conversationLength: number): FollowUpKey[] {
+  const lead = FOLLOW_UP_MATCHERS.find((m) => m.re.test(answer))?.key;
+  const rest = FOLLOW_UP_KEYS.filter((k) => k !== lead);
+  const rotate = conversationLength % rest.length;
+  const rotated = [...rest.slice(rotate), ...rest.slice(0, rotate)];
+  const picked = rotated.slice(0, lead ? 2 : 3);
+  return lead ? [lead, ...picked] : picked;
+}
+
 // ---- View -------------------------------------------------------------------
 
 export function CopilotView({
@@ -291,9 +333,6 @@ export function CopilotView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const canUse = can(role, "copilot:use");
-  const pending = activeStreamId !== null;
-
   const suggestions = useMemo(
     () => [
       t("suggestion1"),
@@ -304,6 +343,22 @@ export function CopilotView({
       t("suggestion6"),
     ],
     [t],
+  );
+
+  const canUse = can(role, "copilot:use");
+  const pending = activeStreamId !== null;
+
+  // Follow-up chips — only under the LAST completed answer.
+  const lastMessage = messages[messages.length - 1];
+  const showFollowUps =
+    !pending &&
+    messages.length >= 2 &&
+    lastMessage?.role === "assistant" &&
+    lastMessage.failed !== true &&
+    lastMessage.content.trim().length > 0;
+  const followUps = useMemo(
+    () => (showFollowUps ? pickFollowUps(lastMessage.content, messages.length) : []),
+    [showFollowUps, lastMessage?.content, messages.length],
   );
 
   // Keep the latest message in view (scroll-only effect — no setState).
@@ -517,6 +572,93 @@ export function CopilotView({
     }
   };
 
+  /** Download the Q&A transcript as a shareable Markdown file. */
+  const exportTranscript = () => {
+    if (messages.length === 0 || pending) return;
+    try {
+      const localeTag = business.locale === "fa" ? "fa-IR" : "en-GB";
+      const nowLabel = new Intl.DateTimeFormat(localeTag, {
+        dateStyle: "long",
+        timeStyle: "short",
+      }).format(new Date());
+      const windowLabel = t(`window_${days}` as "window_7");
+
+      const lines: string[] = [];
+      lines.push(`# ${t("title")} — ${t("exportTranscript")}`);
+      lines.push("");
+      lines.push(`- **${business.name}**`);
+      lines.push(`- ${t("windowLabel")}: ${windowLabel}`);
+      lines.push(`- ${t("citationsGenerated", { time: nowLabel })}`);
+      lines.push(`- ${t("groundedNote")}`);
+      lines.push("");
+      lines.push("---");
+
+      let qIndex = 0;
+      for (let i = 0; i < messages.length; i++) {
+        const m = messages[i];
+        if (m.role !== "user" || m.failed) continue;
+        const answer = messages[i + 1];
+        if (!answer || answer.role !== "assistant" || answer.failed) continue;
+        qIndex += 1;
+        lines.push("");
+        lines.push(`## ${qIndex}. ${m.content}`);
+        lines.push("");
+        lines.push(answer.content);
+        const meta = answer.meta;
+        if (meta) {
+          const c = meta.counts;
+          const bits = [
+            t(`window_${meta.days === 7 ? "7" : meta.days === 30 ? "30" : "90"}` as "window_7"),
+            `${meta.rangeFrom} → ${meta.rangeTo}`,
+            ...(c
+              ? [
+                  t("citationsSales", { count: c.sales }),
+                  t("citationsExpenses", { count: c.expenses }),
+                  t("citationsOpenInvoices", { count: c.openInvoices }),
+                  t("citationsPayments", { count: c.recentPayments }),
+                ]
+              : []),
+          ];
+          try {
+            const time = new Intl.DateTimeFormat(localeTag, {
+              hour: "2-digit",
+              minute: "2-digit",
+            }).format(new Date(meta.generatedAt));
+            bits.push(t("citationsGenerated", { time }));
+          } catch {
+            /* timestamp is decorative in the export */
+          }
+          lines.push("");
+          lines.push(`> ${t("citationsTitle")}: ${bits.join(" · ")}`);
+        }
+        lines.push("");
+        lines.push("---");
+      }
+
+      if (qIndex === 0) return; // nothing answerable to export
+
+      const md = lines.join("\n");
+      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `copilot-transcript-${new Date().toISOString().slice(0, 10)}.md`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast({ title: t("exportedToast") });
+    } catch {
+      toast({ title: t("exportFailed"), variant: "destructive" });
+    }
+  };
+
+  const askFollowUp = (question: string) => {
+    if (pending) return;
+    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: question }]);
+    void send(question, messages);
+  };
+
   if (!canUse) {
     return (
       <div className="space-y-6" data-view="copilot">
@@ -586,16 +728,31 @@ export function CopilotView({
               </CollapsibleTrigger>
             </Collapsible>
             {messages.length > 0 ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground h-8 gap-1.5 text-xs"
-                onClick={() => setMessages([])}
-                disabled={pending}
-              >
-                <RefreshCcw className="size-3.5" aria-hidden="true" />
-                {t("newConversation")}
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground h-8 gap-1.5 text-xs hover:text-foreground"
+                  onClick={exportTranscript}
+                  disabled={pending}
+                  title={t("exportTranscript")}
+                >
+                  <Download className="size-3.5" aria-hidden="true" />
+                  <span className="hidden sm:inline">{t("exportTranscript")}</span>
+                  <span className="sr-only">{t("exportTranscript")}</span>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground h-8 gap-1.5 text-xs"
+                  onClick={() => setMessages([])}
+                  disabled={pending}
+                >
+                  <RefreshCcw className="size-3.5" aria-hidden="true" />
+                  <span className="hidden sm:inline">{t("newConversation")}</span>
+                  <span className="sr-only">{t("newConversation")}</span>
+                </Button>
+              </>
             ) : null}
           </div>
         </div>
@@ -752,6 +909,30 @@ export function CopilotView({
                     <RefreshCcw className="size-3.5" aria-hidden="true" />
                     {tCommon("retry")}
                   </Button>
+                </div>
+              ) : null}
+
+              {followUps.length > 0 ? (
+                <div
+                  className="animate-in fade-in slide-in-from-bottom-1 ps-9.5"
+                  data-testid="copilot-followups"
+                >
+                  <p className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-medium tracking-wide uppercase">
+                    <Sparkles className="size-3 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                    {t("followUpsLabel")}
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-2">
+                    {followUps.map((key) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => askFollowUp(t(key))}
+                        className="border-emerald-500/25 bg-emerald-500/5 hover:border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors"
+                      >
+                        {t(key)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ) : null}
             </>

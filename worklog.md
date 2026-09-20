@@ -926,3 +926,156 @@ Stage Summary:
      counter in admin view).
   5. Roadmap: consider marking Phase 06 complete and drafting Phase 07 (per §6:
      integrations/public API or packaging) once item 3 lands.
+
+---
+Task ID: 09
+Agent: Z.ai Code (cron webDevReview round)
+Task: Status assessment + agent-browser QA, then independent work selection per handoff
+recommendations (copilot transcript export + follow-up chips; reports MoM + CSV export;
+settings danger zone). Mandates: styling details, more features, worklog handover.
+
+Current project status (assessment at round start):
+- Phases 00-06 all functional (16/16 modules). Baseline at round start: server 200,
+  lint clean, e2e smoke 32/32 green, all 16 hash-routed views render clean (the
+  round started with a false alarm: navigating to /members, /settings as PATHS 404s —
+  the app is a hash-routed SPA at "/" with views like #/settings, #/copilot; the
+  nextjs-portal element found during QA is the dev-tools toast, visible:false, NOT an
+  error overlay). One script-only login failure (keyboard type before hydration) was
+  fixed by proper waits — not an app bug.
+
+Work Log (features implemented this round):
+
+- FEATURE A — COPILOT: EXPORTABLE TRANSCRIPT + FOLLOW-UP CHIPS (r8 rec #1):
+  - Export transcript: toolbar button (Download icon, label hidden <sm, sr-only
+    fallback) builds a localized Markdown file client-side — header (business name,
+    data window, "Computed at", grounded note), then Q/A pairs (## N. question /
+    answer) each followed by a citation blockquote (window, range, sales/expenses/
+    open-invoices/recent-payments counts, computed time). Failed answers are skipped.
+    Blob download as copilot-transcript-YYYY-MM-DD.md + toast. Verified live: toast
+    "Transcript downloaded", no errors.
+  - Follow-up chips: pickFollowUps(answer, len) — keyword matchers (EN+FA) pick a
+    LEAD chip from the answer text (owe/stock/expense/sales/cash/product), rest
+    rotate by conversation length so repeat answers surface different prompts.
+    Rendered ONLY under the last completed answer (Sparkles icon, emerald outline
+    chips). Verified: "Who owes me money?" → lead chip "Which customer owes me the
+    most?"; chip click sends the question (stop button appears, second answer streams,
+    new rotated chips appear). 8 new i18n keys ×2 locales.
+
+- FEATURE B — REPORTS: MONTH-OVER-MONTH + CSV EXPORT (r8 rec #2):
+  - lib/reports.ts: buildMonthlyBreakdown(businessId, months) — deterministic month
+    buckets (YYYY-MM via Intl in business timezone, DST-safe UTC-1st anchoring) of
+    revenue/salesCount/expenses/collected/paidOut/netCash/netAccrual, oldest→newest.
+    normalizeReportMonths 3|6|12. New route GET /api/v1/reports/monthly?months=N
+    (data:read).
+  - GET /api/v1/reports/export?days=7|30|90 — CSV of the SAME aggregates as the
+    Reports view (buildReportSummary; single source of truth): meta/KPIs/daily
+    timeline/categories/top products/balances/inventory sections. A08: amounts are
+    integer minor units converted once at serialization (toFixed at business
+    precision); UTF-8 BOM for Excel; Content-Disposition filename with slug+date;
+    rate-limited 10/5min; audited data.export (entityType ReportCSV).
+  - Reports view: MoM card (shadcn Table) — month labels localized via Intl (fa gets
+    Persian calendar labels like «شهریور ۱۴۰۵» automatically), revenue (+sales count
+    on wide screens), expenses, color-coded net cash, and a Δ badge comparing revenue
+    to the previous month (emerald ↑ +N% / rose ↓ N% / muted 0% / "new" when prev=0,
+    title shows "vs <prev month>"); current month row highlighted with "still in
+    progress" note. CSV export button in PageHeader actions (h-9, spinner while
+    pending, toast on success/failure incl. rate-limit message).
+
+- FEATURE C — SETTINGS DANGER ZONE (r8 rec #3): permanent business deletion.
+  - rbac.ts: NEW permission "business:delete" — OWNER only (ADMIN explicitly without
+    it; comment added).
+  - DELETE /api/v1/businesses/[id] — OWNER-only, body {confirmName} must equal the
+    CURRENT business name exactly (else 422 CONFIRM_MISMATCH). Returns record counts
+    then hard-deletes via single Prisma delete (all business-scoped tables cascade;
+    audit trail dies with the business — documented in code).
+  - GET /api/v1/businesses/[id]/danger — OWNER-only counts (customers/suppliers/
+    products/sales/expenses/payments) so the dialog can show exactly what will be
+    destroyed BEFORE confirmation.
+  - Business settings view: destructive-tinted danger card (OWNER-only) → AlertDialog
+    with LIVE counts (useQuery enabled when open), export-reminder line with inline
+    "Download backup now" (reuses exportData), typed-name input with live mismatch
+    hint, confirm disabled until exact match (server re-verifies). onSuccess: toast,
+    invalidateQueries() (all caches — no stale tenant data can flash), navigate to
+    dashboard; AppRoot auto-switches to another business or onboarding.
+  - Verified live WITHOUT destroying Sara's business: dialog opens with real counts
+    (7 customers, 1 products, 1 sales, 3 payments…), wrong name → hint + disabled
+    confirm, correct name → enabled, cancel closes. RBAC/422/delete covered by smoke
+    on a THROWAWAY business.
+
+- BUG FOUND & FIXED (latent, caught by this round's QA): reports view at 390px
+  overflowed (scrollW 464 vs 390). Bisected by hiding sections → the grid gap-4
+  lg:grid-cols-2 (cash chart / category donut / top products). Root cause: grid
+  items (Cards) had no min-w-0, so recharts SVGs measured at ~398px forced the
+  items' min-content width past the viewport (fresh reload reproduced it — not a
+  resize artifact). Fix: min-w-0 on the three chart Cards. Verified: scrollW 390=390
+  after reload; FULL 16-view sweep now clean at 390px AND 1440px. (This bug
+  predates this round — earlier QA had only checked dashboard/copilot at 390.)
+
+- STYLING DETAILS (mandatory pass):
+  - Reports header: range select + CSV button now sit on ONE row on mobile
+    (flex-1 sm:w-44 sm:flex-none trigger) instead of the button orphaning onto its
+    own row.
+  - MoM delta badges: brand palette only (emerald/rose/muted), tabular-nums,
+    title tooltips; current-month row bg-muted/40 highlight; table in
+    overflow-x-auto wrapper.
+  - Follow-up chips: emerald outline brand style with hover fill + animate-in,
+    distinct from the neutral empty-state suggestion chips.
+  - Danger card: border-destructive/40 + bg-destructive/5 tint, ShieldAlert title,
+    destructive confirm button with trash icon and spinner-while-pending.
+  - Copilot toolbar: export/new-conversation labels hidden <sm (icon + sr-only) so
+    the toolbar stays on one line on narrow screens.
+
+- OPS (recorded for next rounds): the sandbox repeatedly ran OUT OF THREADS — dev
+  server crashed ("OS can't spawn worker thread"), node crashed with
+  uv_thread_create assert. Cause: MULTIPLE duplicate `bun run dev` → next dev stacks
+  piling up (3 found) + 4 agent-browser sessions. Fix applied: agent-browser close
+  --all, killed all duplicates, started ONE keep-dev-up instance. If the server dies
+  again: check `ps aux | grep next` for duplicates BEFORE restarting; also
+  Turbopack note from r8 (real content edits needed to invalidate CSS) still holds.
+
+Verification:
+- e2e smoke extended 32 → 41 checks, ALL GREEN: monthly 200 (6 series, integer
+  minors A08), CSV 200 text/csv with sections, VIEWER may read reports (data:read),
+  throwaway business create (201) → ADMIN delete 403 → danger counts 200 →
+  wrong-confirm 422 → correct-confirm delete 200 → gone from list. (One smoke bug
+  fixed during the round: POST /api/v1/businesses returns data.business nested, not
+  data.id.)
+- i18n audit: 542 usages, 0 missing, en<->fa parity 0 gaps. lint clean. dev.log: no
+  runtime errors (only historical EADDRINUSE lines from the duplicate-server
+  incident).
+- Browser QA: EN desktop (1440) + mobile (390) + FA RTL mobile — MoM table Persian
+  month labels, RTL mirror, FA dialog copy with counts; copilot citations + chips +
+  export; danger dialog flows; screenshots saved in download/: qa-r9-reports-mom-en,
+  qa-r9-reports-mom-fa-mobile, qa-r9-reports-header-mobile, qa-r9-settings-danger-en,
+  qa-r9-danger-dialog-mismatch, qa-r9-danger-dialog-ready, qa-r9-danger-dialog-fa,
+  qa-r9-danger-fa-mobile, qa-r9-copilot-followups, qa-r9-copilot-2qa-en,
+  qa-r9-copilot-fa-mobile.
+
+Stage Summary:
+- The copilot conversation is now portable (markdown export with per-answer
+  provenance) and self-extending (context-aware follow-up chips that rotate).
+  Reports gained a month-over-month comparison table with delta badges and a
+  rate-limited, audited CSV export generated from the same deterministic aggregates
+  as the UI. The danger zone completes the settings story: OWNER-only deletion with
+  typed confirmation, live counts, and a backup reminder — enforced by a new
+  business:delete permission and covered end-to-end by the smoke suite (now 41
+  checks). A latent mobile overflow on Reports was found by viewport QA and fixed
+  with min-w-0 on grid items (lesson: ANY grid holding recharts needs min-w-0).
+- Test accounts unchanged: sara@copilot.dev (OWNER), ali@copilot.dev (ADMIN),
+  eve@outsider.dev (VIEWER), rep16007@t.dev (import-test business) — testpass123.
+  Dev DB gained only smoke-probe rows; one throwaway "Smoke Delete Business" was
+  created AND deleted by the suite. Sara's business data unchanged.
+- Next round recommendations (priority order):
+  1. Copilot: suggested-question ranking from actual citation counts (e.g. only
+     propose "restock" chip when lowStock>0 — needs server counts in the client
+     pool decision); multi-session transcripts (persist conversations per business
+     in localStorage or a chat table).
+  2. Reports: MoM chart line (companion to the table) + per-month drill-down deep
+     link (click a month row → filtered sales/expenses view).
+  3. Settings: soft-delete purge policy display; import (restore) STAGING preview
+     hardening (r8 rec, still open); member invite flow (email sending is out of
+     MVP scope, but an invite-link copy button may fit).
+  4. Quality: axe-core accessibility pass in the smoke suite (r8 rec, still open);
+     contrast pass on muted tokens (partially done r8); dependency audit.
+  5. Roadmap: mark Phase 06 complete and draft Phase 07 (§6: integrations/public
+     API or packaging) — the foundation for this is now fully in place.

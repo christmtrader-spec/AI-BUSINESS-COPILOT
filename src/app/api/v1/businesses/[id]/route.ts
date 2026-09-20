@@ -1,6 +1,9 @@
 /**
- * GET   /api/v1/businesses/[id] — business details (member required).
- * PATCH /api/v1/businesses/[id] — update settings (settings:manage) + audit.
+ * GET    /api/v1/businesses/[id] — business details (member required).
+ * PATCH  /api/v1/businesses/[id] — update settings (settings:manage) + audit.
+ * DELETE /api/v1/businesses/[id] — OWNER-only danger zone. Requires the
+ *         exact business name as typed confirmation; hard-deletes the
+ *         business and every related record (FK cascade).
  */
 import { NextRequest } from "next/server";
 import { z } from "zod";
@@ -84,4 +87,61 @@ export const PATCH = route(async (req: NextRequest, { params }: RouteParams) => 
   });
 
   return ok(updated);
+});
+
+// ---- DELETE — danger zone (OWNER-only) --------------------------------------
+
+const deleteSchema = z.object({
+  // Typed confirmation: must equal the CURRENT business name exactly.
+  confirmName: z.string().trim().min(1).max(120),
+});
+
+export const DELETE = route(async (req: NextRequest, { params }: RouteParams) => {
+  const { id } = await params;
+  const ctx = await getAuthContext(req);
+  if (ctx.businessId !== id) {
+    throw new ApiError(403, "FORBIDDEN", "You do not have access to this business.");
+  }
+  requirePermission(ctx, "business:delete"); // OWNER only (rbac.ts)
+
+  const { confirmName } = await parseBody(req, deleteSchema);
+  if (confirmName !== ctx.business.name) {
+    throw new ApiError(
+      422,
+      "CONFIRM_MISMATCH",
+      "The typed name does not match this business.",
+      { expected: ctx.business.name },
+    );
+  }
+
+  // Transparency: counts returned to the caller before deletion. The audit
+  // trail is deleted WITH the business (cascade), so no audit row can
+  // outlive the business it describes.
+  const [customers, suppliers, products, sales, expenses, payments, members, auditLogs] =
+    await Promise.all([
+      db.customer.count({ where: { businessId: ctx.businessId } }),
+      db.supplier.count({ where: { businessId: ctx.businessId } }),
+      db.product.count({ where: { businessId: ctx.businessId } }),
+      db.sale.count({ where: { businessId: ctx.businessId } }),
+      db.expense.count({ where: { businessId: ctx.businessId } }),
+      db.payment.count({ where: { businessId: ctx.businessId } }),
+      db.businessMember.count({ where: { businessId: ctx.businessId } }),
+      db.auditLog.count({ where: { businessId: ctx.businessId } }),
+    ]);
+
+  const counts = {
+    customers,
+    suppliers,
+    products,
+    sales,
+    expenses,
+    payments,
+    members,
+    auditLogs,
+  };
+
+  // Single delete — every business-scoped table cascades (schema.prisma).
+  await db.business.delete({ where: { id: ctx.businessId } });
+
+  return ok({ deleted: true, businessId: ctx.businessId, counts });
 });
