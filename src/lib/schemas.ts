@@ -104,3 +104,23 @@ export const paymentCreateSchema = z
     message: "A payment must target exactly one sale or one expense.",
     path: ["saleId"],
   });
+
+// ---------------------------------------------------------------------------
+// Phase 05 — AI Copilot (read-only). The question and history are plain
+// user text; all authoritative figures are injected server-side from
+// lib/reports.ts (A11-A13) — nothing financial is accepted from the client.
+// ---------------------------------------------------------------------------
+
+export const copilotMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string().trim().min(1).max(2000),
+});
+
+export const copilotAskSchema = z.object({
+  question: z.string().trim().min(1, "Ask a question first.").max(500),
+  history: z.array(copilotMessageSchema).max(8).default([]),
+  days: z
+    .union([z.literal(7), z.literal(30), z.literal(90)])
+    .catch(30)
+    .default(30),
+});

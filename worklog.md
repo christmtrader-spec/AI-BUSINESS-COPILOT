@@ -454,3 +454,100 @@ Stage Summary:
   ali@copilot.dev (ADMIN), eve@outsider.dev (VIEWER), rep16007@t.dev
   (fresh OWNER of empty "Empty Co", pwd testpass123) — dev-only DB.
   Product "Handmade Candle" intentionally left at stock 3 (low-stock demo).
+
+---
+Task ID: 05
+Agent: Z.ai Code (cron webDevReview round)
+Task: Status assessment + QA, then Phase 05 — AI Business Copilot (read-only
+NL Q&A grounded in deterministic metrics) per roadmap §6. Mandates: styling
+details, more features, worklog handover.
+
+Work Log:
+- Baseline verified: server 200, lint clean, all Phase 01-04 modules render
+  (agent-browser snapshot); session persisted. AI Copilot was the only
+  "coming soon" module → implemented it this round (no schema changes).
+- INFRA (Rule 05 refactor): extracted the entire deterministic computation
+  from /api/v1/reports/summary into src/lib/reports.ts
+  (buildReportSummary + normalizeReportDays + ALLOWED_REPORT_DAYS) — now a
+  SINGLE source of truth shared by the Reports UI and the Copilot grounding
+  pipeline. Route file reduced to auth + param parsing + ok(). Verified
+  identical output after refactor (€27.50 / €800.00 / €500.00 etc).
+- AI seam (A11-A13): src/lib/ai/provider.ts — AIProvider interface +
+  ZaiProvider wrapping z-ai-web-dev-sdk (server-only pkg installed; SDK
+  imported NOWHERE else; swap-friendly; empty completions raise
+  AiUnavailableError → 503 AI_UNAVAILABLE).
+- Grounding pipeline: src/lib/ai/snapshot.ts (server-only) — builds the
+  copilot context from buildReportSummary + open sales/expenses (top 8
+  debtors/creditors w/ exact balances) + last 8 payments. CRITICAL DESIGN:
+  every monetary figure is pre-computed AND pre-formatted with the business
+  currency config and passed as display STRINGS ("€25.00"); raw minor units
+  are never given to the model, ratios (collection rate, expense share) are
+  computed server-side too — the model NEVER does arithmetic. System prompt
+  has 8 hard rules: quote only verbatim figures, admit missing figures,
+  read-only, mirror user language (fa/en), no instruction leakage.
+- API: POST /api/v1/copilot — getAuthContext + requirePermission
+  ("copilot:use" — VIEWER excluded by RBAC matrix) + rate limit 10/min/user
+  (A14, 429 w/ retryAfterMs) + zod (copilotAskSchema: question ≤500 chars,
+  history ≤8 messages replayed last-6, days 7|30|90) + audit
+  "copilot.query" (question truncated 200 chars). maxDuration 60.
+- Frontend: src/modules/copilot/copilot-view.tsx — full chat UX: user/
+  assistant bubbles (logical rounded corners, RTL-safe, dir="auto" content),
+  markdown-lite renderer (bold/bullets/code — no deps, no raw HTML, safe by
+  construction), 6 localized suggestion chips, data-window segmented control
+  (7/30/90 → passed to grounding), "What it can see" Collapsible listing the
+  7 grounded data sections (transparency by design), typing indicator
+  (staggered bounce dots + "Thinking…"), copy-answer button (hover reveal +
+  copied check), retry chip after failed turns (lastQuestionRef), 0/500
+  char counter, Enter-to-send/Shift+Enter newline, auto-scroll w/ atBottom
+  detection, viewer lock card (Lock icon + role explanation), error mapping
+  (429 → localized wait-{seconds}s, 403, generic). Height calc(100svh-15rem)
+  app-like layout, custom scrollbars, emerald/teal brand tones.
+- Integration: app-shell routes module "copilot" → CopilotView; sidebar
+  badge "coming soon" REMOVED (copilot live); sidebar+footer → "Phase 05 ·
+  AI Copilot". Dashboard: teaser card now LIVE ("Ask the copilot" button
+  navigates; disabled for roles without copilot:use); roadmap p1-p5 done +
+  NEW p6 "Hardening & polish (next)" highlighted. i18n: complete `copilot`
+  namespace en+fa (+ groundedNote key fix found in QA), dashboard strings
+  updated both languages.
+
+Verification (agent-browser E2E + curl):
+- curl: EN question → exact grounded answer (receivable €0.00, rent
+  payable €500.00, revenue €27.50, 100% collection rate); FA question →
+  Persian answer w/ native numerals (۲ واحد، €25.00 Handmade Candle);
+  eve (VIEWER) → 403; unauth → 401. OK
+- Burst test: 10 requests 200, 11th → 429 RATE_LIMITED + retryAfterMs. OK
+- Audit: copilot.query entries with question+days in /api/v1/audit. OK
+- UI (agent-browser): empty state + chips → answer bubble flow; follow-up
+  "Which product sold best + inventory worth?" → €25.00 candle revenue,
+  €21.00 inventory (3×€7), low stock 3 — exact; 7-day window switch →
+  window-scoped figures (collected €27.50, paid out €300, -€772.50 profit);
+  transparency panel renders 7 sections; copy button present. OK
+- فارسی RTL: dir=rtl lang=fa, sidebar mirrored, copilot fully Persian
+  (۷/۳۰/۹۰ روز), Persian question answered in Persian w/ Persian numerals
+  (شمع دستساز ۳ عدد). Screenshots: qa-copilot-empty/typing/answer/
+  window7-panel/fa-rtl/fa-answer/fa-light/mobile-fa .png. OK
+- VIEWER lock card verified in browser (eve signed in). OK
+- Mobile 390×844: sw=cw=390 no overflow. Light + dark themes verified.
+- Fresh console after reload: ZERO errors (one MISSING_MESSAGE
+  copilot.groundedNote caught+fixed during QA). `bun run lint` clean.
+- dev.log: only STALE pre-fix Phase-04 Prisma error (line 190/1510, old
+  session); all recent requests 200.
+
+Stage Summary:
+- Phase 05 COMPLETE: MVP item 15 (AI copilot) live — read-only, grounded,
+  rate-limited, audited, bilingual. MVP roadmap §6 items: ALL 16 modules
+  now functional; only Phase 06 hardening remains.
+- Design guarantee: the copilot CANNOT invent money figures (data is
+  pre-formatted strings; ratios pre-computed; prompt forbids arithmetic).
+  Follow-ups keep context via last-6 history replay; system prompt always
+  rebuilt fresh (history can't carry stale numbers).
+- Known minor: non-streaming answers (3-20s wait covered by typing
+  indicator; streaming can be added later if SDK supports); audit stores
+  only truncated questions (privacy by design).
+- Next (Phase 06 per roadmap): hardening & polish — e2e stability pass,
+  error-boundary polish, per-page metadata, accessibility audit, rate
+  limit tuning, admin ops views, backup/export story, dependency audit.
+- Test accounts unchanged: sara@copilot.dev (OWNER), ali@copilot.dev
+  (ADMIN), eve@outsider.dev (VIEWER), rep16007@t.dev (Empty Co owner,
+  testpass123) — dev-only DB. Dev DB now also contains copilot.query
+  audit rows (incl. 10 rate-limit probe "test N" questions) — harmless.

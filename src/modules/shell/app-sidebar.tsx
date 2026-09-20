@@ -79,7 +79,7 @@ const OPERATIONS: NavItem[] = [
 
 const INTELLIGENCE: NavItem[] = [
   { view: { kind: "module", module: "reports" }, labelKey: "reports", icon: BarChart3 },
-  { view: { kind: "module", module: "copilot" }, labelKey: "copilot", icon: Bot, soon: true },
+  { view: { kind: "module", module: "copilot" }, labelKey: "copilot", icon: Bot },
 ];
 
 const PLATFORM: NavItem[] = [
@@ -192,7 +192,7 @@ export function AppSidebar({
       </SidebarContent>
       <SidebarFooter>
         <div className="text-muted-foreground group-data-[collapsible=icon]:hidden px-3 py-1 text-[11px]">
-          Phase 04 · Reports
+          Phase 05 · AI Copilot
         </div>
       </SidebarFooter>
       <SidebarRail />

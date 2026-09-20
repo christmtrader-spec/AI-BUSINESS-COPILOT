@@ -18,6 +18,7 @@ import { ExpensesView } from "../expenses/expenses-view";
 import { PaymentsView } from "../payments/payments-view";
 import { BalancesView } from "../balances/balances-view";
 import { ReportsView } from "../reports/reports-view";
+import { CopilotView } from "../copilot/copilot-view";
 import { BusinessSettingsView } from "../settings/business-settings-view";
 import { MembersView } from "../settings/members-view";
 import { ProfileView } from "../settings/profile-view";
@@ -74,6 +75,8 @@ export function AppShell({
                 <BalancesView kind="payables" business={membership!.business} role={role} />
               ) : view.module === "reports" ? (
                 <ReportsView business={membership!.business} />
+              ) : view.module === "copilot" ? (
+                <CopilotView business={membership!.business} role={role} />
               ) : (
                 <ComingSoonView module={view.module} />
               )
@@ -83,7 +86,7 @@ export function AppShell({
         <footer className="border-t">
           <div className="text-muted-foreground mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-1 px-4 py-3 text-xs sm:flex-row">
             <p>
-              {tCommon("appName")} · Phase 04 · Reports
+              {tCommon("appName")} · Phase 05 · AI Copilot
             </p>
             <p>© {new Date().getFullYear()} — {tCommon("tagline")}</p>
           </div>

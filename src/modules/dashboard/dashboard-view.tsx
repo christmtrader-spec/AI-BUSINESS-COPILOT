@@ -222,19 +222,25 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
           </CardContent>
         </Card>
 
-        {/* Copilot teaser */}
+        {/* Copilot — live in Phase 05 */}
         <Card className="from-primary/5 border-primary/20 bg-gradient-to-br to-transparent">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <Sparkles className="text-primary size-4" aria-hidden="true" />
+              <Bot className="text-primary size-4" aria-hidden="true" />
               {t("copilotTeaser")}
             </CardTitle>
             <CardDescription>{t("copilotTeaserDesc")}</CardDescription>
           </CardHeader>
           <CardContent>
-            <Button variant="secondary" size="sm" className="w-full" disabled>
-              <Bot className="size-4" aria-hidden="true" />
-              {tCommon("comingSoon")}
+            <Button
+              variant="secondary"
+              size="sm"
+              className="w-full"
+              disabled={!can(role, "copilot:use")}
+              onClick={() => navigate({ kind: "module", module: "copilot" })}
+            >
+              <Sparkles className="size-4" aria-hidden="true" />
+              {can(role, "copilot:use") ? t("copilotTeaserAction") : tCommon("comingSoon")}
             </Button>
           </CardContent>
         </Card>
@@ -388,19 +394,17 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
           </CardHeader>
           <CardContent>
             <ul className="space-y-2 text-sm">
-              {(["p1", "p2", "p3", "p4", "p5"] as const).map((k) => (
+              {(["p1", "p2", "p3", "p4", "p5", "p6"] as const).map((k) => (
                 <li
                   key={k}
                   className={`rounded-md border px-3 py-2 ${
-                    k === "p4"
+                    k === "p6"
                       ? "border-primary/30 bg-primary/5 font-medium"
-                      : k === "p1" || k === "p2" || k === "p3"
-                        ? "text-muted-foreground border-emerald-500/20 bg-emerald-500/5"
-                        : "text-muted-foreground"
+                      : "text-muted-foreground border-emerald-500/20 bg-emerald-500/5"
                   }`}
                 >
                   {t(`roadmapItems.${k}`)}
-                  {k === "p1" || k === "p2" || k === "p3" ? (
+                  {k !== "p6" ? (
                     <CheckCircle2 className="ms-1.5 inline size-3.5 text-emerald-600" aria-hidden="true" />
                   ) : null}
                 </li>
