@@ -41,6 +41,10 @@ const BASE = process.argv[2] ?? "http://localhost:3000";
 const STAMP = Date.now();
 const DEVLOG = "/home/z/my-project/dev.log";
 
+// Per-run unique client IP so back-to-back harness runs do not exhaust the
+// shared per-IP register/login rate-limit quotas (see prompt17 notes).
+const TEST_IP = `10.208.${Math.floor(Math.random() * 254) + 1}.${Math.floor(Math.random() * 254) + 1}`;
+
 const require = createRequire(import.meta.url);
 
 function loadDatabaseUrl() {
@@ -101,6 +105,7 @@ async function rawFetch(path, { method = "GET", body, headers = {}, jar } = {}) 
     method,
     redirect: "manual",
     headers: {
+      "x-forwarded-for": TEST_IP,
       ...(body !== undefined && typeof body !== "string" ? { "content-type": "application/json" } : {}),
       ...(jar ? { cookie: jar.header() } : {}),
       ...headers,

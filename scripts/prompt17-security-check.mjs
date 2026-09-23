@@ -25,6 +25,13 @@
 const BASE = process.argv[2] ?? "http://localhost:3000";
 const STAMP = Date.now();
 
+// Per-run unique client IP: rate-limit buckets key on the caller IP and all
+// suites share 127.0.0.1, so back-to-back harness runs exhaust the shared
+// register/login quotas (429 before fixtures complete). A distinct
+// X-Forwarded-For per run simulates a dedicated client; the limiter itself
+// stays fully active and is still asserted inside the suites.
+const TEST_IP = `10.207.${Math.floor(Math.random() * 254) + 1}.${Math.floor(Math.random() * 254) + 1}`;
+
 const failures = [];
 let passed = 0;
 
@@ -71,6 +78,7 @@ async function rawFetch(path, { method = "GET", body, headers = {}, jar } = {}) 
     method,
     redirect: "manual",
     headers: {
+      "x-forwarded-for": TEST_IP,
       ...(body !== undefined ? { "content-type": "application/json" } : {}),
       ...(jar ? { cookie: jar.header() } : {}),
       ...headers,

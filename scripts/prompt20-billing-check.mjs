@@ -33,6 +33,10 @@ import { existsSync, readFileSync } from "node:fs";
 
 const BASE = process.argv[2] ?? "http://localhost:3000";
 const ROOT = "/home/z/my-project";
+
+// Per-run unique client IP so back-to-back harness runs do not exhaust the
+// shared per-IP register/login rate-limit quotas (see prompt17 notes).
+const TEST_IP = `10.210.${Math.floor(Math.random() * 254) + 1}.${Math.floor(Math.random() * 254) + 1}`;
 const require = createRequire(import.meta.url);
 const { PrismaClient } = require("@prisma/client");
 
@@ -93,6 +97,7 @@ async function api(path, { method = "GET", body, headers = {}, jar } = {}) {
     method,
     redirect: "manual",
     headers: {
+      "x-forwarded-for": TEST_IP,
       ...(body !== undefined && typeof body !== "string"
         ? { "content-type": "application/json" }
         : {}),

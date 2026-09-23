@@ -2,6 +2,13 @@ const en = {
   common: {
     appName: "AI Business Copilot",
     tagline: "Your business, understood.",
+    marketing: {
+      sub: "Customers, sales, expenses and cash flow — with an AI copilot that answers from your real numbers.",
+      point1: "Per-business data isolation with server-enforced roles",
+      point2: "Deterministic financial math — integer minor units, never floats",
+      point3: "AI copilot that calculates from your recorded business data",
+      localesNote: "English · فارسی · Light / Dark · RTL-first design",
+    },
     save: "Save",
     saving: "Saving…",
     cancel: "Cancel",
@@ -105,6 +112,7 @@ const en = {
     confirmNewPassword: "Confirm new password",
     resetSubmit: "Set new password",
     resetSuccessTitle: "Password changed",
+    resetSuccessBody: "Your password has been changed. Your previous sessions were signed out — please sign in with your new password.",
     goToSignIn: "Go to sign in",
     changePasswordTitle: "Change password",
     changePasswordDesc: "For your security, changing your password signs you out of all devices — you will sign in again with the new password.",

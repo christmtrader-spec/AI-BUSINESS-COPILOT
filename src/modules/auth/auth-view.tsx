@@ -56,10 +56,11 @@ function ForgotPasswordCard({ onBackToSignIn }: { onBackToSignIn: () => void }) 
         method: "POST",
         body: JSON.stringify({ email }),
       }),
-    onSuccess: (data) => {
+    onSuccess: () => {
       setError(null);
-      // Generic by design — never claim whether the account exists.
-      setSentMessage(data?.message || t("resetSentGeneric"));
+      // Generic by design — never claim whether the account exists, and UI
+      // copy is always locale-driven (server message is for API consumers).
+      setSentMessage(t("resetSentGeneric"));
     },
     onError: (err) => {
       if (err instanceof ApiClientError) {
@@ -189,10 +190,10 @@ function ResetPasswordCard({
         method: "POST",
         body: JSON.stringify({ token, newPassword, confirmPassword }),
       }),
-    onSuccess: (data) => {
+    onSuccess: () => {
       setError(null);
       setTokenInvalid(false);
-      setDoneMessage(data?.message || t("resetSuccessTitle"));
+      setDoneMessage(t("resetSuccessBody"));
       // The server killed every session for this user — clear any stale
       // local one right away (the success card below routes to sign-in).
       void signOut({ redirect: false });
@@ -443,15 +444,14 @@ export function AuthView() {
               {tCommon("tagline")}
             </h2>
             <p className="text-muted-foreground text-base">
-              Customers, sales, expenses and cash flow — with an AI copilot that
-              answers from your real numbers.
+              {tCommon("marketing.sub")}
             </p>
           </div>
           <ul className="space-y-4">
             {[
-              { icon: ShieldCheck, text: "Per-business data isolation with server-enforced roles" },
-              { icon: TrendingUp, text: "Deterministic financial math — integer minor units, never floats" },
-              { icon: Sparkles, text: "AI copilot that calculates from your recorded business data" },
+              { icon: ShieldCheck, text: tCommon("marketing.point1") },
+              { icon: TrendingUp, text: tCommon("marketing.point2") },
+              { icon: Sparkles, text: tCommon("marketing.point3") },
             ].map(({ icon: Icon, text }) => (
               <li key={text} className="flex items-center gap-3">
                 <span className="bg-background text-primary flex size-9 shrink-0 items-center justify-center rounded-lg border shadow-sm">
@@ -464,7 +464,7 @@ export function AuthView() {
         </div>
 
         <p className="text-muted-foreground/70 relative text-xs">
-          English · فارسی · Light / Dark · RTL-first design
+          {tCommon("marketing.localesNote")}
         </p>
       </div>
 
