@@ -105,6 +105,25 @@ async function stage2() {
     console.log("another watchdog holds the spawn lock — skipping");
     process.exit(0);
   }
+  // r21 hardening — final bind-gap recheck: another agent's `next dev` may
+  // have started while we probed/waited (process alive, port not yet bound).
+  // dev-guard re-checks too; this second check closes the watchdog-side race
+  // that produced a duplicate Turbopack instance on 2026-09-23.
+  try {
+    const alive = execFileSync(
+      "pgrep",
+      ["-f", "node_modules/[.]bin/next dev|next-server "],
+      { encoding: "utf8" },
+    );
+    if (alive.trim()) {
+      console.log(
+        "a `next dev` process appeared during the wait (boot gap) — not spawning a duplicate",
+      );
+      process.exit(0);
+    }
+  } catch {
+    /* pgrep exit 1 → nothing alive → proceed */
+  }
   const out = fs.openSync(LOG, "a");
   const child = spawn("bun", ["run", "dev"], {
     cwd: "/home/z/my-project",

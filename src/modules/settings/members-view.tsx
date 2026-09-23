@@ -14,6 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { useBillingErrorText } from "@/hooks/use-billing-error-text";
 import { api, ApiClientError } from "@/lib/api-client";
 import { ROLES, ROLE_RANK, asRole, can, permissionsOf, type Role } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
@@ -65,6 +66,7 @@ export function MembersView({ membership }: { membership: BusinessListItem }) {
   const t = useTranslations("settings");
   const tCommon = useTranslations("common");
   const tErrors = useTranslations("errors");
+  const billingErrorText = useBillingErrorText();
   const uiLocale = useLocale();
   const activeId = useAppStore((s) => s.activeBusinessId);
   const queryClient = useQueryClient();
@@ -96,7 +98,7 @@ export function MembersView({ membership }: { membership: BusinessListItem }) {
     },
     onError: (err) => {
       toast({
-        title: err instanceof ApiClientError ? err.message : tErrors("generic"),
+        title: billingErrorText(err) || (err instanceof ApiClientError ? err.message : tErrors("generic")),
         variant: "destructive",
       });
     },
@@ -115,7 +117,7 @@ export function MembersView({ membership }: { membership: BusinessListItem }) {
     },
     onError: (err) => {
       toast({
-        title: err instanceof ApiClientError ? err.message : tErrors("generic"),
+        title: billingErrorText(err) || (err instanceof ApiClientError ? err.message : tErrors("generic")),
         variant: "destructive",
       });
     },
@@ -131,7 +133,7 @@ export function MembersView({ membership }: { membership: BusinessListItem }) {
     },
     onError: (err) => {
       toast({
-        title: err instanceof ApiClientError ? err.message : tErrors("generic"),
+        title: billingErrorText(err) || (err instanceof ApiClientError ? err.message : tErrors("generic")),
         variant: "destructive",
       });
     },
@@ -168,7 +170,7 @@ export function MembersView({ membership }: { membership: BusinessListItem }) {
     },
     onError: (err) => {
       toast({
-        title: err instanceof ApiClientError ? err.message : tErrors("generic"),
+        title: billingErrorText(err) || (err instanceof ApiClientError ? err.message : tErrors("generic")),
         variant: "destructive",
       });
     },
@@ -184,7 +186,7 @@ export function MembersView({ membership }: { membership: BusinessListItem }) {
     },
     onError: (err) => {
       toast({
-        title: err instanceof ApiClientError ? err.message : tErrors("generic"),
+        title: billingErrorText(err) || (err instanceof ApiClientError ? err.message : tErrors("generic")),
         variant: "destructive",
       });
     },

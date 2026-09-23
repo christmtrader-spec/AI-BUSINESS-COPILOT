@@ -40,6 +40,7 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 import { toast } from "@/hooks/use-toast";
+import { useBillingErrorText } from "@/hooks/use-billing-error-text";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -246,6 +247,8 @@ function MoneyTooltip({
 
 export function ReportsView({ business }: { business: BusinessSummary }) {
   const t = useTranslations("reports");
+  const tErrors = useTranslations("errors");
+  const billingErrorText = useBillingErrorText();
   const uiLocale = useLocale();
   const navigate = useAppStore((s) => s.navigate);
   const view = useAppStore((s) => s.view);
@@ -322,7 +325,7 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
     onSuccess: () => toast({ title: t("csvExportedToast") }),
     onError: (err) =>
       toast({
-        title: err instanceof Error ? err.message : t("csvFailed"),
+        title: billingErrorText(err) || (err instanceof Error ? err.message : tErrors("generic")),
         variant: "destructive",
       }),
   });
@@ -360,7 +363,7 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
     onSuccess: () => toast({ title: t("csvExportedToast") }),
     onError: (err) =>
       toast({
-        title: err instanceof Error ? err.message : t("csvFailed"),
+        title: billingErrorText(err) || (err instanceof Error ? err.message : tErrors("generic")),
         variant: "destructive",
       }),
   });

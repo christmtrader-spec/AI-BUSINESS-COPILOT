@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { ArrowLeftRight, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { useBillingErrorText } from "@/hooks/use-billing-error-text";
 import { api, ApiClientError } from "@/lib/api-client";
 import { can, type Role } from "@/lib/rbac";
 import { formatMoney, fromMinor } from "@/lib/money";
@@ -64,6 +65,7 @@ export function ProductsView({
   const tNav = useTranslations("nav");
   const tCommon = useTranslations("common");
   const tErrors = useTranslations("errors");
+  const billingErrorText = useBillingErrorText();
   const queryClient = useQueryClient();
 
   const writable = can(role, "data:write");
@@ -147,7 +149,7 @@ export function ProductsView({
     },
     onError: (err) => {
       toast({
-        title: err instanceof ApiClientError ? err.message : tErrors("generic"),
+        title: billingErrorText(err) || (err instanceof ApiClientError ? err.message : tErrors("generic")),
         variant: "destructive",
       });
     },
@@ -162,7 +164,7 @@ export function ProductsView({
     },
     onError: (err) => {
       toast({
-        title: err instanceof ApiClientError ? err.message : tErrors("generic"),
+        title: billingErrorText(err) || (err instanceof ApiClientError ? err.message : tErrors("generic")),
         variant: "destructive",
       });
     },

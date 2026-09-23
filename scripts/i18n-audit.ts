@@ -16,13 +16,18 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const f of readdirSync(dir)) {
     const p = join(dir, f);
     const s = statSync(p);
+    // r21: also scan .ts — shared hooks (src/hooks/*.ts) carry useTranslations copy.
     if (s.isDirectory()) walk(p, out);
-    else if (/\.tsx$/.test(f)) out.push(p);
+    else if (/\.(ts|tsx)$/.test(f)) out.push(p);
   }
   return out;
 }
 
-const files = walk("src/modules").concat(walk("src/components/shared"));
+const files = walk("src/modules")
+  .concat(walk("src/components/shared"))
+  // r21: shared client hooks carry UI copy too (use-billing-error-text.ts) —
+  // they were invisible to the audit before, leaving runtime missing-key risk.
+  .concat(walk("src/hooks"));
 const used = new Map<string, Set<string>>(); // ns -> keys
 
 for (const file of files) {

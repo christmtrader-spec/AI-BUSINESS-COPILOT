@@ -861,6 +861,11 @@ const en = {
     rateLimited: "Too many requests. Please slow down.",
     network: "Network error. Please check your connection.",
     loadFailed: "Unable to load data. Please try again.",
+    planLimitTeamMembers: "Your current plan allows up to {limit} team members. Upgrade your plan to add more.",
+    planLimitCustomers: "Your current plan allows up to {limit} customers. Upgrade your plan to add more.",
+    planLimitProducts: "Your current plan allows up to {limit} products. Upgrade your plan to add more.",
+    planLimitBusinesses: "Your current plan allows up to {limit} business. Upgrade your plan for more.",
+    featureLockedCsv: "CSV export is not available on your current plan. Upgrade to unlock it.",
   },
   copilot: {
     title: "AI Copilot",

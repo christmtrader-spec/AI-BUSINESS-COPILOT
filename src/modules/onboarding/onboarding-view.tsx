@@ -6,6 +6,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { ArrowRight, Building2, CheckCircle2, Coins, Globe2, Loader2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { useBillingErrorText } from "@/hooks/use-billing-error-text";
 import { api, ApiClientError } from "@/lib/api-client";
 import { CURRENCIES, findCurrency } from "@/lib/currencies";
 import { formatMoney, toMinor } from "@/lib/money";
@@ -50,6 +51,7 @@ export function OnboardingView({
 }) {
   const t = useTranslations("onboarding");
   const tErrors = useTranslations("errors");
+  const billingErrorText = useBillingErrorText();
   const queryClient = useQueryClient();
 
   const zones = useMemo(() => timezoneOptions(), []);
@@ -93,7 +95,7 @@ export function OnboardingView({
     },
     onError: (err) => {
       toast({
-        title: err instanceof ApiClientError ? err.message : tErrors("generic"),
+        title: billingErrorText(err) || (err instanceof ApiClientError ? err.message : tErrors("generic")),
         variant: "destructive",
       });
     },
