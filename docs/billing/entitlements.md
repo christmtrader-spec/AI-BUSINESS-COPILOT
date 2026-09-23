@@ -13,7 +13,7 @@ the authority. Every gate is a check in the API route pipeline, after
 
 ---
 
-## 1. The 7 entitlements
+## 1. The 9 entitlements
 
 Codes are **stable machine identifiers** (`ENTITLEMENT_CODES` in
 `src/lib/billing/catalog.ts`, §72) — never scattered string literals, never
@@ -26,15 +26,17 @@ unlimited) or `BOOLEAN` (feature present or absent).
 | `PRODUCTS_MAX` | LIMIT | `COUNT` | Maximum non-deleted products (active AND inactive count; deactivation is not deletion) |
 | `TEAM_MEMBERS_MAX` | LIMIT | `USERS` | Maximum business members **including the owner** (§108); pending invites do NOT count (§31) |
 | `BUSINESSES_MAX` | LIMIT | `BUSINESSES` | Maximum businesses a user **OWNS** (`ownerId = user`); staff memberships never count (§107) |
-| `AI_COPILOT` | BOOLEAN | — | AI Copilot availability (presence gate only — usage **quantity** metering is Prompt 21, not implemented) |
+| `AI_REQUESTS_MAX` | LIMIT | `REQUESTS` | Maximum AI Copilot executions per usage period (**Prompt 21 — implemented**, see `usage-metering.md` / `ai-quotas.md`) |
+| `AI_MESSAGES_MAX` | LIMIT | `MESSAGES` | Maximum user AI messages per usage period (**Prompt 21 — implemented**; metered together with the request under one idempotency key) |
+| `AI_COPILOT` | BOOLEAN | — | AI Copilot availability (presence gate; quantity metering is enforced by the two LIMIT rows above) |
 | `ADVANCED_REPORTS` | BOOLEAN | — | Advanced report insights (growth/concentration analytics) beyond the deterministic MVP reports |
 | `CSV_EXPORT` | BOOLEAN | — | Server-side CSV export (`GET /api/v1/reports/export`) |
 
 ## 2. Value per plan
 
 The matrix below is exactly what the idempotent seed writes
-(`scripts/seed-billing.ts`) into `PlanEntitlement` rows — 5 plans × 7
-entitlements = 35 mappings, verified complete by the seed and by harness
+(`scripts/seed-billing.ts`) into `PlanEntitlement` rows — 5 plans × 9
+entitlements = 45 mappings, verified complete by the seed and by harness
 check A1–A4.
 
 | Code | FREE | STARTER | BUSINESS | PRO | ENTERPRISE |
@@ -122,14 +124,14 @@ caps how many businesses a **user** may own. Deterministic policy
 5. Count + check run inside the caller's transaction (race-safe on SQLite,
    §112 — harness G4 proves concurrent creates never exceed the limit).
 
-### 4.2 Future metering source — NOT IMPLEMENTED
+### 4.2 AI usage metering — IMPLEMENTED (Prompt 21)
 
-The unit enum already reserves `REQUESTS` and `MESSAGES` for AI usage
-metering. **No AI usage quantity is recorded anywhere in Prompt 20** — no
-usage counter table exists, no copilot request is counted, and `AI_COPILOT`
-gates *presence only* (§36). Period-keyed usage metering (the old design's
-`UsageCounter`) is deferred to **Prompt 21**; until then there is no per-plan
-AI quota of any kind.
+The unit enum's `REQUESTS` / `MESSAGES` values are now in use:
+`AI_REQUESTS_MAX` / `AI_MESSAGES_MAX` are metered server-side per usage
+period with hard-limit enforcement (422 `USAGE_LIMIT_REACHED`), idempotent
+retries and release-on-failure. Full architecture: `usage-metering.md`,
+`ai-quotas.md`, `usage-periods.md`. `AI_TOKENS` is recorded when the
+provider reports it but has NO quota row (recorded-not-enforced, §66).
 
 ## 5. Fail-closed policy
 

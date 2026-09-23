@@ -736,21 +736,32 @@ export function CopilotView({
   );
 
   const localizedError = useCallback(
-    (code: string, retryAfterMs?: number) => {
+    (code: string, details?: { retryAfterMs?: number; limit?: number; periodEnd?: string }) => {
       switch (code) {
         case "RATE_LIMITED":
           return t("errorRateLimited", {
-            seconds: String(Math.max(1, Math.ceil((retryAfterMs ?? 0) / 1000))),
+            seconds: String(Math.max(1, Math.ceil((details?.retryAfterMs ?? 0) / 1000))),
           });
         case "PERMISSION_DENIED":
           return t("errorForbidden");
         case "AI_UNAVAILABLE":
           return t("errorAiUnavailable");
+        case "USAGE_LIMIT_REACHED":
+          // Prompt 21 §54/§98: honest, localized quota messaging — states
+          // what happened and what the user can do; never invents payment.
+          return details?.periodEnd
+            ? t("errorUsageLimit", {
+                limit: details.limit ?? 0,
+                date: new Intl.DateTimeFormat(uiLocale === "fa" ? "fa-IR" : uiLocale, {
+                  dateStyle: "medium",
+                }).format(new Date(details.periodEnd)),
+              })
+            : t("errorUsageLimitNoDate", { limit: details?.limit ?? 0 });
         default:
           return tErrors("generic");
       }
     },
-    [t, tErrors],
+    [t, tErrors, uiLocale],
   );
 
   const send = useCallback(
@@ -796,19 +807,26 @@ export function CopilotView({
 
         if (!res.ok || !res.body) {
           let code = "INTERNAL_ERROR";
-          let retryAfterMs: number | undefined;
+          let errDetails: { retryAfterMs?: number; limit?: number; periodEnd?: string } | undefined;
           try {
             const body = (await res.json()) as {
-              error?: { code?: string; details?: { retryAfterMs?: number } };
+              error?: {
+                code?: string;
+                details?: {
+                  retryAfterMs?: number;
+                  limit?: number;
+                  periodEnd?: string;
+                };
+              };
             };
             if (body?.error?.code) code = body.error.code;
-            retryAfterMs = body?.error?.details?.retryAfterMs;
+            errDetails = body?.error?.details;
           } catch {
             // keep defaults
           }
           patchAssistant(assistantId, (m) => ({
             ...m,
-            content: localizedError(code, retryAfterMs),
+            content: localizedError(code, errDetails),
             failed: true,
           }));
           return;

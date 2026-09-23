@@ -91,6 +91,8 @@ model Business {
   chatSessions ChatSession[]
   subscription Subscription?
   subscriptionEvents SubscriptionEvent[]
+  usagePeriods UsagePeriod[]
+  usageEvents  UsageEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -522,4 +524,100 @@ model SubscriptionEvent {
 
   @@index([businessId, createdAt])
   @@index([subscriptionId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 21 — USAGE METERING (consumption metrics, NOT resource limits).
+//
+// Separation of concepts (§4):
+// - RESOURCE limits (CUSTOMERS_MAX…) are DERIVED from authoritative tables
+//   at check time (Prompt 20) — never duplicated here (§5/§33).
+// - CONSUMPTION metrics (AI_REQUESTS / AI_MESSAGES / AI_TOKENS) accumulate
+//   over a defined USAGE PERIOD aligned with the subscription billing
+//   period (§7) — no cron-based resets (§10/§43): a new billing period
+//   simply resolves to a new UsagePeriod row on the next metered operation
+//   (lazy, race-safe §76), and historical periods are retained (§101).
+//
+// Modeling notes:
+// - Period identity is deterministic: (businessId, start) is UNIQUE (§8).
+//   `end` mirrors the subscription's currentPeriodEnd (null-safe).
+// - One counter per (period, metric) (§25/§72); `used` is an INTEGER that
+//   only moves through guarded atomic updates (never floats §29/§30).
+// - UsageEvent rows exist ONLY for meaningful consumption (AI usage — §26);
+//   idempotencyKey uniqueness ([businessId, metric, idempotencyKey]) makes
+//   a network retry NEVER double-charge (§17/§18). Status: COMMITTED
+//   (counts) | RELEASED (provider failed before acceptance — reconciled).
+// - No prompts/responses are ever stored here (§60); only provider/model
+//   identifiers and authoritative token counts when the provider exposes
+//   them (§14: never fabricated).
+// - No money anywhere (§62/§104): usage is not pricing; a future payment
+//   phase can interpret these quantities without altering their meaning
+//   (§105).
+// ---------------------------------------------------------------------------
+
+model UsagePeriod {
+  id             String    @id @default(cuid())
+  businessId     String
+  business       Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // The subscription whose billing period this usage belongs to. Nullable:
+  // the subscription row is never deleted, but keeping the link soft avoids
+  // any cascade coupling while still identifying the alignment source.
+  subscriptionId String?
+  // UTC boundaries aligned with the subscription billing period (§7/§37).
+  start          DateTime
+  end            DateTime?
+  createdAt      DateTime  @default(now())
+
+  counters UsageCounter[]
+  events   UsageEvent[]
+
+  @@unique([businessId, start])
+  @@index([businessId, start])
+  @@index([subscriptionId])
+}
+
+model UsageCounter {
+  id            String      @id @default(cuid())
+  usagePeriodId String
+  usagePeriod   UsagePeriod @relation(fields: [usagePeriodId], references: [id], onDelete: Cascade)
+  // AI_REQUESTS | AI_MESSAGES | AI_TOKENS (constants in src/lib/billing/usage.ts)
+  metric        String
+  // Integer quantity consumed in this period (COUNT/REQUESTS/MESSAGES/TOKENS
+  // semantics per metric — §29/§30). Never negative: releases are guarded.
+  used          Int         @default(0)
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([usagePeriodId, metric])
+  @@index([metric])
+}
+
+model UsageEvent {
+  id             String      @id @default(cuid())
+  businessId     String
+  business       Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  usagePeriodId  String
+  usagePeriod    UsagePeriod @relation(fields: [usagePeriodId], references: [id], onDelete: Cascade)
+  metric         String
+  quantity       Int
+  // COMMITTED → consumption stands; RELEASED → provider never accepted the
+  // operation and the counter was reconciled back (§20/§49/§50).
+  status         String      @default("COMMITTED")
+  // Correlation id of the logical user operation (server-generated UUID, or
+  // a client-supplied UUID validated server-side — §16). One logical user
+  // operation maps to exactly one metered event per metric (§48/§116).
+  requestId      String
+  // Idempotency gate: a retried operation reuses the same key and is never
+  // double-charged (§17/§18). Keyed per business+metric so cross-tenant
+  // collisions are impossible by construction.
+  idempotencyKey String
+  // Small safe metadata only (§60): provider/model identifiers and
+  // authoritative token counts when the provider exposes them. NEVER the
+  // prompt or the response text (§60/§103).
+  metaJson       String?
+  createdAt      DateTime    @default(now())
+
+  @@unique([businessId, metric, idempotencyKey])
+  @@index([businessId, createdAt])
+  @@index([usagePeriodId, metric])
+  @@index([requestId])
 }

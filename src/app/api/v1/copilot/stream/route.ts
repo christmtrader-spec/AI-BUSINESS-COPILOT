@@ -10,10 +10,20 @@
  *   data: {"done":true}           terminal event on success
  *   data: {"error":{"code","message"}}  terminal event on mid-stream failure
  *
- * All auth / permission / rate-limit / grounding work happens BEFORE the
- * stream is created, so every pre-stream failure is a normal JSON envelope
- * with the correct status code. Audit is written when the stream closes
- * (completed / aborted / failed status recorded).
+ * All auth / permission / BILLING GATE / rate-limit / grounding / USAGE
+ * METERING work happens BEFORE the stream is created, so every pre-stream
+ * failure (including 422 USAGE_LIMIT_REACHED — Prompt 21 §23) is a normal
+ * JSON envelope with the correct status code.
+ *
+ * Prompt 21 metering semantics (§45 — stream-aware, no double counting):
+ * - metered ONCE per logical operation (never per chunk);
+ * - provider failure / stream abort with NO deltas → usage RELEASED;
+ * - at least one delta produced → the provider accepted the operation and
+ *   the charge stands (user abort included — partial content was delivered);
+ * - provider-reported token usage is recorded when the transport exposes it.
+ *
+ * Audit is written when the stream closes (completed / aborted / failed
+ * status recorded).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { ApiError, route } from "@/lib/api-helpers";
@@ -21,6 +31,12 @@ import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { copilotAskSchema } from "@/lib/schemas";
 import { rateLimit } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
+import {
+  assertFeatureAccess,
+  meterAiOperation,
+  recordAiTokenUsage,
+  releaseAiOperation,
+} from "@/lib/billing";
 import { buildCopilotGrounding } from "@/lib/ai/snapshot";
 import { AiUnavailableError, getAI, type AiMessage } from "@/lib/ai/provider";
 
@@ -31,6 +47,12 @@ export const POST = route(async (req: NextRequest) => {
   const authCtx = await getAuthContext(req);
   requirePermission(authCtx, "copilot:use");
 
+  // Billing gate — BUG FIX (Prompt 21): the streaming endpoint previously
+  // skipped the AI_COPILOT entitlement gate that the chat endpoint had,
+  // letting a boolean-gated-out business still reach the provider through
+  // this path. Both transports now enforce the SAME pipeline (§44).
+  await assertFeatureAccess(authCtx.businessId, "AI_COPILOT");
+
   const rl = rateLimit(`copilot:${authCtx.userId}:${authCtx.businessId}`, 10, 60_000);
   if (!rl.allowed) {
     throw new ApiError(429, "RATE_LIMITED", "Too many questions. Please wait a moment.", {
@@ -39,6 +61,13 @@ export const POST = route(async (req: NextRequest) => {
   }
 
   const input = await copilotAskSchema.parse(await req.json());
+
+  // Usage metering BEFORE the stream opens (§44). A quota rejection is a
+  // plain structured 422 JSON response — the stream never starts.
+  const requestId = input.requestId ?? crypto.randomUUID();
+  await meterAiOperation(authCtx.businessId, requestId, {
+    meta: { transport: "stream", actorId: authCtx.userId },
+  });
 
   const grounding = await buildCopilotGrounding({
     businessId: authCtx.businessId,
@@ -74,6 +103,10 @@ export const POST = route(async (req: NextRequest) => {
 
   let answerChars = 0;
   let status: "completed" | "aborted" | "failed" = "completed";
+  // Prompt 21 §45: the reservation is RELEASED only when the provider never
+  // delivered anything (failure/abort before the first delta).
+  let producedAnyDelta = false;
+  let providerUsage: import("@/lib/billing").AiProviderUsage | null = null;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -81,12 +114,15 @@ export const POST = route(async (req: NextRequest) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
       };
       try {
-        send({ meta: grounding.meta });
-        for await (const delta of getAI().chatStream(messages)) {
+        send({ meta: { ...grounding.meta, requestId } });
+        for await (const delta of getAI().chatStream(messages, (usage) => {
+          providerUsage = usage;
+        })) {
           if (abortSignal.aborted) {
             status = "aborted";
             break;
           }
+          producedAnyDelta = true;
           answerChars += delta.length;
           send({ delta });
         }
@@ -117,6 +153,19 @@ export const POST = route(async (req: NextRequest) => {
         } catch {
           // already closed
         }
+
+        // Reconcile the metering reservation (§20/§21/§45/§49):
+        // - nothing delivered (provider never accepted / aborted empty) →
+        //   release so the user is not charged for a failed attempt;
+        // - any delta delivered → the charge stands.
+        if (!producedAnyDelta) {
+          await releaseAiOperation(businessId, requestId, {
+            reason: status === "aborted" ? "stream-aborted-empty" : status === "failed" ? "stream-failed" : "no-output",
+          });
+        } else if (providerUsage) {
+          await recordAiTokenUsage(businessId, requestId, providerUsage, { provider: "z-ai" });
+        }
+
         // Audit on close — never break the response, but be loud on failure.
         void audit({
           businessId,
@@ -130,6 +179,7 @@ export const POST = route(async (req: NextRequest) => {
             transport: "stream",
             status,
             chars: answerChars,
+            requestId,
           },
           ip,
           userAgent,

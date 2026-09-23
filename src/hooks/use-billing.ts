@@ -68,6 +68,7 @@ export const BILLING_KEYS = {
   entitlements: ["billing", "entitlements"] as const,
   plans: ["billing", "plans"] as const,
   events: ["billing", "events"] as const,
+  usage: ["billing", "usage"] as const,
 };
 
 /** Invalidate everything billing touched (§60: no stale premium state). */
@@ -78,6 +79,7 @@ export function useInvalidateBilling() {
     void queryClient.invalidateQueries({ queryKey: BILLING_KEYS.entitlements });
     void queryClient.invalidateQueries({ queryKey: BILLING_KEYS.plans });
     void queryClient.invalidateQueries({ queryKey: BILLING_KEYS.events });
+    void queryClient.invalidateQueries({ queryKey: BILLING_KEYS.usage });
     // Reports embed the gated advanced block; balances show usage banners.
     void queryClient.invalidateQueries({ queryKey: ["reports"] });
   };
@@ -114,6 +116,42 @@ export function useSubscriptionEvents(enabled = true) {
   return useQuery<SubscriptionEventPayload>({
     queryKey: BILLING_KEYS.events,
     queryFn: () => api("/api/v1/billing/events?pageSize=20"),
+    enabled,
+    staleTime: 15_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 21 — usage metering UI hooks (§52/§94). INFORMATIONAL ONLY: the
+// server re-verifies every quota server-side on each AI request; these
+// numbers never authorize anything (§3/§26).
+// ---------------------------------------------------------------------------
+
+export type UsageMetricPayload = {
+  metric: string;
+  used: number;
+  limit: number | null;
+  remaining: number | null;
+  percentageUsed: number | null;
+  level: "ok" | "warning" | "critical" | "reached";
+};
+
+export type UsagePayload = {
+  planCode: string;
+  entitled: boolean;
+  status: string;
+  period: { start: string; end: string | null };
+  metrics: {
+    AI_REQUESTS: UsageMetricPayload;
+    AI_MESSAGES: UsageMetricPayload;
+    AI_TOKENS: UsageMetricPayload;
+  };
+};
+
+export function useUsage(enabled = true) {
+  return useQuery<UsagePayload>({
+    queryKey: BILLING_KEYS.usage,
+    queryFn: () => api("/api/v1/billing/usage"),
     enabled,
     staleTime: 15_000,
   });

@@ -1,0 +1,2454 @@
+PROMPT 21 — USAGE METERING, AI QUOTAS & SERVER-SIDE USAGE ENFORCEMENT
+
+PROJECT:
+AI Business Copilot
+
+PHASE:
+21 — Usage Metering + AI Quotas + Usage Enforcement
+
+============================================================
+0. CURRENT PROJECT CONTEXT
+============================================================
+
+This is an EXISTING SaaS application.
+
+The codebase already contains, or is expected to contain after Prompt 20:
+
+- Authentication
+- Password recovery
+- Account lifecycle
+- Multi-tenant businesses
+- Business memberships
+- RBAC
+- Customers
+- Suppliers
+- Products
+- Inventory
+- Sales
+- Expenses
+- Payments
+- Receivables
+- Payables
+- Reports
+- AI Copilot
+- Audit logging
+- Database migrations
+- Subscription
+- Plans
+- Entitlements
+- Feature gates
+
+Prompt 21 must continue from the actual current repository state.
+
+CRITICAL:
+
+Before writing code:
+
+1. Inspect the current repository.
+2. Inspect Prompt 20 implementation.
+3. Inspect actual subscription models.
+4. Inspect actual entitlement models.
+5. Inspect actual billing service.
+6. Inspect actual AI Copilot flow.
+7. Inspect actual AI provider abstraction.
+8. Inspect current Prisma schema.
+9. Inspect current migrations.
+10. Inspect current tests.
+
+DO NOT assume Prompt 20 used the exact example structures from its prompt.
+
+Use the existing implementation as authoritative.
+
+============================================================
+1. PRIMARY OBJECTIVE
+============================================================
+
+Implement a robust server-side usage metering system.
+
+The system must be able to answer:
+
+- How much has this business consumed?
+- During which usage period?
+- Which limits apply?
+- How much remains?
+- Has a quota been reached?
+- Can the requested operation proceed?
+- Can an operation be retried without double-counting?
+- Can a malicious client bypass the limit?
+- Can concurrent requests exceed the limit?
+
+The usage system must be designed primarily for SaaS consumption controls.
+
+============================================================
+2. SCOPE
+============================================================
+
+THIS PHASE MAY IMPLEMENT:
+
+- Usage period
+- Usage counters
+- Usage events where justified
+- AI request metering
+- AI message metering
+- AI token usage recording where provider usage is genuinely available
+- Usage summaries
+- Usage quota checks
+- Atomic increments
+- Idempotency
+- Usage enforcement
+- Usage-aware feature gates
+- Usage API
+- Billing-period-aware usage
+- Usage auditability
+- Usage tests
+- Admin/read-only usage inspection
+
+THIS PHASE MUST NOT IMPLEMENT:
+
+- Payment gateway
+- Checkout
+- Payment webhooks
+- Real SaaS payment collection
+- Pricing UI
+- Refunds
+- Payment reconciliation
+- Tax calculation
+- Cryptocurrency payment
+- External billing provider integration
+- Revenue recognition
+- Invoicing for SaaS charges
+
+============================================================
+3. CORE PRINCIPLE
+============================================================
+
+The client is NEVER the source of truth for usage.
+
+Never trust:
+
+localStorage
+sessionStorage
+cookies controlled by client
+client Zustand state
+query parameters
+hidden frontend counters
+frontend plan data
+frontend usage data
+
+as authoritative usage.
+
+The authoritative usage must be determined by server-side logic and database state.
+
+============================================================
+4. USAGE CATEGORIES
+============================================================
+
+Separate:
+
+A. RESOURCE LIMITS
+
+Examples:
+
+CUSTOMERS_MAX
+PRODUCTS_MAX
+TEAM_MEMBERS_MAX
+BUSINESSES_MAX
+
+These are current-state resource counts.
+
+B. CONSUMPTION METRICS
+
+Examples:
+
+AI_REQUESTS_MONTHLY
+AI_MESSAGES_MONTHLY
+AI_TOKENS_MONTHLY
+EXPORTS_MONTHLY
+FILE_STORAGE_MB
+
+These accumulate over a defined period.
+
+Do not mix these two concepts.
+
+============================================================
+5. RESOURCE LIMITS
+============================================================
+
+Existing resource-limit logic from Prompt 20 remains authoritative.
+
+For customers/products/team members/businesses:
+
+Current usage should generally be derived from authoritative database state.
+
+Do NOT duplicate customer counts into a usage counter merely to create a second source of truth unless there is a proven performance need.
+
+Example:
+
+customers current usage
+=
+COUNT(active customers)
+
+Not:
+
+customersUsageCounter
++
+customer table
+
+unless explicitly justified.
+
+============================================================
+6. CONSUMPTION METERING
+============================================================
+
+Consumption metrics are different.
+
+For AI requests, exports, and similar events:
+
+the system should store usage by period.
+
+Conceptual:
+
+Business
+   ↓
+UsagePeriod
+   ↓
+UsageCounter
+
+Optional:
+
+UsageEvent
+
+Use the simplest architecture that is safe and scalable for the current application.
+
+============================================================
+7. USAGE PERIOD MODEL
+============================================================
+
+Usage must belong to a defined period.
+
+Prefer alignment with the Business subscription billing period.
+
+Example:
+
+Subscription:
+currentPeriodStart
+currentPeriodEnd
+
+Usage:
+periodStart
+periodEnd
+
+This prevents usage resets from depending on:
+
+server restart
+cron job
+local timezone
+manual reset
+
+DO NOT build a "reset usage every first day of month" mechanism if the subscription billing period is different.
+
+============================================================
+8. PERIOD IDENTITY
+============================================================
+
+Every usage period must have a stable identity.
+
+Conceptually:
+
+usagePeriodId
+
+or a deterministic compound identity such as:
+
+businessId + periodStart + periodEnd
+
+There must be no ambiguity about which usage period a record belongs to.
+
+============================================================
+9. USAGE PERIOD CREATION
+============================================================
+
+When a metered operation occurs:
+
+1. Resolve business.
+2. Resolve active subscription.
+3. Resolve current entitlement.
+4. Determine current billing/usage period.
+5. Find or create UsagePeriod.
+6. Verify quota.
+7. Meter operation atomically.
+8. Proceed with operation.
+
+The implementation must be safe under concurrency.
+
+============================================================
+10. NO CRON-BASED RESET
+============================================================
+
+Do NOT implement:
+
+"reset usage counters at midnight"
+
+or:
+
+"reset monthly usage via cron"
+
+unless required for a separate cleanup process.
+
+Usage should naturally roll into a new period.
+
+============================================================
+11. USAGE METRICS
+============================================================
+
+At minimum support:
+
+AI_REQUESTS
+AI_MESSAGES
+
+Optionally support:
+
+AI_TOKENS
+EXPORTS
+FILE_STORAGE_BYTES
+
+Only implement metrics that have real enforcement or reporting value.
+
+Do not create dozens of unused counters.
+
+============================================================
+12. AI REQUEST METERING
+============================================================
+
+Define precisely what counts as one AI request.
+
+Recommended:
+
+One accepted Copilot execution attempt that reaches the AI orchestration layer.
+
+Do NOT count:
+
+- page views
+- opening Copilot UI
+- typing
+- streaming chunks
+- refreshing chat page
+
+Each actual AI execution should be metered once.
+
+============================================================
+13. AI MESSAGE METERING
+============================================================
+
+Define what a message means.
+
+Recommended:
+
+One user-submitted AI message that enters the Copilot processing pipeline.
+
+A single message may cause:
+
+- one or multiple internal tool calls
+- one AI provider call
+- multiple streaming chunks
+
+It still counts as one user AI message unless product semantics explicitly define otherwise.
+
+Document the policy.
+
+============================================================
+14. AI TOKEN METERING
+============================================================
+
+Tokens require special care.
+
+DO NOT fabricate token usage.
+
+If the AI provider returns:
+
+input tokens
+output tokens
+total tokens
+
+and the integration exposes reliable values:
+
+record them.
+
+If the provider does NOT expose reliable usage:
+
+do not pretend a token count exists.
+
+In that case:
+
+- meter request/message count
+- leave token usage unknown
+- optionally store null
+
+Do not estimate tokens for billing purposes in this phase unless estimation is explicitly defined as non-authoritative analytics.
+
+============================================================
+15. PROVIDER USAGE ABSTRACTION
+============================================================
+
+AI usage returned by the provider must be normalized.
+
+Conceptual:
+
+AIProviderResponse
+{
+  result,
+  usage: {
+    inputTokens?,
+    outputTokens?,
+    totalTokens?
+  }
+}
+
+This must remain provider-independent.
+
+Do not make billing logic depend on one vendor SDK.
+
+============================================================
+16. AI REQUEST ID
+============================================================
+
+Every metered AI execution should have a unique request/correlation identifier.
+
+Purpose:
+
+- tracing
+- idempotency
+- debugging
+- usage reconciliation
+
+Never use a predictable sequential ID exposed to the client as the security mechanism.
+
+Use a cryptographically safe or UUID-style identifier.
+
+============================================================
+17. IDEMPOTENCY
+============================================================
+
+This is CRITICAL.
+
+A network retry must NOT double-charge usage.
+
+Example:
+
+Request A
+→ AI operation starts
+→ usage recorded
+→ response lost
+→ client retries
+
+The retry must not create another identical usage event simply because the client retried.
+
+Use an idempotency key or server-generated operation ID.
+
+The exact design must fit the existing AI architecture.
+
+============================================================
+18. IDEMPOTENCY KEY STORAGE
+============================================================
+
+If usage events are persisted:
+
+store enough information to detect duplicate operations.
+
+Possible fields:
+
+idempotencyKey
+businessId
+metric
+periodId
+createdAt
+
+with a uniqueness constraint appropriate to the operation semantics.
+
+Do not create an overly broad unique constraint that blocks legitimate operations.
+
+============================================================
+19. CONCURRENCY
+============================================================
+
+The system must prevent quota bypass under concurrent requests.
+
+Example:
+
+AI quota:
+100 requests
+
+Current usage:
+99
+
+Two requests arrive simultaneously.
+
+Expected:
+
+Only one should consume the final available slot.
+
+The second must be rejected.
+
+Do not implement:
+
+read count
+→ application check
+→ increment
+
+as separate unsafe operations if that creates a race condition.
+
+Use an atomic or transactional mechanism.
+
+============================================================
+20. RESERVATION VS COMMIT
+============================================================
+
+Consider whether the AI operation should:
+
+A. Count before provider call
+B. Count after successful provider call
+C. Reserve before and reconcile after
+
+Choose one strategy based on existing AI behavior.
+
+For quota protection, a reservation-before-provider-call approach may be appropriate.
+
+But do not permanently consume usage when a request fails for infrastructure reasons unless the documented policy intentionally does so.
+
+Document:
+
+- failed AI call behavior
+- provider timeout behavior
+- user cancellation
+- server exception
+- retry behavior
+
+============================================================
+21. RECOMMENDED AI METERING SEMANTICS
+============================================================
+
+Unless the existing architecture dictates otherwise:
+
+Attempt begins
+        ↓
+Authorize entitlement
+        ↓
+Reserve usage
+        ↓
+Call provider
+        ↓
+Success
+  → finalize usage
+        ↓
+Failure
+  → release/reconcile reservation
+
+However:
+
+Do not blindly copy this pattern.
+
+Inspect the actual AI architecture and implement the safest compatible approach.
+
+============================================================
+22. QUOTA TYPES
+============================================================
+
+Support at least:
+
+HARD_LIMIT
+
+and conceptually allow:
+
+SOFT_LIMIT
+
+HARD_LIMIT:
+Operation blocked when quota is exceeded.
+
+SOFT_LIMIT:
+Operation may continue but creates a warning/event.
+
+Do NOT activate soft-limit behavior unless the current product policy requires it.
+
+============================================================
+23. HARD LIMIT RESPONSE
+============================================================
+
+When quota is exhausted:
+
+Return a structured error.
+
+Example:
+
+{
+  code: "USAGE_LIMIT_REACHED",
+  metric: "AI_REQUESTS",
+  limit: 100,
+  used: 100,
+  remaining: 0,
+  periodEnd: "...",
+  upgradeAvailable: true
+}
+
+Do not return:
+
+HTTP 500
+
+Do not expose database internals.
+
+============================================================
+24. FAIL-SAFE BILLING BEHAVIOR
+============================================================
+
+If usage data cannot be read due to a database failure:
+
+Do NOT automatically grant unlimited premium usage.
+
+Choose a safe policy.
+
+For metered premium AI operations:
+
+fail closed where appropriate.
+
+For non-metered core business functions:
+
+do not unnecessarily block the entire application.
+
+Document the distinction.
+
+============================================================
+25. USAGE COUNTER MODEL
+============================================================
+
+Design a compact normalized structure.
+
+Conceptually:
+
+UsagePeriod
+- id
+- businessId
+- subscriptionId or period reference
+- start
+- end
+- createdAt
+
+UsageCounter
+- id
+- usagePeriodId
+- metric
+- used
+- updatedAt
+
+Possible:
+
+UsageEvent
+- id
+- usagePeriodId
+- businessId
+- metric
+- quantity
+- idempotencyKey
+- requestId
+- createdAt
+- metadata
+
+Do not add all fields automatically.
+
+Inspect actual requirements and choose the smallest reliable model.
+
+============================================================
+26. DATA GROWTH CONTROL
+============================================================
+
+Do not create an unbounded append-only event table for every tiny UI action.
+
+Meter only meaningful consumption events.
+
+If UsageEvent is used for auditability:
+
+define retention or aggregation strategy.
+
+For this phase:
+
+AI usage events may be justified.
+
+Do not log:
+
+every keystroke
+every UI interaction
+every token stream chunk
+
+============================================================
+27. USAGE AGGREGATION
+============================================================
+
+Usage counters should support fast reads.
+
+For example:
+
+AI_REQUESTS used = 73
+
+rather than scanning 73 individual records for every UI request.
+
+If events are stored:
+
+counter + event history
+
+may be used together.
+
+============================================================
+28. COUNTER INTEGRITY
+============================================================
+
+The system must protect against:
+
+negative counters
+double increments
+lost updates
+integer overflow
+cross-tenant writes
+wrong-period writes
+
+Use database-level constraints where appropriate.
+
+============================================================
+29. QUANTITY SEMANTICS
+============================================================
+
+Define whether each metric measures:
+
+COUNT
+BYTES
+TOKENS
+REQUESTS
+MESSAGES
+
+Use integer storage for quantities wherever practical.
+
+Do not use floating point.
+
+============================================================
+30. AI TOKEN QUANTITIES
+============================================================
+
+Token counts should use integer values.
+
+Storage:
+
+integer / bigint
+
+Do not use decimal for token count.
+
+============================================================
+31. FILE STORAGE METERING
+============================================================
+
+If file uploads already exist:
+
+determine whether storage metering can be implemented safely.
+
+If file storage is not yet implemented:
+
+do NOT create a fake storage counter.
+
+Document:
+
+FILE_STORAGE_BYTES = future
+
+Do not claim it is measured.
+
+============================================================
+32. EXPORT METERING
+============================================================
+
+If CSV export already exists:
+
+you may implement:
+
+EXPORTS
+
+as a consumption metric.
+
+Define:
+
+One successful export operation = one unit.
+
+Do not count:
+
+opening export dialog
+preview
+failed validation
+
+unless explicitly defined.
+
+============================================================
+33. BUSINESS RESOURCE LIMITS
+============================================================
+
+Existing Prompt 20 feature limits remain in force.
+
+Do not duplicate:
+
+CUSTOMERS_MAX
+PRODUCTS_MAX
+TEAM_MEMBERS_MAX
+BUSINESSES_MAX
+
+inside usage counters unless there is a real performance requirement.
+
+Instead query authoritative business tables.
+
+============================================================
+34. USAGE RESOLUTION SERVICE
+============================================================
+
+Create a dedicated server-side UsageService.
+
+Conceptual methods:
+
+getUsagePeriod(businessId)
+
+getUsage(businessId, metric)
+
+getRemainingUsage(businessId, metric)
+
+canConsume(businessId, metric, quantity)
+
+reserveUsage(businessId, metric, quantity)
+
+commitUsage(reservationId)
+
+releaseUsage(reservationId)
+
+recordUsage(...)
+
+The exact methods may vary.
+
+Do not implement unnecessary APIs.
+
+============================================================
+35. ENTITLEMENT INTEGRATION
+============================================================
+
+The UsageService must use the existing entitlement system from Prompt 20.
+
+Conceptual:
+
+EntitlementService
+        ↓
+quota definition
+
+UsageService
+        ↓
+current usage
+
+Quota evaluation:
+
+limit
+-
+used
+=
+remaining
+
+Do not duplicate plan limits inside UsageService.
+
+============================================================
+36. SINGLE SOURCE OF PLAN LIMITS
+============================================================
+
+There must be ONE authoritative source for:
+
+AI_REQUESTS
+AI_MESSAGES
+AI_TOKENS
+EXPORTS
+etc.
+
+Do NOT hard-code:
+
+if (plan === "PRO") limit = 5000
+
+in application code.
+
+Limits must come from the entitlement system.
+
+============================================================
+37. PERIOD ALIGNMENT
+============================================================
+
+Usage must align to the correct subscription period.
+
+Do not use the server's local timezone.
+
+Use timestamps stored in UTC.
+
+If the subscription has:
+
+currentPeriodStart
+currentPeriodEnd
+
+use those boundaries.
+
+============================================================
+38. PLAN CHANGE DURING PERIOD
+============================================================
+
+Define behavior when plan changes during a billing period.
+
+Example:
+
+FREE
+→ PRO
+
+Should existing usage:
+
+A. remain
+B. reset
+C. prorate
+
+For this phase, do NOT invent financial proration.
+
+Recommended conceptual policy:
+
+Usage remains associated with the existing period.
+
+The new plan changes the applicable quota from the point of plan change.
+
+Document exact implementation.
+
+============================================================
+39. DOWNGRADE DURING PERIOD
+============================================================
+
+Example:
+
+PRO quota:
+1000 AI requests
+
+Current usage:
+700
+
+Downgrade:
+FREE quota = 100
+
+Expected:
+
+- usage remains 700
+- no deletion
+- no negative counter
+- new requests are blocked until a new eligible period or upgrade
+- UI can show "over current plan quota"
+
+Do NOT reset usage to 0.
+
+============================================================
+40. SUBSCRIPTION EXPIRATION
+============================================================
+
+If subscription becomes expired:
+
+metered premium features must respect entitlement state.
+
+Do not automatically erase usage data.
+
+Keep historical usage for the period.
+
+============================================================
+41. TRIAL USAGE
+============================================================
+
+Trial usage should be metered under the applicable trial subscription.
+
+When trial expires:
+
+new usage must obey the resulting plan/state.
+
+Do not delete trial usage.
+
+============================================================
+42. CURRENT PERIOD CALCULATION
+============================================================
+
+Do not calculate current billing period independently in multiple modules.
+
+Reuse the subscription/billing service.
+
+One service should determine:
+
+current period
+
+============================================================
+43. NO USAGE RESET JOB
+============================================================
+
+Do not create:
+
+resetUsage()
+
+called by cron for normal period rollover.
+
+New period = new period record.
+
+============================================================
+44. API / SERVER ACTION ENFORCEMENT
+============================================================
+
+Metering must happen inside the authoritative server-side operation.
+
+For AI:
+
+API/server action
+    ↓
+authenticate
+    ↓
+resolve business
+    ↓
+authorize membership
+    ↓
+check entitlement
+    ↓
+check quota
+    ↓
+meter/reserve
+    ↓
+call AI
+    ↓
+finalize usage
+    ↓
+return response
+
+Do NOT meter from the client.
+
+============================================================
+45. AI STREAMING
+============================================================
+
+The AI Copilot may use streaming.
+
+Do not count every streamed chunk as usage.
+
+One user AI operation should produce one metered request unless the product semantics explicitly define another model.
+
+Handle:
+
+- stream starts
+- stream succeeds
+- stream aborts
+- provider failure
+- user disconnect
+- server timeout
+
+without double counting.
+
+============================================================
+46. CHAT HISTORY
+============================================================
+
+Do not count loading existing ChatSession or ChatMessage records as AI usage.
+
+Only actual AI execution should consume usage.
+
+============================================================
+47. TOOL CALLS
+============================================================
+
+AI tool calls such as:
+
+get_sales
+get_expenses
+get_inventory
+
+are internal Copilot operations.
+
+Do not count each tool call as a separate user AI request.
+
+Unless explicitly justified later, one user Copilot request = one AI request.
+
+============================================================
+48. RETRY BEHAVIOR
+============================================================
+
+Provider retries initiated server-side must NOT accidentally multiply user quota consumption.
+
+Define:
+
+user request ID
+provider attempt ID
+
+separately if needed.
+
+One logical user operation should map to one metered request.
+
+============================================================
+49. FAILURE SEMANTICS
+============================================================
+
+Document usage treatment for:
+
+- validation failure
+- unauthorized request
+- entitlement denied
+- quota exceeded
+- provider timeout
+- provider rate limit
+- provider error
+- server exception
+- user abort
+- successful completion
+
+Recommended:
+
+Validation/authorization/quota rejection:
+NO USAGE
+
+Provider request actually accepted:
+USAGE POLICY MUST BE EXPLICIT
+
+Infrastructure failure before provider acceptance:
+generally NO FINAL USAGE
+
+Provider accepted but response lost:
+must avoid double-counting on retry
+
+Do not guess.
+
+============================================================
+50. USAGE RECONCILIATION
+============================================================
+
+Provide a way to detect inconsistencies between:
+
+UsageCounter
+
+and:
+
+UsageEvent
+
+if both exist.
+
+A lightweight integrity script is sufficient.
+
+Example:
+
+scripts/audit-usage-consistency.mjs
+
+Do not implement a full reconciliation platform.
+
+============================================================
+51. ADMIN USAGE INSPECTION
+============================================================
+
+If a safe admin architecture exists:
+
+allow read-only inspection of:
+
+- Business
+- Plan
+- Usage period
+- Usage by metric
+- Remaining quota
+
+Do not create payment administration.
+
+Do not expose cross-business usage to ordinary users.
+
+============================================================
+52. BUSINESS SETTINGS USAGE VIEW
+============================================================
+
+Add a minimal UI section:
+
+Settings
+→ Subscription / Usage
+
+Show:
+
+Current plan
+Current period
+AI requests used
+AI requests remaining
+AI messages used
+AI messages remaining
+Exports used
+Exports remaining
+
+ONLY show metrics that are actually implemented.
+
+Never display fake or estimated numbers as authoritative.
+
+============================================================
+53. UI WARNING STATES
+============================================================
+
+Provide safe UX:
+
+75%:
+informational warning
+
+90%:
+strong warning
+
+100%:
+limit reached
+
+These thresholds should be configurable or centralized.
+
+Do not hard-code percentages across components.
+
+============================================================
+54. QUOTA EXHAUSTION UX
+============================================================
+
+When quota is exhausted:
+
+show:
+
+- metric
+- used
+- limit
+- period end
+- what the user can do next
+
+Example:
+
+"You have used all AI requests included in your current plan."
+
+Do not falsely claim:
+
+"Upgrade now to continue"
+
+unless upgrade capability actually exists.
+
+At this phase, upgrade may be presented as "Contact admin" or hidden until payment infrastructure exists.
+
+============================================================
+55. SECURITY — TENANT ISOLATION
+============================================================
+
+Usage records are tenant-sensitive.
+
+Test:
+
+Business A cannot read Business B usage.
+
+Business A cannot mutate Business B usage.
+
+Business A cannot forge Business B's usage.
+
+Client cannot submit arbitrary businessId and bypass server context.
+
+============================================================
+56. SECURITY — QUOTA BYPASS
+============================================================
+
+Test attempts using:
+
+- changed plan code
+- changed entitlement code
+- changed businessId
+- changed usage quantity
+- changed remaining value
+- localStorage manipulation
+- direct API requests
+- replayed requests
+- duplicated idempotency keys
+
+All must fail safely.
+
+============================================================
+57. SECURITY — NEGATIVE QUANTITY
+============================================================
+
+Never allow:
+
+quantity = -100
+
+to reduce usage.
+
+Reject:
+
+zero quantity where invalid
+negative quantities
+NaN
+Infinity
+non-integer values where metric requires integer
+
+Validate all quantities server-side.
+
+============================================================
+58. SECURITY — INTEGER OVERFLOW
+============================================================
+
+Use a safe numeric representation for counters.
+
+Do not allow arbitrary client-provided huge values.
+
+Apply sane upper bounds.
+
+============================================================
+59. SECURITY — SERVER AUTHORITATIVE METRIC
+============================================================
+
+The client may request:
+
+"perform AI request"
+
+The client must NOT decide:
+
+"this costs 1"
+
+The server decides the quantity.
+
+============================================================
+60. USAGE EVENT METADATA
+============================================================
+
+Store only necessary metadata.
+
+Potential safe fields:
+
+requestId
+metric
+quantity
+provider
+model
+createdAt
+
+Do not store unnecessary raw prompts in usage records.
+
+Do not duplicate entire chat content.
+
+============================================================
+61. AI MODEL METADATA
+============================================================
+
+If provider response exposes model:
+
+store model identifier where useful.
+
+Do not make authorization depend on model string from client.
+
+The server/provider response is authoritative.
+
+============================================================
+62. TOKEN COST VS TOKEN USAGE
+============================================================
+
+IMPORTANT:
+
+Usage metering is NOT payment pricing.
+
+Do not multiply tokens by a monetary price in Prompt 21.
+
+Keep:
+
+token usage
+
+separate from:
+
+future monetary cost
+
+Payment pricing belongs to later phases.
+
+============================================================
+63. USAGE REPORTING
+============================================================
+
+Create internal service methods capable of returning:
+
+current usage
+limit
+remaining
+percentage used
+
+Example:
+
+{
+  metric: "AI_REQUESTS",
+  used: 73,
+  limit: 100,
+  remaining: 27,
+  percentageUsed: 73
+}
+
+Do not calculate monetary value.
+
+============================================================
+64. PERCENTAGE CALCULATION
+============================================================
+
+For unlimited entitlements:
+
+limit = null or equivalent.
+
+Expected:
+
+remaining = null
+percentageUsed = null
+
+Do NOT represent unlimited as:
+
+999999999999
+
+============================================================
+65. UNLIMITED SEMANTICS
+============================================================
+
+Support:
+
+UNLIMITED
+
+through the entitlement system if Prompt 20 already defined it.
+
+Do not encode unlimited using arbitrary giant numbers.
+
+============================================================
+66. NO FAKE ENTERPRISE QUOTAS
+============================================================
+
+If ENTERPRISE is configured with custom quotas:
+
+allow null/unlimited/override semantics.
+
+Do not invent fixed enterprise numbers merely to populate UI.
+
+============================================================
+67. USAGE CACHE
+============================================================
+
+Do not introduce Redis solely for usage.
+
+Use database state first.
+
+If existing application cache is available:
+
+short-lived caching may be used for read-only usage summaries.
+
+Authorization must still remain reliable.
+
+============================================================
+68. ATOMIC USAGE OPERATIONS
+============================================================
+
+Prefer database transaction/atomic increment patterns.
+
+Example conceptual operation:
+
+UPDATE usage_counter
+SET used = used + quantity
+WHERE id = ?
+AND used + quantity <= limit
+
+If affected rows = 0:
+quota exceeded.
+
+Adapt to actual database capabilities.
+
+Do not use unsafe:
+
+SELECT
+if enough
+then UPDATE
+
+without transaction/concurrency protection.
+
+============================================================
+69. USAGE RESERVATION
+============================================================
+
+If the AI operation requires reservation:
+
+define:
+
+reservation state
+reservation expiry
+commit/release behavior
+
+Do not create permanent reservation rows for every short-lived request unless justified.
+
+Keep architecture simple.
+
+============================================================
+70. RESERVATION TIMEOUT
+============================================================
+
+If reservations exist:
+
+they must not remain indefinitely.
+
+Define expiration.
+
+Do not create an operational job just for this unless needed.
+
+Opportunistic cleanup may be sufficient initially.
+
+============================================================
+71. DATABASE INDEXING
+============================================================
+
+Add indexes for actual query patterns.
+
+Likely:
+
+UsagePeriod.businessId
+UsagePeriod.start/end
+
+UsageCounter.usagePeriodId
+UsageCounter.metric
+
+UsageEvent.businessId
+UsageEvent.periodId
+UsageEvent.metric
+UsageEvent.createdAt
+UsageEvent.idempotencyKey
+
+Only create indexes that are actually justified.
+
+============================================================
+72. UNIQUE CONSTRAINTS
+============================================================
+
+Ensure:
+
+One UsagePeriod per business + exact period identity.
+
+One counter per:
+
+usagePeriod + metric
+
+where appropriate.
+
+Idempotency keys must have suitable uniqueness.
+
+============================================================
+73. MIGRATIONS
+============================================================
+
+All database changes must use the existing Prisma migration workflow.
+
+DO NOT use:
+
+db push
+
+DO NOT use:
+
+--accept-data-loss
+
+Create a new versioned migration.
+
+Do not modify old applied migrations.
+
+============================================================
+74. SEED / INITIALIZATION
+============================================================
+
+Do not create fake usage.
+
+Existing businesses:
+
+usage = zero
+
+for newly introduced metered metrics
+
+unless actual historical usage can be deterministically derived.
+
+Do not guess historical AI usage.
+
+============================================================
+75. HISTORICAL USAGE POLICY
+============================================================
+
+Do NOT attempt to reconstruct historical AI token usage if the system did not record it.
+
+For the migration:
+
+new usage period begins according to current subscription period.
+
+Historical data may remain:
+
+UNKNOWN
+
+Do not backfill fake values.
+
+============================================================
+76. USAGE PERIOD INITIALIZATION
+============================================================
+
+For existing businesses:
+
+create usage state lazily on first metered operation OR explicitly initialize the current period.
+
+Choose one strategy.
+
+Lazy initialization is acceptable if it is race-safe.
+
+============================================================
+77. PLAN CHANGE AND USAGE
+============================================================
+
+When plan changes:
+
+usage does not reset automatically.
+
+Entitlement resolution changes.
+
+Document how limit evaluation behaves for:
+
+upgrade
+downgrade
+trial
+expiration
+cancellation
+
+============================================================
+78. CANCEL-AT-PERIOD-END
+============================================================
+
+If subscription is:
+
+cancelAtPeriodEnd = true
+
+current entitlements may remain active until:
+
+currentPeriodEnd
+
+Do not immediately deny access unless current subscription semantics say so.
+
+At period end:
+
+state transition and entitlement resolution must follow the Prompt 20 lifecycle.
+
+============================================================
+79. BILLING FAILURE
+============================================================
+
+Payment is not yet implemented.
+
+Therefore:
+
+do not invent payment failure events.
+
+PAST_DUE should only affect usage if Prompt 20 explicitly defines that behavior.
+
+Do not create fake past-due states.
+
+============================================================
+80. TEST DATA
+============================================================
+
+Use synthetic businesses.
+
+Example:
+
+Business A:
+FREE
+AI quota 10
+
+Business B:
+PRO
+AI quota 1000
+
+Do not use real customer information.
+
+============================================================
+81. REQUIRED TESTS — BASIC
+============================================================
+
+Test:
+
+- usage period creation
+- usage counter creation
+- first consumption
+- repeated consumption
+- remaining calculation
+- limit reached
+- unlimited entitlement
+- zero usage
+- new period behavior
+
+============================================================
+82. REQUIRED TESTS — CONCURRENCY
+============================================================
+
+Simulate concurrent requests.
+
+Example:
+
+limit = 10
+current = 9
+
+10 simultaneous requests.
+
+Expected:
+
+exactly 1 accepted
+
+OR the exact behavior defined by the chosen reservation strategy.
+
+Never:
+
+11 successful consumption units
+
+============================================================
+83. REQUIRED TESTS — IDEMPOTENCY
+============================================================
+
+Repeat same:
+
+business
+metric
+period
+idempotencyKey
+
+multiple times.
+
+Expected:
+
+one logical consumption.
+
+============================================================
+84. REQUIRED TESTS — AI
+============================================================
+
+Test:
+
+- successful AI request
+- failed AI provider request
+- provider timeout
+- stream abort
+- retry
+- tool calls
+- chat history load
+- unauthorized AI request
+- quota exhaustion
+
+============================================================
+85. REQUIRED TESTS — TENANT
+============================================================
+
+Test:
+
+Business A usage cannot be read/mutated by Business B.
+
+============================================================
+86. REQUIRED TESTS — CLIENT TAMPERING
+============================================================
+
+Attempt:
+
+plan = PRO
+remaining = 999999
+businessId = other business
+quantity = negative
+metric = arbitrary string
+
+Expected:
+
+server rejects manipulation.
+
+============================================================
+87. REQUIRED TESTS — RESOURCE LIMIT SEPARATION
+============================================================
+
+Verify:
+
+Customer count remains derived from actual customer data.
+
+Product count remains derived from actual product data.
+
+Do not allow usage counter drift to change current resource counts.
+
+============================================================
+88. REQUIRED TESTS — PERIOD BOUNDARY
+============================================================
+
+Test:
+
+period end
+
+then:
+
+next period
+
+Expected:
+
+new usage period
+
+without resetting historical usage.
+
+============================================================
+89. REQUIRED TESTS — PLAN DOWNGRADE
+============================================================
+
+Usage = 700
+
+Old limit = 1000
+
+New limit = 100
+
+Expected:
+
+usage remains 700
+
+remaining is treated as exhausted/over-limit
+
+new consumption blocked
+
+no deletion
+
+============================================================
+90. REQUIRED TESTS — PLAN UPGRADE
+============================================================
+
+Usage = 700
+
+Old limit = 100
+
+New limit = 1000
+
+Expected:
+
+remaining becomes 300
+
+existing usage remains 700
+
+============================================================
+91. AUDIT LOGGING
+============================================================
+
+Use audit logs for important usage/billing events if appropriate.
+
+Do not create audit noise for every token.
+
+Useful events may include:
+
+usage.limit_reached
+usage.quota_denied
+usage.subscription_period_started
+usage.reconciliation_issue
+
+Do not expose sensitive AI content.
+
+============================================================
+92. USAGE RECONCILIATION TOOL
+============================================================
+
+Create:
+
+scripts/audit-usage-consistency.mjs
+
+It must be capable of checking:
+
+counter vs event sum
+
+where events exist.
+
+Report discrepancies.
+
+Do not automatically modify data.
+
+This is an audit tool, not a repair tool.
+
+============================================================
+93. ADMIN READ-ONLY USAGE
+============================================================
+
+If existing admin architecture permits:
+
+provide read-only usage inspection.
+
+Show:
+
+Business
+Plan
+Period
+Metric
+Used
+Limit
+Remaining
+
+Do not allow arbitrary admin editing unless a future phase explicitly defines support tooling.
+
+============================================================
+94. USER USAGE VIEW
+============================================================
+
+Add a minimal:
+
+Subscription
+→ Usage
+
+view.
+
+The UI should prioritize:
+
+- current plan
+- current period
+- usage
+- limit
+- remaining
+- warnings
+
+Do not make UI unnecessarily complex.
+
+============================================================
+95. MOBILE UX
+============================================================
+
+Test usage UI at:
+
+360x640
+390x844
+412x915
+
+Ensure numbers remain readable.
+
+============================================================
+96. RTL
+============================================================
+
+Test:
+
+English LTR
+Persian RTL
+
+Charts and numeric values must remain readable.
+
+Do not reverse numeric semantics incorrectly.
+
+============================================================
+97. LOCALIZATION
+============================================================
+
+All new usage-related strings must be localized.
+
+Examples:
+
+Usage
+Used
+Remaining
+Limit
+Current period
+AI requests
+AI messages
+Exports
+Limit reached
+Usage unavailable
+Unlimited
+
+No hard-coded visible strings.
+
+============================================================
+98. ERROR UX
+============================================================
+
+When quota is exceeded:
+
+show a helpful localized message.
+
+Do not expose internal database values unnecessarily.
+
+============================================================
+99. API RESPONSE SECURITY
+============================================================
+
+Usage endpoints must return only:
+
+data belonging to the authenticated business
+
+Do not expose:
+
+- other businesses
+- global usage
+- system-wide AI consumption
+- raw provider credentials
+- internal audit data
+
+============================================================
+100. PERFORMANCE
+============================================================
+
+Usage lookup should be efficient.
+
+Avoid:
+
+counting every UsageEvent on every AI request
+
+if UsageCounter already exists.
+
+Avoid:
+
+loading all chat records
+
+to determine usage.
+
+============================================================
+101. RETENTION
+============================================================
+
+Define retention policy.
+
+At minimum:
+
+UsagePeriod:
+retain historical periods
+
+UsageCounter:
+retain historical summaries
+
+UsageEvent:
+if implemented, document retention and future archival strategy.
+
+Do not delete historical usage automatically in this phase.
+
+============================================================
+102. DATA CLASSIFICATION
+============================================================
+
+Classify usage data as:
+
+BUSINESS-SENSITIVE
+
+It must obey tenant isolation and access controls.
+
+Do not treat aggregated usage as public.
+
+============================================================
+103. OBSERVABILITY
+============================================================
+
+Log operational problems such as:
+
+quota service unavailable
+usage consistency mismatch
+AI metering reconciliation failure
+
+Do not log:
+
+passwords
+tokens
+session secrets
+full AI prompts
+full AI responses
+provider API keys
+
+============================================================
+104. NO PAYMENT COST CALCULATION
+============================================================
+
+DO NOT calculate:
+
+cost = tokens × provider price
+
+in this phase.
+
+Do not create:
+
+amountDue
+invoiceAmount
+paymentAmount
+
+from usage.
+
+Usage and money are deliberately separate.
+
+============================================================
+105. FUTURE COST COMPATIBILITY
+============================================================
+
+Design usage records so future pricing can calculate cost without altering historical usage meaning.
+
+For example:
+
+metric = AI_TOKENS
+quantity = 1500
+
+Future billing layer can interpret that quantity.
+
+Do not store monetary pricing inside the usage counter unless explicitly needed.
+
+============================================================
+106. PLAN-SPECIFIC QUOTAS
+============================================================
+
+Quota values must come from the Prompt 20 entitlement catalog.
+
+Do not create a second plan quota table unless the existing design requires it.
+
+============================================================
+107. ENTERPRISE CUSTOM QUOTAS
+============================================================
+
+Enterprise may eventually have custom limits.
+
+Ensure the entitlement resolution layer can support:
+
+default plan quota
+OR
+business-specific override
+
+Do not fully implement a complex override system unless Prompt 20 already has it.
+
+If not implemented:
+
+document as future extension.
+
+============================================================
+108. GRACE POLICY
+============================================================
+
+Do not invent a grace period for usage.
+
+If no quota:
+
+block according to hard-limit semantics.
+
+Future paid overage can be implemented later.
+
+============================================================
+109. OVERAGE BILLING
+============================================================
+
+DO NOT IMPLEMENT OVERAGE BILLING.
+
+Examples:
+
+"No quota left → charge extra"
+
+must NOT be implemented.
+
+============================================================
+110. NO AUTO-UPGRADE
+============================================================
+
+Never automatically upgrade a business because usage is high.
+
+============================================================
+111. NO AUTO-DOWNGRADE
+============================================================
+
+Never automatically downgrade a business because quota is exceeded.
+
+============================================================
+112. NO DATA DELETION ON LIMIT
+============================================================
+
+Quota enforcement must never delete:
+
+customers
+products
+sales
+expenses
+payments
+messages
+documents
+
+============================================================
+113. AI CONTEXT SAFETY
+============================================================
+
+Do not inject usage internals into the AI prompt unnecessarily.
+
+AI can be told:
+
+"quota exhausted"
+
+through structured application behavior.
+
+Do not expose implementation details such as:
+
+database table names
+usage IDs
+internal plan IDs
+
+============================================================
+114. COPILOT RESPONSE WHEN QUOTA IS EXCEEDED
+============================================================
+
+The AI interface should receive a structured application-level error.
+
+Example:
+
+AI_USAGE_LIMIT_REACHED
+
+The UI then displays localized quota messaging.
+
+Do not ask the LLM to generate the quota error message.
+
+============================================================
+115. STREAMING ERROR
+============================================================
+
+If the AI stream is already open and a usage policy failure occurs:
+
+handle gracefully according to the current streaming infrastructure.
+
+Do not dump raw exceptions into the UI.
+
+============================================================
+116. PROVIDER RETRIES
+============================================================
+
+If the server retries an AI provider call:
+
+do not create separate user usage charges unless policy explicitly defines provider attempts as chargeable.
+
+Recommended:
+
+meter logical user operation once.
+
+============================================================
+117. TESTING WITH REAL PROVIDER
+============================================================
+
+Do not require a paid production provider for all automated tests.
+
+Use a mock/stub provider.
+
+If a provider integration test exists:
+
+mark it clearly.
+
+Do not claim paid-provider usage data validation without actually running it.
+
+============================================================
+118. DOCUMENTATION
+============================================================
+
+Create/update:
+
+docs/billing/usage-metering.md
+docs/billing/ai-quotas.md
+docs/billing/usage-periods.md
+docs/billing/usage-reconciliation.md
+
+Each document must distinguish:
+
+IMPLEMENTED
+PLANNED
+NOT IMPLEMENTED
+
+============================================================
+119. WORKLOG
+============================================================
+
+Add Prompt 21 to worklog.md.
+
+Include:
+
+- usage architecture
+- metrics
+- period logic
+- AI metering
+- quota enforcement
+- concurrency strategy
+- idempotency
+- tests
+- limitations
+
+============================================================
+120. REQUIRED DATABASE MIGRATION
+============================================================
+
+If database changes are required:
+
+create a new Prisma migration.
+
+Do NOT alter historical migrations.
+
+Do NOT use db push.
+
+Do NOT use --accept-data-loss.
+
+Migration must preserve existing records.
+
+============================================================
+121. REQUIRED FILES
+============================================================
+
+At minimum create/update:
+
+database usage models
+usage service
+AI metering integration
+quota enforcement
+usage APIs/server actions
+usage UI
+tests
+documentation
+
+Possible implementation directories:
+
+src/server/billing/
+src/server/usage/
+src/server/ai/
+src/lib/usage/
+src/app/api/
+docs/billing/
+scripts/
+
+Use the existing project architecture instead of forcing these exact paths.
+
+============================================================
+122. REQUIRED FINAL VALIDATION
+============================================================
+
+Run:
+
+- lint
+- TypeScript
+- build
+- i18n audit
+- existing security suite
+- authentication suite
+- billing suite
+- usage suite
+- tenant isolation suite
+- concurrency tests
+- idempotency tests
+
+Do not claim success for tests not actually executed.
+
+============================================================
+123. ACCEPTANCE CRITERIA
+============================================================
+
+Prompt 21 is complete only when:
+
+[ ] Existing Prompt 20 billing architecture inspected
+
+[ ] Usage domain documented
+
+[ ] Resource limits separated from consumption metrics
+
+[ ] Usage periods implemented
+
+[ ] Usage periods align with subscription periods
+
+[ ] Usage counters implemented where appropriate
+
+[ ] AI request metering implemented
+
+[ ] AI message metering implemented if applicable
+
+[ ] AI token usage recorded only when provider gives authoritative values
+
+[ ] No fabricated token counts
+
+[ ] Usage is server-authoritative
+
+[ ] Plan quotas come from entitlement system
+
+[ ] Client cannot alter usage
+
+[ ] Client cannot alter limits
+
+[ ] Client cannot alter business context
+
+[ ] AI requests cannot bypass quota
+
+[ ] Concurrent requests cannot exceed quota
+
+[ ] Idempotency prevents duplicate charging of logical operations
+
+[ ] AI retries do not double count
+
+[ ] Provider tool calls do not create multiple user charges
+
+[ ] Usage does not reset via cron
+
+[ ] New billing period creates new usage period
+
+[ ] Downgrade preserves historical usage
+
+[ ] Upgrade preserves historical usage
+
+[ ] Quota exhaustion is handled safely
+
+[ ] Core business data is never deleted due to quota limits
+
+[ ] Tenant isolation tests pass
+
+[ ] Security tests pass
+
+[ ] Usage consistency tooling exists if event history exists
+
+[ ] Usage UI displays only real metrics
+
+[ ] English localization complete
+
+[ ] Persian localization complete
+
+[ ] RTL verified
+
+[ ] Mobile verified
+
+[ ] Database migration created safely
+
+[ ] No historical migration modified
+
+[ ] No payment implementation performed
+
+[ ] No overage billing implemented
+
+[ ] No fake monetary cost created from usage
+
+[ ] Documentation complete
+
+[ ] Worklog updated
+
+[ ] Lint passes
+
+[ ] TypeScript passes
+
+[ ] Build passes
+
+[ ] Relevant tests pass
+
+============================================================
+124. REQUIRED FINAL REPORT
+============================================================
+
+Return a detailed report containing:
+
+1. Current billing architecture discovered
+2. Usage architecture selected
+3. Usage models created
+4. Metrics implemented
+5. Period model
+6. AI metering behavior
+7. Token usage behavior
+8. Quota enforcement
+9. Concurrency strategy
+10. Idempotency strategy
+11. Failure semantics
+12. Plan integration
+13. APIs/server actions
+14. UI changes
+15. Database migration
+16. Tests added
+17. Tests actually executed
+18. Tests passed
+19. Tests failed
+20. Files created
+21. Files modified
+22. Known limitations
+23. Future work intentionally excluded
+
+============================================================
+125. STOP CONDITION
+============================================================
+
+STOP after Prompt 21.
+
+DO NOT continue to payment integration.
+
+DO NOT implement checkout.
+
+DO NOT implement pricing.
+
+DO NOT implement overage billing.
+
+DO NOT implement payment webhooks.
+
+DO NOT integrate a payment provider.
+
+Wait for the next phase instruction.

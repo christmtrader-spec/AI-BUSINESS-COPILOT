@@ -146,7 +146,9 @@ async function main(): Promise<void> {
   console.log("[billing-seed] seeding catalog…");
   await seedCatalog();
   await verifyCatalogCompleteness();
-  console.log("[billing-seed] catalog complete (5 plans × 7 entitlements verified)");
+  console.log(
+    `[billing-seed] catalog complete (${PLANS.length} plans × ${ENTITLEMENTS.length} entitlements verified)`,
+  );
 
   console.log("[billing-seed] backfilling existing businesses to FREE…");
   const { backfilled, skipped } = await backfillExistingBusinesses();

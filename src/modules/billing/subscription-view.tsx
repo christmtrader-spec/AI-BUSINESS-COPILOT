@@ -24,6 +24,7 @@ import {
   Info,
   Loader2,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { ApiClientError } from "@/lib/api-client";
@@ -38,6 +39,8 @@ import {
   useReactivateSubscription,
   useSubscription,
   useSubscriptionEvents,
+  useUsage,
+  type UsageMetricPayload,
 } from "@/hooks/use-billing";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -93,6 +96,93 @@ function usagePercent(used: number, limit: number | null): number | null {
   return Math.min(100, Math.round((used / limit) * 100));
 }
 
+/**
+ * Prompt 21 §52/§53/§54 — AI usage card content for ONE metric.
+ * Levels come from the SERVER (single source: src/lib/billing/usage.ts);
+ * this component never hard-codes thresholds (§53).
+ */
+function UsageMetricRow({
+  metric,
+  m,
+  periodEnd,
+  locale,
+}: {
+  metric: string;
+  m: UsageMetricPayload;
+  periodEnd: string | null;
+  locale: string;
+}) {
+  const tUsage = useTranslations("billing.usage");
+  const pct = m.percentageUsed;
+  const tone =
+    m.level === "reached"
+      ? "border-destructive/40 bg-destructive/10 text-destructive"
+      : m.level === "critical"
+        ? "border-orange-500/40 bg-orange-500/10 text-orange-700 dark:text-orange-400"
+        : m.level === "warning"
+          ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+          : null;
+  const barTone =
+    m.level === "reached"
+      ? "[&>div]:bg-destructive"
+      : m.level === "critical"
+        ? "[&>div]:bg-orange-500"
+        : m.level === "warning"
+          ? "[&>div]:bg-amber-500"
+          : "";
+  const badge =
+    m.level === "reached"
+      ? tUsage("reachedBadge")
+      : m.level === "critical"
+        ? tUsage("criticalBadge")
+        : m.level === "warning"
+          ? tUsage("warningBadge")
+          : null;
+  return (
+    <div className="space-y-1.5" data-testid={`usage-${metric}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <span className="flex items-center gap-2">
+          {tUsage(`metric_${metric}` as "metric_AI_REQUESTS")}
+          {badge ? (
+            <Badge variant="outline" className={cn("font-medium", tone)}>
+              {badge}
+            </Badge>
+          ) : null}
+        </span>
+        {m.limit === null ? (
+          <span className="text-muted-foreground font-medium">
+            {tUsage("usedOnly", { used: m.used })} · {tUsage("unlimitedMetric")}
+          </span>
+        ) : (
+          <span className="text-muted-foreground font-medium">
+            {tUsage("usedOf", { used: m.used, limit: m.limit })} ·{" "}
+            <span>
+              {m.remaining === 0
+                ? tUsage("remainingNone")
+                : tUsage("remaining", { count: m.remaining ?? 0 })}
+            </span>
+          </span>
+        )}
+      </div>
+      {pct !== null ? (
+        <Progress
+          value={pct}
+          aria-label={tUsage(`metric_${metric}` as "metric_AI_REQUESTS")}
+          className={cn("h-1.5", barTone)}
+        />
+      ) : null}
+      {m.level === "reached" ? (
+        <p className="text-destructive flex items-start gap-1.5 text-xs">
+          <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          {periodEnd
+            ? tUsage("reachedNotice", { date: formatDate(periodEnd, locale) })
+            : tUsage("reachedNoticeNoDate")}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function SubscriptionView({ business, role }: { business: BusinessSummary; role: string }) {
   const t = useTranslations("billing");
   const tCommon = useTranslations("common");
@@ -107,6 +197,7 @@ export function SubscriptionView({ business, role }: { business: BusinessSummary
   const entitlementsQ = useEntitlements();
   const catalogQ = usePlanCatalog();
   const eventsQ = useSubscriptionEvents();
+  const usageQ = useUsage();
 
   const changePlan = useChangePlan();
   const cancelSub = useCancelSubscription();
@@ -308,6 +399,77 @@ export function SubscriptionView({ business, role }: { business: BusinessSummary
               <ShieldCheck className="size-3.5" aria-hidden="true" />
               {t("ownerOnly")}
             </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ---- AI usage (Prompt 21 §52/§53/§54) -------------------------------- */}
+      <Card data-testid="usage-card">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Sparkles className="text-muted-foreground size-4" aria-hidden="true" />
+            {t("usage.title")}
+          </CardTitle>
+          <CardDescription>{t("usage.subtitle")}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {usageQ.isLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-5 w-full" />
+              <Skeleton className="h-5 w-3/4" />
+            </div>
+          ) : usageQ.isError || !usageQ.data ? (
+            <p className="text-muted-foreground text-sm">{t("usage.unavailable")}</p>
+          ) : (
+            <>
+              <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                <span>
+                  {t("usage.currentPeriod")}:{" "}
+                  {formatDate(usageQ.data.period.start, locale)}
+                  {usageQ.data.period.end
+                    ? ` → ${formatDate(usageQ.data.period.end, locale)}`
+                    : ""}
+                </span>
+              </div>
+              <UsageMetricRow
+                metric="AI_REQUESTS"
+                m={usageQ.data.metrics.AI_REQUESTS}
+                periodEnd={usageQ.data.period.end}
+                locale={locale}
+              />
+              <UsageMetricRow
+                metric="AI_MESSAGES"
+                m={usageQ.data.metrics.AI_MESSAGES}
+                periodEnd={usageQ.data.period.end}
+                locale={locale}
+              />
+              {/* AI_TOKENS is recorded-when-reported (§14) — shown only when
+                  real provider data exists; never displayed as a quota. */}
+              {usageQ.data.metrics.AI_TOKENS.used > 0 ? (
+                <UsageMetricRow
+                  metric="AI_TOKENS"
+                  m={usageQ.data.metrics.AI_TOKENS}
+                  periodEnd={usageQ.data.period.end}
+                  locale={locale}
+                />
+              ) : null}
+              {canManage &&
+              (usageQ.data.metrics.AI_REQUESTS.level === "reached" ||
+                usageQ.data.metrics.AI_MESSAGES.level === "reached") ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPlanDialogOpen(true)}
+                  data-testid="usage-switch-plan"
+                >
+                  {t("usage.reachedAction")}
+                </Button>
+              ) : null}
+              <p className="text-muted-foreground flex items-start gap-1.5 text-xs">
+                <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                {t("usage.serverAuthoritative")}
+              </p>
+            </>
           )}
         </CardContent>
       </Card>

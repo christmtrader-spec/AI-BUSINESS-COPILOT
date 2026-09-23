@@ -13,6 +13,9 @@
  * - 409 INVALID_SUBSCRIPTION_STATE → transition not allowed by the
  *   state machine (§45/§46)
  * - 422 BUSINESS_NOT_ELIGIBLE     → trial/eligibility policy violation
+ * - 422 USAGE_LIMIT_REACHED       → metered consumption quota exhausted for
+ *   the current usage period (Prompt 21) — structured body carries metric,
+ *   limit, used, remaining, periodEnd (§23); never a 500, never DB internals
  * - 503 BILLING_UNAVAILABLE       → billing lookup FAILED (fail closed,
  *   §68) — retryable, never mapped to "unlimited access"
  */
@@ -25,6 +28,7 @@ export const BILLING_ERROR_CODES = [
   "SUBSCRIPTION_NOT_FOUND",
   "INVALID_SUBSCRIPTION_STATE",
   "BUSINESS_NOT_ELIGIBLE",
+  "USAGE_LIMIT_REACHED",
   "BILLING_UNAVAILABLE",
 ] as const;
 
@@ -37,6 +41,7 @@ const STATUS_BY_CODE: Record<BillingErrorCode, number> = {
   SUBSCRIPTION_NOT_FOUND: 404,
   INVALID_SUBSCRIPTION_STATE: 409,
   BUSINESS_NOT_ELIGIBLE: 422,
+  USAGE_LIMIT_REACHED: 422,
   BILLING_UNAVAILABLE: 503,
 };
 
@@ -55,4 +60,29 @@ export function limitReachedError(feature: string, limit: number, current: numbe
     current,
     upgradeAvailable: true,
   });
+}
+
+/**
+ * Metered-consumption quota error (Prompt 21 §23) — structured, localized
+ * by the client from `details` ({ metric, limit, used, remaining, periodEnd,
+ * upgradeAvailable }). Never exposes DB internals; never a 500.
+ */
+export function usageLimitReachedError(
+  metric: string,
+  limit: number,
+  used: number,
+  periodEnd: string | null,
+): BillingError {
+  return new BillingError(
+    "USAGE_LIMIT_REACHED",
+    `The included ${metric} quota for the current period has been used up.`,
+    {
+      metric,
+      limit,
+      used,
+      remaining: Math.max(0, limit - used),
+      periodEnd,
+      upgradeAvailable: true,
+    },
+  );
 }

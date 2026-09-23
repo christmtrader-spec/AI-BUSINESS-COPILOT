@@ -43,8 +43,16 @@ Payments are **not**. What exists today:
 
 **Still deferred (unchanged from the design below):** payment provider
 choice (legal-counsel gate), checkout, prices, invoices/cards/webhooks/
-refunds, **AI usage metering (usage quantity per plan → Prompt 21)**, and
-the reserved `PAST_DUE`/`PAUSED` writers (nothing sets these statuses yet).
+refunds, and the reserved `PAST_DUE`/`PAUSED` writers (nothing sets these
+statuses yet).
+
+**Prompt 21 update — AI usage metering is now IMPLEMENTED:**
+`UsagePeriod` / `UsageCounter` / `UsageEvent` tables (migration
+`20260923091927_prompt21_usage_metering`), `AI_REQUESTS_MAX` /
+`AI_MESSAGES_MAX` hard-limit entitlements, idempotent metering with
+release-on-failure, usage API + UI. See `usage-metering.md`, `ai-quotas.md`,
+`usage-periods.md`, `usage-reconciliation.md`. Tests:
+`scripts/prompt21-usage-check.mjs` — 76/76.
 
 > **Prompt 20 note (supersession map for this document):** the design text
 > below is preserved as history. Where implementation diverged, a short
@@ -267,10 +275,12 @@ billing tables directly.
 
 ## 6. Usage abstraction (design)
 
-> *Prompt 20 note: superseded by a deliberate deferral — **no**
-> `UsageCounter` table exists and **no** AI usage quantity is recorded
-> anywhere in Prompt 20 (`AI_COPILOT` gates presence only, §36). Period-keyed
-> metering moves to **Prompt 21** (see `docs/billing/entitlements.md` §4.2).*
+> *Prompt 21 note: **IMPLEMENTED** — the sketch below became
+> `src/lib/billing/usage.ts` with relational `UsagePeriod` / `UsageCounter` /
+> `UsageEvent` tables (migration `20260923091927_prompt21_usage_metering`),
+> quotas from the entitlement catalog (`AI_REQUESTS_MAX` / `AI_MESSAGES_MAX`),
+> idempotency via `UsageEvent(businessId, metric, idempotencyKey)` UNIQUE and
+> release-on-failure reconciliation. Live behavior: `docs/billing/usage-metering.md`.*
 
 ```ts
 // src/modules/billing/usage.ts (FUTURE — design sketch)

@@ -123,6 +123,19 @@ export const copilotAskSchema = z.object({
     .union([z.literal(7), z.literal(30), z.literal(90)])
     .catch(30)
     .default(30),
+  // Prompt 21 idempotency (§16/§17): a client retrying the SAME logical
+  // question re-sends the SAME requestId so the server never double-charges
+  // usage. Optional + format-validated: the server generates one when
+  // absent, and the client can never inject a non-UUID value into the
+  // usage ledger (arbitrary strings are rejected, not trusted).
+  requestId: z
+    .string()
+    .trim()
+    .regex(
+      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+      "requestId must be a UUID.",
+    )
+    .optional(),
 });
 
 // ---------------------------------------------------------------------------

@@ -311,15 +311,17 @@ try {
   const defCount = await prisma.entitlementDefinition.count();
   const mapCount = await prisma.planEntitlement.count();
   check("A1. 5 plans seeded", planCount === 5, `count=${planCount}`);
-  check("A2. 7 entitlement definitions seeded", defCount === 7, `count=${defCount}`);
-  check("A3. 35 plan-entitlement mappings", mapCount === 35, `count=${mapCount}`);
+  // Prompt 21 extended the catalog: 7 original entitlements + AI_REQUESTS_MAX
+  // + AI_MESSAGES_MAX = 9 definitions; 5 plans × 9 = 45 mappings.
+  check("A2. 9 entitlement definitions seeded (7 + Prompt 21 AI quotas)", defCount === 9, `count=${defCount}`);
+  check("A3. 45 plan-entitlement mappings (5 plans × 9)", mapCount === 45, `count=${mapCount}`);
   const activePlans = await prisma.plan.findMany({
     where: { active: true },
     include: { planEntitlements: true },
   });
   check(
-    "A4. every active plan defines all 7 entitlements",
-    activePlans.every((p) => p.planEntitlements.length === 7),
+    "A4. every active plan defines all 9 entitlements",
+    activePlans.every((p) => p.planEntitlements.length === 9),
     activePlans.map((p) => `${p.code}:${p.planEntitlements.length}`).join(","),
   );
 
@@ -396,9 +398,9 @@ try {
     headers: ctxHeader(bizA.id),
   });
   check(
-    "C2. GET /billing/entitlements returns 7 entitlements + usage map",
+    "C2. GET /billing/entitlements returns 9 entitlements + usage map",
     rEnt.status === 200 &&
-      rEnt.json?.data?.entitlements?.length === 7 &&
+      rEnt.json?.data?.entitlements?.length === 9 &&
       typeof rEnt.json?.data?.usage?.CUSTOMERS_MAX?.limit === "number",
     rEnt.text?.slice(0, 160),
   );
