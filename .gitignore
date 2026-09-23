@@ -52,3 +52,14 @@ prompt
 server.log
 # Skills directory
 /skills/
+# database backups & migration safety artifacts (Prompt 19 §29)
+db/backups/
+*.db.bak
+.dev-watchdog.lock
+
+# environment files: secrets never committed (`.env*` above), but the
+# placeholder template MUST be version-controlled:
+!.env.example
+
+# NOTE: prisma/migrations/ is deliberately NOT ignored — migration files
+# are immutable release artifacts and MUST be version-controlled.

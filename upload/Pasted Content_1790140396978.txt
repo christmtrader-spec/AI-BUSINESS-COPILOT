@@ -1,0 +1,1452 @@
+PROMPT 19 — PRODUCTION DATABASE MIGRATION DISCIPLINE & SCHEMA BASELINE
+
+PROJECT:
+AI Business Copilot
+
+PHASE:
+19 — Production Database Migration Discipline & Schema Baseline
+
+PRIMARY OBJECTIVE:
+
+Convert the existing database workflow from:
+
+"schema managed by db push"
+
+to:
+
+"schema managed by version-controlled Prisma Migrations"
+
+while preserving all existing data and existing application behavior.
+
+============================================================
+0. CRITICAL PROJECT STATE
+============================================================
+
+This is an EXISTING codebase.
+
+The current stack includes:
+
+- Next.js
+- TypeScript
+- Prisma 6.x
+- SQLite
+- NextAuth
+- Multi-tenant business model
+- RBAC
+- Financial records
+- AI Copilot
+- Password reset
+- Account deletion
+- Audit logging
+
+The repository currently contains:
+
+prisma/schema.prisma
+
+and an existing SQLite database:
+
+db/custom.db
+
+However:
+
+prisma/migrations/
+
+does NOT currently exist.
+
+The project currently contains:
+
+"db:push": "prisma db push --accept-data-loss"
+
+and:
+
+"db:migrate": "prisma migrate dev"
+
+The goal of this phase is to establish safe migration discipline.
+
+============================================================
+1. NON-NEGOTIABLE RULES
+============================================================
+
+DO NOT rebuild the project.
+
+DO NOT redesign the application.
+
+DO NOT change Next.js.
+
+DO NOT replace Prisma.
+
+DO NOT migrate SQLite to PostgreSQL in this phase.
+
+DO NOT modify financial business logic unless a migration exposes a real data-integrity problem.
+
+DO NOT delete existing database data.
+
+DO NOT reset db/custom.db.
+
+DO NOT run:
+
+prisma migrate reset
+
+against the current project database.
+
+DO NOT run:
+
+prisma db push --accept-data-loss
+
+against the current real database.
+
+DO NOT silently recreate the database.
+
+DO NOT assume the database is disposable.
+
+DO NOT change database provider in this phase.
+
+DO NOT implement subscriptions.
+
+DO NOT implement payment gateways.
+
+DO NOT implement pricing.
+
+DO NOT implement billing.
+
+============================================================
+2. FIRST TASK — REPOSITORY INSPECTION
+============================================================
+
+Before touching the database:
+
+Inspect:
+
+- prisma/schema.prisma
+- db/custom.db
+- package.json
+- docs/ARCHITECTURE.md
+- docs/TECH-DECISION-RECORD.md
+- docs/audit/database-production-plan.md
+- docs/deployment/production-checklist.md
+- docs/deployment/backup-restore-plan.md
+- worklog.md
+- all database-related scripts
+- all Prisma usage
+- all database initialization code
+- all tests using Prisma
+- all seed/fixture logic
+
+Confirm whether:
+
+prisma/migrations/
+
+exists.
+
+If it exists unexpectedly:
+
+STOP and inspect before modifying it.
+
+============================================================
+3. DATABASE SNAPSHOT
+============================================================
+
+Before any schema operation:
+
+Create a safety snapshot of:
+
+db/custom.db
+
+Use a clearly identifiable filename.
+
+Example:
+
+db/backups/pre-prompt19-YYYYMMDD-HHMMSS.db
+
+Do not commit backup copies to Git.
+
+Ensure the backup directory is ignored.
+
+Calculate a SHA-256 checksum of the backup.
+
+Create a record in documentation:
+
+docs/database/prompt19-baseline.md
+
+containing:
+
+- timestamp
+- source database path
+- backup path
+- backup hash
+- database size
+- schema version if detectable
+- migration table presence
+
+Never store passwords or secrets in this document.
+
+============================================================
+4. DATABASE INTEGRITY CHECK
+============================================================
+
+Before modifying migration metadata:
+
+Run an integrity check appropriate for SQLite.
+
+Verify:
+
+- database opens
+- SQLite integrity is OK
+- foreign-key integrity is OK
+- no corrupted pages
+- no unexpected schema objects
+
+If integrity checks fail:
+
+STOP.
+
+Do NOT attempt to repair automatically.
+
+Report:
+
+DATABASE INTEGRITY BLOCKER
+
+============================================================
+5. DATA INVENTORY
+============================================================
+
+Collect counts for every major model/table.
+
+At minimum:
+
+User
+Business
+BusinessMember
+BusinessInvite
+AuditLog
+Customer
+Supplier
+Product
+InventoryAdjustment
+Sale
+SaleItem
+Expense
+Payment
+ChatSession
+ChatMessage
+PasswordResetToken
+
+Also capture important relationship sanity checks:
+
+- Business.ownerId points to existing User
+- BusinessMember.businessId points to existing Business
+- BusinessMember.userId points to existing User
+- SaleItem.saleId points to existing Sale
+- Payment references valid business-owned target
+- PasswordResetToken.userId points to User
+
+Do not dump sensitive record contents.
+
+Record only:
+
+- counts
+- structural verification results
+- integrity results
+
+Create:
+
+docs/database/data-inventory-before-baseline.md
+
+============================================================
+6. SCHEMA VS DATABASE VERIFICATION
+============================================================
+
+Determine whether:
+
+prisma/schema.prisma
+
+matches the current database.
+
+Do NOT simply assume they match.
+
+Use appropriate Prisma tooling.
+
+If schema mismatch exists:
+
+DO NOT automatically overwrite the database.
+
+First determine whether:
+
+A. Prisma schema is ahead of database
+
+B. Database is ahead of Prisma schema
+
+C. Database drift exists
+
+D. Schema contains unsupported/manual structures
+
+STOP and document the discrepancy before making destructive changes.
+
+============================================================
+7. BASELINE STRATEGY
+============================================================
+
+The current database contains existing state that must be preserved.
+
+Therefore establish a Prisma migration baseline.
+
+For Prisma 6.x, the conceptual baseline workflow is:
+
+1. Generate migration SQL from empty database to current schema.
+2. Review the generated SQL.
+3. Store it as an initial migration.
+4. Mark the baseline as already applied to the existing database.
+5. Do not execute the baseline creation SQL against the existing database.
+
+The baseline migration must represent the CURRENT schema exactly.
+
+Do not create a fake "minimal" baseline.
+
+============================================================
+8. CREATE BASELINE MIGRATION
+============================================================
+
+Create:
+
+prisma/migrations/
+
+Create an initial directory with a lexically first name.
+
+Recommended:
+
+prisma/migrations/0_init/
+
+Generate the SQL from the current schema.
+
+For the currently pinned Prisma 6.x workflow use the Prisma-6-compatible command.
+
+Conceptually:
+
+prisma migrate diff
+--from-empty
+--to-schema prisma/schema.prisma
+--script
+
+Write the result to:
+
+prisma/migrations/0_init/migration.sql
+
+Do not blindly accept generated SQL.
+
+============================================================
+9. BASELINE SQL REVIEW
+============================================================
+
+Read the generated migration.sql completely.
+
+Verify that it represents all expected current models.
+
+At minimum verify:
+
+User
+PasswordResetToken
+Business
+BusinessMember
+BusinessInvite
+AuditLog
+Customer
+Supplier
+Product
+InventoryAdjustment
+Sale
+SaleItem
+Expense
+Payment
+ChatSession
+ChatMessage
+
+Verify:
+
+- primary keys
+- foreign keys
+- indexes
+- unique constraints
+- nullable fields
+- cascade behavior
+- defaults
+
+Do NOT apply this migration to the current database.
+
+============================================================
+10. SQLITE-SPECIFIC REVIEW
+============================================================
+
+Review generated SQL for SQLite-specific behavior.
+
+Pay special attention to:
+
+- foreign keys
+- table recreation
+- indexes
+- unique constraints
+- default values
+- relationship cascades
+
+Ensure the generated migration is deterministic and valid for the project's current Prisma version.
+
+============================================================
+11. BASELINE ON A CLONE FIRST
+============================================================
+
+Before modifying db/custom.db:
+
+Create a temporary copy of the database.
+
+Example:
+
+/tmp/aibc-p19-baseline.db
+
+Use the copy for testing.
+
+Configure DATABASE_URL temporarily against the clone.
+
+Verify:
+
+- existing tables remain
+- existing data remains
+- Prisma can connect
+- migration metadata behavior is correct
+
+============================================================
+12. MARK BASELINE AS APPLIED
+============================================================
+
+On the CLONED database:
+
+mark:
+
+0_init
+
+as applied using Prisma migration resolution.
+
+Do NOT execute the baseline creation SQL against the cloned existing schema if it already exists.
+
+The objective is:
+
+"this database already contains the schema represented by 0_init."
+
+After marking the baseline as applied:
+
+run:
+
+prisma migrate status
+
+Verify:
+
+- baseline is recognized as applied
+- no destructive reset is requested
+- no pending migration exists unexpectedly
+
+============================================================
+13. REAL DATABASE BASELINE
+============================================================
+
+Only after the clone test succeeds:
+
+Create a NEW backup of:
+
+db/custom.db
+
+Then mark:
+
+0_init
+
+as applied on the real database.
+
+This must NOT:
+
+- recreate tables
+- delete rows
+- drop data
+- reinsert data
+
+It should only establish migration history metadata.
+
+============================================================
+14. POST-BASELINE DATA VERIFICATION
+============================================================
+
+After baselining the real database:
+
+Repeat the data inventory from Section 5.
+
+Compare:
+
+BEFORE
+
+vs
+
+AFTER
+
+Counts must match.
+
+Important:
+
+No User records should disappear.
+
+No Business records should disappear.
+
+No Financial records should disappear.
+
+No ChatSession/ChatMessage records should disappear.
+
+No PasswordResetToken rows should disappear unless they are already expired and explicitly cleaned by the existing runtime logic.
+
+If counts change unexpectedly:
+
+STOP and restore the pre-baseline backup.
+
+============================================================
+15. FOREIGN KEY VERIFICATION
+============================================================
+
+Run integrity checks again.
+
+Verify:
+
+- foreign keys
+- schema integrity
+- application access
+
+No corruption is acceptable.
+
+============================================================
+16. CREATE FUTURE-MIGRATION CANARY
+============================================================
+
+Do NOT leave the repository without proving that future migrations work.
+
+Create a temporary, disposable test migration on a cloned database.
+
+The canary migration should be:
+
+- additive
+- nullable
+- non-destructive
+- easy to verify
+
+Example conceptual test:
+
+add a temporary nullable column to a temporary test table on the cloned DB.
+
+Then:
+
+1. generate migration
+2. inspect migration SQL
+3. apply migration with migrate deploy
+4. verify schema
+5. verify existing records
+6. discard clone and temporary canary migration
+
+DO NOT leave the test-only column in the production schema.
+
+DO NOT commit temporary canary migrations.
+
+============================================================
+17. PRODUCTION MIGRATION SCRIPT
+============================================================
+
+Add a dedicated script:
+
+"db:migrate:deploy"
+
+which executes:
+
+prisma migrate deploy
+
+This is the production/staging migration command.
+
+Do not alias production deployment to:
+
+prisma migrate dev
+
+Prisma's production workflow uses migrate deploy rather than migrate dev.
+
+============================================================
+18. MIGRATION STATUS SCRIPT
+============================================================
+
+Add:
+
+"db:migrate:status"
+
+which executes:
+
+prisma migrate status
+
+This allows operators to verify migration state before deployment.
+
+============================================================
+19. BLOCK DANGEROUS DB PUSH
+============================================================
+
+The existing:
+
+db:push
+
+script currently uses:
+
+prisma db push --accept-data-loss
+
+This must not be able to run against NODE_ENV=production.
+
+Implement a small guard.
+
+Desired behavior:
+
+NODE_ENV=production
+
++
+db:push
+
+=
+
+HARD FAILURE
+
+with a clear message:
+
+"db push is disabled in production. Use prisma migrate deploy."
+
+For development:
+
+db push may remain available if clearly documented as DEVELOPMENT ONLY.
+
+============================================================
+20. BLOCK RESET IN PRODUCTION
+============================================================
+
+The existing:
+
+db:reset
+
+must also refuse to run when:
+
+NODE_ENV=production
+
+It must fail before invoking Prisma.
+
+Desired message:
+
+"Database reset is development-only and is blocked in production."
+
+============================================================
+21. DATABASE SCRIPT DOCUMENTATION
+============================================================
+
+Document:
+
+db:generate
+db:push
+db:migrate
+db:migrate:deploy
+db:migrate:status
+db:reset
+
+Clearly classify each:
+
+DEVELOPMENT
+STAGING
+PRODUCTION
+
+Example:
+
+db:push
+→ DEVELOPMENT ONLY
+
+db:migrate
+→ DEVELOPMENT ONLY
+
+db:migrate:deploy
+→ STAGING / PRODUCTION
+
+db:migrate:status
+→ ALL environments
+
+db:reset
+→ DEVELOPMENT ONLY
+
+============================================================
+22. ENVIRONMENT GUARD
+============================================================
+
+Any dangerous database operation must have an environment guard.
+
+At minimum:
+
+- db push
+- db reset
+
+must be blocked in production.
+
+Do not rely only on documentation.
+
+The shell command itself must be protected.
+
+============================================================
+23. ENV EXAMPLE
+============================================================
+
+The worklog claimed .env.example was created during Prompt 18.
+
+The current archive does not contain it.
+
+Create:
+
+.env.example
+
+with placeholders only.
+
+At minimum include only variables actually required/referenced.
+
+Possible entries:
+
+DATABASE_URL=
+NEXTAUTH_SECRET=
+NEXTAUTH_URL=
+APP_BASE_URL=
+
+and reserved email variables only if currently referenced or intentionally reserved:
+
+EMAIL_FROM=
+EMAIL_SERVER_HOST=
+EMAIL_SERVER_PORT=
+EMAIL_SERVER_USER=
+EMAIL_SERVER_PASSWORD=
+
+Never include real values.
+
+Never include test passwords.
+
+Never include real API keys.
+
+============================================================
+24. ENV DOCUMENTATION
+============================================================
+
+Create/update:
+
+docs/deployment/environment-variables.md
+
+For every variable document:
+
+- purpose
+- required/optional
+- development behavior
+- production behavior
+- whether it contains a secret
+
+Do not document actual secret values.
+
+============================================================
+25. UPDATE PRODUCTION CHECKLIST
+============================================================
+
+The existing:
+
+docs/deployment/production-checklist.md
+
+contains stale information.
+
+Update it to reflect the ACTUAL codebase.
+
+Specifically remove obsolete claims such as:
+
+- ignoreBuildErrors still enabled
+- password reset missing
+- password change missing
+- account deletion missing
+
+Replace them with the actual Prompt 18 state.
+
+Also update:
+
+- migration workflow
+- db:migrate:deploy
+- db:migrate:status
+- baseline status
+- .env.example
+- current auth state
+
+Do not invent completed CI/CD.
+
+============================================================
+26. UPDATE BASELINE DOCUMENT
+============================================================
+
+Update:
+
+docs/audit/production-monetization-baseline.md
+
+Do not preserve obsolete Prompt 17 findings when Prompt 18 has resolved them.
+
+The document should contain:
+
+- original finding
+- resolution status
+- phase resolved
+- current state
+
+Example:
+
+Authentication
+Prompt 17: PARTIALLY READY
+Prompt 18: HARDENED
+Current: AUTHENTICATION BASELINE COMPLETE WITH DOCUMENTED LIMITATIONS
+
+============================================================
+27. UPDATE SECURITY DOCUMENTATION
+============================================================
+
+Synchronize:
+
+docs/security/authentication-current-state.md
+docs/security/account-lifecycle.md
+docs/security/password-recovery.md
+
+with actual implementation.
+
+Do not duplicate contradictory descriptions.
+
+============================================================
+28. UPDATE WORKLOG
+============================================================
+
+Add a Prompt 19 section to:
+
+worklog.md
+
+Include:
+
+- objective
+- database backup
+- baseline creation
+- migration history
+- data verification
+- scripts added
+- guards added
+- documentation updated
+- tests
+- known limitations
+
+============================================================
+29. GITIGNORE
+============================================================
+
+Ensure the following are ignored:
+
+- environment files containing secrets
+- database backups
+- temporary migration test databases
+- dev logs
+- server logs
+- temporary baseline files
+
+Do NOT ignore:
+
+prisma/migrations/
+
+Migration files MUST be version-controlled.
+
+============================================================
+30. MIGRATION HISTORY INTEGRITY
+============================================================
+
+Add safeguards against:
+
+- edited migration files
+- deleted migrations
+- renaming already-applied migrations
+- modifying historical SQL
+
+Document:
+
+"Applied migration files are immutable."
+
+Future schema changes require NEW migrations.
+
+Never rewrite an old migration to modify production state.
+
+============================================================
+31. FUTURE SCHEMA CHANGE WORKFLOW
+============================================================
+
+Document the future workflow:
+
+1. Modify schema.prisma
+2. Create migration in development
+3. Review SQL
+4. Test against disposable database
+5. Run application tests
+6. Run migration status
+7. Commit migration
+8. Backup production database
+9. Run prisma migrate deploy
+10. Verify application
+11. Verify database health
+
+Do NOT use db push on production.
+
+============================================================
+32. DATA MIGRATION RULE
+============================================================
+
+If a future change requires transforming data:
+
+DO NOT hide the transformation in application startup code.
+
+Use a deliberate migration/data-migration strategy.
+
+Document:
+
+- old structure
+- new structure
+- transformation
+- rollback/recovery strategy
+
+This phase only establishes the policy.
+
+============================================================
+33. BACKUP BEFORE MIGRATION
+============================================================
+
+Update:
+
+docs/deployment/backup-restore-plan.md
+
+Require:
+
+backup
+↓
+checksum
+↓
+migration
+↓
+integrity check
+↓
+smoke test
+
+For SQLite production:
+
+The database file must be backed up BEFORE any schema migration.
+
+============================================================
+34. RESTORE TEST
+============================================================
+
+On a clone:
+
+1. Restore the pre-baseline database.
+2. Verify integrity.
+3. Verify row counts.
+4. Verify application can connect.
+5. Verify business data is readable.
+
+Do not claim disaster recovery readiness unless this restore test is actually performed.
+
+============================================================
+35. APPLICATION REGRESSION TEST
+============================================================
+
+After baseline:
+
+Run existing project checks.
+
+At minimum:
+
+- lint
+- TypeScript
+- build
+- i18n audit
+- existing smoke suite
+- Prompt 17 security harness
+- Prompt 18 auth harness
+
+If a tool cannot be executed in the current environment:
+
+document that clearly.
+
+Do not fabricate success.
+
+============================================================
+36. AUTH REGRESSION
+============================================================
+
+Verify that database migration metadata does not break:
+
+- login
+- signup
+- password change
+- password reset
+- account deletion
+- session invalidation
+
+============================================================
+37. FINANCIAL REGRESSION
+============================================================
+
+Verify:
+
+- money remains integer minor units
+- Payment status logic remains unchanged
+- Sale totals remain unchanged
+- Expense totals remain unchanged
+- Receivables remain unchanged
+- Payables remain unchanged
+- dashboard metrics remain unchanged
+
+No financial behavior may change merely because migration infrastructure changed.
+
+============================================================
+38. TENANT REGRESSION
+============================================================
+
+Verify after baseline:
+
+- User A cannot access User B business
+- business membership remains intact
+- roles remain intact
+- audit records remain intact
+- AI Copilot tenant isolation remains intact
+
+============================================================
+39. SNAPSHOT COMPARISON
+============================================================
+
+Where practical, compare important aggregate data:
+
+Businesses per owner
+Members per business
+Sales per business
+Expenses per business
+Payments per business
+Customers per business
+Products per business
+
+Before baseline
+
+vs
+
+After baseline
+
+No unexplained difference.
+
+============================================================
+40. SQLITE FILE SAFETY
+============================================================
+
+Do NOT move:
+
+db/custom.db
+
+to a new location unless there is a real operational reason.
+
+Keep the existing database path contract.
+
+If DATABASE_URL uses:
+
+file:../db/custom.db
+
+preserve compatibility.
+
+============================================================
+41. DEPLOYMENT COMPATIBILITY
+============================================================
+
+Review standalone build behavior.
+
+Verify Prisma Client is included.
+
+Verify the migration directory is included in the deploy artifact or otherwise available to the migration step.
+
+Important:
+
+The application bundle and migration deployment are related but distinct operations.
+
+Do not assume Next.js standalone output automatically makes migration SQL available in the runtime.
+
+Document how migrations will be delivered during deployment.
+
+============================================================
+42. PRODUCTION COMMAND POLICY
+============================================================
+
+Recommended production sequence:
+
+1. Backup database
+2. Validate backup
+3. Deploy application files
+4. Run prisma migrate deploy
+5. Run health check
+6. Run smoke validation
+7. Confirm logs
+8. Mark release successful
+
+Do NOT run:
+
+prisma migrate dev
+
+in production.
+
+============================================================
+43. NO AUTOMATIC PRODUCTION MIGRATION ON APP START
+============================================================
+
+Do NOT place:
+
+prisma migrate deploy
+
+inside application startup code.
+
+Application startup and database deployment must remain separate.
+
+Reason:
+
+- startup failures
+- duplicate migration attempts
+- unclear rollback
+- difficult operational control
+
+Migration should be an explicit release step.
+
+============================================================
+44. NO AUTOMATIC DB RESET
+============================================================
+
+There must never be startup logic that resets or pushes schema destructively.
+
+============================================================
+45. DATABASE VERSION REPORT
+============================================================
+
+Create:
+
+GET /api/health
+
+or extend the existing safe health endpoint ONLY if this can be done without creating an unsafe public dependency.
+
+The health response may expose:
+
+- application version
+- migration status summary
+
+BUT:
+
+Do not expose:
+
+- database URL
+- schema internals
+- secrets
+- table names unnecessarily
+
+If adding database readiness requires authentication or a private operational route, prefer that instead of expanding the public endpoint.
+
+============================================================
+46. MIGRATION OBSERVABILITY
+============================================================
+
+When migrations run:
+
+Record:
+
+- migration command result
+- version/release identifier
+- timestamp
+
+Do NOT write sensitive DB credentials into logs.
+
+============================================================
+47. SECURITY
+============================================================
+
+Migration files themselves must not contain:
+
+- production credentials
+- secrets
+- passwords
+- customer PII
+
+The migration SQL should describe schema changes only.
+
+============================================================
+48. DO NOT OVERENGINEER
+============================================================
+
+Do NOT introduce:
+
+- Kubernetes
+- distributed database orchestration
+- migration service
+- event bus
+- microservices
+- complex database proxy
+
+This phase is migration discipline, not infrastructure expansion.
+
+============================================================
+49. PRODUCTION DATABASE DECISION
+============================================================
+
+Keep SQLite for the current phase.
+
+Document clearly:
+
+CURRENT:
+SQLite / single-node
+
+FUTURE:
+PostgreSQL may become appropriate when scaling triggers justify it.
+
+Do NOT perform the engine migration now.
+
+Document future triggers such as:
+
+- sustained concurrent writers
+- horizontal scaling requirement
+- significantly larger workloads
+- operational PostgreSQL requirement
+
+============================================================
+50. REQUIRED FILES
+============================================================
+
+At minimum create/update:
+
+prisma/migrations/0_init/migration.sql
+
+.env.example
+
+docs/database/prompt19-baseline.md
+
+docs/database/data-inventory-before-baseline.md
+
+docs/database/migration-workflow.md
+
+docs/deployment/environment-variables.md
+
+docs/deployment/production-checklist.md
+
+docs/deployment/backup-restore-plan.md
+
+docs/audit/production-monetization-baseline.md
+
+worklog.md
+
+and any small safety script required for:
+
+- db push guard
+- db reset guard
+
+============================================================
+51. REQUIRED PACKAGE SCRIPTS
+============================================================
+
+Add safe scripts such as:
+
+db:generate
+db:push
+db:migrate
+db:migrate:deploy
+db:migrate:status
+db:reset
+
+But ensure:
+
+db:push → development only
+db:reset → development only
+db:migrate → development only
+db:migrate:deploy → staging/production
+db:migrate:status → safe for all
+
+Do not delete useful developer commands.
+
+============================================================
+52. REQUIRED TESTS
+============================================================
+
+Create a regression harness:
+
+scripts/prompt19-db-check.mjs
+
+It should verify as much as practical:
+
+1. migration directory exists
+2. baseline migration exists
+3. baseline is valid
+4. database is not reset
+5. row counts preserved
+6. foreign-key integrity
+7. migration status recognized
+8. dangerous commands are guarded in production
+9. auth still works
+10. tenant isolation still works
+11. money pipeline still works
+12. Prompt 18 auth functionality still works
+
+The test harness must not rely on production secrets.
+
+Use synthetic users where needed.
+
+============================================================
+53. DOCUMENTATION QUALITY
+============================================================
+
+Documentation must distinguish:
+
+"implemented"
+
+from:
+
+"planned"
+
+and:
+
+"recommended future work"
+
+Do not mark a migration as production-ready simply because migration SQL exists.
+
+Production migration readiness requires:
+
+- backup procedure
+- baseline
+- migration status
+- deploy command
+- restore procedure
+- regression checks
+
+============================================================
+54. ACCEPTANCE CRITERIA
+============================================================
+
+Prompt 19 is complete only when:
+
+[ ] Existing database inspected
+
+[ ] Database integrity checked
+
+[ ] Pre-baseline backup created
+
+[ ] Backup checksum recorded
+
+[ ] Data inventory captured
+
+[ ] Schema vs database verified
+
+[ ] prisma/migrations exists
+
+[ ] 0_init baseline created
+
+[ ] Baseline SQL reviewed
+
+[ ] Baseline tested on cloned database
+
+[ ] Baseline marked applied on clone
+
+[ ] Migration status works
+
+[ ] Existing real database safely baselined
+
+[ ] No business data deleted
+
+[ ] No financial data changed
+
+[ ] Row counts verified after baseline
+
+[ ] Foreign-key integrity verified
+
+[ ] Future migration canary tested on clone
+
+[ ] db:migrate:deploy added
+
+[ ] db:migrate:status added
+
+[ ] db:push production guard added
+
+[ ] db:reset production guard added
+
+[ ] .env.example exists
+
+[ ] No real secrets in .env.example
+
+[ ] Production checklist updated
+
+[ ] Old Prompt 17 documentation synchronized
+
+[ ] Prompt 18 documentation synchronized
+
+[ ] Worklog updated
+
+[ ] Migration directory tracked by Git
+
+[ ] Database backups ignored by Git
+
+[ ] Future migration workflow documented
+
+[ ] Restore test completed on clone
+
+[ ] Lint passed
+
+[ ] TypeScript passed
+
+[ ] Build passed
+
+[ ] i18n audit passed
+
+[ ] Existing smoke tests passed
+
+[ ] Prompt 17 security checks passed
+
+[ ] Prompt 18 authentication checks passed
+
+[ ] Prompt 19 database regression checks passed
+
+============================================================
+55. FINAL REPORT
+============================================================
+
+Return a detailed final report containing:
+
+1. Current database state
+2. Database integrity result
+3. Backup created
+4. Backup checksum
+5. Data inventory before baseline
+6. Baseline migration name
+7. Migration SQL review result
+8. Clone test result
+9. Real database baseline result
+10. Row-count comparison
+11. Foreign-key verification
+12. Migration status
+13. Scripts added
+14. Production guards added
+15. Documentation updated
+16. Regression tests
+17. Commands executed
+18. Test results
+19. Any warnings
+20. Remaining production limitations
+
+============================================================
+56. STOP CONDITION
+============================================================
+
+STOP AFTER PROMPT 19.
+
+DO NOT:
+
+- implement subscriptions
+- implement pricing
+- implement payment gateways
+- implement billing
+- migrate to PostgreSQL
+- redesign the dashboard
+- add advanced accounting
+- add payroll
+- add tax modules
+
+Wait for the next phase instruction.

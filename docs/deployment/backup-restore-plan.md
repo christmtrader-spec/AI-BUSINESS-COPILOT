@@ -1,8 +1,11 @@
 # Backup & Restore Plan (AI Business Copilot)
 
-**Document ID:** BACKUP-RESTORE-v1.0
-**Phase:** Prompt 17 (deployment readiness)
+**Document ID:** BACKUP-RESTORE-v1.1
+**Phase:** Prompt 17 (created) · revised Prompt 19 (verified restore drill, backup pipeline codified, `db/backups/` location)
 **Companions:** `docs/deployment/production-checklist.md` (deployment + first-run),
+`docs/database/migration-workflow.md` (migration discipline),
+`docs/database/prompt19-baseline.md` (baseline + drill record),
+`docs/database/data-inventory-before-baseline.md` (authoritative counts),
 `docs/billing/billing-architecture.md` (billing is design-only; no billing data exists yet)
 
 Two layers of protection, both already supported by shipped code:
@@ -19,7 +22,7 @@ Two layers of protection, both already supported by shipped code:
 |---|---|---|
 | **`db/custom.db`** | ✅ **REQUIRED — single source of truth** | All application data lives in this one SQLite file (`docs/TECH-DECISION-RECORD.md:20` "Prisma + SQLite (file `db/custom.db`)"; datasource `prisma/schema.prisma:9-12` resolves `DATABASE_URL`) |
 | **`.env`** | ✅ required — **stored separately from db backups** | Secrets (`DATABASE_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL` — names only; see `docs/deployment/production-checklist.md` §4). Losing `NEXTAUTH_SECRET` means every user session is invalidated on rotation (TDR §5, `docs/TECH-DECISION-RECORD.md:132`) |
-| **`prisma/migrations/`** (once created) | ✅ with the repo | Schema history; needed to rebuild/reproduce (`production-checklist.md` §3) |
+| **`prisma/migrations/`** | ✅ with the repo | Schema history; **now EXISTS** — baseline `0_init` committed (Prompt 19). Needed to rebuild/reproduce and to run `prisma migrate deploy` at deploy time (`docs/database/migration-workflow.md` §5) |
 | `.next/` build output | ❌ not needed | Fully rebuildable from source via `npm run build` (`package.json:7`; standalone output `next.config.ts:4`) |
 | `node_modules/` | ❌ not needed | Reinstallable (`bun.lock`) |
 | Uploaded files | ❌ none exist today | No file-storage feature is implemented (A15 is interface-only, `docs/PROJECT-CONSTITUTION.md:242-246`) — revisit when A15 lands |
@@ -56,6 +59,38 @@ API.) Prefer Option A around upgrades; use Option B for the daily cadence.
 
 Always ship backups **off the host** (separate machine/object storage) —
 same-box backups don't survive disk loss.
+
+### Backup location (Prompt 19)
+
+Project backups live in **`db/backups/`** (git-ignored — checksums may be
+documented, artifacts never enter version control). Concrete Prompt-19
+examples, both SHA-256
+`ec8b4958d5f6b305cb51036fb89200026f5c87ca95dabd010ebce5e80e812e80`,
+483328 bytes:
+
+- `db/backups/pre-prompt19-20260923-052005.db` — safety snapshot before ANY operation
+- `db/backups/pre-baseline-20260923-052157.db` — second snapshot immediately before the real-DB baseline
+
+## 2.1 Required pipeline (every time — no exceptions)
+
+Every schema migration on a non-disposable database follows this fixed
+pipeline (`docs/database/migration-workflow.md` §3/§6). **The DB file MUST be
+backed up before ANY schema migration** — this is the rollback anchor, and
+`prisma migrate deploy` is forward-only.
+
+```
+backup  →  checksum  →  migration  →  integrity check  →  smoke test
+```
+
+1. **Backup** — Option A (cold) or Option B (online) into `db/backups/` with a timestamped name.
+2. **Checksum** — `sha256sum` the artifact; record the hash next to the file name in the operator log (Prompt-19 example above).
+3. **Migration** — `bun run db:migrate:deploy` only (`db push`/`reset`/`migrate dev` are development-only and production-blocked, `docs/database/migration-workflow.md` §1).
+4. **Integrity check** — `PRAGMA integrity_check`, `PRAGMA quick_check`, `PRAGMA foreign_key_check` (expect `ok` / `ok` / 0 rows).
+5. **Smoke test** — application reads/writes on the affected flows + `GET /api/health` reporting `status: "ok"`.
+
+Standard read-only probe for steps 4–5: **`scripts/db-inventory.mjs`**
+(integrity, quick_check, FK violations, per-table counts, money totals,
+relationship orphans — no record contents).
 
 ## 3. Cadence
 
@@ -94,6 +129,23 @@ sqlite3 db/custom.db "PRAGMA integrity_check;"
 If `integrity_check` fails on the restored file, try the next-newest backup;
 do not start the server on a corrupt file.
 
+## 4.1 VERIFIED restore procedure (performed 2026-09-23, Prompt 19 §34)
+
+The file-restore path is **not a claim — it was executed on a clone** using
+the pre-prompt19 backup (`db/backups/pre-prompt19-20260923-052005.db`),
+copied to `/tmp/aibc-p19-restore.db`:
+
+1. **Copy the file** to a scratch location (never restore in place first).
+2. **Integrity:** `PRAGMA integrity_check` → ok; `PRAGMA foreign_key_check` → 0 violations.
+3. **Row counts vs the inventory doc** (`docs/database/data-inventory-before-baseline.md`, probed with `scripts/db-inventory.mjs`): **34 users / 13 businesses** — match.
+4. **PrismaClient connects and reads:** `businesses = 13`, `users = 34`, `SUM(Sale.totalMinor) = 300008500` — match.
+5. **Read sample business data** (e.g. "Sara's Handmade Shop") — rows readable.
+
+Clone discarded afterwards; production untouched. **This drill verified that
+the Prompt-19 backup is restorable and the data is intact.** Repeat this
+procedure on a clone whenever the backup strategy or schema changes, and on
+the regular monthly cadence below.
+
 ## 5. Verification procedure (prove backups are real)
 
 A backup that was never restored is a hope, not a backup. Drill:
@@ -101,7 +153,9 @@ A backup that was never restored is a hope, not a backup. Drill:
 1. **Restore into staging, not prod:** copy the artifact to a staging host/dir
    with its own `DATABASE_URL` + `NEXTAUTH_SECRET` (a *different* secret —
    never share prod's), point a test instance at it, run
-   `PRAGMA integrity_check` first (§4).
+   `PRAGMA integrity_check` first (§4). Minimum drill: §4.1 (copy → integrity
+   + FK check → counts vs `docs/database/data-inventory-before-baseline.md`
+   via `scripts/db-inventory.mjs` → PrismaClient connect → read business data).
 2. **Round-trip:** from the staging instance, export the business
    (`GET /api/v1/businesses/[id]/export`) and import into a scratch business
    (`POST …/import?mode=dry_run` then `mode=merge`) — the report must show
@@ -116,7 +170,8 @@ A backup that was never restored is a hope, not a backup. Drill:
    `bun scripts/e2e-smoke.ts --base <staging>` (`scripts/e2e-smoke.ts:18`)
    and the tenant-isolation step of `production-checklist.md` §7 step 4).
 4. **Record** the drill date, artifact name, and result in the operator log.
-   Repeat monthly.
+   Repeat monthly. The Prompt-19 file-restore drill (§4.1) is the recorded
+   precedent.
 
 ## 6. Application-level backup story (EXISTS — owner-driven, per business)
 
@@ -174,11 +229,15 @@ shipped and rate-limited:
 
 ## 7. Checklist sign-off
 
-- [ ] Daily Option-B job live, artifacts land off-host encrypted
-- [ ] Pre-upgrade cold snapshots on every deploy (production-checklist §9)
-- [ ] Retention prune (7 daily / 4 weekly) running
-- [ ] `.env` backed up separately under a different key
-- [ ] Restore drill completed: staging restore + export/import round-trip +
-      security checks (§5) — recorded with date
+- [ ] Daily Option-B job live, artifacts land off-host encrypted *(recommended — not yet implemented)*
+- [ ] Pre-upgrade cold snapshots on every deploy (production-checklist §9) — **done for the Prompt-19 baseline; standing rule** (`docs/database/migration-workflow.md` §3/§6)
+- [ ] Retention prune (7 daily / 4 weekly) running *(recommended — not yet implemented)*
+- [ ] `.env` backed up separately under a different key *(recommended — operator task at deploy time)*
+- [x] File-restore drill completed on a clone (§4.1, Prompt 19, 2026-09-23):
+      integrity ok, FK check clean, counts/money match the inventory,
+      PrismaClient reads verified — recorded in
+      `docs/database/prompt19-baseline.md`
+- [ ] Full staging drill (export/import round-trip + security checks, §5
+      steps 2–3) — repeat monthly
 - [ ] Owner-facing export documented in the onboarding/FAQ copy
       (`docs/marketing/launch-readiness.md` §3 approved claims)

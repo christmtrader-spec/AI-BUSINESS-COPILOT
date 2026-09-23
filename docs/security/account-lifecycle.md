@@ -81,3 +81,7 @@ All three events share one primitive: `User.sessionVersion` (`prisma/schema.pris
 - **No session device list / management UI** — invalidation is all-or-nothing via `sessionVersion`; you cannot sign out one device specifically.
 - **No SMTP wiring** — the `EmailProvider` boundary exists and is ready for adapters (`src/lib/email/index.ts:29-76`), but production has no configured transport; password reset returns a uniform 503 until one is wired (`.env.example` reserves `EMAIL_*`).
 - No "recent sign-in" freshness window on deletion — the freshness gate is the session-version check plus password re-entry (`me/route.ts:78-103`), not a login-age check.
+
+## 11. Migration baseline note (Prompt 19)
+
+The Prompt 19 database baseline (`0_init`, `docs/database/prompt19-baseline.md`) captured the existing schema — including `User.sessionVersion` and the `PasswordResetToken` table — as the first committed migration with **zero drift and zero data change**. Signup, password change/reset, session invalidation and account-deletion behavior described in this document are **unchanged** by that round; the only operational change is that future schema touches go through migrations (`docs/database/migration-workflow.md`), and database backups/restores follow `docs/deployment/backup-restore-plan.md` (the file-restore path was drill-verified on a clone in Prompt 19).

@@ -71,6 +71,7 @@ Password + typed `confirmation: "DELETE"` → ownership guard (any owned busines
 - **In-memory rate limiter**: per-process `Map`, resets on restart, effective limits multiply with N instances (`src/lib/rate-limit.ts`; full analysis in `docs/audit/rate-limiting.md`).
 - **No email transport in production yet**: `EMAIL_*` configuration is reserved for a future adapter (`src/lib/email/index.ts:58-71`, `.env.example`); until wired, production password reset returns a uniform `503 RESET_DELIVERY_UNAVAILABLE` — the product never pretends an email was sent.
 - Reset links depend on `APP_BASE_URL`/`NEXTAUTH_URL` configuration, never on request headers (`src/lib/auth-security.ts:136-146`).
+- **Database workflow is migration-based (Prompt 19):** the schema (including `User.sessionVersion` and the `PasswordResetToken` table) is now captured in the committed baseline migration `0_init` with zero drift (`docs/database/prompt19-baseline.md`); future schema changes ship as new migrations through `prisma migrate deploy` (`docs/database/migration-workflow.md`). This changed nothing about the auth behavior described above — sessions, hashing and rate limits are unchanged.
 
 ## 7. Audit event catalogue (new in Prompt 18)
 

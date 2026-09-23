@@ -1,9 +1,9 @@
 # Production Deployment Checklist (AI Business Copilot)
 
-**Document ID:** DEPLOY-CHECKLIST-v1.0
-**Phase:** Prompt 17 (deployment readiness)
-**Stack:** Next.js 16 App Router standalone · Prisma + SQLite (`db/custom.db`) · NextAuth v4 · Caddy reverse proxy
-**Companion:** `docs/deployment/backup-restore-plan.md`
+**Document ID:** DEPLOY-CHECKLIST-v1.1
+**Phase:** Prompt 17 (created) · revised Prompt 18 (build gate, auth) & Prompt 19 (migration baseline, guards, health probe)
+**Stack:** Next.js 16 App Router standalone · Prisma 6.11.1 + SQLite (`db/custom.db`) · NextAuth v4 · Caddy reverse proxy
+**Companions:** `docs/deployment/backup-restore-plan.md` · `docs/database/migration-workflow.md` · `docs/database/prompt19-baseline.md` · `docs/deployment/environment-variables.md`
 
 All commands assume the repo root `/home/z/my-project`.
 
@@ -22,9 +22,12 @@ npm run build
   standalone server self-contained (static assets + `public/`).
 - Verify after build: `.next/standalone/server.js` exists and
   `.next/standalone/.next/static` is populated.
-- ⚠️ `next.config.ts:6-8` sets `typescript.ignoreBuildErrors: true` — the build
-  will NOT fail on type errors. Run `bun run lint` (`package.json:9`) and fix
-  issues manually before shipping.
+- ✅ **Type-checking is enforced** — `typescript.ignoreBuildErrors` was
+  **removed in Prompt 18**; `next build` fails on type errors. Run
+  `bun run lint` (`package.json:9`) before shipping as well.
+- Note: standalone tracing bundles the Prisma query engine, but NOT the
+  `prisma/migrations/` directory — run migrations from the repo checkout
+  (`docs/database/migration-workflow.md` §5).
 
 ## 2. Start
 
@@ -42,7 +45,7 @@ NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log
 - Do not use `npm run dev` in production (dev server + `tee dev.log` is the
   sandbox pattern, `package.json:6`).
 
-## 3. Database setup (Prisma) — READ THE WARNING
+## 3. Database setup (Prisma) — migration-based since Prompt 19
 
 Datasource is SQLite via `DATABASE_URL` (`prisma/schema.prisma:9-12`); the
 production file is `db/custom.db` (TDR §1, `docs/TECH-DECISION-RECORD.md:20`).
@@ -52,28 +55,33 @@ production file is `db/custom.db` (TDR §1, `docs/TECH-DECISION-RECORD.md:20`).
    standalone bundle's expected environment (verify the generated client is
    present in the deployed tree; standalone bundles include it via node_modules
    tracing — verify on first deploy).
-3. **MIGRATION BASELINE — required before first production start:**
+3. **MIGRATION BASELINE — DONE (Prompt 19, 2026-09-23).**
 
-   > ⚠️ **The project uses `prisma db push --accept-data-loss` in development**
-   > (`package.json:10`, script `db:push`). `db push` **diffs and mutates the
-   > database directly — it is NOT migration-safe**: it can drop/recreate
-   > tables/columns without history, which is unacceptable for production data.
-   > There is **no `prisma/migrations/` history in this repository today**.
+   The schema is now migration-based: baseline migration **`0_init`** is
+   generated, committed, and marked applied on `db/custom.db` with **zero
+   drift** and zero data change (full machine-audit record:
+   `docs/database/prompt19-baseline.md`). The `db push` era is over.
 
-   Required action (one-time, before prod):
-   ```bash
-   bun run db:migrate      # = prisma migrate dev (package.json:12)
-   # when prompted, choose "init/create a new baseline migration"
-   # commit prisma/migrations/ to the repository
-   ```
-   Production schema changes thereafter use `prisma migrate deploy` against a
-   backed-up database (see `docs/deployment/backup-restore-plan.md` §3
-   "pre-upgrade backup"). `db:push` is banned against any real dataset.
+   Operating rules (enforced + documented, `docs/database/migration-workflow.md`):
+   - **Staging/production schema changes:** `bun run db:migrate:deploy`
+     (i.e. `prisma migrate deploy`) — the ONLY sanctioned command, run against
+     a freshly backed-up database.
+   - **Pre-deploy verification:** `bun run db:migrate:status` must show the
+     expected pending/apply state before every deploy.
+   - **Production guards:** `db:push`, `db:reset`, and `db:migrate`
+     (`prisma migrate dev`) are DEVELOPMENT ONLY and hard-blocked with exit 1
+     when `NODE_ENV=production` (`scripts/db-guard.cjs` — exact block messages
+     in the workflow doc §1). Never invoke the underlying `prisma db push` by
+     hand against real data either.
+   - `prisma/migrations/` is version-controlled and **immutable once applied**
+     (workflow doc §2); future changes ship as NEW migrations (workflow doc §3).
 
 ## 4. Required environment variables
 
-`.env` currently contains **exactly these three keys** (names verified;
-values never documented here):
+**`.env.example` now exists** (placeholders only, version-controlled via the
+`.gitignore` `!.env.example` exception). The canonical per-variable reference
+is **`docs/deployment/environment-variables.md`** — keep it in sync when
+variables are added. Minimum set:
 
 | Variable | Mandatory | Purpose | Notes |
 |---|---|---|---|
@@ -81,10 +89,18 @@ values never documented here):
 | `NEXTAUTH_SECRET` | ✅ **prod throws without it** | NextAuth v4 JWT/JWE signing + encryption key (`src/lib/auth.ts:24-28`; production fails fast via next-auth's `NO_SECRET`) | Dev has a stable literal fallback (`auth.ts:26-28`) that is **disabled in production**; generate with `openssl rand -hex 32` (TDR §5, `:135`); rotating invalidates all sessions (`:132`) |
 | `NEXTAUTH_URL` | ✅ | Canonical origin NextAuth issues cookies against (TDR §5, `:133`) | Must match the externally reachable origin (scheme + host) or CSRF/session cookies fail behind the proxy |
 
+Also in `.env.example` (used by the Prompt-18 auth flows):
+`APP_BASE_URL` (base for password-reset links — never derived from request
+headers) and the reserved `EMAIL_*` block. Production **without**
+`EMAIL_SERVER_HOST` makes password-reset requests return a uniform `503`
+(`docs/security/password-recovery.md` §8/§11). No SMTP adapter is wired yet.
+
 **No other secrets exist** in this project today: the AI provider SDK is
-keyed through the platform, no SMTP, no payment provider (billing is design
-only — `docs/billing/billing-architecture.md`), no third-party API keys.
-When one is added, it must be documented here (never committed, never quoted).
+keyed through the platform, no SMTP credentials configured, no payment
+provider (billing is design only — `docs/billing/billing-architecture.md`),
+no third-party API keys. When one is added, it must be documented in
+`docs/deployment/environment-variables.md` and `.env.example`
+(never committed, never quoted).
 
 ## 5. Reverse proxy (Caddy)
 
@@ -106,18 +122,22 @@ Key behavior to know:
 
 ## 6. Health check & watchdog
 
-- **Health endpoint (EXISTS, static):** `GET /api` returns a JSON hello
-  (`src/app/api/route.ts:3-5`). It is cheap and unauthenticated — use it for
-  liveness probes: `curl -fsS http://localhost:3000/api`.
-- Note it does not touch the database; for a deeper readiness signal use the
-  login page (`GET /`) plus the app itself. (A db-ping health route is a
-  future enhancement — do not assume it exists.)
+- **Health endpoint (EXISTS — Prompt 19):** `GET /api/health` is the
+  liveness/readiness probe (`src/app/api/health/route.ts`): unauthenticated,
+  rate-limited 30/min/IP, 15 s in-memory cache. Response:
+  `{status: "ok" | "degraded", version, database:{reachable}, migrations:{applied, pending}, timestamp}`
+  (version from `src/lib/app-version.ts`, currently `0.2.1`; migration counts
+  derived from `_prisma_migrations`). It **never** exposes the DB URL, schema
+  internals, table names or secrets — safe for public uptime monitoring:
+  `curl -fsS http://localhost:3000/api/health`.
+- `GET /api` (static JSON hello, `src/app/api/route.ts`) also remains for a
+  no-database liveness ping.
 - **Startup watchdog:** the sandbox pattern `scripts/keep-dev-up.cjs`
-  (`scripts/keep-dev-up.cjs:8-20` probes `http://localhost:3000/` expecting
-  HTTP 200; `:28-38` re-spawns `bun run dev` detached) demonstrates the
+  (hardened in the r19-hotfix round: TCP :3000 probe, PID lockfile) and
+  `scripts/dev-guard.cjs` (refuses a second `next dev`) demonstrate the
   expected shape. For production, adapt the same probe/respawn idea to the
-  §2 start command (and your process manager) — the script as written starts
-  the DEV server and must not be run as-is in production.
+  §2 start command (and your process manager) — these scripts as written are
+  DEV-server tooling and must not be run as-is in production.
 
 ## 7. First-run checklist (new deployment)
 
@@ -125,7 +145,7 @@ Execute in order; do not skip verification steps:
 
 | # | Step | Verify |
 |---|---|---|
-| 1 | Env vars set (§4), Caddy up, app started with §2 command | `curl -fsS localhost:3000/api` → JSON |
+| 1 | Env vars set (§4), Caddy up, app started with §2 command | `curl -fsS localhost:3000/api/health` → `status:"ok"` (or `curl -fsS localhost:3000/api` → JSON for a no-DB ping) |
 | 2 | Create the owner account | `GET /` renders the auth view; sign-up → `POST /api/v1/auth/register` → session established |
 | 3 | Create the first business (onboarding) | Business settings persisted (currency/locale/timezone — `prisma/schema.prisma:43-48`) |
 | 4 | **Verify tenant isolation** | Second account signs up; attempt to open business #1's data (e.g. `GET /api/v1/businesses/<id1>/export`) → must be 403 (`export/route.ts:31-33`); all queries tenant-scoped (`docs/ARCHITECTURE.md:64-77`) |
@@ -171,12 +191,15 @@ Execute in order; do not skip verification steps:
 
 ## 11. Go-live sign-off
 
-- [ ] Build artifacts verified (§1), lint clean
-- [ ] Env vars set from a secrets manager, values never in the repo (§4)
-- [ ] `prisma/migrations/` baseline created and committed (§3) — `db:push` never used against prod
+- [ ] Build artifacts verified (§1) — build passes WITH type-checking; lint clean
+- [ ] Env vars set from a secrets manager, values never in the repo (§4; template: `.env.example`)
+- [ ] ✅ `prisma/migrations/` baseline `0_init` created and committed (§3,
+  `docs/database/prompt19-baseline.md`) — deploys use `db:migrate:deploy`;
+  `db:push` never used against prod (guarded)
 - [ ] Caddy TLS + `NEXTAUTH_URL` origin match (§5)
-- [ ] Health probe wired into watchdog/monitor (§6)
+- [ ] Health probe wired into watchdog/monitor (§6 — `GET /api/health`)
 - [ ] First-run checklist §7 steps 1–6 all green
 - [ ] Backup schedule live and first restore drill passed
-  (`docs/deployment/backup-restore-plan.md`)
+  (`docs/deployment/backup-restore-plan.md` — the file-restore path was
+  drill-verified on a clone in Prompt 19)
 - [ ] Launch-copy checklist reviewed (`docs/marketing/launch-readiness.md` §3)

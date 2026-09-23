@@ -103,3 +103,7 @@ On each request **for an existing user** (single-node deployment, no scheduler �
 | Delivery failure | Logged with masked address; response stays generic 200 (`request/route.ts:121-127`) | Same rule; never reveals account state |
 | Fake delivery | None — console output is loud and explicitly marked | None — "not configured" is a hard 503, never a pretend success |
 | Token in logs | Link visible in dev console by design | Never — no transport logs links; audit/API/DB never hold raw tokens |
+
+## 12. Migration baseline note (Prompt 19)
+
+The token lifecycle above is **unchanged** by the database migration baseline (`0_init`, `docs/database/prompt19-baseline.md`) — TTL (30 minutes), SHA-256 hashing, single-use claim, rate limits and opportunistic cleanup are exactly as documented. The `PasswordResetToken` table is now part of the committed baseline migration (schema identical, zero drift), and database backups therefore contain only token **hashes**, consistent with §3. Future schema changes follow `docs/database/migration-workflow.md`.
