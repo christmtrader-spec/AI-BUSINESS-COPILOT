@@ -1,0 +1,2593 @@
+PROMPT 20 — SUBSCRIPTION, PLANS, ENTITLEMENTS & BUSINESS BILLING FOUNDATION
+
+PROJECT:
+AI Business Copilot
+
+PHASE:
+20 — Subscription Plans + Entitlements + Business-Level Billing Foundation
+
+============================================================
+0. IMPORTANT CURRENT STATE
+============================================================
+
+This is an EXISTING SaaS codebase.
+
+The project already contains substantial functionality including:
+
+- Authentication
+- Password change
+- Password recovery
+- Account deletion
+- Session invalidation
+- Multi-tenant businesses
+- Business membership
+- RBAC
+- Customers
+- Suppliers
+- Products
+- Inventory
+- Sales
+- Expenses
+- Payments
+- Receivables
+- Payables
+- Reports
+- AI Copilot
+- Audit logging
+- Localization
+- RTL/LTR
+- Security controls
+- Database migration discipline
+
+Previous phases:
+
+Prompt 17:
+Production + Monetization Audit
+
+Prompt 18:
+Authentication + Password Recovery + Account Lifecycle
+
+Prompt 19:
+Database Migration Discipline + Schema Baseline
+
+This phase MUST continue from that existing codebase.
+
+Do NOT rebuild the application.
+
+Do NOT replace working architecture without a documented technical reason.
+
+Do NOT modify unrelated business functionality.
+
+============================================================
+1. PRIMARY OBJECTIVE
+============================================================
+
+Build the internal subscription and entitlement foundation required for a commercial SaaS product.
+
+The system must be able to represent:
+
+Business
+    ↓
+Subscription
+    ↓
+Plan
+    ↓
+Entitlements
+    ↓
+Usage / Limits
+
+The goal is NOT to process payments yet.
+
+The goal is to establish the authoritative server-side billing domain.
+
+After this phase, the application should be able to answer:
+
+- Which plan does this business have?
+- Is the subscription active?
+- Is the subscription expired?
+- Is the business in a trial?
+- Which features are allowed?
+- What limits apply?
+- Has a limit been reached?
+- What happens when the subscription becomes past due?
+- What happens after cancellation?
+- What happens when a subscription expires?
+
+============================================================
+2. ABSOLUTE SCOPE BOUNDARY
+============================================================
+
+THIS PHASE MAY IMPLEMENT:
+
+- Plan catalog
+- Subscription model
+- Subscription status
+- Billing period model
+- Trial state
+- Entitlement definitions
+- Plan-to-entitlement mapping
+- Business-to-subscription relationship
+- Server-side entitlement checks
+- Limit checks
+- Feature gates
+- Internal billing service layer
+- Billing audit events
+- Billing admin/read-only inspection
+- Billing-related tests
+
+THIS PHASE MUST NOT IMPLEMENT:
+
+- Payment gateway
+- Checkout
+- Payment collection
+- Bank integration
+- Payment provider SDK
+- Real invoices for SaaS billing
+- Credit card storage
+- Wallets
+- Cryptocurrency payments
+- Coupons
+- Affiliate/referral payments
+- Revenue sharing
+- Tax calculation for SaaS billing
+- Automated refunds
+- External payment webhooks
+- Final public pricing
+- Production payment configuration
+
+Those belong to later phases.
+
+============================================================
+3. BUSINESS-LEVEL BILLING DECISION
+============================================================
+
+Billing must belong to the BUSINESS / TENANT rather than the individual user.
+
+Conceptual model:
+
+User
+   ↓
+Business Membership
+   ↓
+Business
+   ↓
+Subscription
+   ↓
+Plan
+
+Reason:
+
+A business may have multiple members.
+
+Example:
+
+Business:
+"ABC Store"
+
+Members:
+Owner
+Manager
+Staff
+Accountant
+
+The subscription applies to the business, not individually to every employee.
+
+Do NOT attach the primary subscription record directly to User unless a later explicit architectural decision changes this model.
+
+============================================================
+4. DEVELOPMENT RULES
+============================================================
+
+MANDATORY:
+
+1. Continue from the current repository.
+2. Preserve existing functionality.
+3. Do not duplicate billing concepts.
+4. Do not create client-trusted subscription state.
+5. Do not use localStorage as billing authority.
+6. Do not trust browser-supplied plan IDs.
+7. Do not trust browser-supplied entitlement results.
+8. Server state is authoritative.
+9. Billing state must be tenant-scoped.
+10. All sensitive billing mutations require server authorization.
+11. No payment processing in this phase.
+12. All schema changes must use Prisma migrations.
+13. Never use db push for production.
+14. Do not create destructive migrations.
+15. Use precise timestamps.
+16. Use enums where they improve domain integrity.
+17. Do not use JSON for core relational billing relationships when relational modeling is more appropriate.
+18. Keep provider-specific payment details OUT of the core subscription model.
+19. Do not leak billing internals into unrelated business modules.
+20. Keep billing logic behind a service boundary.
+
+============================================================
+5. BILLING DOMAIN MODEL
+============================================================
+
+Design the following conceptual entities.
+
+Plan
+Subscription
+EntitlementDefinition
+PlanEntitlement
+SubscriptionEvent
+
+Optionally:
+
+UsageRecord
+UsageSnapshot
+
+BUT usage metering is primarily Prompt 21.
+
+Do not overbuild usage infrastructure here.
+
+============================================================
+6. PLAN MODEL
+============================================================
+
+A Plan represents a commercial product tier.
+
+Required conceptual fields:
+
+id
+code
+name
+description
+active
+sortOrder
+createdAt
+updatedAt
+
+Potential fields:
+
+isPublic
+metadata
+
+Do not hard-code pricing into the core plan record unless there is a strong reason.
+
+The same plan may eventually have:
+
+Monthly pricing
+Annual pricing
+Different currencies
+Promotional pricing
+
+Those should not force redesign of plan identity.
+
+============================================================
+7. PLAN CODE
+============================================================
+
+Use stable internal codes.
+
+Example:
+
+FREE
+STARTER
+BUSINESS
+PRO
+ENTERPRISE
+
+Codes are machine identifiers.
+
+Names are display labels.
+
+Never use display names for authorization logic.
+
+Example:
+
+GOOD:
+
+plan.code === "PRO"
+
+BAD:
+
+plan.name === "Professional"
+
+============================================================
+8. PLAN MUTABILITY
+============================================================
+
+Plan code must be treated as stable.
+
+Avoid changing internal plan codes after users have subscriptions.
+
+Display names and descriptions can change.
+
+Document:
+
+Plan code = internal immutable identifier.
+
+============================================================
+9. ENTITLEMENT MODEL
+============================================================
+
+Do NOT hard-code every plan restriction throughout application components.
+
+Create a centralized entitlement system.
+
+Concept:
+
+EntitlementDefinition
+        ↓
+PlanEntitlement
+        ↓
+EntitlementService
+        ↓
+Feature Gate
+
+Examples:
+
+CUSTOMERS_MAX
+PRODUCTS_MAX
+TEAM_MEMBERS_MAX
+BUSINESSES_MAX
+AI_REQUESTS_MONTHLY
+AI_MESSAGES_MONTHLY
+EXPORTS_MONTHLY
+FILE_STORAGE_MB
+
+Feature flags may also exist:
+
+ADVANCED_REPORTS
+AI_COPILOT
+CSV_EXPORT
+MULTI_MEMBER_ACCESS
+ADVANCED_ANALYTICS
+
+============================================================
+10. ENTITLEMENT TYPES
+============================================================
+
+Support at least two entitlement types:
+
+LIMIT
+BOOLEAN
+
+Example:
+
+CUSTOMERS_MAX
+type = LIMIT
+value = 1000
+
+ADVANCED_REPORTS
+type = BOOLEAN
+value = true
+
+Do not represent boolean permissions as arbitrary strings.
+
+============================================================
+11. ENTITLEMENT UNITS
+============================================================
+
+For LIMIT entitlements define units.
+
+Examples:
+
+COUNT
+REQUESTS
+MESSAGES
+MEGABYTES
+BUSINESSES
+USERS
+
+Keep the unit explicit.
+
+Example:
+
+AI_REQUESTS_MONTHLY
+type = LIMIT
+unit = REQUESTS
+value = 1000
+
+============================================================
+12. PLAN-ENTITLEMENT RELATIONSHIP
+============================================================
+
+A plan may contain many entitlements.
+
+An entitlement definition may belong to many plans.
+
+Use a proper relational join model.
+
+Conceptual:
+
+Plan
+  ↓
+PlanEntitlement
+  ↓
+EntitlementDefinition
+
+Do not duplicate entitlement definitions for every plan.
+
+============================================================
+13. DEFAULT FREE PLAN
+============================================================
+
+The system must have a deterministic FREE plan.
+
+The Free plan is not a marketing page.
+
+It is a real internal plan.
+
+Every eligible business must have a well-defined entitlement state.
+
+Existing businesses must not suddenly lose access because billing tables were introduced.
+
+============================================================
+14. EXISTING BUSINESS MIGRATION
+============================================================
+
+This is CRITICAL.
+
+When Prompt 20 is installed into the existing database:
+
+Existing businesses already exist.
+
+They must not become unusable.
+
+Create a controlled migration strategy.
+
+Possible approach:
+
+Every existing business receives the FREE plan.
+
+Do NOT randomly assign a paid plan.
+
+Do NOT require payment.
+
+Do NOT leave existing businesses without a subscription if the application assumes one exists.
+
+The migration must be deterministic and auditable.
+
+============================================================
+15. SUBSCRIPTION MODEL
+============================================================
+
+Subscription represents the current commercial state of a business.
+
+Conceptual fields:
+
+id
+businessId
+planId
+status
+billingPeriod
+currentPeriodStart
+currentPeriodEnd
+trialStart
+trialEnd
+cancelAtPeriodEnd
+canceledAt
+createdAt
+updatedAt
+
+Potential fields:
+
+gracePeriodEnd
+endedAt
+
+Use only fields with a clear business purpose.
+
+============================================================
+16. SUBSCRIPTION STATUS
+============================================================
+
+Define a controlled set of states.
+
+Recommended conceptual states:
+
+TRIALING
+ACTIVE
+PAST_DUE
+CANCELED
+EXPIRED
+PAUSED
+
+Use only states actually needed.
+
+Do not create states merely for completeness.
+
+Document the meaning of each status.
+
+============================================================
+17. STATUS SEMANTICS
+============================================================
+
+Document exact behavior.
+
+Example:
+
+TRIALING
+→ temporary valid subscription
+
+ACTIVE
+→ entitled to plan features
+
+PAST_DUE
+→ payment issue state for future payment integrations
+
+CANCELED
+→ subscription has been canceled but may remain active until period end
+
+EXPIRED
+→ no longer entitled to paid plan
+
+PAUSED
+→ temporarily restricted state if needed
+
+Do not make assumptions that payment exists yet.
+
+============================================================
+18. BILLING PERIOD
+============================================================
+
+Define:
+
+MONTHLY
+YEARLY
+
+as internal billing period concepts.
+
+Even though payment does not exist yet, the subscription model should be able to represent period duration.
+
+Do not hard-code exact prices.
+
+============================================================
+19. TRIAL SUPPORT
+============================================================
+
+Support trial state structurally.
+
+Required fields:
+
+trialStart
+trialEnd
+
+Do NOT automatically start trials for all users unless explicitly configured.
+
+The future onboarding phase may choose:
+
+- 7-day trial
+- 14-day trial
+- 30-day trial
+- no trial
+
+For now:
+
+Implement the domain capability.
+
+Do not finalize business policy.
+
+============================================================
+20. SUBSCRIPTION HISTORY
+============================================================
+
+Do not overwrite important subscription history without trace.
+
+Create:
+
+SubscriptionEvent
+
+Possible event types:
+
+CREATED
+PLAN_CHANGED
+TRIAL_STARTED
+TRIAL_ENDED
+CANCELED
+REACTIVATED
+EXPIRED
+PAUSED
+RESUMED
+
+Do not implement payment events yet.
+
+============================================================
+21. SUBSCRIPTION EVENT AUDIT
+============================================================
+
+Every meaningful subscription mutation should create an internal event.
+
+Examples:
+
+FREE → STARTER
+
+STARTER → BUSINESS
+
+BUSINESS → PRO
+
+Cancellation
+
+Reactivation
+
+Trial start
+
+Expiration
+
+Events must be associated with the correct business.
+
+Avoid recording unnecessary sensitive information.
+
+============================================================
+22. BILLING SERVICE BOUNDARY
+============================================================
+
+Create a dedicated billing service layer.
+
+Conceptual API:
+
+getBusinessSubscription(businessId)
+
+getBusinessPlan(businessId)
+
+getEntitlements(businessId)
+
+hasEntitlement(businessId, entitlementCode)
+
+getLimit(businessId, entitlementCode)
+
+assertFeatureAccess(businessId, entitlementCode)
+
+assertWithinLimit(businessId, entitlementCode, currentUsage)
+
+changePlan(...)
+
+cancelSubscription(...)
+
+reactivateSubscription(...)
+
+startTrial(...)
+
+endTrial(...)
+
+The exact implementation may differ.
+
+The purpose is to prevent billing logic from being scattered throughout:
+
+- components
+- API routes
+- server actions
+- random utilities
+
+============================================================
+23. SERVER-SIDE AUTHORITY
+============================================================
+
+This is mandatory.
+
+For example:
+
+Frontend:
+"User is PRO."
+
+must NEVER be trusted.
+
+Instead:
+
+Server:
+authenticated user
+    ↓
+business membership
+    ↓
+business subscription
+    ↓
+plan
+    ↓
+entitlement
+
+Only this chain determines access.
+
+============================================================
+24. CLIENT BILLING STATE
+============================================================
+
+Client-side state may cache billing information for UI.
+
+It must NOT determine authorization.
+
+Examples:
+
+BAD:
+
+if(localStorage.plan === "PRO") allow feature
+
+BAD:
+
+if(clientUser.plan === "PRO") call privileged endpoint
+
+GOOD:
+
+Client requests data.
+
+Server verifies entitlement.
+
+Server allows or rejects.
+
+============================================================
+25. FEATURE GATING
+============================================================
+
+Create reusable server-side feature gate functionality.
+
+Example:
+
+requireEntitlement(
+    businessId,
+    "ADVANCED_REPORTS"
+)
+
+or:
+
+requireLimit(
+    businessId,
+    "CUSTOMERS_MAX",
+    currentCustomerCount
+)
+
+Avoid duplicating this logic manually.
+
+============================================================
+26. UI FEATURE GATING
+============================================================
+
+The UI may hide or disable features for clarity.
+
+However:
+
+UI restrictions are informational only.
+
+Server authorization remains mandatory.
+
+If a feature is hidden in UI but the API is accessible without entitlement:
+
+THIS IS A BUG.
+
+============================================================
+27. LIMIT ENFORCEMENT
+============================================================
+
+Examples:
+
+CUSTOMERS_MAX = 100
+
+Before creating the 101st customer:
+
+Server checks entitlement.
+
+If limit reached:
+
+Return a structured business error.
+
+Example:
+
+ENTITLEMENT_LIMIT_REACHED
+
+Do not return:
+
+500 Internal Server Error
+
+Do not silently delete or overwrite data.
+
+============================================================
+28. LIMIT ERROR MODEL
+============================================================
+
+Create a structured error response.
+
+Conceptual:
+
+code:
+ENTITLEMENT_LIMIT_REACHED
+
+feature:
+CUSTOMERS_MAX
+
+limit:
+100
+
+current:
+100
+
+upgradeAvailable:
+true
+
+Do not expose internal database details.
+
+============================================================
+29. EXISTING BUSINESS FEATURES
+============================================================
+
+Audit current modules:
+
+Customers
+Products
+Team members
+Businesses
+AI
+Exports
+
+Determine where plan limits should be enforced.
+
+Do NOT enforce every conceivable limit in this phase.
+
+Implement high-value foundational gates only.
+
+Recommended initial gates:
+
+CUSTOMERS_MAX
+PRODUCTS_MAX
+TEAM_MEMBERS_MAX
+BUSINESSES_MAX
+ADVANCED_REPORTS
+AI_COPILOT
+CSV_EXPORT
+
+AI usage quantity itself belongs primarily to Prompt 21.
+
+============================================================
+30. BUSINESS COUNT
+============================================================
+
+If the product supports multiple businesses per user:
+
+Business creation must check:
+
+BUSINESSES_MAX
+
+Do not perform this check only on the frontend.
+
+============================================================
+31. TEAM MEMBER LIMIT
+============================================================
+
+When inviting a business member:
+
+Check:
+
+TEAM_MEMBERS_MAX
+
+Do not count pending invites as active members unless this is an explicit documented policy.
+
+Choose one policy and document it.
+
+Recommended:
+
+Active members + accepted memberships determine member limit.
+
+Pending invitation count may have a separate security/abuse cap later.
+
+============================================================
+32. CUSTOMER LIMIT
+============================================================
+
+Customer creation endpoint must enforce:
+
+CUSTOMERS_MAX
+
+Existing customers must remain available after migration.
+
+Do not retroactively delete anything because a business's new plan limit is lower.
+
+============================================================
+33. PRODUCT LIMIT
+============================================================
+
+Product creation endpoint must enforce:
+
+PRODUCTS_MAX
+
+Existing products must remain intact.
+
+Do not deactivate existing products merely because a plan changes.
+
+============================================================
+34. EXPORT FEATURE
+============================================================
+
+If:
+
+CSV_EXPORT = false
+
+server-side CSV export must reject.
+
+If:
+
+CSV_EXPORT = true
+
+export proceeds subject to existing authorization.
+
+Do not rely on UI hiding.
+
+============================================================
+35. ADVANCED REPORTS
+============================================================
+
+Introduce the feature gate structure for advanced reporting.
+
+Do not unnecessarily remove current reports.
+
+If the MVP currently provides existing reports to all businesses:
+
+keep them working.
+
+Only future/advanced report capabilities should be gated if that is the intended plan design.
+
+Do not use billing implementation as a reason to break current functionality.
+
+============================================================
+36. AI COPILOT
+============================================================
+
+Do not immediately restrict AI usage by numeric quotas in this phase.
+
+However, establish:
+
+AI_COPILOT = true/false
+
+and ensure the server-side Copilot entry point can use entitlement checks.
+
+Actual AI usage metering belongs to Prompt 21.
+
+Do not invent token counting here.
+
+============================================================
+37. PLAN CATALOG
+============================================================
+
+Create a seedable internal plan catalog.
+
+Initial plans:
+
+FREE
+STARTER
+BUSINESS
+PRO
+ENTERPRISE
+
+However:
+
+Do not assume final public prices.
+
+Do not expose all commercial details to users yet.
+
+The plan catalog should contain:
+
+- code
+- internal display name
+- description
+- active
+- sort order
+
+Optional future pricing metadata may be reserved, but do not build public checkout logic.
+
+============================================================
+38. PLAN CAPABILITIES
+============================================================
+
+Use safe conceptual defaults.
+
+Example:
+
+FREE
+- low customer limit
+- low product limit
+- small team
+- basic dashboard
+- basic reports
+- AI enabled with future usage limit
+- no advanced exports if desired
+
+STARTER
+- higher limits
+- AI enabled
+- more reporting
+
+BUSINESS
+- larger limits
+- team access
+- advanced reports
+
+PRO
+- high limits
+- advanced AI
+- advanced reporting
+
+ENTERPRISE
+- customizable
+
+These are INTERNAL DEFAULTS.
+
+Do not assume these values are final business pricing decisions.
+
+Make values configurable through database/seed data.
+
+============================================================
+39. NO PRICE COUPLING
+============================================================
+
+Plan identity must not be:
+
+"$9.99"
+"499000"
+"€19"
+
+Plan code is the stable identifier.
+
+Price is a separate future concern.
+
+============================================================
+40. CURRENCY
+============================================================
+
+Do not force a billing currency into Subscription.
+
+Future payment layer may require:
+
+BillingPrice
+Currency
+Amount
+BillingPeriod
+
+But these belong to the pricing/payment domain.
+
+For Prompt 20:
+
+do not implement finalized prices.
+
+============================================================
+41. PLAN CHANGES
+============================================================
+
+Implement the internal state transition mechanism without connecting it to real payments.
+
+Example:
+
+FREE → STARTER
+
+STARTER → BUSINESS
+
+BUSINESS → PRO
+
+All changes must:
+
+- validate target plan
+- verify business access
+- record event
+- update subscription
+- remain transactional
+
+Do not charge money.
+
+============================================================
+42. DOWNGRADE SAFETY
+============================================================
+
+Important:
+
+A business may currently contain:
+
+500 customers
+
+while a downgraded plan allows:
+
+100 customers.
+
+DO NOT delete 400 customers.
+
+DO NOT randomly archive records.
+
+DO NOT corrupt data.
+
+Instead:
+
+- keep existing data
+- block creation beyond the new limit
+- show a clear "over plan limit" state
+- require upgrade or cleanup before further growth
+
+This is called grandfathering existing data.
+
+============================================================
+43. UPGRADE SAFETY
+============================================================
+
+Upgrading plan:
+
+- does not delete data
+- increases entitlement
+- updates subscription
+- records event
+
+No payment is taken in this phase.
+
+============================================================
+44. CANCELLATION SEMANTICS
+============================================================
+
+Because payment is not integrated yet:
+
+Cancellation must be a domain-level state.
+
+Support:
+
+cancelAtPeriodEnd = true
+
+rather than immediately destroying subscription access.
+
+Document exact behavior.
+
+Do not invent refund behavior.
+
+============================================================
+45. REACTIVATION
+============================================================
+
+Allow reactivation only when the subscription state logically supports it.
+
+Do not allow invalid state transitions.
+
+Create a transition validation layer.
+
+Example:
+
+EXPIRED → ACTIVE
+
+should not automatically occur without a future renewal/payment mechanism.
+
+============================================================
+46. STATE MACHINE
+============================================================
+
+Create explicit subscription transition rules.
+
+Example:
+
+TRIALING
+→ ACTIVE
+
+TRIALING
+→ EXPIRED
+
+ACTIVE
+→ CANCELED
+
+ACTIVE
+→ PAST_DUE
+
+CANCELED
+→ EXPIRED
+
+PAUSED
+→ ACTIVE
+
+Do not permit arbitrary transitions from every state to every other state.
+
+Document valid transitions.
+
+============================================================
+47. TRANSACTIONAL OPERATIONS
+============================================================
+
+Operations that modify:
+
+Subscription
++
+SubscriptionEvent
+
+must be transactional.
+
+Do not write one record and then risk failing before the corresponding event is written.
+
+============================================================
+48. IDEMPOTENCY
+============================================================
+
+Future payment webhooks will require idempotency.
+
+Do NOT implement webhooks yet.
+
+However:
+
+Subscription service methods that conceptually represent state changes should avoid accidental duplicate events.
+
+For example:
+
+Calling cancel twice should not create two contradictory cancellation events.
+
+============================================================
+49. BILLING DOMAIN ERRORS
+============================================================
+
+Create structured domain errors for:
+
+INVALID_PLAN
+SUBSCRIPTION_NOT_FOUND
+INVALID_SUBSCRIPTION_STATE
+ENTITLEMENT_NOT_AVAILABLE
+ENTITLEMENT_LIMIT_REACHED
+BUSINESS_NOT_ELIGIBLE
+
+Do not use generic:
+
+Error("something went wrong")
+
+for domain failures.
+
+============================================================
+50. ADMIN / DEBUG VISIBILITY
+============================================================
+
+Provide a safe internal/server-side way to inspect:
+
+Business
+Current subscription
+Plan
+Entitlements
+Subscription events
+
+This does NOT need to be a polished public admin panel.
+
+Do not expose another business's billing information to ordinary users.
+
+============================================================
+51. BUSINESS SETTINGS
+============================================================
+
+If appropriate, add a read-only subscription summary in Business Settings.
+
+It may show:
+
+Current plan
+Subscription status
+Current period
+Trial state
+Available features
+
+Do not show payment forms.
+
+Do not implement checkout.
+
+============================================================
+52. ACCOUNTING SEPARATION
+============================================================
+
+Do not mix SaaS subscription billing with the user's internal business accounting.
+
+This distinction is extremely important.
+
+Example:
+
+Business ABC sells products.
+
+AI Business Copilot charges Business ABC for SaaS subscription.
+
+The SaaS subscription is PLATFORM BILLING.
+
+Customer product sales are TENANT BUSINESS DATA.
+
+Do not store platform subscription payments as ordinary business `Payment` records.
+
+Future payment architecture must remain separate.
+
+============================================================
+53. DATABASE MODEL SEPARATION
+============================================================
+
+Do not reuse:
+
+Sale
+Expense
+Payment
+
+for SaaS billing.
+
+Create dedicated billing tables.
+
+============================================================
+54. BILLING SECURITY
+============================================================
+
+Subscription changes are sensitive.
+
+Require:
+
+- authenticated user
+- active business membership
+- appropriate role
+
+Who may change plans?
+
+Recommended:
+
+OWNER
+ADMIN
+
+Do not allow:
+
+VIEWER
+STAFF
+
+to change subscription state.
+
+Do not automatically allow ACCOUNTANT unless explicitly defined.
+
+Document the policy.
+
+============================================================
+55. PLAN READ ACCESS
+============================================================
+
+Ordinary business members may be allowed to read:
+
+current plan
+available features
+current subscription status
+
+But:
+
+subscription mutation
+
+must require elevated role.
+
+============================================================
+56. CROSS-TENANT BILLING SECURITY
+============================================================
+
+Test:
+
+Business A cannot inspect Business B subscription.
+
+Business A cannot change Business B plan.
+
+Business A cannot cancel Business B subscription.
+
+Business A cannot access Business B subscription events.
+
+Business A cannot access Business B entitlements.
+
+This is mandatory.
+
+============================================================
+57. BILLING API
+============================================================
+
+Use the existing API conventions.
+
+Possible endpoints:
+
+GET
+/api/v1/billing/subscription
+
+GET
+/api/v1/billing/plan
+
+GET
+/api/v1/billing/entitlements
+
+POST
+/api/v1/billing/change-plan
+
+POST
+/api/v1/billing/cancel
+
+POST
+/api/v1/billing/reactivate
+
+Exact paths may differ if existing conventions require it.
+
+Do not create duplicate routing systems.
+
+============================================================
+58. SERVER ACTION SUPPORT
+============================================================
+
+If this project primarily uses server actions rather than REST APIs:
+
+follow the existing architecture.
+
+Do not introduce REST purely for stylistic reasons.
+
+Billing domain logic must still be shared underneath.
+
+============================================================
+59. CLIENT HOOKS
+============================================================
+
+Create reusable client-side hooks only where appropriate.
+
+Examples:
+
+useSubscription()
+useEntitlements()
+
+But these are UI convenience layers.
+
+They are NOT authorization.
+
+============================================================
+60. CACHE INVALIDATION
+============================================================
+
+After subscription change:
+
+invalidate relevant cached state.
+
+Examples:
+
+subscription
+entitlements
+business settings
+
+Do not rely on page reloads if the project already has a client-cache strategy.
+
+============================================================
+61. AUDIT LOGGING
+============================================================
+
+Add billing-related audit events.
+
+Examples:
+
+billing.subscription_created
+billing.plan_changed
+billing.subscription_canceled
+billing.subscription_reactivated
+billing.trial_started
+billing.trial_ended
+
+Do not log:
+
+- payment card data
+- future payment tokens
+- provider secrets
+
+because those do not exist yet.
+
+============================================================
+62. SUBSCRIPTION EVENTS
+============================================================
+
+Keep business subscription history available even before payments exist.
+
+Every meaningful state transition should be traceable.
+
+============================================================
+63. SEEDING
+============================================================
+
+Create a safe idempotent plan seed.
+
+Running the seed multiple times must not duplicate plans.
+
+Do not delete plans during seeding.
+
+Do not overwrite existing production subscription data.
+
+Seed only missing catalog records.
+
+============================================================
+64. EXISTING DATA MIGRATION
+============================================================
+
+Write a one-time migration strategy for existing businesses.
+
+Every existing business must receive:
+
+FREE
+
+unless a deterministic existing billing state already exists.
+
+No existing business should remain without a valid subscription relationship if the application requires one.
+
+The operation must be:
+
+- idempotent
+- transactional where possible
+- auditable
+- safe to rerun
+
+============================================================
+65. EXISTING USER EXPERIENCE
+============================================================
+
+Current users should not see:
+
+"Your subscription has expired"
+
+immediately after deployment.
+
+Existing businesses should remain operational under the FREE plan unless another documented state is intentionally assigned.
+
+This migration must be backwards-compatible.
+
+============================================================
+66. LIMIT ENFORCEMENT STRATEGY
+============================================================
+
+Create a reusable server helper:
+
+getEntitlementContext(businessId)
+
+Conceptually returns:
+
+{
+  plan,
+  subscription,
+  entitlements
+}
+
+Then:
+
+assertFeatureEnabled(...)
+assertWithinLimit(...)
+
+Avoid querying Plan + Subscription + Entitlements separately in every API handler.
+
+Optimize only where justified.
+
+============================================================
+67. CACHE STRATEGY
+============================================================
+
+Do not introduce Redis just for billing.
+
+For initial implementation:
+
+database-backed state
++
+application-level short-lived cache if the existing architecture supports it
+
+is sufficient.
+
+Do not create distributed infrastructure prematurely.
+
+============================================================
+68. FAILURE MODE
+============================================================
+
+If billing lookup fails:
+
+DO NOT silently grant unlimited PRO access.
+
+Choose a safe policy.
+
+For high-risk premium features:
+
+fail closed.
+
+For general core app availability:
+
+do not unnecessarily take the entire application offline.
+
+Document the exact policy.
+
+============================================================
+69. FREE PLAN SAFETY
+============================================================
+
+FREE must be a valid deterministic fallback ONLY where business policy explicitly allows it.
+
+Do not use:
+
+"if billing lookup fails → FREE"
+
+without distinguishing between:
+
+- actual FREE subscription
+- billing data failure
+
+Those are different states.
+
+============================================================
+70. TIME HANDLING
+============================================================
+
+Use UTC / timezone-safe timestamps.
+
+Do not compare dates using locale-formatted strings.
+
+Trial end and subscription period boundaries must be deterministic.
+
+Test:
+
+- end-of-day
+- month-end
+- year-end
+- leap year
+
+where relevant.
+
+============================================================
+71. BILLING PERIOD BOUNDARY
+============================================================
+
+Implement period fields so future billing systems can safely determine:
+
+currentPeriodStart
+currentPeriodEnd
+
+Do not calculate renewal dates from browser time.
+
+============================================================
+72. PLAN LIMIT DEFINITIONS
+============================================================
+
+Centralize entitlement codes.
+
+Example:
+
+CUSTOMERS_MAX
+PRODUCTS_MAX
+TEAM_MEMBERS_MAX
+BUSINESSES_MAX
+AI_COPILOT
+ADVANCED_REPORTS
+CSV_EXPORT
+
+Codes must be constants/enums where appropriate.
+
+Do not scatter raw string literals throughout the codebase.
+
+============================================================
+73. DOCUMENT ENTITLEMENTS
+============================================================
+
+Create:
+
+docs/billing/entitlements.md
+
+Document:
+
+code
+type
+unit
+meaning
+current default
+enforcement point
+future metering source
+
+Example:
+
+CUSTOMERS_MAX
+LIMIT
+COUNT
+Maximum active customers
+Enforced during customer creation
+
+============================================================
+74. DOCUMENT SUBSCRIPTION STATE
+============================================================
+
+Create:
+
+docs/billing/subscription-lifecycle.md
+
+Document every state and transition.
+
+Include:
+
+TRIALING
+ACTIVE
+PAST_DUE
+CANCELED
+EXPIRED
+PAUSED
+
+only if implemented.
+
+============================================================
+75. DOCUMENT BILLING BOUNDARY
+============================================================
+
+Create:
+
+docs/billing/platform-billing-vs-business-finance.md
+
+Clearly distinguish:
+
+Platform Billing
+vs
+Tenant Business Finance
+
+This prevents future architectural corruption.
+
+============================================================
+76. DOCUMENT PLAN CATALOG
+============================================================
+
+Create:
+
+docs/billing/plan-catalog.md
+
+For each internal plan:
+
+FREE
+STARTER
+BUSINESS
+PRO
+ENTERPRISE
+
+document:
+
+- code
+- purpose
+- intended customer
+- entitlement profile
+
+Do NOT publish final pricing.
+
+Mark prices:
+
+NOT DEFINED YET
+
+============================================================
+77. DATABASE MIGRATION
+============================================================
+
+Create proper Prisma migration(s).
+
+Do NOT use:
+
+db push
+
+Do NOT use:
+
+--accept-data-loss
+
+Migration must be additive and safe.
+
+============================================================
+78. DATABASE INDEXING
+============================================================
+
+Add appropriate indexes for:
+
+Subscription.businessId
+Subscription.planId
+Subscription.status
+Subscription.currentPeriodEnd
+
+Plan.code
+Plan.active
+
+EntitlementDefinition.code
+
+PlanEntitlement.planId
+PlanEntitlement.entitlementId
+
+SubscriptionEvent.businessId
+SubscriptionEvent.subscriptionId
+SubscriptionEvent.createdAt
+
+Review query patterns before choosing exact indexes.
+
+============================================================
+79. UNIQUE CONSTRAINTS
+============================================================
+
+A business should not accidentally have multiple simultaneously active primary subscriptions unless the architecture explicitly supports it.
+
+Prefer a database-level strategy where feasible.
+
+At minimum implement service-level protection.
+
+If a unique constraint can safely enforce:
+
+one current subscription per business
+
+use it.
+
+If historical subscriptions are needed later, model them carefully.
+
+============================================================
+80. PLAN HISTORY
+============================================================
+
+Do not delete a Plan that has historical references.
+
+Prefer:
+
+active = false
+
+for retired plan catalog entries.
+
+============================================================
+81. SUBSCRIPTION HISTORY
+============================================================
+
+Do not delete Subscription records merely because they ended.
+
+Historical state is important for:
+
+- support
+- analytics
+- billing reconciliation
+- customer history
+
+============================================================
+82. NO PAYMENT DEPENDENCY
+============================================================
+
+The subscription service must work without a payment provider.
+
+This is critical.
+
+For Prompt 20:
+
+A developer/test/admin mechanism may create or change internal subscription state.
+
+But it must be clearly separated from future payment integration.
+
+DO NOT pretend a plan change means money was paid.
+
+============================================================
+83. PAYMENT TERMINOLOGY
+============================================================
+
+Do not label:
+
+"Plan changed"
+
+as:
+
+"Payment successful"
+
+There is no payment yet.
+
+Do not create fake transaction records.
+
+============================================================
+84. FUTURE PAYMENT COMPATIBILITY
+============================================================
+
+Design subscription identity so future payment providers can reference:
+
+subscriptionId
+
+and businessId.
+
+Do not yet add provider-specific payment IDs unless there is a generic nullable reference model clearly justified.
+
+Prefer adding provider mapping later.
+
+============================================================
+85. NO SECRET STORAGE
+============================================================
+
+Do not introduce:
+
+API keys
+payment secrets
+webhook signing secrets
+
+in this phase.
+
+============================================================
+86. TESTING — UNIT
+============================================================
+
+Add unit tests for:
+
+- entitlement resolution
+- boolean entitlement
+- numeric entitlement
+- plan lookup
+- subscription status transitions
+- invalid transitions
+- limit enforcement
+- feature enforcement
+- downgrade behavior
+- upgrade behavior
+
+============================================================
+87. TESTING — DATABASE
+============================================================
+
+Test:
+
+- unique plan codes
+- valid subscription references
+- valid business references
+- entitlement references
+- subscription event references
+- existing business migration
+- idempotent seeding
+
+============================================================
+88. TESTING — SECURITY
+============================================================
+
+Test:
+
+1. User cannot read another business's subscription.
+2. User cannot modify another business's subscription.
+3. Staff cannot change subscription.
+4. Viewer cannot change subscription.
+5. Owner can change subscription.
+6. Admin can change subscription if policy allows.
+7. Client cannot forge PRO access.
+8. Client cannot modify entitlement result.
+9. localStorage cannot grant access.
+10. API rejects unauthorized premium operations.
+11. Existing tenant isolation remains intact.
+
+============================================================
+89. TESTING — DOWNGRADE
+============================================================
+
+Create test:
+
+Business has:
+
+500 customers
+
+Plan changes to one allowing:
+
+100 customers
+
+Expected:
+
+- 500 existing customers remain
+- new customer creation beyond limit is rejected
+- no automatic deletion
+- no data corruption
+- UI can indicate the business is over limit
+
+============================================================
+90. TESTING — UPGRADE
+============================================================
+
+Expected:
+
+FREE
+→ STARTER
+
+increases relevant limits.
+
+Existing data remains unchanged.
+
+============================================================
+91. TESTING — CANCELLATION
+============================================================
+
+Cancellation:
+
+- records cancellation
+- records event
+- preserves data
+- does not immediately erase subscription
+- follows cancelAtPeriodEnd semantics if selected
+
+============================================================
+92. TESTING — TENANT ISOLATION
+============================================================
+
+Create at least two businesses.
+
+Business A:
+subscription PRO
+
+Business B:
+subscription FREE
+
+Verify:
+
+Business A cannot inspect B's subscription.
+
+Business B cannot inspect A's subscription.
+
+Business B cannot claim PRO through client manipulation.
+
+============================================================
+93. TESTING — FAILURE MODES
+============================================================
+
+Test behavior when:
+
+- plan does not exist
+- subscription missing
+- entitlement missing
+- database query fails
+- malformed entitlement code provided
+- invalid status transition requested
+
+Do not fail into unlimited access.
+
+============================================================
+94. ACCESSIBILITY
+============================================================
+
+If a billing summary is added to UI:
+
+ensure:
+
+- accessible labels
+- keyboard navigation
+- visible focus
+- clear states
+- RTL support
+- mobile support
+
+Do not create payment UI yet.
+
+============================================================
+95. LOCALIZATION
+============================================================
+
+Add all new strings to:
+
+English
+Persian
+
+No hard-coded billing copy.
+
+At minimum support:
+
+Plan
+Subscription
+Active
+Trial
+Canceled
+Expired
+Upgrade
+Current plan
+Feature unavailable
+Limit reached
+
+============================================================
+96. UI SCOPE
+============================================================
+
+Implement only a minimal billing summary.
+
+Possible:
+
+Settings
+→ Subscription
+
+Display:
+
+Current plan
+Subscription status
+Current period
+Trial if applicable
+Feature summary
+
+Do NOT build:
+
+checkout
+payment form
+credit-card form
+bank form
+crypto payment form
+
+============================================================
+97. ADMIN INTERNAL INSPECTION
+============================================================
+
+If the application already has an admin architecture:
+
+Add a READ-ONLY billing inspection view if safe.
+
+If no admin architecture exists:
+
+Do NOT create a giant admin system.
+
+Use tests/services to verify billing state.
+
+============================================================
+98. API SECURITY
+============================================================
+
+Every billing API must:
+
+- authenticate
+- resolve business from server-side context
+- verify membership
+- enforce role
+- validate input
+- authorize requested plan/action
+- log sensitive mutations
+- return structured errors
+
+Never accept arbitrary:
+
+businessId
+
+from browser and trust it without membership validation.
+
+============================================================
+99. BUSINESS RESOLUTION
+============================================================
+
+Follow the existing business context mechanism.
+
+Do not create a second tenant resolver.
+
+Reuse existing:
+
+- getCurrentBusiness()
+- getBusinessContext()
+- membership resolver
+
+or whatever the existing code uses.
+
+============================================================
+100. ROLE POLICY
+============================================================
+
+Default subscription mutation policy:
+
+OWNER:
+ALLOW
+
+ADMIN:
+ALLOW
+
+ACCOUNTANT:
+DENY unless existing business policy explicitly permits
+
+MANAGER:
+DENY
+
+STAFF:
+DENY
+
+VIEWER:
+DENY
+
+Document this.
+
+Do not expose privileged controls merely because a user can open the Settings page.
+
+============================================================
+101. BILLING EVENT AUTHORIZATION
+============================================================
+
+Only authorized service operations may create subscription mutation events.
+
+Do not allow client code to create arbitrary billing events.
+
+============================================================
+102. AUDIT VS SUBSCRIPTION EVENT
+============================================================
+
+Keep these concepts distinct:
+
+AuditLog:
+security/operational trace
+
+SubscriptionEvent:
+business billing lifecycle history
+
+A subscription change may create both.
+
+Do not use one to replace the other.
+
+============================================================
+103. IDEMPOTENT SEED
+============================================================
+
+Plan seed must be safe to run repeatedly.
+
+Expected:
+
+First run:
+creates missing plans
+
+Second run:
+does not duplicate
+
+Third run:
+same result
+
+Do not wipe plans.
+
+============================================================
+104. MIGRATION BACKWARD COMPATIBILITY
+============================================================
+
+Existing application must remain usable during migration.
+
+Existing businesses should receive a valid free subscription.
+
+Existing customers, products, sales, expenses, and payments must not change.
+
+============================================================
+105. PRODUCT LIMIT POLICY
+============================================================
+
+Use ACTIVE RECORD counts where appropriate.
+
+Do not count deleted/deactivated records unless business rules specify otherwise.
+
+Document exactly what counts toward:
+
+CUSTOMERS_MAX
+PRODUCTS_MAX
+TEAM_MEMBERS_MAX
+BUSINESSES_MAX
+
+============================================================
+106. SOFT-DELETED RECORDS
+============================================================
+
+If the existing system has archived/deleted entities:
+
+verify whether those records count toward plan limits.
+
+Do not guess.
+
+Follow existing domain semantics.
+
+Document the policy.
+
+============================================================
+107. BUSINESS LIMIT
+============================================================
+
+If a User creates multiple businesses:
+
+BUSINESSES_MAX must be calculated from businesses that the user owns or is permitted to create.
+
+Do not count businesses where the user is merely staff unless the product explicitly defines that policy.
+
+Document ownership semantics.
+
+============================================================
+108. TEAM LIMIT
+============================================================
+
+Define whether:
+
+Owner counts as a member.
+
+Recommended:
+
+Yes.
+
+Document:
+
+TEAM_MEMBERS_MAX includes the owner.
+
+============================================================
+109. FEATURE GATE TEST HELPER
+============================================================
+
+Create reusable testing helpers for:
+
+assertEntitled()
+assertNotEntitled()
+assertWithinLimit()
+assertLimitReached()
+
+Avoid duplicating complicated setup in every test.
+
+============================================================
+110. NO CLIENT PLAN IN AUTH SESSION
+============================================================
+
+Do not put the full subscription/entitlement catalog into JWT/session unless there is a justified reason.
+
+Subscription state can change independently.
+
+The authoritative source must remain server-side.
+
+============================================================
+111. CACHE INVALIDATION SAFETY
+============================================================
+
+Do not allow stale premium access after downgrade indefinitely.
+
+After billing changes:
+
+invalidate relevant cached subscription state.
+
+For highly sensitive authorization:
+
+perform fresh server verification where appropriate.
+
+============================================================
+112. RACE CONDITION SAFETY
+============================================================
+
+Prevent simultaneous requests from bypassing limits.
+
+Example:
+
+Two concurrent requests create customers when limit = 100 and current = 99.
+
+Both must not succeed and create 101 customers.
+
+Implement appropriate transaction/concurrency protection for high-value limits where feasible.
+
+Do not claim complete distributed locking if the current architecture does not provide it.
+
+Document limitations.
+
+============================================================
+113. BILLING DATA PRIVACY
+============================================================
+
+Subscription data is business-sensitive.
+
+Do not expose it publicly.
+
+Do not include unnecessary subscription details in:
+
+- logs
+- client telemetry
+- public URLs
+
+============================================================
+114. DOCUMENTATION
+============================================================
+
+Create/update:
+
+docs/billing/billing-architecture.md
+docs/billing/plan-catalog.md
+docs/billing/entitlements.md
+docs/billing/subscription-lifecycle.md
+docs/billing/platform-billing-vs-business-finance.md
+
+Documentation must match the actual code.
+
+Do not document planned functionality as implemented.
+
+============================================================
+115. WORKLOG
+============================================================
+
+Add Prompt 20 to worklog.md.
+
+Include:
+
+- objective
+- schema changes
+- subscription architecture
+- entitlement architecture
+- seed changes
+- feature gates
+- tests
+- migration
+- known limitations
+- future payment dependency
+
+============================================================
+116. REQUIRED MIGRATION
+============================================================
+
+Create a Prisma migration for:
+
+- Plan
+- EntitlementDefinition
+- PlanEntitlement
+- Subscription
+- SubscriptionEvent
+- any required supporting fields
+
+Use the existing migration workflow.
+
+DO NOT use:
+
+prisma db push
+
+DO NOT use:
+
+--accept-data-loss
+
+============================================================
+117. MIGRATION SAFETY
+============================================================
+
+Migration must be additive.
+
+Do not delete:
+
+customers
+products
+sales
+expenses
+payments
+businesses
+users
+
+Do not alter existing financial amounts.
+
+============================================================
+118. SEED MIGRATION SAFETY
+============================================================
+
+Existing business assignment to FREE must be safe and deterministic.
+
+Do not rely on application startup.
+
+Prefer an explicit one-time data migration or carefully controlled idempotent migration mechanism.
+
+Document the exact behavior.
+
+============================================================
+119. PRODUCTION DATA SAFETY
+============================================================
+
+Before applying migration:
+
+existing deployment policy must already require:
+
+backup
+→ migration
+→ verification
+
+Do not introduce automatic destructive schema operations.
+
+============================================================
+120. FINAL VALIDATION
+============================================================
+
+Run:
+
+- lint
+- TypeScript
+- build
+- i18n audit
+- existing security tests
+- existing auth tests
+- database migration validation
+- billing unit tests
+- billing integration tests
+- tenant isolation tests
+
+Do not claim success for tests that were not actually run.
+
+============================================================
+121. REQUIRED FINAL REPORT
+============================================================
+
+Return:
+
+1. Executive summary
+2. Existing architecture reused
+3. Billing database models
+4. Subscription status design
+5. Plan catalog
+6. Entitlement catalog
+7. Existing business migration strategy
+8. Server-side authorization
+9. Feature gates added
+10. Limit enforcement added
+11. Billing events
+12. API endpoints or server actions
+13. UI changes
+14. Localization
+15. Database migration
+16. Seed strategy
+17. Tests added
+18. Tests executed
+19. Tests passed
+20. Tests failed
+21. Files created
+22. Files modified
+23. Known limitations
+24. Explicit confirmation that NO payment processing was implemented
+
+============================================================
+122. ACCEPTANCE CRITERIA
+============================================================
+
+Prompt 20 is complete only when:
+
+[ ] Billing domain is isolated from tenant business finance
+
+[ ] Subscription belongs to Business
+
+[ ] Plan catalog exists
+
+[ ] Stable internal plan codes exist
+
+[ ] FREE plan exists
+
+[ ] STARTER plan exists
+
+[ ] BUSINESS plan exists
+
+[ ] PRO plan exists
+
+[ ] ENTERPRISE plan exists
+
+[ ] Entitlement definitions exist
+
+[ ] Plan-entitlement mapping exists
+
+[ ] Subscription model exists
+
+[ ] Subscription status is explicit
+
+[ ] Subscription lifecycle is documented
+
+[ ] Subscription events exist
+
+[ ] Business-level subscription resolution exists
+
+[ ] Server-side entitlement service exists
+
+[ ] Client state cannot authorize premium access
+
+[ ] Customer limit enforcement exists
+
+[ ] Product limit enforcement exists
+
+[ ] Team member limit enforcement exists
+
+[ ] Business limit enforcement exists if multi-business creation exists
+
+[ ] Feature gates exist for selected premium features
+
+[ ] Existing businesses are safely assigned FREE
+
+[ ] Existing data remains intact
+
+[ ] Downgrade does not delete existing data
+
+[ ] Upgrade does not delete existing data
+
+[ ] Subscription mutation requires appropriate role
+
+[ ] Tenant isolation tests pass
+
+[ ] Billing security tests pass
+
+[ ] Invalid state transitions are blocked
+
+[ ] Subscription changes are transactional
+
+[ ] Billing events are auditable
+
+[ ] Plan seed is idempotent
+
+[ ] All schema changes use Prisma migrations
+
+[ ] No db push used for migration
+
+[ ] No payment gateway implemented
+
+[ ] No fake payment records created
+
+[ ] No fake payment success status created
+
+[ ] Localization complete
+
+[ ] Documentation complete
+
+[ ] Lint passes
+
+[ ] TypeScript passes
+
+[ ] Build passes
+
+[ ] Relevant tests pass
+
+============================================================
+123. STOP CONDITION
+============================================================
+
+STOP after Prompt 20.
+
+DO NOT continue automatically.
+
+DO NOT implement:
+
+- payment gateways
+- checkout
+- pricing UI
+- real payments
+- webhooks
+- payment refunds
+- payment reconciliation
+- AI usage metering
+
+Those are future phases.
+
+Wait for the next phase instruction.

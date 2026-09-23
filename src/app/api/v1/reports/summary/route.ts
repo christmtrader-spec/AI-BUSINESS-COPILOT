@@ -8,10 +8,16 @@
  * grounding pipeline (single source of truth).
  *
  * Permission: data:read (all roles).
+ * Billing (§35): when the plan carries ADVANCED_REPORTS, the response
+ * additionally includes the deterministic `advanced` insights block;
+ * the server OMITS it otherwise — UI hiding is never the enforcement (§26).
+ * Existing basic reports remain available to EVERY plan (§35).
  */
 import { NextRequest } from "next/server";
 import { ok, route } from "@/lib/api-helpers";
 import { getAuthContext, requirePermission } from "@/lib/tenant";
+import { hasEntitlement } from "@/lib/billing";
+import { buildAdvancedInsights } from "@/lib/reports-advanced";
 import { buildReportSummary, normalizeReportDays } from "@/lib/reports";
 
 export const dynamic = "force-dynamic";
@@ -23,5 +29,14 @@ export const GET = route(async (req: NextRequest) => {
   const url = new URL(req.url);
   const days = normalizeReportDays(url.searchParams.get("days"));
 
-  return ok(await buildReportSummary(ctx.businessId, days));
+  const summary = await buildReportSummary(ctx.businessId, days);
+
+  // Billing gate (§35/§26): the advanced block exists in the payload ONLY
+  // when the plan entitles it — fresh server-side check (§111).
+  const advancedEntitled = await hasEntitlement(ctx.businessId, "ADVANCED_REPORTS");
+  if (!advancedEntitled) {
+    return ok({ ...summary, advancedAvailable: false });
+  }
+  const advanced = await buildAdvancedInsights(ctx.businessId, days);
+  return ok({ ...summary, advancedAvailable: true, advanced });
 });

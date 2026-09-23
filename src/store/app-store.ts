@@ -20,6 +20,7 @@ export type AppView =
   | { kind: "audit" }
   | { kind: "settings:business" }
   | { kind: "settings:members" }
+  | { kind: "settings:billing" }
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
@@ -84,6 +85,8 @@ export function viewToHash(view: AppView): string | null {
       return "#/settings";
     case "settings:members":
       return "#/settings/members";
+    case "settings:billing":
+      return "#/settings/billing";
     case "profile":
       return "#/profile";
     case "module": {
@@ -117,6 +120,7 @@ export function hashToView(hash: string): AppView {
   if (path === "audit") return { kind: "audit" };
   if (path === "settings") return { kind: "settings:business" };
   if (path === "settings/members") return { kind: "settings:members" };
+  if (path === "settings/billing") return { kind: "settings:billing" };
   if (path === "profile") return { kind: "profile" };
   if (path.startsWith("join/")) {
     const token = path.slice("join/".length);

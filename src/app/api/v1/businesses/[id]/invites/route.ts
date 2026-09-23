@@ -17,6 +17,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { ROLES, ROLE_RANK } from "@/lib/rbac";
+import { assertWithinLimitIn, getEntitlementContextTx } from "@/lib/billing";
 
 export const dynamic = "force-dynamic";
 
@@ -106,33 +107,43 @@ export const POST = route(async (req: NextRequest, { params }: RouteParams) => {
   const token = randomBytes(36).toString("base64url"); // 48 chars, opaque
   const expiresAt = new Date(Date.now() + input.expiresInDays * 24 * 60 * 60 * 1000);
 
-  const invite = await db.$transaction(async (tx) => {
-    const created = await tx.businessInvite.create({
-      data: {
-        businessId: ctx.businessId,
-        token,
-        role: input.role,
-        createdById: ctx.userId,
-        expiresAt,
-      },
-    });
+  const invite = await db.$transaction(
+    async (tx) => {
+      // Billing gate (§31): an accepted invite becomes an active member, so
+      // minting checks TEAM_MEMBERS_MAX against ACTIVE members (owner
+      // included; pending invites do NOT count — documented policy).
+      const bctx = await getEntitlementContextTx(tx, ctx.businessId);
+      const usage = await tx.businessMember.count({ where: { businessId: ctx.businessId } });
+      assertWithinLimitIn(bctx, "TEAM_MEMBERS_MAX", usage);
 
-    await audit(
-      {
-        businessId: ctx.businessId,
-        actorId: ctx.userId,
-        action: "invite.create",
-        entityType: "BusinessInvite",
-        entityId: created.id,
-        after: { role: input.role, expiresInDays: input.expiresInDays },
-        ip: req.headers.get("x-forwarded-for"),
-        userAgent: req.headers.get("user-agent"),
-      },
-      tx,
-    );
+      const created = await tx.businessInvite.create({
+        data: {
+          businessId: ctx.businessId,
+          token,
+          role: input.role,
+          createdById: ctx.userId,
+          expiresAt,
+        },
+      });
 
-    return created;
-  });
+      await audit(
+        {
+          businessId: ctx.businessId,
+          actorId: ctx.userId,
+          action: "invite.create",
+          entityType: "BusinessInvite",
+          entityId: created.id,
+          after: { role: input.role, expiresInDays: input.expiresInDays },
+          ip: req.headers.get("x-forwarded-for"),
+          userAgent: req.headers.get("user-agent"),
+        },
+        tx,
+      );
+
+      return created;
+    },
+    { isolationLevel: "Serializable" },
+  );
 
   return ok(
     {

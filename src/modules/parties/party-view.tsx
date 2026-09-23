@@ -29,6 +29,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { DataTable, Ltr } from "@/components/shared/data-table";
 import { FormDialog, Pagination, SearchInput } from "@/components/shared/table-kit";
+import { PlanLimitBanner } from "../billing/plan-limit-banner";
 import type { BusinessSummary } from "../shell/types";
 
 export type Party = {
@@ -193,6 +194,10 @@ export function PartyView({
           </>
         }
       />
+
+      {/* Prompt 20: informational plan-limit banner (server enforces the
+          same limit on create — this only makes the boundary visible). */}
+      {kind === "customer" ? <PlanLimitBanner code="CUSTOMERS_MAX" /> : null}
 
       <Card>
         <CardContent className="pt-6">

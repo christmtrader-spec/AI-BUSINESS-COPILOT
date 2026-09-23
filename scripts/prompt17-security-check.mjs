@@ -253,7 +253,16 @@ let customerA_id = null;
     method: "POST",
     body: { name: "Audit Biz B2", currencyCode: "USD" },
   });
-  check("member business-create still allowed (own scope) — sanity", rmOwner.status === 201 || rmOwner.status === 429, `got ${rmOwner.status}`);
+  // Prompt 20: business creation is now plan-limited (BUSINESSES_MAX).
+  // ownerB already owns one business on the FREE plan (limit 1), so a second
+  // creation correctly returns 422 ENTITLEMENT_LIMIT_REACHED — an expected,
+  // intentional behavior change from billing foundation. 201 (upgraded) or
+  // 429 (rate limiter) remain acceptable.
+  const limitOk =
+    rmOwner.status === 201 ||
+    rmOwner.status === 429 ||
+    (rmOwner.status === 422 && rmOwner.json?.error?.code === "ENTITLEMENT_LIMIT_REACHED");
+  check("member business-create still allowed (own scope) — sanity", limitOk, `got ${rmOwner.status} ${rmOwner.text?.slice(0, 120)}`);
 }
 
 /* -- 5. CSV formula-injection guard ----------------------------------------- */

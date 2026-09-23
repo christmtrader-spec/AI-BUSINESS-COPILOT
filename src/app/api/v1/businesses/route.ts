@@ -1,6 +1,13 @@
 /**
  * GET  /api/v1/businesses — businesses the caller belongs to (with role).
  * POST /api/v1/businesses — create a business; caller becomes OWNER (A01).
+ *
+ * Prompt 20: creation is gated by BUSINESSES_MAX (§30/§107) — counted as
+ * businesses the user OWNS (ownerId = user); staff memberships never
+ * count. The gate + count + create + the business's own FREE subscription
+ * all happen inside ONE serializable transaction, so every business is
+ * born with a valid subscription (§13: no business is ever left without
+ * a well-defined entitlement state).
  */
 import { NextRequest } from "next/server";
 import { z } from "zod";
@@ -11,6 +18,7 @@ import { ApiError, ok, parseBody, route } from "@/lib/api-helpers";
 import { audit } from "@/lib/audit";
 import { findCurrency } from "@/lib/currencies";
 import { rateLimit } from "@/lib/rate-limit";
+import { assertWithinBusinessesLimitTx, ensureSubscription } from "@/lib/billing";
 
 export const dynamic = "force-dynamic";
 
@@ -90,37 +98,48 @@ export const POST = route(async (req: NextRequest) => {
     throw new ApiError(422, "INVALID_CURRENCY", "Unsupported currency code.");
   }
 
-  const business = await db.$transaction(async (tx) => {
-    const created = await tx.business.create({
-      data: {
-        name: input.name,
-        slug: slugify(input.name),
-        currencyCode: currency.code,
-        currencySymbol: input.currencySymbol ?? currency.symbol,
-        decimalPrecision: input.decimalPrecision ?? currency.precision,
-        locale: input.locale,
-        timezone: input.timezone,
-        ownerId: userId,
-        members: {
-          create: { userId, role: "OWNER" },
+  const business = await db.$transaction(
+    async (tx) => {
+      // Billing gate (§30/§107): businesses the user OWNS vs the effective
+      // BUSINESSES_MAX (max across owned businesses' plans, FREE fallback).
+      await assertWithinBusinessesLimitTx(tx, userId);
+
+      const created = await tx.business.create({
+        data: {
+          name: input.name,
+          slug: slugify(input.name),
+          currencyCode: currency.code,
+          currencySymbol: input.currencySymbol ?? currency.symbol,
+          decimalPrecision: input.decimalPrecision ?? currency.precision,
+          locale: input.locale,
+          timezone: input.timezone,
+          ownerId: userId,
+          members: {
+            create: { userId, role: "OWNER" },
+          },
         },
-      },
-    });
+      });
 
-    await audit(
-      {
-        businessId: created.id,
-        actorId: userId,
-        action: "business.create",
-        entityType: "Business",
-        entityId: created.id,
-        after: { name: created.name, currencyCode: created.currencyCode },
-      },
-      tx,
-    );
+      // §13: every business is born with a deterministic FREE subscription,
+      // created inside this same transaction.
+      await ensureSubscription(created.id, { actorId: userId, source: "business-create", tx });
 
-    return created;
-  });
+      await audit(
+        {
+          businessId: created.id,
+          actorId: userId,
+          action: "business.create",
+          entityType: "Business",
+          entityId: created.id,
+          after: { name: created.name, currencyCode: created.currencyCode },
+        },
+        tx,
+      );
+
+      return created;
+    },
+    { isolationLevel: "Serializable" },
+  );
 
   return ok(
     {

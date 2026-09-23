@@ -30,6 +30,7 @@ import {
   HandCoins,
   Layers,
   Loader2,
+  Lock,
   Minus,
   Package,
   ReceiptText,
@@ -112,6 +113,31 @@ type Summary = {
       stockQty: number;
       lowStockAt: number;
     }>;
+  };
+  // Prompt 20 — ADVANCED_REPORTS entitlement: the server OMITS `advanced`
+  // when the plan is not entitled; `advancedAvailable` is always present.
+  advancedAvailable: boolean;
+  advanced?: AdvancedInsights;
+};
+
+/** Mirrors src/lib/reports-advanced.ts (server-computed, deterministic). */
+type AdvancedInsights = {
+  previousRange: { from: string; to: string };
+  growth: {
+    revenueMinor: number;
+    revenuePrevMinor: number;
+    revenueChangePct: number | null;
+    salesCount: number;
+    salesCountPrev: number;
+    salesChangePct: number | null;
+    expensesMinor: number;
+    expensesPrevMinor: number;
+    expensesChangePct: number | null;
+  };
+  concentration: {
+    topCustomers: Array<{ name: string; revenueMinor: number; sharePct: number }>;
+    top5SharePct: number;
+    customerCount: number;
   };
 };
 
@@ -538,6 +564,14 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
               </Card>
             ))}
           </div>
+
+          {/* Prompt 20 — advanced insights: rendered ONLY from what the
+              server entitled (§26). Locked teaser otherwise. */}
+          {data.advancedAvailable && data.advanced ? (
+            <AdvancedInsightsCard data={data.advanced} fmt={fmt} uiLocale={uiLocale} />
+          ) : (
+            <AdvancedLockedCard />
+          )}
 
           {/* Income vs spending timeline */}
           <Card>
@@ -1294,5 +1328,157 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// ---- Prompt 20: advanced insights (ADVANCED_REPORTS entitlement) -------------
+
+/**
+ * Deterministic "beyond the basics" analytics card. Rendered from data the
+ * SERVER included (or omitted) per entitlement — the UI never gates
+ * anything by itself (§26). When not entitled this renders a small locked
+ * teaser; the data block simply is not in the payload.
+ */
+function AdvancedInsightsCard({
+  data,
+  fmt,
+  uiLocale,
+}: {
+  data: AdvancedInsights;
+  fmt: (minor: number) => string;
+  uiLocale: string;
+}) {
+  const tAdv = useTranslations("billing.advanced");
+  const tBilling = useTranslations("billing");
+
+  const pct = (v: number | null) =>
+    v === null ? (
+      <span className="text-muted-foreground">—</span>
+    ) : (
+      <span
+        className={
+          v >= 0
+            ? "inline-flex items-center gap-0.5 text-emerald-600 dark:text-emerald-400"
+            : "inline-flex items-center gap-0.5 text-destructive"
+        }
+        dir="ltr"
+      >
+        {v >= 0 ? (
+          <ArrowUpRight className="size-3.5" aria-hidden="true" />
+        ) : (
+          <ArrowDownRight className="size-3.5" aria-hidden="true" />
+        )}
+        {Math.abs(v)}%
+      </span>
+    );
+
+  const g = data.growth;
+
+  return (
+    <Card data-testid="advanced-insights">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">{tAdv("title")}</CardTitle>
+        <CardDescription>{tAdv("vsPrev")}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="bg-muted/40 rounded-lg border p-3">
+            <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+              {tAdv("revenueChange", { days: 30 })}
+            </p>
+            <p className="mt-1 flex items-center justify-between gap-2 text-sm font-semibold tabular-nums" dir="ltr">
+              {fmt(g.revenueMinor)} {pct(g.revenueChangePct)}
+            </p>
+            <p className="text-muted-foreground mt-0.5 text-xs tabular-nums" dir="ltr">
+              {fmt(g.revenuePrevMinor)}
+            </p>
+          </div>
+          <div className="bg-muted/40 rounded-lg border p-3">
+            <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+              {tAdv("salesChange")}
+            </p>
+            <p className="mt-1 flex items-center justify-between gap-2 text-sm font-semibold tabular-nums" dir="ltr">
+              {g.salesCount} {pct(g.salesChangePct)}
+            </p>
+            <p className="text-muted-foreground mt-0.5 text-xs tabular-nums" dir="ltr">
+              {g.salesCountPrev}
+            </p>
+          </div>
+          <div className="bg-muted/40 rounded-lg border p-3">
+            <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+              {tAdv("expensesChange")}
+            </p>
+            <p className="mt-1 flex items-center justify-between gap-2 text-sm font-semibold tabular-nums" dir="ltr">
+              {fmt(g.expensesMinor)} {pct(g.expensesChangePct)}
+            </p>
+            <p className="text-muted-foreground mt-0.5 text-xs tabular-nums" dir="ltr">
+              {fmt(g.expensesPrevMinor)}
+            </p>
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-sm font-medium">{tAdv("concentration")}</p>
+            <p className="text-muted-foreground text-xs tabular-nums">
+              {tAdv("top5Share")}: <span className="font-semibold">{data.concentration.top5SharePct}%</span>
+            </p>
+          </div>
+          {data.concentration.topCustomers.length === 0 ? (
+            <p className="text-muted-foreground text-sm">{tAdv("noCustomerData")}</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {data.concentration.topCustomers.map((c) => (
+                <li key={c.name} className="flex items-center gap-3 text-sm">
+                  <span className="w-28 shrink-0 truncate sm:w-40" title={c.name}>
+                    {c.name}
+                  </span>
+                  <div className="bg-muted h-1.5 flex-1 overflow-hidden rounded-full">
+                    <div
+                      className="bg-primary/60 h-full rounded-full"
+                      style={{ width: `${Math.min(100, c.sharePct)}%` }}
+                    />
+                  </div>
+                  <span className="text-muted-foreground w-10 shrink-0 text-end text-xs tabular-nums">
+                    {c.sharePct}%
+                  </span>
+                  <span
+                    className="w-24 shrink-0 text-end text-xs font-medium tabular-nums"
+                    dir="ltr"
+                  >
+                    {fmt(c.revenueMinor)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="sr-only">
+            {tBilling("advancedReports")} — {uiLocale}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Locked teaser shown when the plan does not carry ADVANCED_REPORTS. */
+function AdvancedLockedCard() {
+  const tB = useTranslations("billing");
+  const navigate = useAppStore((s) => s.navigate);
+  return (
+    <Card
+      data-testid="advanced-locked"
+      className="border-dashed"
+    >
+      <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+        <p className="text-muted-foreground flex items-center gap-2 text-sm">
+          <Lock className="size-4 shrink-0" aria-hidden="true" />
+          {tB("advancedLocked")}
+        </p>
+        <Button size="sm" variant="outline" onClick={() => navigate({ kind: "settings:billing" })}>
+          {tB("upgrade")}
+        </Button>
+      </CardContent>
+    </Card>
   );
 }

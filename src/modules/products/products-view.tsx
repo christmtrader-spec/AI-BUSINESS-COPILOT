@@ -34,6 +34,7 @@ import {
   moneyToMinorOrNull,
 } from "@/components/shared/table-kit";
 import { StockDialog } from "./stock-dialog";
+import { PlanLimitBanner } from "../billing/plan-limit-banner";
 import type { BusinessSummary } from "../shell/types";
 
 export type Product = {
@@ -199,6 +200,11 @@ export function ProductsView({
           ) : null
         }
       />
+
+      {/* Prompt 20: informational plan-limit banner (server enforces the
+          same limit on create — this only makes the boundary visible). */}
+      <PlanLimitBanner code="PRODUCTS_MAX" />
+
       <Card>
         <CardContent className="pt-6">
           <div className="mb-4">

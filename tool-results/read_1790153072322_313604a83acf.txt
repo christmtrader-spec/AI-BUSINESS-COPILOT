@@ -1,0 +1,993 @@
+     1→/**
+     2→ * Billing service layer — Prompt 20 (§22/§47/§48/§66/§67/§68/§111).
+     3→ *
+     4→ * The ONLY sanctioned path to subscription state. Billing logic must never
+     5→ * leak into components, routes, or random utilities — every route goes
+     6→ * through these functions:
+     7→ *
+     8→ *   authenticated user → membership (tenant.ts) → businessId
+     9→ *     → getEntitlementContext / hasEntitlement / assertFeatureAccess
+    10→ *     → assertWithinLimit(usage counted inside the same transaction)
+    11→ *     → changePlan / cancelSubscription / reactivateSubscription / trials
+    12→ *
+    13→ * Authority rules:
+    14→ * - Server state is authoritative; nothing here reads client input except
+    15→ *   validated plan codes (§23/§24).
+    16→ * - Subscription mutation methods are TRANSACTIONAL and write the matching
+    17→ *   SubscriptionEvent in the SAME transaction (§47).
+    18→ * - Mutations are IDEMPOTENT where repetition is plausible — cancel twice
+    19→ *   never writes two contradictory events (§48).
+    20→ * - Premium feature gates always verify against a FRESH read (§111);
+    21→ *   the short-lived in-memory cache (§67) serves UI read endpoints only
+    22→ *   and is invalidated on every mutation.
+    23→ * - Billing lookup FAILURE fails closed with BILLING_UNAVAILABLE (§68) —
+    24→ *   it never degrades into unlimited access (§93).
+    25→ */
+    26→import { db } from "@/lib/db";
+    27→import { ApiError } from "@/lib/api-helpers";
+    28→import { audit } from "@/lib/audit";
+    29→import type { Prisma } from "@prisma/client";
+    30→import {
+    31→  ENTITLEMENTS,
+    32→  ENTITLEMENT_CODES,
+    33→  FREE_PLAN_CODE,
+    34→  isEntitlementCode,
+    35→  type EntitlementCode,
+    36→  type EntitlementType,
+    37→  type EntitlementUnit,
+    38→  type PlanCode,
+    39→} from "./catalog";
+    40→import {
+    41→  BillingError,
+    42→  limitReachedError,
+    43→} from "./errors";
+    44→import {
+    45→  VALID_TRANSITIONS,
+    46→  asSubscriptionStatus,
+    47→  decidePlan,
+    48→  isBillingPeriod,
+    49→  isValidTransition,
+    50→  periodEnd,
+    51→  type BillingPeriod,
+    52→  type SubscriptionEventType,
+    53→  type SubscriptionStatus,
+    54→} from "./state-machine";
+    55→
+    56→type Tx = Prisma.TransactionClient;
+    57→
+    58→// ---------------------------------------------------------------------------
+    59→// Public DTOs (serialized for API responses — dates as ISO strings)
+    60→// ---------------------------------------------------------------------------
+    61→
+    62→export type PlanDto = {
+    63→  id: string;
+    64→  code: string;
+    65→  name: string;
+    66→  description: string;
+    67→  sortOrder: number;
+    68→  isPublic: boolean;
+    69→};
+    70→
+    71→export type SubscriptionDto = {
+    72→  id: string;
+    73→  businessId: string;
+    74→  status: SubscriptionStatus;
+    75→  billingPeriod: BillingPeriod;
+    76→  plan: PlanDto;
+    77→  currentPeriodStart: string | null;
+    78→  currentPeriodEnd: string | null;
+    79→  trialStart: string | null;
+    80→  trialEnd: string | null;
+    81→  cancelAtPeriodEnd: boolean;
+    82→  canceledAt: string | null;
+    83→  endedAt: string | null;
+    84→  createdAt: string;
+    85→  updatedAt: string;
+    86→  /** Plan whose entitlements ACTUALLY apply (expiry → FREE fallback, §13). */
+    87→  effectivePlanCode: string;
+    88→  /** True when paid-plan features are live (TRIALING/ACTIVE/PAST_DUE/CANCELED-in-grace). */
+    89→  entitled: boolean;
+    90→  inTrial: boolean;
+    91→};
+    92→
+    93→export type ResolvedEntitlement = {
+    94→  code: EntitlementCode;
+    95→  type: EntitlementType;
+    96→  unit: EntitlementUnit | null;
+    97→  /** LIMIT: numeric limit or null = UNLIMITED. BOOLEAN: the flag. */
+    98→  value: number | null | boolean;
+    99→  description: string;
+   100→};
+   101→
+   102→export type EntitlementContext = {
+   103→  businessId: string;
+   104→  subscription: SubscriptionDto;
+   105→  entitlements: Record<EntitlementCode, ResolvedEntitlement>;
+   106→};
+   107→
+   108→export type SubscriptionEventDto = {
+   109→  id: string;
+   110→  type: SubscriptionEventType;
+   111→  fromStatus: string | null;
+   112→  toStatus: string | null;
+   113→  fromPlanCode: string | null;
+   114→  toPlanCode: string | null;
+   115→  data: unknown;
+   116→  actor: { name: string | null; email: string } | null;
+   117→  createdAt: string;
+   118→};
+   119→
+   120→// ---------------------------------------------------------------------------
+   121→// Internal cache (§67) — UI reads only; mutations invalidate (§111)
+   122→// ---------------------------------------------------------------------------
+   123→
+   124→const CACHE_TTL_MS = 15_000;
+   125→const cache = new Map<string, { at: number; ctx: EntitlementContext }>();
+   126→
+   127→export function invalidateBillingCache(businessId?: string): void {
+   128→  if (businessId) cache.delete(businessId);
+   129→  else cache.clear();
+   130→}
+   131→
+   132→// ---------------------------------------------------------------------------
+   133→// Row → DTO helpers
+   134→// ---------------------------------------------------------------------------
+   135→
+   136→type SubRow = Prisma.SubscriptionGetPayload<{ include: { plan: true } }>;
+   137→
+   138→function planDto(plan: SubRow["plan"]): PlanDto {
+   139→  return {
+   140→    id: plan.id,
+   141→    code: plan.code,
+   142→    name: plan.name,
+   143→    description: plan.description,
+   144→    sortOrder: plan.sortOrder,
+   145→    isPublic: plan.isPublic,
+   146→  };
+   147→}
+   148→
+   149→function subscriptionDto(sub: SubRow, effectivePlanCode: string, entitled: boolean): SubscriptionDto {
+   150→  return {
+   151→    id: sub.id,
+   152→    businessId: sub.businessId,
+   153→    status: asSubscriptionStatus(sub.status),
+   154→    billingPeriod: isBillingPeriod(sub.billingPeriod) ? sub.billingPeriod : "MONTHLY",
+   155→    plan: planDto(sub.plan),
+   156→    currentPeriodStart: sub.currentPeriodStart?.toISOString() ?? null,
+   157→    currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null,
+   158→    trialStart: sub.trialStart?.toISOString() ?? null,
+   159→    trialEnd: sub.trialEnd?.toISOString() ?? null,
+   160→    cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+   161→    canceledAt: sub.canceledAt?.toISOString() ?? null,
+   162→    endedAt: sub.endedAt?.toISOString() ?? null,
+   163→    createdAt: sub.createdAt.toISOString(),
+   164→    updatedAt: sub.updatedAt.toISOString(),
+   165→    effectivePlanCode,
+   166→    entitled,
+   167→    inTrial: sub.status === "TRIALING" && !!sub.trialEnd && sub.trialEnd.getTime() > Date.now(),
+   168→  };
+   169→}
+   170→
+   171→// ---------------------------------------------------------------------------
+   172→// Core loaders (fail-closed, §68)
+   173→// ---------------------------------------------------------------------------
+   174→
+   175→async function loadSubscription(tx: Tx | typeof db, businessId: string): Promise<SubRow> {
+   176→  return tx.subscription.findUnique({
+   177→    where: { businessId },
+   178→    include: { plan: true },
+   179→  }) as Promise<SubRow>;
+   180→}
+   181→
+   182→/**
+   183→ * Get-or-create the deterministic FREE subscription for a business
+   184→ * (§13/§14/§118). Idempotent, transactional, auditable — used at business
+   185→ * creation, by the seed backfill and as the lazy safety net on read.
+   186→ */
+   187→export async function ensureSubscription(
+   188→  businessId: string,
+   189→  opts: { actorId?: string | null; source?: string; tx?: Tx } = {},
+   190→): Promise<SubRow> {
+   191→  const run = async (tx: Tx): Promise<SubRow> => {
+   192→    const existing = await loadSubscription(tx, businessId);
+   193→    if (existing) return existing;
+   194→
+   195→    const business = await tx.business.findUnique({ where: { id: businessId } });
+   196→    if (!business) {
+   197→      throw new ApiError(403, "FORBIDDEN", "You do not have access to this business.");
+   198→    }
+   199→
+   200→    const free = await tx.plan.findUnique({ where: { code: FREE_PLAN_CODE } });
+   201→    if (!free || !free.active) {
+   202→      // Catalog corruption — fail closed loudly, never invent entitlements.
+   203→      throw new BillingError("BILLING_UNAVAILABLE", "Billing catalog is not initialized.");
+   204→    }
+   205→
+   206→    const now = new Date();
+   207→    const created = await tx.subscription.create({
+   208→      data: {
+   209→        businessId,
+   210→        planId: free.id,
+   211→        status: "ACTIVE",
+   212→        billingPeriod: "MONTHLY",
+   213→        currentPeriodStart: now,
+   214→        currentPeriodEnd: periodEnd(now, "MONTHLY"),
+   215→      },
+   216→      include: { plan: true },
+   217→    });
+   218→    await tx.subscriptionEvent.create({
+   219→      data: {
+   220→        businessId,
+   221→        subscriptionId: created.id,
+   222→        type: "CREATED",
+   223→        toStatus: "ACTIVE",
+   224→        toPlanCode: free.code,
+   225→        dataJson: JSON.stringify({ source: opts.source ?? "ensure" }),
+   226→        actorId: opts.actorId ?? null,
+   227→      },
+   228→    });
+   229→    await audit(
+   230→      {
+   231→        businessId,
+   232→        actorId: opts.actorId ?? null,
+   233→        action: "billing.subscription_created",
+   234→        entityType: "Subscription",
+   235→        entityId: created.id,
+   236→        after: { planCode: free.code, status: "ACTIVE", source: opts.source ?? "ensure" },
+   237→      },
+   238→      tx,
+   239→    );
+   240→    return created as SubRow;
+   241→  };
+   242→
+   243→  if (opts.tx) return run(opts.tx);
+   244→  return db.$transaction(run, { isolationLevel: "Serializable" });
+   245→}
+   246→
+   247→/**
+   248→ * Lazy expiry (§17/§91): when a read finds a subscription whose grace/
+   249→ * trial/period has passed, transition it to EXPIRED with an event —
+   250→ * transactional, only if still in an expirable state.
+   251→ */
+   252→async function expireSubscriptionIfDue(sub: SubRow): Promise<SubRow> {
+   253→  const decision = decidePlan(sub);
+   254→  if (!("expired" in decision) || !decision.expired) return sub;
+   255→
+   256→  const updated = await db.$transaction(
+   257→    async (tx) => {
+   258→      const current = await loadSubscription(tx, sub.businessId);
+   259→      if (!current) return current;
+   260→      const re = decidePlan(current);
+   261→      if (!("expired" in re) || !re.expired) return current;
+   262→      const row = await tx.subscription.update({
+   263→        where: { id: current.id },
+   264→        data: { status: "EXPIRED", endedAt: new Date() },
+   265→        include: { plan: true },
+   266→      });
+   267→      await tx.subscriptionEvent.create({
+   268→        data: {
+   269→          businessId: current.businessId,
+   270→          subscriptionId: current.id,
+   271→          type: "EXPIRED",
+   272→          fromStatus: current.status,
+   273→          toStatus: "EXPIRED",
+   274→          fromPlanCode: current.plan.code,
+   275→        },
+   276→      });
+   277→      await audit(
+   278→        {
+   279→          businessId: current.businessId,
+   280→          action: "billing.subscription_expired",
+   281→          entityType: "Subscription",
+   282→          entityId: current.id,
+   283→          before: { status: current.status },
+   284→          after: { status: "EXPIRED" },
+   285→        },
+   286→        tx,
+   287→      );
+   288→      return row;
+   289→    },
+   290→    { isolationLevel: "Serializable" },
+   291→  );
+   292→  invalidateBillingCache(sub.businessId);
+   293→  return updated;
+   294→}
+   295→
+   296→/**
+   297→ * Resolve the effective plan for a subscription row (§17 + §13 fallback).
+   298→ * Returns the plan whose entitlements apply.
+   299→ */
+   300→async function resolveEffectivePlan(sub: SubRow, tx: Tx | typeof db) {
+   301→  const decision = decidePlan(sub);
+   302→  if (decision.kind === "own-plan") return { plan: sub.plan, entitled: true };
+   303→  const free = await tx.plan.findUnique({ where: { code: FREE_PLAN_CODE } });
+   304→  if (!free) {
+   305→    throw new BillingError("BILLING_UNAVAILABLE", "Billing catalog is not initialized.");
+   306→  }
+   307→  return { plan: free, entitled: decision.entitled };
+   308→}
+   309→
+   310→/** Resolve a plan's full entitlement map (fail-closed on corruption). */
+   311→function entitlementsFromRows(
+   312→  rows: Array<{ entitlement: { code: string; type: string; unit: string | null; description: string }; value: number | null; boolValue: boolean }>,
+   313→): Record<EntitlementCode, ResolvedEntitlement> {
+   314→  const map = {} as Record<EntitlementCode, ResolvedEntitlement>;
+   315→  // Fail-closed defaults first (§68/§93): a MISSING catalog row can never
+   316→  // behave as "allowed/unlimited". The seed guarantees completeness; if a
+   317→  // row is missing anyway the gate blocks loudly.
+   318→  for (const spec of ENTITLEMENTS) {
+   319→    map[spec.code] = {
+   320→      code: spec.code,
+   321→      type: spec.type,
+   322→      unit: spec.unit,
+   323→      value: spec.type === "LIMIT" ? 0 : false,
+   324→      description: spec.description,
+   325→    };
+   326→  }
+   327→  for (const row of rows) {
+   328→    if (!isEntitlementCode(row.entitlement.code)) continue;
+   329→    const spec = ENTITLEMENTS.find((s) => s.code === row.entitlement.code)!;
+   330→    map[spec.code] = {
+   331→      code: spec.code,
+   332→      type: spec.type,
+   333→      unit: spec.unit,
+   334→      value:
+   335→        spec.type === "LIMIT"
+   336→          ? row.value // number, or null = UNLIMITED
+   337→          : row.boolValue,
+   338→      description: spec.description,
+   339→    };
+   340→  }
+   341→  return map;
+   342→}
+   343→
+   344→/** Fresh (uncached) entitlement context — the gate-enforcement loader. */
+   345→export async function getEntitlementContextFresh(businessId: string): Promise<EntitlementContext> {
+   346→  try {
+   347→    let sub = await loadSubscription(db, businessId);
+   348→    if (!sub) {
+   349→      sub = await ensureSubscription(businessId, { source: "lazy-backfill" });
+   350→      invalidateBillingCache(businessId);
+   351→    }
+   352→    sub = await expireSubscriptionIfDue(sub);
+   353→    const { plan, entitled } = await resolveEffectivePlan(sub, db);
+   354→    const rows = await db.planEntitlement.findMany({
+   355→      where: { planId: plan.id },
+   356→      include: { entitlement: true },
+   357→    });
+   358→    return {
+   359→      businessId,
+   360→      subscription: subscriptionDto(sub, plan.code, entitled),
+   361→      entitlements: entitlementsFromRows(rows),
+   362→    };
+   363→  } catch (error) {
+   364→    if (error instanceof ApiError) throw error;
+   365→    console.error("[billing] context lookup failed:", error);
+   366→    throw new BillingError("BILLING_UNAVAILABLE", "Billing state is temporarily unavailable. Please try again.");
+   367→  }
+   368→}
+   369→
+   370→/** Same as getEntitlementContextFresh but inside an existing transaction. */
+   371→export async function getEntitlementContextTx(tx: Tx, businessId: string): Promise<EntitlementContext> {
+   372→  let sub = await loadSubscription(tx, businessId);
+   373→  if (!sub) {
+   374→    sub = await ensureSubscription(businessId, { source: "lazy-backfill", tx });
+   375→  }
+   376→  const { plan, entitled } = await resolveEffectivePlan(sub, tx);
+   377→  const rows = await tx.planEntitlement.findMany({
+   378→    where: { planId: plan.id },
+   379→    include: { entitlement: true },
+   380→  });
+   381→  return {
+   382→    businessId,
+   383→    subscription: subscriptionDto(sub, plan.code, entitled),
+   384→    entitlements: entitlementsFromRows(rows),
+   385→  };
+   386→}
+   387→
+   388→/** Cached context for UI read endpoints (§67); 15s TTL, mutation-invalidated. */
+   389→export async function getEntitlementContext(businessId: string): Promise<EntitlementContext> {
+   390→  const hit = cache.get(businessId);
+   391→  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.ctx;
+   392→  const ctx = await getEntitlementContextFresh(businessId);
+   393→  cache.set(businessId, { at: Date.now(), ctx });
+   394→  return ctx;
+   395→}
+   396→
+   397→// ---------------------------------------------------------------------------
+   398→// Pure checks over a resolved context (unit-testable, no DB)
+   399→// ---------------------------------------------------------------------------
+   400→
+   401→export function hasEntitlementIn(ctx: EntitlementContext, code: EntitlementCode): boolean {
+   402→  const e = ctx.entitlements[code];
+   403→  return e !== undefined && e.type === "BOOLEAN" && e.value === true;
+   404→}
+   405→
+   406→export function getLimitIn(ctx: EntitlementContext, code: EntitlementCode): number | null {
+   407→  const e = ctx.entitlements[code];
+   408→  if (!e || e.type !== "LIMIT") return 0; // unknown/misconfigured → fail closed
+   409→  return e.value === null ? null : (e.value as number);
+   410→}
+   411→
+   412→/** §25/§27 — throws the structured error; `currentUsage` counted by caller. */
+   413→export function assertWithinLimitIn(
+   414→  ctx: EntitlementContext,
+   415→  code: EntitlementCode,
+   416→  currentUsage: number,
+   417→): void {
+   418→  const limit = getLimitIn(ctx, code);
+   419→  if (limit === null) return; // unlimited (e.g. ENTERPRISE)
+   420→  if (currentUsage >= limit) throw limitReachedError(code, limit, currentUsage);
+   421→}
+   422→
+   423→// ---------------------------------------------------------------------------
+   424→// Convenience wrappers (non-tx paths)
+   425→// ---------------------------------------------------------------------------
+   426→
+   427→export async function getBusinessSubscription(businessId: string): Promise<SubscriptionDto> {
+   428→  return (await getEntitlementContext(businessId)).subscription;
+   429→}
+   430→
+   431→export async function getBusinessPlan(businessId: string): Promise<PlanDto> {
+   432→  return (await getEntitlementContext(businessId)).subscription.plan;
+   433→}
+   434→
+   435→export async function getEntitlements(businessId: string): Promise<ResolvedEntitlement[]> {
+   436→  return Object.values((await getEntitlementContext(businessId)).entitlements);
+   437→}
+   438→
+   439→export async function hasEntitlement(businessId: string, code: EntitlementCode): Promise<boolean> {
+   440→  return hasEntitlementIn(await getEntitlementContextFresh(businessId), code);
+   441→}
+   442→
+   443→export async function getLimit(businessId: string, code: EntitlementCode): Promise<number | null> {
+   444→  return getLimitIn(await getEntitlementContextFresh(businessId), code);
+   445→}
+   446→
+   447→/** Premium feature gate — ALWAYS a fresh server-side check (§111). */
+   448→export async function assertFeatureAccess(businessId: string, code: EntitlementCode): Promise<void> {
+   449→  const ctx = await getEntitlementContextFresh(businessId);
+   450→  if (!hasEntitlementIn(ctx, code)) {
+   451→    throw new BillingError(
+   452→      "ENTITLEMENT_NOT_AVAILABLE",
+   453→      "This feature is not available on the current plan.",
+   454→      { feature: code, planCode: ctx.subscription.effectivePlanCode, upgradeAvailable: true },
+   455→    );
+   456→  }
+   457→}
+   458→
+   459→// ---------------------------------------------------------------------------
+   460→// Usage counting (§105/§106 — documented counting policies)
+   461→// ---------------------------------------------------------------------------
+   462→
+   463→export async function countEntitlementUsage(
+   464→  businessId: string,
+   465→  ownerId: string,
+   466→  codes: readonly EntitlementCode[],
+   467→): Promise<Record<string, { used: number; limit: number | null }>> {
+   468→  const ctx = await getEntitlementContext(businessId);
+   469→  const out: Record<string, { used: number; limit: number | null }> = {};
+   470→  for (const code of codes) {
+   471→    const limit = getLimitIn(ctx, code);
+   472→    let used = 0;
+   473→    switch (code) {
+   474→      case "CUSTOMERS_MAX":
+   475→        used = await db.customer.count({ where: { businessId, deletedAt: null } });
+   476→        break;
+   477→      case "PRODUCTS_MAX":
+   478→        // Deactivation (isActive=false) is a catalog state, NOT deletion —
+   479→        // both count (documented in entitlements.md).
+   480→        used = await db.product.count({ where: { businessId, deletedAt: null } });
+   481→        break;
+   482→      case "TEAM_MEMBERS_MAX":
+   483→        // Active memberships only; owner included (§108); pending invites
+   484→        // never count (§31).
+   485→        used = await db.businessMember.count({ where: { businessId } });
+   486→        break;
+   487→      case "BUSINESSES_MAX":
+   488→        // Businesses the user OWNS (§107) — staff memberships don't count.
+   489→        used = await db.business.count({ where: { ownerId } });
+   490→        break;
+   491→      default:
+   492→        used = 0;
+   493→    }
+   494→    out[code] = { used, limit };
+   495→  }
+   496→  return out;
+   497→}
+   498→
+   499→// ---------------------------------------------------------------------------
+   500→// Business-creation limit (§30/§107) — a USER-level check
+   501→// ---------------------------------------------------------------------------
+   502→
+   503→/**
+   504→ * BUSINESSES_MAX is special: it caps how many businesses a USER may OWN,
+   505→ * so it cannot be read from one business's subscription. Deterministic
+   506→ * policy (documented in entitlements.md): the effective limit is the
+   507→ * MAXIMUM BUSINESSES_MAX across the plans of businesses the user already
+   508→ * owns — upgrading any owned business lifts the cap; a user with no
+   509→ * businesses gets the FREE limit. Count + check run inside the caller's
+   510→ * transaction (race-safe on SQLite, §112).
+   511→ */
+   512→export async function assertWithinBusinessesLimitTx(tx: Tx, userId: string): Promise<void> {
+   513→  const owned = await tx.business.findMany({
+   514→    where: { ownerId: userId },
+   515→    select: {
+   516→      subscription: {
+   517→        include: {
+   518→          plan: { include: { planEntitlements: { include: { entitlement: true } } } },
+   519→        },
+   520→      },
+   521→    },
+   522→  });
+   523→
+   524→  let limit = 0;
+   525→  for (const b of owned) {
+   526→    const sub = b.subscription;
+   527→    if (!sub) continue; // grandfathered mid-backfill rows contribute nothing
+   528→    const row = sub.plan.planEntitlements.find((pe) => pe.entitlement.code === "BUSINESSES_MAX");
+   529→    if (!row) continue; // fail-closed: corrupt plan contributes nothing
+   530→    const planLimit = row.value; // null = unlimited
+   531→    if (planLimit === null) return; // any unlimited plan lifts the cap
+   532→    limit = Math.max(limit, planLimit);
+   533→  }
+   534→  if (limit === 0) {
+   535→    // No owned business (or none with a valid subscription) → FREE limit.
+   536→    const free = await tx.plan.findUnique({
+   537→      where: { code: FREE_PLAN_CODE },
+   538→      include: { planEntitlements: { include: { entitlement: true } } },
+   539→    });
+   540→    const row = free?.planEntitlements.find((pe) => pe.entitlement.code === "BUSINESSES_MAX");
+   541→    limit = row?.value ?? 0;
+   542→  }
+   543→
+   544→  if (owned.length >= limit) {
+   545→    throw limitReachedError("BUSINESSES_MAX", limit, owned.length);
+   546→  }
+   547→}
+   548→
+   549→// ---------------------------------------------------------------------------
+   550→// Subscription mutations (transactional + evented + audited, §41/§44/§45/§47)
+   551→// ---------------------------------------------------------------------------
+   552→
+   553→export type SubscriptionMutationResult = {
+   554→  subscription: SubscriptionDto;
+   555→  /** false when the call was an idempotent no-op (§48). */
+   556→  changed: boolean;
+   557→};
+   558→
+   559→function assertTransition(from: SubscriptionStatus, to: SubscriptionStatus): void {
+   560→  if (from === to) return;
+   561→  if (!isValidTransition(from, to)) {
+   562→    throw new BillingError(
+   563→      "INVALID_SUBSCRIPTION_STATE",
+   564→      `Transition ${from} → ${to} is not allowed.`,
+   565→      { from, to, allowed: VALID_TRANSITIONS[from] },
+   566→    );
+   567→  }
+   568→}
+   569→
+   570→async function eventAndAudit(
+   571→  tx: Tx,
+   572→  input: {
+   573→    businessId: string;
+   574→    subscriptionId: string;
+   575→    type: SubscriptionEventType;
+   576→    fromStatus?: string | null;
+   577→    toStatus?: string | null;
+   578→    fromPlanCode?: string | null;
+   579→    toPlanCode?: string | null;
+   580→    data?: Record<string, unknown>;
+   581→    actorId?: string | null;
+   582→    auditAction: string;
+   583→    auditBefore?: unknown;
+   584→    auditAfter?: unknown;
+   585→  },
+   586→): Promise<void> {
+   587→  await tx.subscriptionEvent.create({
+   588→    data: {
+   589→      businessId: input.businessId,
+   590→      subscriptionId: input.subscriptionId,
+   591→      type: input.type,
+   592→      fromStatus: input.fromStatus ?? null,
+   593→      toStatus: input.toStatus ?? null,
+   594→      fromPlanCode: input.fromPlanCode ?? null,
+   595→      toPlanCode: input.toPlanCode ?? null,
+   596→      dataJson: input.data ? JSON.stringify(input.data) : null,
+   597→      actorId: input.actorId ?? null,
+   598→    },
+   599→  });
+   600→  await audit(
+   601→    {
+   602→      businessId: input.businessId,
+   603→      actorId: input.actorId ?? null,
+   604→      action: input.auditAction,
+   605→      entityType: "Subscription",
+   606→      entityId: input.subscriptionId,
+   607→      before: input.auditBefore,
+   608→      after: input.auditAfter,
+   609→    },
+   610→    tx,
+   611→  );
+   612→}
+   613→
+   614→/**
+   615→ * Internal plan change (§41/§43/§82/§83): validates the target plan,
+   616→ * verifies state transitions, records PLAN_CHANGED (+ REACTIVATED when it
+   617→ * doubles as reactivation), all in ONE transaction. NO money changes hands
+   618→ * and NOTHING is labeled as payment (§83). Downgrades never delete data —
+   619→ * they only cap future growth (§42).
+   620→ */
+   621→export async function changePlan(
+   622→  businessId: string,
+   623→  targetPlanCode: string,
+   624→  opts: { actorId?: string | null; source?: string } = {},
+   625→): Promise<SubscriptionMutationResult> {
+   626→  const result = await db.$transaction(
+   627→    async (tx) => {
+   628→      let sub = await loadSubscription(tx, businessId);
+   629→      if (!sub) throw new BillingError("SUBSCRIPTION_NOT_FOUND", "No subscription exists for this business.");
+   630→
+   631→      const target = await tx.plan.findUnique({ where: { code: targetPlanCode } });
+   632→      if (!target || !target.active) {
+   633→        throw new BillingError("INVALID_PLAN", "The requested plan does not exist or is inactive.", {
+   634→          planCode: targetPlanCode,
+   635→        });
+   636→      }
+   637→
+   638→      if (sub.planId === target.id) {
+   639→        // §48 idempotency — same plan → no event, no mutation.
+   640→        return { sub, changed: false as const };
+   641→      }
+   642→
+   643→      const fromStatus = asSubscriptionStatus(sub.status);
+   644→      const wasCanceled = fromStatus === "CANCELED";
+   645→      const reactivating = wasCanceled || fromStatus === "EXPIRED" || fromStatus === "PAUSED";
+   646→      // Any plan change re-engages the subscription (a deliberate renewal
+   647→      // decision by an authorized user — never automatic, §45).
+   648→      assertTransition(fromStatus, "ACTIVE");
+   649→
+   650→      if (reactivating) {
+   651→        await eventAndAudit(tx, {
+   652→          businessId,
+   653→          subscriptionId: sub.id,
+   654→          type: "REACTIVATED",
+   655→          fromStatus,
+   656→          toStatus: "ACTIVE",
+   657→          fromPlanCode: sub.plan.code,
+   658→          toPlanCode: target.code,
+   659→          actorId: opts.actorId ?? null,
+   660→          auditAction: "billing.subscription_reactivated",
+   661→          auditBefore: { status: fromStatus, planCode: sub.plan.code },
+   662→          auditAfter: { status: "ACTIVE", planCode: target.code },
+   663→        });
+   664→      }
+   665→
+   666→      const now = new Date();
+   667→      const period =
+   668→        sub.currentPeriodEnd && sub.currentPeriodEnd.getTime() > now.getTime()
+   669→          ? { start: sub.currentPeriodStart ?? now, end: sub.currentPeriodEnd }
+   670→          : { start: now, end: periodEnd(now, (isBillingPeriod(sub.billingPeriod) ? sub.billingPeriod : "MONTHLY") as BillingPeriod) };
+   671→
+   672→      const updated = await tx.subscription.update({
+   673→        where: { id: sub.id },
+   674→        data: {
+   675→          planId: target.id,
+   676→          status: "ACTIVE",
+   677→          cancelAtPeriodEnd: false,
+   678→          canceledAt: null,
+   679→          endedAt: null,
+   680→          currentPeriodStart: period.start,
+   681→          currentPeriodEnd: period.end,
+   682→        },
+   683→        include: { plan: true },
+   684→      });
+   685→
+   686→      await eventAndAudit(tx, {
+   687→        businessId,
+   688→        subscriptionId: sub.id,
+   689→        type: "PLAN_CHANGED",
+   690→        fromStatus,
+   691→        toStatus: "ACTIVE",
+   692→        fromPlanCode: sub.plan.code,
+   693→        toPlanCode: target.code,
+   694→        data: { source: opts.source ?? "settings" },
+   695→        actorId: opts.actorId ?? null,
+   696→        auditAction: "billing.plan_changed",
+   697→        auditBefore: { planCode: sub.plan.code, status: fromStatus },
+   698→        auditAfter: { planCode: target.code, status: "ACTIVE" },
+   699→      });
+   700→
+   701→      return { sub: updated as SubRow, changed: true as const };
+   702→    },
+   703→    { isolationLevel: "Serializable" },
+   704→  );
+   705→
+   706→  invalidateBillingCache(businessId);
+   707→  return {
+   708→    subscription: subscriptionDto(result.sub, result.sub.plan.code, true),
+   709→    changed: result.changed,
+   710→  };
+   711→}
+   712→
+   713→/**
+   714→ * Cancellation (§44): sets cancelAtPeriodEnd + status CANCELED — access
+   715→ * continues until currentPeriodEnd, then lazy expiry moves it to EXPIRED.
+   716→ * Idempotent (§48): a second cancel is a no-op. Data is never touched.
+   717→ */
+   718→export async function cancelSubscription(
+   719→  businessId: string,
+   720→  opts: { actorId?: string | null } = {},
+   721→): Promise<SubscriptionMutationResult> {
+   722→  const result = await db.$transaction(
+   723→    async (tx) => {
+   724→      const sub = await loadSubscription(tx, businessId);
+   725→      if (!sub) throw new BillingError("SUBSCRIPTION_NOT_FOUND", "No subscription exists for this business.");
+   726→
+   727→      const fromStatus = asSubscriptionStatus(sub.status);
+   728→      if (fromStatus === "CANCELED" && sub.cancelAtPeriodEnd) {
+   729→        return { sub, changed: false as const };
+   730→      }
+   731→      assertTransition(fromStatus, "CANCELED");
+   732→
+   733→      const updated = await tx.subscription.update({
+   734→        where: { id: sub.id },
+   735→        data: { status: "CANCELED", cancelAtPeriodEnd: true, canceledAt: new Date() },
+   736→        include: { plan: true },
+   737→      });
+   738→      await eventAndAudit(tx, {
+   739→        businessId,
+   740→        subscriptionId: sub.id,
+   741→        type: "CANCELED",
+   742→        fromStatus,
+   743→        toStatus: "CANCELED",
+   744→        fromPlanCode: sub.plan.code,
+   745→        actorId: opts.actorId ?? null,
+   746→        auditAction: "billing.subscription_canceled",
+   747→        auditBefore: { status: fromStatus, planCode: sub.plan.code },
+   748→        auditAfter: { status: "CANCELED", cancelAtPeriodEnd: true },
+   749→      });
+   750→      return { sub: updated as SubRow, changed: true as const };
+   751→    },
+   752→    { isolationLevel: "Serializable" },
+   753→  );
+   754→  invalidateBillingCache(businessId);
+   755→  const decision = decidePlan(result.sub);
+   756→  return {
+   757→    subscription: subscriptionDto(
+   758→      result.sub,
+   759→      decision.kind === "own-plan" ? result.sub.plan.code : FREE_PLAN_CODE,
+   760→      decision.entitled,
+   761→    ),
+   762→    changed: result.changed,
+   763→  };
+   764→}
+   765→
+   766→/**
+   767→ * Reactivation (§45): only a CANCELED subscription with remaining grace can
+   768→ * return to ACTIVE. EXPIRED requires the explicit changePlan renewal path.
+   769→ * Idempotent: reactivating an ACTIVE subscription is a no-op.
+   770→ */
+   771→export async function reactivateSubscription(
+   772→  businessId: string,
+   773→  opts: { actorId?: string | null } = {},
+   774→): Promise<SubscriptionMutationResult> {
+   775→  const result = await db.$transaction(
+   776→    async (tx) => {
+   777→      const sub = await loadSubscription(tx, businessId);
+   778→      if (!sub) throw new BillingError("SUBSCRIPTION_NOT_FOUND", "No subscription exists for this business.");
+   779→
+   780→      const fromStatus = asSubscriptionStatus(sub.status);
+   781→      if (fromStatus === "ACTIVE") return { sub, changed: false as const };
+   782→      // §45/§46: reactivation is ONLY the CANCELED → ACTIVE path (undo the
+   783→      // cancellation while the period still runs). An EXPIRED subscription
+   784→      // returns exclusively through changePlan — a deliberate, authorized
+   785→      // renewal — and PAUSED resumes through a dedicated admin flow that
+   786→      // does not exist yet. Arbitrary hopping is refused.
+   787→      if (fromStatus === "EXPIRED" || fromStatus === "PAUSED") {
+   788→        throw new BillingError(
+   789→          "INVALID_SUBSCRIPTION_STATE",
+   790→          "This subscription state cannot be reactivated. Use a plan change to renew.",
+   791→          { from: fromStatus, allowed: VALID_TRANSITIONS[fromStatus] },
+   792→        );
+   793→      }
+   794→      assertTransition(fromStatus, "ACTIVE");
+   795→
+   796→      const updated = await tx.subscription.update({
+   797→        where: { id: sub.id },
+   798→        data: { status: "ACTIVE", cancelAtPeriodEnd: false, canceledAt: null, endedAt: null },
+   799→        include: { plan: true },
+   800→      });
+   801→      await eventAndAudit(tx, {
+   802→        businessId,
+   803→        subscriptionId: sub.id,
+   804→        type: "REACTIVATED",
+   805→        fromStatus,
+   806→        toStatus: "ACTIVE",
+   807→        fromPlanCode: sub.plan.code,
+   808→        actorId: opts.actorId ?? null,
+   809→        auditAction: "billing.subscription_reactivated",
+   810→        auditBefore: { status: fromStatus },
+   811→        auditAfter: { status: "ACTIVE" },
+   812→      });
+   813→      return { sub: updated as SubRow, changed: true as const };
+   814→    },
+   815→    { isolationLevel: "Serializable" },
+   816→  );
+   817→  invalidateBillingCache(businessId);
+   818→  return {
+   819→    subscription: subscriptionDto(result.sub, result.sub.plan.code, true),
+   820→    changed: result.changed,
+   821→  };
+   822→}
+   823→
+   824→/**
+   825→ * Trial capability (§19) — domain support WITHOUT business policy: nothing
+   826→ * calls this automatically, there is no self-service UI, and the API
+   827→ * surface (POST /api/v1/billing/trial) is disabled unless the operator
+   828→ * explicitly enables it (BILLING_TRIALS_ENABLED=1). One trial per business
+   829→ * (trialStart must be null).
+   830→ */
+   831→export async function startTrial(
+   832→  businessId: string,
+   833→  days: number,
+   834→  opts: { actorId?: string | null; source?: string } = {},
+   835→): Promise<SubscriptionMutationResult> {
+   836→  const result = await db.$transaction(
+   837→    async (tx) => {
+   838→      let sub = await loadSubscription(tx, businessId);
+   839→      if (!sub) {
+   840→        sub = await ensureSubscription(businessId, { tx, source: "trial" });
+   841→      }
+   842→      if (sub.trialStart) {
+   843→        throw new BillingError("BUSINESS_NOT_ELIGIBLE", "This business has already used its trial.");
+   844→      }
+   845→      const fromStatus = asSubscriptionStatus(sub.status);
+   846→      assertTransition(fromStatus, "TRIALING");
+   847→
+   848→      const now = new Date();
+   849→      const trialEnd = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+   850→      const updated = await tx.subscription.update({
+   851→        where: { id: sub.id },
+   852→        data: {
+   853→          status: "TRIALING",
+   854→          trialStart: now,
+   855→          trialEnd,
+   856→          cancelAtPeriodEnd: false,
+   857→          canceledAt: null,
+   858→        },
+   859→        include: { plan: true },
+   860→      });
+   861→      await eventAndAudit(tx, {
+   862→        businessId,
+   863→        subscriptionId: sub.id,
+   864→        type: "TRIAL_STARTED",
+   865→        fromStatus,
+   866→        toStatus: "TRIALING",
+   867→        fromPlanCode: sub.plan.code,
+   868→        data: { days, source: opts.source ?? "manual" },
+   869→        actorId: opts.actorId ?? null,
+   870→        auditAction: "billing.trial_started",
+   871→        auditAfter: { status: "TRIALING", trialEnd: trialEnd.toISOString() },
+   872→      });
+   873→      return { sub: updated as SubRow, changed: true as const };
+   874→    },
+   875→    { isolationLevel: "Serializable" },
+   876→  );
+   877→  invalidateBillingCache(businessId);
+   878→  return {
+   879→    subscription: subscriptionDto(result.sub, result.sub.plan.code, true),
+   880→    changed: result.changed,
+   881→  };
+   882→}
+   883→
+   884→/** End trial → ACTIVE (TRIAL_ENDED). Keeps the plan (no payment policy yet). */
+   885→export async function endTrial(
+   886→  businessId: string,
+   887→  opts: { actorId?: string | null } = {},
+   888→): Promise<SubscriptionMutationResult> {
+   889→  const result = await db.$transaction(
+   890→    async (tx) => {
+   891→      const sub = await loadSubscription(tx, businessId);
+   892→      if (!sub) throw new BillingError("SUBSCRIPTION_NOT_FOUND", "No subscription exists for this business.");
+   893→      const fromStatus = asSubscriptionStatus(sub.status);
+   894→      if (fromStatus !== "TRIALING") {
+   895→        throw new BillingError("INVALID_SUBSCRIPTION_STATE", "The subscription is not in a trial.", {
+   896→          status: fromStatus,
+   897→        });
+   898→      }
+   899→      const updated = await tx.subscription.update({
+   900→        where: { id: sub.id },
+   901→        data: { status: "ACTIVE" },
+   902→        include: { plan: true },
+   903→      });
+   904→      await eventAndAudit(tx, {
+   905→        businessId,
+   906→        subscriptionId: sub.id,
+   907→        type: "TRIAL_ENDED",
+   908→        fromStatus,
+   909→        toStatus: "ACTIVE",
+   910→        fromPlanCode: sub.plan.code,
+   911→        actorId: opts.actorId ?? null,
+   912→        auditAction: "billing.trial_ended",
+   913→        auditBefore: { status: fromStatus },
+   914→        auditAfter: { status: "ACTIVE" },
+   915→      });
+   916→      return { sub: updated as SubRow, changed: true as const };
+   917→    },
+   918→    { isolationLevel: "Serializable" },
+   919→  );
+   920→  invalidateBillingCache(businessId);
+   921→  return {
+   922→    subscription: subscriptionDto(result.sub, result.sub.plan.code, true),
+   923→    changed: result.changed,
+   924→  };
+   925→}
+   926→
+   927→// ---------------------------------------------------------------------------
+   928→// Event history (§20/§62) — tenant-scoped, paginated
+   929→// ---------------------------------------------------------------------------
+   930→
+   931→export async function listSubscriptionEvents(
+   932→  businessId: string,
+   933→  opts: { page?: number; pageSize?: number } = {},
+   934→): Promise<{ items: SubscriptionEventDto[]; total: number; page: number; pageSize: number }> {
+   935→  const page = Math.max(1, opts.page ?? 1);
+   936→  const pageSize = Math.min(100, Math.max(1, opts.pageSize ?? 20));
+   937→  const [rows, total] = await Promise.all([
+   938→    db.subscriptionEvent.findMany({
+   939→      where: { businessId },
+   940→      orderBy: { createdAt: "desc" },
+   941→      skip: (page - 1) * pageSize,
+   942→      take: pageSize,
+   943→      include: { actor: { select: { name: true, email: true } } },
+   944→    }),
+   945→    db.subscriptionEvent.count({ where: { businessId } }),
+   946→  ]);
+   947→  return {
+   948→    items: rows.map((r) => ({
+   949→      id: r.id,
+   950→      type: (isSubscriptionEventTypeSafe(r.type) ? r.type : "CREATED") as SubscriptionEventType,
+   951→      fromStatus: r.fromStatus,
+   952→      toStatus: r.toStatus,
+   953→      fromPlanCode: r.fromPlanCode,
+   954→      toPlanCode: r.toPlanCode,
+   955→      data: r.dataJson ? safeParse(r.dataJson) : null,
+   956→      actor: r.actor ? { name: r.actor.name, email: r.actor.email } : null,
+   957→      createdAt: r.createdAt.toISOString(),
+   958→    })),
+   959→    total,
+   960→    page,
+   961→    pageSize,
+   962→  };
+   963→}
+   964→
+   965→function isSubscriptionEventTypeSafe(value: string): boolean {
+   966→  return [
+   967→    "CREATED",
+   968→    "PLAN_CHANGED",
+   969→    "TRIAL_STARTED",
+   970→    "TRIAL_ENDED",
+   971→    "CANCELED",
+   972→    "REACTIVATED",
+   973→    "EXPIRED",
+   974→    "PAUSED",
+   975→    "RESUMED",
+   976→  ].includes(value);
+   977→}
+   978→
+   979→function safeParse(json: string): unknown {
+   980→  try {
+   981→    return JSON.parse(json);
+   982→  } catch {
+   983→    return null;
+   984→  }
+   985→}
+   986→
+   987→// ---------------------------------------------------------------------------
+   988→// Re-exports (public surface of the billing domain)
+   989→// ---------------------------------------------------------------------------
+   990→
+   991→export { ENTITLEMENT_CODES, FREE_PLAN_CODE } from "./catalog";
+   992→export type { EntitlementCode, PlanCode };
+   993→

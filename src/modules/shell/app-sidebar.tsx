@@ -62,6 +62,7 @@ type NavItem = {
     | "audit"
     | "teamMembers"
     | "settings"
+    | "billing"
     | "profile";
   icon: LucideIcon;
   soon?: boolean;
@@ -92,6 +93,7 @@ const PLATFORM: NavItem[] = [
   { view: { kind: "audit" }, labelKey: "audit", icon: ScrollText },
   { view: { kind: "settings:members" }, labelKey: "teamMembers", icon: Users },
   { view: { kind: "settings:business" }, labelKey: "settings", icon: Settings },
+  { view: { kind: "settings:billing" }, labelKey: "billing", icon: CreditCard },
   { view: { kind: "profile" }, labelKey: "profile", icon: UserRound },
 ];
 

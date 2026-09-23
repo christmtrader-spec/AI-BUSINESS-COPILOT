@@ -11,6 +11,7 @@ import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { ROLES, ROLE_RANK } from "@/lib/rbac";
+import { assertWithinLimitIn, getEntitlementContextTx } from "@/lib/billing";
 
 export const dynamic = "force-dynamic";
 
@@ -80,28 +81,38 @@ export const POST = route(async (req: NextRequest, { params }: RouteParams) => {
     throw new ApiError(409, "ALREADY_MEMBER", "This user is already a member of the business.");
   }
 
-  const member = await db.$transaction(async (tx) => {
-    const created = await tx.businessMember.create({
-      data: { businessId: ctx.businessId, userId: user.id, role: input.role },
-      include: { user: { select: { id: true, name: true, email: true } } },
-    });
+  const member = await db.$transaction(
+    async (tx) => {
+      // Billing gate (§31/§108): active members (owner INCLUDED) vs
+      // TEAM_MEMBERS_MAX. Pending invites never count. Count + check +
+      // create inside one serializable transaction (§112).
+      const bctx = await getEntitlementContextTx(tx, ctx.businessId);
+      const usage = await tx.businessMember.count({ where: { businessId: ctx.businessId } });
+      assertWithinLimitIn(bctx, "TEAM_MEMBERS_MAX", usage);
 
-    await audit(
-      {
-        businessId: ctx.businessId,
-        actorId: ctx.userId,
-        action: "member.add",
-        entityType: "BusinessMember",
-        entityId: created.id,
-        after: { email: user.email, role: input.role },
-        ip: req.headers.get("x-forwarded-for"),
-        userAgent: req.headers.get("user-agent"),
-      },
-      tx,
-    );
+      const created = await tx.businessMember.create({
+        data: { businessId: ctx.businessId, userId: user.id, role: input.role },
+        include: { user: { select: { id: true, name: true, email: true } } },
+      });
 
-    return created;
-  });
+      await audit(
+        {
+          businessId: ctx.businessId,
+          actorId: ctx.userId,
+          action: "member.add",
+          entityType: "BusinessMember",
+          entityId: created.id,
+          after: { email: user.email, role: input.role },
+          ip: req.headers.get("x-forwarded-for"),
+          userAgent: req.headers.get("user-agent"),
+        },
+        tx,
+      );
+
+      return created;
+    },
+    { isolationLevel: "Serializable" },
+  );
 
   return ok(
     {

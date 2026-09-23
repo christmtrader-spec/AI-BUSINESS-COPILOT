@@ -1,10 +1,66 @@
-# Billing Architecture — DESIGN ONLY (not implemented in Prompt 17)
+# Billing Architecture
 
-**Document ID:** BILLING-DESIGN-v1.0
-**Phase:** Prompt 17 (monetization design) — **STATUS: DESIGN / NOT IMPLEMENTED**
+**Document ID:** BILLING-DESIGN-v1.0 (rev. Prompt 20 — foundation implemented)
+**Phase:** Prompt 17 (monetization design) → **Prompt 20 (billing foundation): IMPLEMENTED** — payments still deferred
 **Implements:** Constitution A16 (`docs/PROJECT-CONSTITUTION.md:248-252`)
 **Companion docs:** `docs/ARCHITECTURE.md`, `docs/marketing/launch-readiness.md`
+**Prompt 20 companion docs:** `docs/billing/entitlements.md` · `docs/billing/subscription-lifecycle.md` · `docs/billing/plan-catalog.md` · `docs/billing/platform-billing-vs-business-finance.md`
 
+---
+
+## Implementation status (Prompt 20) — READ THIS FIRST
+
+The **billing foundation described below is now implemented** (Prompt 20).
+Payments are **not**. What exists today:
+
+- **5 billing tables** via migration
+  `prisma/migrations/20260923075730_prompt20_billing_foundation/migration.sql`:
+  `Plan`, `EntitlementDefinition`, `PlanEntitlement` (relational join table —
+  not `entitlementsJson`), `Subscription`, `SubscriptionEvent`.
+- **Service layer** at `src/lib/billing/` (`catalog.ts` — plan + entitlement
+  catalog; `state-machine.ts` — pure statuses/transitions/`decidePlan`;
+  `service.ts` — transactional, evented, audited mutations + entitlement
+  resolution; `errors.ts` — structured billing error codes). The service layer
+  is the only module that touches the billing tables.
+- **9 API endpoints** under `/api/v1/billing/`: `plans`, `plan`,
+  `subscription`, `entitlements`, `events` (reads) and `change-plan`,
+  `cancel`, `reactivate`, `trial` (mutations, OWNER/ADMIN + rate limits;
+  trial disabled unless `BILLING_TRIALS_ENABLED=1`).
+- **Entitlement gates** in: customers (`CUSTOMERS_MAX`), products
+  (`PRODUCTS_MAX`), businesses (`BUSINESSES_MAX`), members + invites
+  (`TEAM_MEMBERS_MAX`), copilot (`AI_COPILOT`), reports export
+  (`CSV_EXPORT`), reports summary (`ADVANCED_REPORTS` — server omits the
+  advanced block when not entitled).
+- **Settings → Subscription UI** (`src/modules/billing/subscription-view.tsx`,
+  `plan-limit-banner.tsx`): internal plan switching without payment (§83 —
+  no money changes hands, nothing is labeled as payment).
+- **Idempotent seed + FREE backfill** (`scripts/seed-billing.ts`): 5 plans ×
+  7 entitlements, never overwrites, backfills every subscription-less
+  business to FREE, invariant `subscriptions == businesses`.
+- **Tests:** `scripts/prompt20-billing-check.mjs` — 55/55;
+  `scripts/prompt20-state-machine.test.ts` — 38/38 (pure state-machine unit
+  tests).
+
+**Still deferred (unchanged from the design below):** payment provider
+choice (legal-counsel gate), checkout, prices, invoices/cards/webhooks/
+refunds, **AI usage metering (usage quantity per plan → Prompt 21)**, and
+the reserved `PAST_DUE`/`PAUSED` writers (nothing sets these statuses yet).
+
+> **Prompt 20 note (supersession map for this document):** the design text
+> below is preserved as history. Where implementation diverged, a short
+> *Prompt 20 note* is added in place: §2 (`entitlementsJson` → relational
+> `PlanEntitlement` per §17; 5 statuses → 6), §4 (placeholder entitlement
+> keys → final 7-key catalog), §6 (`UsageCounter` → deferred to Prompt 21),
+> §8 (pseudo-schema → real migration), §9 (non-goals partially lifted).
+> The live behavior is documented in the four Prompt 20 companion docs above.
+
+---
+
+> ⚠️ *The warning below was written in Prompt 17 and is kept verbatim as
+> history. Since Prompt 20 it is **outdated in one direction only**: the
+> billing tables, API routes, and service layer NOW exist (see above).
+> It remains true that no payment integration exists.*
+>
 > ⚠️ Nothing in this document is built: no `src/modules/billing/` module, no
 > billing API route, no payment integration, no billing tables in
 > `prisma/schema.prisma`. ARCHITECTURE.md already marks billing as a
@@ -40,6 +96,14 @@ contractually constrained by the operator's jurisdiction.
   on a verified provider webhook/billing event — no "manual confirm" path,
   no seeded paid accounts, no UI implying payment happened when it did not.
 
+  > *Prompt 20 note: in this phase (no provider exists yet) plan changes are
+  > **explicit internal operations** by an authorized user — they set ACTIVE
+  > and write `PLAN_CHANGED` events, but **no money changes hands and nothing
+  > is labeled as payment** (§83). No simulated "payment" record is created
+  > anywhere (harness K1 proves zero `Payment` rows). The webhook-only path
+  > above remains the law for the future payment phase. See
+  > `docs/billing/platform-billing-vs-business-finance.md` §4.*
+
 ---
 
 ## 2. Entities (conceptual model)
@@ -54,7 +118,20 @@ contractually constrained by the operator's jurisdiction.
 | **BillingPeriod** | The billing clock | `MONTHLY`/`YEARLY` design placeholder; period keys are `YYYY-MM` strings for monthly counters |
 | **Trial** | Time-boxed paid-tier evaluation | `SubscriptionStatus.TRIALING` + `trialEndsAt` (no separate table in v1) |
 
+> *Prompt 20 note: superseded by the relational `PlanEntitlement` join table
+> (`Plan ⋈ EntitlementDefinition`) — §17 of the implementation mandates
+> relational resolution, not an `entitlementsJson` blob. The status set is
+> 6 values: `PAST_DUE` and `PAUSED` are reserved/unused in this phase, and
+> the `UsageCounter` entity is deferred (see §6). See
+> `docs/billing/subscription-lifecycle.md` §1–§2 and
+> `docs/billing/platform-billing-vs-business-finance.md` §1.*
+
 ### 2.1 SubscriptionStatus semantics (design)
+
+> *Prompt 20 note: superseded by `STATUS_SEMANTICS` in
+> `src/lib/billing/state-machine.ts` (6 statuses — `PAUSED` added as a
+> reserved state) — the exact, implemented semantics live in
+> `docs/billing/subscription-lifecycle.md` §1.*
 
 | Status | Meaning | Access |
 |---|---|---|
@@ -120,7 +197,17 @@ Notes: values above are **placeholder magnitudes for design review only**
 forward-looking (no file upload exists — A15 is interface-only,
 `docs/PROJECT-CONSTITUTION.md:242-246`).
 
+> *Prompt 20 note: superseded by the final 7-entitlement catalog in
+> `src/lib/billing/catalog.ts` (`CUSTOMERS_MAX`, `PRODUCTS_MAX`,
+> `TEAM_MEMBERS_MAX`, `BUSINESSES_MAX`, `AI_COPILOT`, `ADVANCED_REPORTS`,
+> `CSV_EXPORT` — with `ENTERPRISE` as a fifth, catalog-only plan) and the
+> exact per-plan values in `docs/billing/entitlements.md` §2.*
+
 ### 4.1 Entitlement record shape (design)
+
+> *Prompt 20 note: superseded by `EntitlementSpec`/`PlanSpec` in
+> `src/lib/billing/catalog.ts` and the `EntitlementDefinition` +
+> `PlanEntitlement` tables (see `docs/billing/entitlements.md` §1).*
 
 ```ts
 // src/modules/billing/entitlements.ts (FUTURE — design sketch)
@@ -179,6 +266,11 @@ billing tables directly.
 ---
 
 ## 6. Usage abstraction (design)
+
+> *Prompt 20 note: superseded by a deliberate deferral — **no**
+> `UsageCounter` table exists and **no** AI usage quantity is recorded
+> anywhere in Prompt 20 (`AI_COPILOT` gates presence only, §36). Period-keyed
+> metering moves to **Prompt 21** (see `docs/billing/entitlements.md` §4.2).*
 
 ```ts
 // src/modules/billing/usage.ts (FUTURE — design sketch)
@@ -239,6 +331,11 @@ export interface PaymentProvider {
 Flow laws:
 1. `verifyWebhook` is the **only** code path that can move a subscription to
    `ACTIVE` — manual flips forbidden (§1.2, no fake confirmation).
+   > *Prompt 20 note: superseded **for this phase** by the internal
+   > change-plan tool (`changePlan` in `src/lib/billing/service.ts`) — an
+   > authorized OWNER/ADMIN operation that re-engages a subscription without
+   > money (§41/§83). The webhook-only law returns with the payment phase;
+   > `verifyWebhook` does not exist yet.*
 2. Provider identity never leaks past the adapter (mirror of D7/A10 for AI,
    `docs/TECH-DECISION-RECORD.md:79-83`).
 3. Provider selection is **deferred** and requires legal counsel sign-off
@@ -250,6 +347,14 @@ Flow laws:
 ---
 
 ## 8. Minimal Prisma model sketch (PSEUDO-SCHEMA — NOT applied)
+
+> *Prompt 20 note: superseded by the real schema — `prisma/schema.prisma`
+> (the 5 billing models) and migration
+> `20260923075730_prompt20_billing_foundation`. Divergences: `Subscription`
+> (not `BusinessSubscription`) references a `Plan` row by FK (`ON DELETE
+> RESTRICT`) instead of storing a `planCode` string; the join-table pattern
+> replaced flat `PlanEntitlement` key rows; no `providerRef` column exists
+> (§84/§85); history lives in `SubscriptionEvent`.*
 
 ```prisma
 // prisma/schema.prisma (FUTURE — sketch; do NOT paste into the live schema)
@@ -303,6 +408,12 @@ conceptual; not applied to the live schema in this phase.)
 ---
 
 ## 9. Explicit non-goals of this phase
+
+> *Prompt 20 note: this section is preserved as Prompt 17 history and is now
+> partially superseded — billing code/routes/tables/UI **do** exist as of
+> Prompt 20 (see the Implementation status section at the top). Still true:
+> no prices, no checkout, no provider choice (legal-counsel gate, §1.2).
+> The current non-goal list lives in the Implementation status section.*
 
 No billing code/routes/tables/UI in Prompt 17 (A16 —
 `docs/PROJECT-CONSTITUTION.md:250-252` — still true), no prices or checkout

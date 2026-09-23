@@ -11,6 +11,8 @@
  * the business precision) — never float arithmetic.
  *
  * Permission: data:read (all roles — mirrors the Reports view).
+ * Billing (§34): CSV_EXPORT entitlement — server-side reject when false;
+ * UI hiding alone is never the enforcement.
  * Rate limited: 10 exports / 5 min / user. Audited: "data.export".
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -18,6 +20,7 @@ import { ApiError, route } from "@/lib/api-helpers";
 import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { rateLimit } from "@/lib/rate-limit";
+import { assertFeatureAccess } from "@/lib/billing";
 import { fromMinor } from "@/lib/money";
 import { buildReportSummary, normalizeReportDays } from "@/lib/reports";
 import { csvCell } from "@/lib/csv";
@@ -31,6 +34,10 @@ function csvRow(cells: (string | number | null | undefined)[]): string {
 export const GET = route(async (req: NextRequest) => {
   const ctx = await getAuthContext(req);
   requirePermission(ctx, "data:read");
+
+  // Billing gate (§34): server-side CSV export rejects when the plan's
+  // CSV_EXPORT entitlement is false — fresh read (§111).
+  await assertFeatureAccess(ctx.businessId, "CSV_EXPORT");
 
   const limit = rateLimit(`report-export:${ctx.userId}`, 10, 5 * 60_000);
   if (!limit.allowed) {

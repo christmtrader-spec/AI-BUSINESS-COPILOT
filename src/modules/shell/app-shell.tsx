@@ -26,6 +26,7 @@ import { CopilotView } from "../copilot/copilot-view";
 import { BusinessSettingsView } from "../settings/business-settings-view";
 import { MembersView } from "../settings/members-view";
 import { ProfileView } from "../settings/profile-view";
+import { SubscriptionView } from "../billing/subscription-view";
 import { AuditView } from "../audit/audit-view";
 import { ComingSoonView } from "./coming-soon-view";
 
@@ -40,6 +41,8 @@ function labelKeyOf(view: AppView): string {
       return "settings";
     case "settings:members":
       return "teamMembers";
+    case "settings:billing":
+      return "billing";
     case "profile":
       return "profile";
     case "module": {
@@ -126,6 +129,9 @@ export function AppShell({
                 <BusinessSettingsView business={membership!.business} />
               ) : null}
               {view.kind === "settings:members" ? <MembersView membership={membership!} /> : null}
+              {view.kind === "settings:billing" ? (
+                <SubscriptionView business={membership!.business} role={role} />
+              ) : null}
               {view.kind === "profile" ? <ProfileView /> : null}
               {view.kind === "audit" ? <AuditView membership={membership!} /> : null}
               {view.kind === "module" ? (

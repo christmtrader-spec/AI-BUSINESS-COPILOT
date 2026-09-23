@@ -17,6 +17,7 @@ import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { copilotAskSchema } from "@/lib/schemas";
 import { rateLimit } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
+import { assertFeatureAccess } from "@/lib/billing";
 import { buildCopilotGrounding } from "@/lib/ai/snapshot";
 import { AiUnavailableError, getAI, type AiMessage } from "@/lib/ai/provider";
 
@@ -26,6 +27,11 @@ export const maxDuration = 60;
 export const POST = route(async (req: NextRequest) => {
   const ctx = await getAuthContext(req);
   requirePermission(ctx, "copilot:use");
+
+  // Billing gate (§36): AI_COPILOT boolean entitlement — server-side,
+  // fresh read (§111). Usage QUANTITY metering is Prompt 21; this gate is
+  // presence-only and never assumes payment.
+  await assertFeatureAccess(ctx.businessId, "AI_COPILOT");
 
   const rl = rateLimit(`copilot:${ctx.userId}:${ctx.businessId}`, 10, 60_000);
   if (!rl.allowed) {

@@ -38,6 +38,7 @@ model User {
   chatSessions ChatSession[]
   chatMessages ChatMessage[]
   passwordResetTokens PasswordResetToken[]
+  subscriptionEvents SubscriptionEvent[]
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +89,8 @@ model Business {
   expenses  Expense[]
   payments  Payment[]
   chatSessions ChatSession[]
+  subscription Subscription?
+  subscriptionEvents SubscriptionEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -384,4 +387,139 @@ model ChatMessage {
 
   @@index([sessionId, createdAt])
   @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 20 — PLATFORM BILLING FOUNDATION (subscription + entitlement domain).
+//
+// SEPARATION LAW (docs/billing/platform-billing-vs-business-finance.md):
+// these tables model the SaaS subscription of a business TO THIS PLATFORM.
+// They must never be mixed with tenant business finance (Sale/Expense/
+// Payment), which records the business's OWN customers' money.
+//
+// Modeling notes:
+// - SQLite has no enums → status/type/period/billingPeriod are strings;
+//   the authoritative value sets + transition rules live in
+//   src/lib/billing/state-machine.ts and are validated at every boundary.
+// - Subscription belongs to the BUSINESS (tenant), never to a User (§3).
+// - One current subscription per business: unique(businessId) at the DB
+//   level (§79). History is preserved via SubscriptionEvent rows; ended
+//   subscriptions are never deleted (§81).
+// - Plan.code / EntitlementDefinition.code are STABLE machine identifiers
+//   (§7/§8) — display names are never used for authorization.
+// - No pricing columns anywhere (§39/§40): plan identity is not money.
+//   A future payment layer adds its own price/provider tables.
+// - No provider-specific ids or secrets (§84/§85) — added by a later
+//   payment phase through a dedicated mapping model if justified.
+// ---------------------------------------------------------------------------
+
+model Plan {
+  id          String   @id @default(cuid())
+  // Stable machine identifier: FREE | STARTER | BUSINESS | PRO | ENTERPRISE.
+  code        String   @unique
+  name        String
+  description String   @default("")
+  // Retired plans are deactivated (active=false), never deleted (§80).
+  active      Boolean  @default(true)
+  isPublic    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  planEntitlements PlanEntitlement[]
+  subscriptions    Subscription[]
+
+  @@index([active, sortOrder])
+}
+
+model EntitlementDefinition {
+  id   String @id @default(cuid())
+  // Stable machine code: CUSTOMERS_MAX | AI_COPILOT | ... (§72 — constants
+  // live in src/lib/billing/catalog.ts; raw literals never scatter).
+  code String @unique
+  // LIMIT | BOOLEAN (validated against catalog at seed time).
+  type String
+  // COUNT | REQUESTS | MESSAGES | MEGABYTES | BUSINESSES | USERS (LIMIT only).
+  unit String?
+  description String @default("")
+
+  planEntitlements PlanEntitlement[]
+
+  // NOTE: code is @unique — SQLite already maintains a unique index (§78).
+}
+
+model PlanEntitlement {
+  id            String @id @default(cuid())
+  planId        String
+  plan          Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  entitlementId String
+  entitlement   EntitlementDefinition @relation(fields: [entitlementId], references: [id], onDelete: Cascade)
+  // LIMIT rows: the numeric limit; null = UNLIMITED (e.g. ENTERPRISE).
+  // BOOLEAN rows: value stays null.
+  value         Int?
+  // BOOLEAN rows carry the flag; LIMIT rows are always false here.
+  boolValue     Boolean @default(false)
+  createdAt     DateTime @default(now())
+
+  @@unique([planId, entitlementId])
+  @@index([entitlementId])
+}
+
+model Subscription {
+  id         String @id @default(cuid())
+  // One CURRENT subscription per business (§79). History → SubscriptionEvent.
+  businessId String @unique
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Deleting a plan that still has subscriptions is blocked (Restrict) —
+  // retire via active=false instead (§80).
+  planId     String
+  plan       Plan @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  // TRIALING | ACTIVE | PAST_DUE | CANCELED | EXPIRED | PAUSED (§16/§17).
+  status     String @default("ACTIVE")
+  // MONTHLY | YEARLY — period duration concept only; no prices (§18).
+  billingPeriod String @default("MONTHLY")
+
+  currentPeriodStart DateTime @default(now())
+  currentPeriodEnd   DateTime?
+  trialStart DateTime?
+  trialEnd   DateTime?
+  // Cancellation semantics (§44): keep access until period end.
+  cancelAtPeriodEnd Boolean @default(false)
+  canceledAt DateTime?
+  endedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events SubscriptionEvent[]
+
+  @@index([planId])
+  @@index([status])
+  @@index([currentPeriodEnd])
+}
+
+model SubscriptionEvent {
+  id             String @id @default(cuid())
+  businessId     String
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  // CREATED | PLAN_CHANGED | TRIAL_STARTED | TRIAL_ENDED | CANCELED |
+  // REACTIVATED | EXPIRED | PAUSED | RESUMED (§20) — no payment events.
+  type       String
+  fromStatus String?
+  toStatus   String?
+  fromPlanCode String?
+  toPlanCode   String?
+  // Small structured payload (e.g. { source: "seed-backfill" }) — never
+  // payment data; the core relationships above are relational, not JSON (§17).
+  dataJson   String?
+  actorId    String?
+  actor      User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([subscriptionId, createdAt])
 }

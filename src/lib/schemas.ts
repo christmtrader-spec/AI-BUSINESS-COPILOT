@@ -157,3 +157,34 @@ export const chatSessionUpdateSchema = z
   .refine((v) => v.title !== undefined || v.pinned !== undefined, {
     message: "Nothing to update.",
   });
+
+// ---------------------------------------------------------------------------
+// Prompt 20 — billing (§98: every billing input is validated; plan codes
+// are stable machine identifiers, never display names).
+// ---------------------------------------------------------------------------
+
+/** Stable machine plan code: FREE | STARTER | BUSINESS | PRO | ENTERPRISE. */
+export const planCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z][A-Z0-9_]{1,39}$/, "Invalid plan code.");
+
+/** POST /api/v1/billing/change-plan */
+export const changePlanSchema = z.object({ planCode: planCodeSchema });
+
+/** POST /api/v1/billing/cancel — §44 cancelAtPeriodEnd semantics. */
+export const billingCancelSchema = z.object({}).strict();
+
+/** POST /api/v1/billing/reactivate */
+export const billingReactivateSchema = z.object({}).strict();
+
+/**
+ * POST /api/v1/billing/trial — domain capability only (§19). The endpoint
+ * is disabled unless the operator sets BILLING_TRIALS_ENABLED=1; nothing
+ * starts trials automatically and there is no self-service policy yet.
+ */
+export const billingTrialSchema = z.object({
+  action: z.enum(["start", "end"]),
+  days: z.number().int().min(1).max(90).default(14),
+});
