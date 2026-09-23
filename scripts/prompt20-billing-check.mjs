@@ -370,10 +370,27 @@ try {
     nonFreeExisting === 0,
     `nonFree=${nonFreeExisting}`,
   );
+  // B3 (r22 redesign): the original check counted a MUTABLE global counter
+  // (all seed-backfill CREATED events >= 17), which regresses whenever a
+  // seeded business is legitimately deleted (cascade removes its events —
+  // e.g. the smoke suite's throwaway cleanup). The real invariant is:
+  //   1. every subscription that EXISTS right now has a CREATED event
+  //      (nothing unauditable remains), and
+  //   2. at least one seed-backfill event survived (the backfill provably
+  //      wrote auditable events).
+  const totalSubs = await prisma.subscription.count({});
+  const subsWithCreated = await prisma.subscription.count({
+    where: { events: { some: { type: "CREATED" } } },
+  });
+  check(
+    "B3. every existing subscription's creation is auditable (CREATED event)",
+    totalSubs >= 1 && totalSubs === subsWithCreated,
+    `${subsWithCreated}/${totalSubs} auditable`,
+  );
   const backfillEvents = await prisma.subscriptionEvent.count({
     where: { type: "CREATED", dataJson: { contains: "seed-backfill" } },
   });
-  check("B3. backfill is auditable (CREATED events with source)", backfillEvents >= 17, `events=${backfillEvents}`);
+  check("B3b. seed backfill wrote auditable CREATED events (>=1 survives)", backfillEvents >= 1, `events=${backfillEvents}`);
   const subA = await prisma.subscription.findUnique({
     where: { businessId: bizA.id },
     include: { plan: true },

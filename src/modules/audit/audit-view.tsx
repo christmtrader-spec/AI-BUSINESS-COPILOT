@@ -1,8 +1,8 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { ScrollText } from "lucide-react";
+import { Download, Loader2, ScrollText } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
 import { asRole, can, type Role } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
@@ -12,6 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Ltr } from "@/components/shared/data-table";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
+import { toast } from "@/hooks/use-toast";
+import { useBillingErrorText } from "@/hooks/use-billing-error-text";
 import type { AuditEntry, BusinessListItem } from "../shell/types";
 
 function formatAction(action: string): string {
@@ -26,8 +28,10 @@ export function AuditView({ membership }: { membership: BusinessListItem }) {
   const t = useTranslations("audit");
   const tErrors = useTranslations("errors");
   const tCommon = useTranslations("common");
+  const billingErrorText = useBillingErrorText();
   const locale = useAppStore((s) => s.locale);
   const activeId = useAppStore((s) => s.activeBusinessId);
+  const queryClient = useQueryClient();
 
   const role: Role = asRole(membership.role);
   const allowed = can(role, "audit:read");
@@ -36,6 +40,51 @@ export function AuditView({ membership }: { membership: BusinessListItem }) {
     queryKey: ["audit", activeId],
     queryFn: () => api(`/api/v1/audit?take=100`),
     enabled: allowed,
+  });
+
+  // CSV export — server-generated from the SAME audit rows (single source
+  // of truth); the client only streams the blob to a file. Same pattern as
+  // the Reports export (r22).
+  const csvExport = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/v1/audit?take=200&format=csv`, {
+        credentials: "same-origin",
+        headers: activeId ? { "x-business-id": activeId } : undefined,
+      });
+      if (!res.ok) {
+        let message = t("csvFailed");
+        try {
+          const body = (await res.json()) as { error?: { code?: string; message?: string } };
+          if (body.error?.code === "RATE_LIMITED") message = t("csvRateLimited");
+          else if (body.error?.message) message = body.error.message;
+        } catch {
+          // keep default
+        }
+        throw new Error(message);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const dispo = res.headers.get("content-disposition") ?? "";
+      const match = /filename="([^"]+)"/.exec(dispo);
+      a.download = match?.[1] ?? "audit-export.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+    onSuccess: () => {
+      toast({ title: t("csvExportedToast") });
+      // The export itself is audited — refresh so the new entry is visible.
+      void queryClient.invalidateQueries({ queryKey: ["audit", activeId] });
+    },
+    onError: (err) =>
+      toast({
+        title:
+          billingErrorText(err) || (err instanceof Error ? err.message : tErrors("generic")),
+        variant: "destructive",
+      }),
   });
 
   const fmt = new Intl.DateTimeFormat(locale === "fa" ? "fa-IR" : "en-US", {
@@ -55,7 +104,30 @@ export function AuditView({ membership }: { membership: BusinessListItem }) {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6" data-view="audit">
-      <PageHeader title={t("title")} subtitle={t("subtitle")} />
+      <PageHeader
+        title={t("title")}
+        subtitle={t("subtitle")}
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5"
+            onClick={() => csvExport.mutate()}
+            disabled={csvExport.isPending}
+            title={t("exportCsv")}
+          >
+            {csvExport.isPending ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Download className="size-4" aria-hidden="true" />
+            )}
+            <span className="hidden sm:inline" aria-hidden="true">
+              {csvExport.isPending ? t("exportingCsv") : t("exportCsv")}
+            </span>
+            <span className="sr-only">{csvExport.isPending ? t("exportingCsv") : t("exportCsv")}</span>
+          </Button>
+        }
+      />
 
       <Card>
         <CardContent className="pt-6">

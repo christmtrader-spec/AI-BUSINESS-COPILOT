@@ -368,6 +368,11 @@ const en = {
     empty: "No audit entries yet",
     emptyDesc: "Actions like settings changes and member updates will appear here automatically.",
     system: "System",
+    exportCsv: "Export CSV",
+    exportingCsv: "Preparing CSV…",
+    csvExportedToast: "Audit CSV downloaded",
+    csvFailed: "Unable to export the audit CSV right now. Please try again.",
+    csvRateLimited: "Too many exports in a short time — please wait a few minutes.",
   },
   comingSoon: {
     title: "{module} — coming soon",

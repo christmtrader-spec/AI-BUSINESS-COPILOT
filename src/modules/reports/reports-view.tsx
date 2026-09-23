@@ -506,7 +506,9 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
               ) : (
                 <Download className="size-4" aria-hidden="true" />
               )}
-              <span className="hidden sm:inline">{csvExport.isPending ? t("exportingCsv") : t("exportCsv")}</span>
+              <span className="hidden sm:inline" aria-hidden="true">
+                {csvExport.isPending ? t("exportingCsv") : t("exportCsv")}
+              </span>
               <span className="sr-only">{csvExport.isPending ? t("exportingCsv") : t("exportCsv")}</span>
             </Button>
           </div>

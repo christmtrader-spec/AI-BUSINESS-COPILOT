@@ -27,6 +27,11 @@ const BASE = (() => {
 })();
 
 const PASS = "testpass123";
+
+// Per-run unique client IP — register/login limiters key on the caller IP,
+// so a fixed IP can rate-limit the suite when other harnesses run in the
+// same window (same isolation pattern as the prompt17-21 check scripts).
+const RUN_XFF = `10.212.${Math.floor(Math.random() * 254) + 1}.${Math.floor(Math.random() * 254) + 1}`;
 const results: Check[] = [];
 
 function record(name: string, ok: boolean, info?: string) {
@@ -41,6 +46,7 @@ function jarFetch(jar: Map<string, string>) {
   return async (path: string, init: RequestInit = {}): Promise<Response> => {
     const cookie = [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
     const headers: Record<string, string> = {
+      "x-forwarded-for": RUN_XFF,
       ...(init.headers as Record<string, string> | undefined),
     };
     if (cookie) headers.cookie = cookie;
@@ -131,6 +137,55 @@ async function main() {
   // 1. Owner login + business context
   const sara = await login("sara@copilot.dev");
   record("login OWNER (sara)", true);
+
+  // 1a. Self-healing fixture sweep — a crashed/interrupted previous run can
+  // leak its throwaway businesses ("Smoke *" names). A leaked throwaway trips
+  // the FREE-plan BUSINESSES_MAX entitlement and permanently 422s the
+  // throwaway creation steps of every later run (failure class found r22).
+  // Sweep leaks BEFORE resolving the main business or creating new throwaways.
+  {
+    const preList = await api(sara, "/api/v1/businesses");
+    const preItems: any[] = Array.isArray(preList.body?.data)
+      ? preList.body.data
+      : (preList.body?.data?.businesses ?? []);
+    const leaked = preItems.filter((it) =>
+      String(it?.business?.name ?? "").startsWith("Smoke "),
+    );
+    let swept = 0;
+    for (const it of leaked) {
+      const del = await api(sara, `/api/v1/businesses/${it.business.id}`, it.business.id, {
+        method: "DELETE",
+        body: JSON.stringify({ confirmName: it.business.name }),
+      });
+      if (del.status === 200 || del.status === 201 || del.status === 204) swept++;
+    }
+    record(
+      "self-heal: leaked throwaway businesses swept",
+      swept === leaked.length,
+      `${swept}/${leaked.length} deleted`,
+    );
+  }
+
+  // 1b. Fresh throwaway owner — registered per run so the throwaway-based
+  // sections always have full BUSINESSES_MAX headroom (the main account
+  // sara sits at her FREE-plan limit of 1 business and must stay there)
+  // and gets a fresh business:create rate bucket of its own.
+  const ownerEmail = `smkowner${Date.now()}@t.dev`;
+  const regOwner = await fetch(`${BASE}/api/v1/auth/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-forwarded-for": RUN_XFF },
+    body: JSON.stringify({
+      name: "Smoke Throwaway Owner",
+      email: ownerEmail,
+      password: PASS,
+    }),
+  });
+  record(
+    "fixtures: fresh throwaway owner registered (201)",
+    regOwner.status === 201,
+    `status ${regOwner.status}`,
+  );
+  const smk = await login(ownerEmail);
 
   const bizList = await api(sara, "/api/v1/businesses");
   const bizData = bizList.body?.data;
@@ -424,7 +479,7 @@ async function main() {
   // throwaway business, assert role enforcement + confirm-mismatch, delete
   // it for real, verify it is gone from the membership list.
   {
-    const created = await api(sara, "/api/v1/businesses", undefined, {
+    const created = await api(smk, "/api/v1/businesses", undefined, {
       method: "POST",
       body: JSON.stringify({
         name: "Smoke Delete Business",
@@ -455,7 +510,7 @@ async function main() {
       );
 
       // Danger counts endpoint — OWNER allowed on the throwaway.
-      const counts = await api(sara, `/api/v1/businesses/${TB}/danger`, TB);
+      const counts = await api(smk, `/api/v1/businesses/${TB}/danger`, TB);
       record(
         "danger: counts endpoint (OWNER)",
         counts.status === 200 && typeof counts.body?.data?.customers === "number",
@@ -463,7 +518,7 @@ async function main() {
       );
 
       // Wrong typed name → 422 CONFIRM_MISMATCH.
-      const mismatch = await api(sara, `/api/v1/businesses/${TB}`, TB, {
+      const mismatch = await api(smk, `/api/v1/businesses/${TB}`, TB, {
         method: "DELETE",
         body: JSON.stringify({ confirmName: "Wrong Name" }),
       });
@@ -474,7 +529,7 @@ async function main() {
       );
 
       // Correct typed name → business hard-deleted.
-      const del = await api(sara, `/api/v1/businesses/${TB}`, TB, {
+      const del = await api(smk, `/api/v1/businesses/${TB}`, TB, {
         method: "DELETE",
         body: JSON.stringify({ confirmName: throwBiz.name ?? "Smoke Delete Business" }),
       });
@@ -485,7 +540,7 @@ async function main() {
       );
 
       // Gone from the membership list.
-      const listAfter = await api(sara, "/api/v1/businesses");
+      const listAfter = await api(smk, "/api/v1/businesses");
       const afterList = Array.isArray(listAfter.body?.data)
         ? listAfter.body.data
         : listAfter.body?.data?.businesses ?? [];
@@ -499,7 +554,7 @@ async function main() {
   // as a FRESHLY registered user → membership created → re-accept 410 →
   // delete the throwaway business (cascades invite + membership away).
   {
-    const created = await api(sara, "/api/v1/businesses", undefined, {
+    const created = await api(smk, "/api/v1/businesses", undefined, {
       method: "POST",
       body: JSON.stringify({
         name: "Smoke Invite Business",
@@ -519,7 +574,7 @@ async function main() {
       const IB = invBiz.id as string;
 
       // OWNER role must never be mintable through an invite.
-      const ownerInvite = await api(sara, `/api/v1/businesses/${IB}/invites`, IB, {
+      const ownerInvite = await api(smk, `/api/v1/businesses/${IB}/invites`, IB, {
         method: "POST",
         body: JSON.stringify({ role: "OWNER", expiresInDays: 7 }),
       });
@@ -530,7 +585,7 @@ async function main() {
       );
 
       // Mint a real invite (24h expiry).
-      const mint = await api(sara, `/api/v1/businesses/${IB}/invites`, IB, {
+      const mint = await api(smk, `/api/v1/businesses/${IB}/invites`, IB, {
         method: "POST",
         body: JSON.stringify({ role: "MANAGER", expiresInDays: 1 }),
       });
@@ -542,7 +597,7 @@ async function main() {
       );
 
       // List must NOT leak the full token.
-      const listInv = await api(sara, `/api/v1/businesses/${IB}/invites`, IB);
+      const listInv = await api(smk, `/api/v1/businesses/${IB}/invites`, IB);
       const leaksToken =
         listInv.status === 200 && JSON.stringify(listInv.body?.data ?? {}).includes(token ?? "\\u0000");
       record(
@@ -553,7 +608,7 @@ async function main() {
 
       if (token) {
         // Unknown token → 404 (never a stack trace).
-        const badToken = await api(sara, "/api/v1/invites/not-a-real-token");
+        const badToken = await api(smk, "/api/v1/invites/not-a-real-token");
         record(
           "invites: unknown token 404",
           badToken.status === 404 && badToken.body?.error?.code === "NOT_FOUND",
@@ -565,7 +620,7 @@ async function main() {
         const email = `inv${stamp}@t.dev`;
         const reg = await fetch(`${BASE}/api/v1/auth/register`, {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", "x-forwarded-for": RUN_XFF },
           body: JSON.stringify({ name: "Smoke Invitee", email, password: PASS }),
         });
         record("invites: register invitee (201)", reg.status === 201, `status ${reg.status}`);
@@ -625,7 +680,7 @@ async function main() {
       }
 
       // Cleanup: delete the throwaway business (cascades invite + member).
-      const delInvBiz = await api(sara, `/api/v1/businesses/${IB}`, IB, {
+      const delInvBiz = await api(smk, `/api/v1/businesses/${IB}`, IB, {
         method: "DELETE",
         body: JSON.stringify({ confirmName: "Smoke Invite Business" }),
       });
@@ -670,10 +725,10 @@ async function main() {
   }
 
   // 11. COPILOT TRANSCRIPT PERSISTENCE (Phase 07) — lifecycle, caps, RBAC,
-  //     per-user scoping, on a THROWAWAY business so Sara's real transcripts
+  //     per-user scoping, on a THROWAWAY business so the main account's real transcripts
   //     are never touched.
   {
-    const created = await api(sara, "/api/v1/businesses", undefined, {
+    const created = await api(smk, "/api/v1/businesses", undefined, {
       method: "POST",
       body: JSON.stringify({
         name: "Smoke Chat Business",
@@ -694,7 +749,7 @@ async function main() {
       const SID = "s-smoketest000000"; // valid client-format session id
 
       // First append AUTO-CREATES the session (with title).
-      const m1 = await api(sara, `/api/v1/copilot/sessions/${SID}/messages`, CB, {
+      const m1 = await api(smk, `/api/v1/copilot/sessions/${SID}/messages`, CB, {
         method: "POST",
         body: JSON.stringify({
           role: "user",
@@ -708,7 +763,7 @@ async function main() {
         `status ${m1.status}`,
       );
 
-      const m2 = await api(sara, `/api/v1/copilot/sessions/${SID}/messages`, CB, {
+      const m2 = await api(smk, `/api/v1/copilot/sessions/${SID}/messages`, CB, {
         method: "POST",
         body: JSON.stringify({
           role: "assistant",
@@ -723,7 +778,7 @@ async function main() {
       );
 
       // List returns the session with both messages + title + parsed meta.
-      const list = await api(sara, "/api/v1/copilot/sessions", CB);
+      const list = await api(smk, "/api/v1/copilot/sessions", CB);
       const sessions = Array.isArray(list.body?.data?.sessions)
         ? list.body.data.sessions
         : [];
@@ -744,7 +799,7 @@ async function main() {
 
       // r12 — PATCH rename: title changes, titleEdited flag set, auto-title
       // must never override it afterwards.
-      const rename = await api(sara, `/api/v1/copilot/sessions/${SID}`, CB, {
+      const rename = await api(smk, `/api/v1/copilot/sessions/${SID}`, CB, {
         method: "PATCH",
         body: JSON.stringify({ title: "My renamed Q&A" }),
       });
@@ -757,11 +812,11 @@ async function main() {
       );
 
       // r12 — PATCH pin: pinned flag returned; list mirrors it.
-      const pin = await api(sara, `/api/v1/copilot/sessions/${SID}`, CB, {
+      const pin = await api(smk, `/api/v1/copilot/sessions/${SID}`, CB, {
         method: "PATCH",
         body: JSON.stringify({ pinned: true }),
       });
-      const listPinned = await api(sara, "/api/v1/copilot/sessions", CB);
+      const listPinned = await api(smk, "/api/v1/copilot/sessions", CB);
       const pinnedFound = (listPinned.body?.data?.sessions ?? []).find(
         (s: { id?: string }) => s.id === SID,
       );
@@ -774,11 +829,11 @@ async function main() {
       );
 
       // Append AFTER rename — the user-set title must survive (no auto-takeover).
-      await api(sara, `/api/v1/copilot/sessions/${SID}/messages`, CB, {
+      await api(smk, `/api/v1/copilot/sessions/${SID}/messages`, CB, {
         method: "POST",
         body: JSON.stringify({ role: "user", content: "One more question" }),
       });
-      const listAfterAppend = await api(sara, "/api/v1/copilot/sessions", CB);
+      const listAfterAppend = await api(smk, "/api/v1/copilot/sessions", CB);
       const afterFound = (listAfterAppend.body?.data?.sessions ?? []).find(
         (s: { id?: string }) => s.id === SID,
       );
@@ -789,7 +844,7 @@ async function main() {
       );
 
       // Validation negatives.
-      const patchEmpty = await api(sara, `/api/v1/copilot/sessions/${SID}`, CB, {
+      const patchEmpty = await api(smk, `/api/v1/copilot/sessions/${SID}`, CB, {
         method: "PATCH",
         body: JSON.stringify({}),
       });
@@ -798,7 +853,7 @@ async function main() {
         patchEmpty.status === 422,
         `status ${patchEmpty.status}`,
       );
-      const patchEmptyTitle = await api(sara, `/api/v1/copilot/sessions/${SID}`, CB, {
+      const patchEmptyTitle = await api(smk, `/api/v1/copilot/sessions/${SID}`, CB, {
         method: "PATCH",
         body: JSON.stringify({ title: "   " }),
       });
@@ -807,7 +862,7 @@ async function main() {
         patchEmptyTitle.status === 422,
         `status ${patchEmptyTitle.status}`,
       );
-      const patchBad = await api(sara, `/api/v1/copilot/sessions/x`, CB, {
+      const patchBad = await api(smk, `/api/v1/copilot/sessions/x`, CB, {
         method: "PATCH",
         body: JSON.stringify({ pinned: true }),
       });
@@ -853,7 +908,7 @@ async function main() {
       );
 
       // Malformed session id rejected before any DB touch.
-      const badId = await api(sara, "/api/v1/copilot/sessions/bad-id!@/messages", CB, {
+      const badId = await api(smk, "/api/v1/copilot/sessions/bad-id!@/messages", CB, {
         method: "POST",
         body: JSON.stringify({ role: "user", content: "x" }),
       });
@@ -864,11 +919,11 @@ async function main() {
       );
 
       // Delete the session; second delete → 404 (gone).
-      const del = await api(sara, `/api/v1/copilot/sessions/${SID}`, CB, {
+      const del = await api(smk, `/api/v1/copilot/sessions/${SID}`, CB, {
         method: "DELETE",
       });
       record("chat: delete session (200)", del.status === 200, `status ${del.status}`);
-      const reDel = await api(sara, `/api/v1/copilot/sessions/${SID}`, CB, {
+      const reDel = await api(smk, `/api/v1/copilot/sessions/${SID}`, CB, {
         method: "DELETE",
       });
       record(
@@ -878,7 +933,7 @@ async function main() {
       );
 
       // Clear-all on empty store still succeeds (idempotent).
-      const clear = await api(sara, "/api/v1/copilot/sessions", CB, { method: "DELETE" });
+      const clear = await api(smk, "/api/v1/copilot/sessions", CB, { method: "DELETE" });
       record(
         "chat: clear-all (200, idempotent)",
         clear.status === 200 && typeof clear.body?.data?.deleted === "number",
@@ -886,7 +941,7 @@ async function main() {
       );
 
       // Cleanup throwaway business (cascades any remaining chat rows).
-      const delChatBiz = await api(sara, `/api/v1/businesses/${CB}`, CB, {
+      const delChatBiz = await api(smk, `/api/v1/businesses/${CB}`, CB, {
         method: "DELETE",
         body: JSON.stringify({ confirmName: "Smoke Chat Business" }),
       });
@@ -933,7 +988,7 @@ async function main() {
   //     from the reports month dialog. The list ?month= filter must bucket
   //     rows with the SAME business-timezone month key as the drill-down.
   {
-    const created = await api(sara, "/api/v1/businesses", undefined, {
+    const created = await api(smk, "/api/v1/businesses", undefined, {
       method: "POST",
       body: JSON.stringify({
         name: "Smoke Month Business",
@@ -952,7 +1007,7 @@ async function main() {
     if (mb?.id) {
       const MB = mb.id as string;
       // One sale + one expense inside 2026-03, one sale in 2026-04.
-      const saleMar = await api(sara, "/api/v1/sales", MB, {
+      const saleMar = await api(smk, "/api/v1/sales", MB, {
         method: "POST",
         body: JSON.stringify({
           items: [{ name: "Smoke item", unit: "pcs", qty: 2, unitPriceMinor: 1500 }],
@@ -964,14 +1019,14 @@ async function main() {
         saleMar.status === 201,
         `status ${saleMar.status}`,
       );
-      await api(sara, "/api/v1/sales", MB, {
+      await api(smk, "/api/v1/sales", MB, {
         method: "POST",
         body: JSON.stringify({
           items: [{ name: "Smoke item April", unit: "pcs", qty: 1, unitPriceMinor: 999 }],
           issueDate: "2026-04-02T09:00:00.000Z",
         }),
       });
-      const expMar = await api(sara, "/api/v1/expenses", MB, {
+      const expMar = await api(smk, "/api/v1/expenses", MB, {
         method: "POST",
         body: JSON.stringify({
           category: "Rent",
@@ -986,7 +1041,7 @@ async function main() {
       );
 
       // March filter: exactly the one March sale.
-      const salesMar = await api(sara, "/api/v1/sales?month=2026-03&page=1&pageSize=10", MB);
+      const salesMar = await api(smk, "/api/v1/sales?month=2026-03&page=1&pageSize=10", MB);
       const smItems = salesMar.body?.data?.items ?? [];
       record(
         "month list: sales ?month=2026-03 returns only March rows",
@@ -998,7 +1053,7 @@ async function main() {
       );
 
       // Empty month: zero rows, still 200 (drives the localized empty state).
-      const salesEmpty = await api(sara, "/api/v1/sales?month=2099-01&page=1&pageSize=10", MB);
+      const salesEmpty = await api(smk, "/api/v1/sales?month=2099-01&page=1&pageSize=10", MB);
       record(
         "month list: sales ?month=2099-01 → total 0",
         salesEmpty.status === 200 && salesEmpty.body?.data?.total === 0,
@@ -1006,7 +1061,7 @@ async function main() {
       );
 
       // Malformed month: rejected.
-      const salesBad = await api(sara, "/api/v1/sales?month=2026-13&page=1&pageSize=10", MB);
+      const salesBad = await api(smk, "/api/v1/sales?month=2026-13&page=1&pageSize=10", MB);
       record(
         "month list: invalid month rejected (422)",
         salesBad.status === 422,
@@ -1018,7 +1073,7 @@ async function main() {
       record("month list: filtered sales money integers (A08)", moneyOk);
 
       // Expenses mirror the same discipline.
-      const expFiltered = await api(sara, "/api/v1/expenses?month=2026-03&page=1&pageSize=10", MB);
+      const expFiltered = await api(smk, "/api/v1/expenses?month=2026-03&page=1&pageSize=10", MB);
       record(
         "month list: expenses ?month=2026-03 returns only March rows",
         expFiltered.status === 200 &&
@@ -1028,7 +1083,7 @@ async function main() {
       );
 
       // Cleanup throwaway business (cascades sale/expense rows).
-      const delMb = await api(sara, `/api/v1/businesses/${MB}`, MB, {
+      const delMb = await api(smk, `/api/v1/businesses/${MB}`, MB, {
         method: "DELETE",
         body: JSON.stringify({ confirmName: "Smoke Month Business" }),
       });
