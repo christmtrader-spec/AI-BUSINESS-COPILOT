@@ -30,10 +30,12 @@ import { toast } from "@/hooks/use-toast";
 import { ApiClientError } from "@/lib/api-client";
 import { asRole, can } from "@/lib/rbac";
 import { cn } from "@/lib/utils";
+import { formatMinor } from "@/lib/payments/pricing";
 import type { BusinessSummary } from "../shell/types";
 import {
   useCancelSubscription,
   useChangePlan,
+  useCreateCheckout,
   useEntitlements,
   usePlanCatalog,
   useReactivateSubscription,
@@ -42,6 +44,8 @@ import {
   useUsage,
   type UsageMetricPayload,
 } from "@/hooks/use-billing";
+import { CheckoutDialog } from "./checkout-dialog";
+import { PaymentsHistoryCard } from "./payments-history-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -192,6 +196,8 @@ export function SubscriptionView({ business, role }: { business: BusinessSummary
 
   const [planDialogOpen, setPlanDialogOpen] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  // Prompt 22 — sandbox checkout session currently open in the dialog.
+  const [checkout, setCheckout] = useState<{ id: string; planName: string } | null>(null);
 
   const subscriptionQ = useSubscription();
   const entitlementsQ = useEntitlements();
@@ -202,6 +208,7 @@ export function SubscriptionView({ business, role }: { business: BusinessSummary
   const changePlan = useChangePlan();
   const cancelSub = useCancelSubscription();
   const reactivate = useReactivateSubscription();
+  const createCheckout = useCreateCheckout();
 
   const sub = subscriptionQ.data?.subscription;
   const entitlements = entitlementsQ.data?.entitlements ?? [];
@@ -255,6 +262,26 @@ export function SubscriptionView({ business, role }: { business: BusinessSummary
           variant: "destructive",
         }),
     });
+  };
+
+  // Prompt 22 — start a sandbox checkout for a PAID plan. The browser sends
+  // only the plan + period; the amount comes back from the server.
+  const startCheckout = async (
+    planCode: string,
+    planName: string,
+    billingPeriod: "MONTHLY" | "YEARLY",
+  ) => {
+    try {
+      const res = await createCheckout.mutateAsync({ planCode, billingPeriod });
+      setPlanDialogOpen(false);
+      setCheckout({ id: res.checkoutSession.id, planName });
+    } catch (error) {
+      toast({
+        title: t("checkout.createFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        variant: "destructive",
+      });
+    }
   };
 
   // ---- loading / error states ----------------------------------------------
@@ -603,7 +630,7 @@ export function SubscriptionView({ business, role }: { business: BusinessSummary
         </CardContent>
       </Card>
 
-      {/* ---- Plan switch dialog (internal, no payment) ------------------------- */}
+      {/* ---- Plan dialog (Prompt 22: prices + payment path + internal switch) -- */}
       <AlertDialog open={planDialogOpen} onOpenChange={setPlanDialogOpen}>
         <AlertDialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
           <AlertDialogHeader>
@@ -613,53 +640,108 @@ export function SubscriptionView({ business, role }: { business: BusinessSummary
           <div className="space-y-2" data-testid="billing-plan-options">
             {(catalogQ.data?.plans ?? [])
               .filter((p) => p.selfService)
-              .map((p) => (
-              <button
-                key={p.code}
-                type="button"
-                disabled={p.code === sub.plan.code || changePlan.isPending}
-                onClick={() => onSwitch(p.code, p.name)}
-                data-testid={`plan-option-${p.code}`}
-                className={cn(
-                  "w-full rounded-lg border p-3 text-start transition-colors",
-                  p.code === sub.plan.code
-                    ? "border-primary/40 bg-primary/5 cursor-default"
-                    : "hover:bg-accent",
-                )}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold">{p.name}</span>
-                  {p.code === sub.plan.code ? (
-                    <Badge variant="secondary">{t("currentPlan")}</Badge>
-                  ) : (
-                    <span className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                      {catalogQ.data?.definitions
-                        .filter((d) => d.type === "LIMIT")
-                        .map((d) => {
-                          const v = p.entitlements[d.code];
-                          return (
-                            <span key={d.code} className="whitespace-nowrap">
-                              {t(`entitlement.${d.code}` as "entitlement.CUSTOMERS_MAX")}:{" "}
-                              <span className="font-medium">
-                                {v === null ? t("unlimited") : (v as number)}
-                              </span>
-                            </span>
-                          );
-                        })}
-                    </span>
-                  )}
-                </div>
-                <p className="text-muted-foreground mt-1 text-xs">{p.description}</p>
-              </button>
-            ))}
+              .map((p) => {
+                const isCurrent = p.code === sub.plan.code;
+                const priceLine = p.pricing
+                  ? {
+                      monthly: formatMinor(p.pricing.monthlyMinor, p.pricing.currency, uiLocale),
+                      yearly: formatMinor(p.pricing.yearlyMinor, p.pricing.currency, uiLocale),
+                    }
+                  : null;
+                return (
+                  <div
+                    key={p.code}
+                    data-testid={`plan-option-${p.code}`}
+                    className={cn(
+                      "w-full rounded-lg border p-3 text-start transition-colors",
+                      isCurrent
+                        ? "border-primary/40 bg-primary/5"
+                        : "hover:bg-accent/50",
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold">{p.name}</span>
+                      {isCurrent ? (
+                        <Badge variant="secondary">{t("currentPlan")}</Badge>
+                      ) : priceLine ? (
+                        <span className="text-muted-foreground flex flex-wrap items-center gap-x-2 text-xs">
+                          <span className="font-semibold text-foreground">
+                            {t("checkout.perMonth", { amount: priceLine.monthly })}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>
+                            {t("checkout.perYear", { amount: priceLine.yearly })} (
+                            {t("checkout.yearlySaving")})
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground text-xs font-medium">
+                          {t("checkout.free")}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-muted-foreground mt-1 text-xs">{p.description}</p>
+                    {!isCurrent && canManage ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {priceLine ? (
+                          <>
+                            <Button
+                              size="sm"
+                              onClick={() => startCheckout(p.code, p.name, "MONTHLY")}
+                              disabled={createCheckout.isPending}
+                              data-testid={`checkout-monthly-${p.code}`}
+                            >
+                              {createCheckout.isPending ? (
+                                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                              ) : null}
+                              {t("checkout.payWithPlan")} · {t("checkout.periodMonthly")}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => startCheckout(p.code, p.name, "YEARLY")}
+                              disabled={createCheckout.isPending}
+                              data-testid={`checkout-yearly-${p.code}`}
+                            >
+                              {t("checkout.periodYearly")}
+                            </Button>
+                          </>
+                        ) : null}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-muted-foreground"
+                          onClick={() => onSwitch(p.code, p.name)}
+                          disabled={changePlan.isPending}
+                          data-testid={`switch-internal-${p.code}`}
+                        >
+                          {t("changePlan")}
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
           </div>
+          <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
+            <Info className="size-3.5 shrink-0" aria-hidden="true" />
+            {t("priceNote")}
+          </p>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={changePlan.isPending}>
+            <AlertDialogCancel disabled={changePlan.isPending || createCheckout.isPending}>
               {tCommon("cancel")}
             </AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ---- Prompt 22: sandbox checkout + payment history ---------------------- */}
+      <CheckoutDialog
+        checkoutId={checkout?.id ?? null}
+        planName={checkout?.planName ?? ""}
+        onClose={() => setCheckout(null)}
+      />
+      <PaymentsHistoryCard businessId={business.id} />
 
       {/* ---- Cancel confirmation ------------------------------------------------ */}
       <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>

@@ -193,6 +193,21 @@ export const billingCancelSchema = z.object({}).strict();
 export const billingReactivateSchema = z.object({}).strict();
 
 /**
+ * POST /api/v1/billing/checkout — Prompt 22. The browser supplies ONLY the
+ * target plan + period; the amount comes from the server price catalog
+ * (src/lib/payments/pricing.ts) and is never client-supplied.
+ */
+export const billingCheckoutSchema = z.object({
+  planCode: planCodeSchema,
+  billingPeriod: z.enum(["MONTHLY", "YEARLY"]).default("MONTHLY"),
+});
+
+/** POST /api/v1/billing/checkout/[id]/simulate — sandbox provider only. */
+export const billingSimulateSchema = z.object({
+  outcome: z.enum(["succeeded", "failed", "expired"]),
+});
+
+/**
  * POST /api/v1/billing/trial — domain capability only (§19). The endpoint
  * is disabled unless the operator sets BILLING_TRIALS_ENABLED=1; nothing
  * starts trials automatically and there is no self-service policy yet.

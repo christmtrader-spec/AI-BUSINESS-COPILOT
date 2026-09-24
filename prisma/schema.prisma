@@ -93,6 +93,7 @@ model Business {
   subscriptionEvents SubscriptionEvent[]
   usagePeriods UsagePeriod[]
   usageEvents  UsageEvent[]
+  checkoutSessions CheckoutSession[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -620,4 +621,98 @@ model UsageEvent {
   @@index([businessId, createdAt])
   @@index([usagePeriodId, metric])
   @@index([requestId])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 22 — PAYMENT PROVIDER ABSTRACTION (checkout sessions & payments).
+//
+// Separation of concerns:
+// - The PROVIDER INTERFACE lives in src/lib/payments (registry + adapters).
+//   Providers are code+env driven (no provider table): the sandbox "mock"
+//   provider is always available for development/testing; real providers
+//   only activate when their env keys exist. Unknown → fail closed.
+// - PRICES are server-authoritative (src/lib/payments/pricing.ts, EUR minor
+//   units) — the browser never supplies an amount; the session snapshots
+//   the charged amount at creation time.
+// - FULFILLMENT is the ONLY path that changes a plan through a payment:
+//   a signature-verified webhook marks the session SUCCEEDED and invokes
+//   the idempotent Prompt-20 changePlan(service) — never the reverse, and
+//   never any client-asserted "paid" state.
+//
+// Lifecycle:  PENDING → SUCCEEDED | FAILED | EXPIRED | CANCELED  (terminal).
+// ---------------------------------------------------------------------------
+
+model CheckoutSession {
+  id           String   @id @default(cuid())
+  businessId   String
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  // Target plan + period SNAPSHOT at creation (plan rows may later change).
+  planCode     String
+  billingPeriod String  @default("MONTHLY")
+
+  // Provider slug: "mock" (sandbox) today; registry-gated (fail closed).
+  provider     String
+  // Provider-side reference (e.g. mock_… / cs_live_…) — unique per provider.
+  providerRef  String
+
+  // Settlement currency is the PLAN CATALOG currency (EUR), independent of
+  // the business display currency; amounts are integer minor units.
+  amountMinor  Int
+  currency     String   @default("EUR")
+
+  // PENDING | SUCCEEDED | FAILED | EXPIRED | CANCELED
+  status       String   @default("PENDING")
+
+  expiresAt    DateTime
+  completedAt  DateTime?
+  // Set when fulfillment (plan change via changePlan) has been applied.
+  fulfilledAt  DateTime?
+
+  // Small safe metadata only (never card data — the abstraction never
+  // touches payment instruments; providers handle those).
+  metaJson     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  transactions PaymentTransaction[]
+
+  @@unique([provider, providerRef])
+  @@index([businessId, createdAt])
+  @@index([status, expiresAt])
+}
+
+model PaymentTransaction {
+  id                String          @id @default(cuid())
+  checkoutSessionId String
+  checkoutSession   CheckoutSession @relation(fields: [checkoutSessionId], references: [id], onDelete: Cascade)
+  provider          String
+  // Provider event id — the idempotency anchor: a retried/duplicated
+  // webhook can never produce two money records for the same event.
+  providerEventId   String
+  // SUCCEEDED | FAILED | REFUNDED (refunds out of MVP scope — reserved).
+  status            String
+  amountMinor       Int
+  currency          String          @default("EUR")
+  processedAt       DateTime        @default(now())
+  metaJson          String?
+
+  @@unique([provider, providerEventId])
+  @@index([checkoutSessionId])
+  @@index([processedAt])
+}
+
+// Webhook replay protection: every provider event id is recorded exactly
+// once, inside the same transaction as its side effects (best-effort
+// insert-with-catch → duplicate deliveries short-circuit before any state
+// mutation).
+model ProcessedWebhookEvent {
+  id         String   @id @default(cuid())
+  provider   String
+  eventId    String
+  eventType  String
+  receivedAt DateTime @default(now())
+
+  @@unique([provider, eventId])
+  @@index([receivedAt])
 }

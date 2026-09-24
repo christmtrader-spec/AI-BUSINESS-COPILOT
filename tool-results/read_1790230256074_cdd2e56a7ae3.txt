@@ -1,0 +1,694 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * Settings → Subscription — Prompt 20 (§51/§96/§94/§95).
+     5→ *
+     6→ * MINIMAL, READ-ONLY-SUMMARY billing UI:
+     7→ * - current plan + status + period + trial state
+     8→ * - feature/limit summary with live usage bars (over-limit state, §89)
+     9→ * - internal plan switch (clearly labeled "no payment" — §82/§83)
+    10→ * - cancel (cancelAtPeriodEnd semantics, §44) + reactivate (§45)
+    11→ * - subscription event history (§20)
+    12→ *
+    13→ * There is deliberately NO checkout, NO payment form, NO card field.
+    14→ * Everything shown comes from the server; nothing here authorizes access.
+    15→ */
+    16→import { useState } from "react";
+    17→import { useLocale, useTranslations } from "next-intl";
+    18→import {
+    19→  BadgeCheck,
+    20→  CalendarClock,
+    21→  CircleAlert,
+    22→  CreditCard,
+    23→  History,
+    24→  Info,
+    25→  Loader2,
+    26→  ShieldCheck,
+    27→  Sparkles,
+    28→} from "lucide-react";
+    29→import { toast } from "@/hooks/use-toast";
+    30→import { ApiClientError } from "@/lib/api-client";
+    31→import { asRole, can } from "@/lib/rbac";
+    32→import { cn } from "@/lib/utils";
+    33→import type { BusinessSummary } from "../shell/types";
+    34→import {
+    35→  useCancelSubscription,
+    36→  useChangePlan,
+    37→  useEntitlements,
+    38→  usePlanCatalog,
+    39→  useReactivateSubscription,
+    40→  useSubscription,
+    41→  useSubscriptionEvents,
+    42→  useUsage,
+    43→  type UsageMetricPayload,
+    44→} from "@/hooks/use-billing";
+    45→import { Button } from "@/components/ui/button";
+    46→import { Badge } from "@/components/ui/badge";
+    47→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+    48→import { Progress } from "@/components/ui/progress";
+    49→import { Separator } from "@/components/ui/separator";
+    50→import { Skeleton } from "@/components/ui/skeleton";
+    51→import {
+    52→  AlertDialog,
+    53→  AlertDialogAction,
+    54→  AlertDialogCancel,
+    55→  AlertDialogContent,
+    56→  AlertDialogDescription,
+    57→  AlertDialogFooter,
+    58→  AlertDialogHeader,
+    59→  AlertDialogTitle,
+    60→} from "@/components/ui/alert-dialog";
+    61→import { PageHeader, EmptyState } from "@/components/shared/primitives";
+    62→
+    63→function formatDate(iso: string | null, locale: string): string {
+    64→  if (!iso) return "—";
+    65→  try {
+    66→    return new Intl.DateTimeFormat(locale === "fa" ? "fa-IR" : locale, {
+    67→      dateStyle: "medium",
+    68→      timeStyle: "short",
+    69→    }).format(new Date(iso));
+    70→  } catch {
+    71→    return iso.slice(0, 10);
+    72→  }
+    73→}
+    74→
+    75→function StatusBadge({ status }: { status: string }) {
+    76→  const t = useTranslations("billing");
+    77→  const tone =
+    78→    status === "ACTIVE"
+    79→      ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+    80→      : status === "TRIALING"
+    81→        ? "border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-400"
+    82→        : status === "CANCELED"
+    83→          ? "border-orange-500/30 bg-orange-500/15 text-orange-700 dark:text-orange-400"
+    84→          : status === "PAST_DUE" || status === "PAUSED"
+    85→            ? "border-yellow-500/30 bg-yellow-500/15 text-yellow-700 dark:text-yellow-400"
+    86→            : "text-muted-foreground border-border bg-muted"; // EXPIRED
+    87→  return (
+    88→    <Badge variant="outline" className={cn("font-medium", tone)} data-testid="billing-status">
+    89→      {t(`status_${status}` as "status_ACTIVE")}
+    90→    </Badge>
+    91→  );
+    92→}
+    93→
+    94→function usagePercent(used: number, limit: number | null): number | null {
+    95→  if (limit === null || limit <= 0) return null;
+    96→  return Math.min(100, Math.round((used / limit) * 100));
+    97→}
+    98→
+    99→/**
+   100→ * Prompt 21 §52/§53/§54 — AI usage card content for ONE metric.
+   101→ * Levels come from the SERVER (single source: src/lib/billing/usage.ts);
+   102→ * this component never hard-codes thresholds (§53).
+   103→ */
+   104→function UsageMetricRow({
+   105→  metric,
+   106→  m,
+   107→  periodEnd,
+   108→  locale,
+   109→}: {
+   110→  metric: string;
+   111→  m: UsageMetricPayload;
+   112→  periodEnd: string | null;
+   113→  locale: string;
+   114→}) {
+   115→  const tUsage = useTranslations("billing.usage");
+   116→  const pct = m.percentageUsed;
+   117→  const tone =
+   118→    m.level === "reached"
+   119→      ? "border-destructive/40 bg-destructive/10 text-destructive"
+   120→      : m.level === "critical"
+   121→        ? "border-orange-500/40 bg-orange-500/10 text-orange-700 dark:text-orange-400"
+   122→        : m.level === "warning"
+   123→          ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+   124→          : null;
+   125→  const barTone =
+   126→    m.level === "reached"
+   127→      ? "[&>div]:bg-destructive"
+   128→      : m.level === "critical"
+   129→        ? "[&>div]:bg-orange-500"
+   130→        : m.level === "warning"
+   131→          ? "[&>div]:bg-amber-500"
+   132→          : "";
+   133→  const badge =
+   134→    m.level === "reached"
+   135→      ? tUsage("reachedBadge")
+   136→      : m.level === "critical"
+   137→        ? tUsage("criticalBadge")
+   138→        : m.level === "warning"
+   139→          ? tUsage("warningBadge")
+   140→          : null;
+   141→  return (
+   142→    <div className="space-y-1.5" data-testid={`usage-${metric}`}>
+   143→      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+   144→        <span className="flex items-center gap-2">
+   145→          {tUsage(`metric_${metric}` as "metric_AI_REQUESTS")}
+   146→          {badge ? (
+   147→            <Badge variant="outline" className={cn("font-medium", tone)}>
+   148→              {badge}
+   149→            </Badge>
+   150→          ) : null}
+   151→        </span>
+   152→        {m.limit === null ? (
+   153→          <span className="text-muted-foreground font-medium">
+   154→            {tUsage("usedOnly", { used: m.used })} · {tUsage("unlimitedMetric")}
+   155→          </span>
+   156→        ) : (
+   157→          <span className="text-muted-foreground font-medium">
+   158→            {tUsage("usedOf", { used: m.used, limit: m.limit })} ·{" "}
+   159→            <span>
+   160→              {m.remaining === 0
+   161→                ? tUsage("remainingNone")
+   162→                : tUsage("remaining", { count: m.remaining ?? 0 })}
+   163→            </span>
+   164→          </span>
+   165→        )}
+   166→      </div>
+   167→      {pct !== null ? (
+   168→        <Progress
+   169→          value={pct}
+   170→          aria-label={tUsage(`metric_${metric}` as "metric_AI_REQUESTS")}
+   171→          className={cn("h-1.5", barTone)}
+   172→        />
+   173→      ) : null}
+   174→      {m.level === "reached" ? (
+   175→        <p className="text-destructive flex items-start gap-1.5 text-xs">
+   176→          <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+   177→          {periodEnd
+   178→            ? tUsage("reachedNotice", { date: formatDate(periodEnd, locale) })
+   179→            : tUsage("reachedNoticeNoDate")}
+   180→        </p>
+   181→      ) : null}
+   182→    </div>
+   183→  );
+   184→}
+   185→
+   186→export function SubscriptionView({ business, role }: { business: BusinessSummary; role: string }) {
+   187→  const t = useTranslations("billing");
+   188→  const tCommon = useTranslations("common");
+   189→  const uiLocale = useLocale();
+   190→  const r = asRole(role);
+   191→  const canManage = can(r, "settings:manage");
+   192→
+   193→  const [planDialogOpen, setPlanDialogOpen] = useState(false);
+   194→  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+   195→
+   196→  const subscriptionQ = useSubscription();
+   197→  const entitlementsQ = useEntitlements();
+   198→  const catalogQ = usePlanCatalog();
+   199→  const eventsQ = useSubscriptionEvents();
+   200→  const usageQ = useUsage();
+   201→
+   202→  const changePlan = useChangePlan();
+   203→  const cancelSub = useCancelSubscription();
+   204→  const reactivate = useReactivateSubscription();
+   205→
+   206→  const sub = subscriptionQ.data?.subscription;
+   207→  const entitlements = entitlementsQ.data?.entitlements ?? [];
+   208→  const usage = entitlementsQ.data?.usage ?? null;
+   209→
+   210→  const onSwitch = (planCode: string, planName: string) => {
+   211→    changePlan.mutate(
+   212→      { planCode },
+   213→      {
+   214→        onSuccess: (res) => {
+   215→          setPlanDialogOpen(false);
+   216→          if (res.changed) toast({ title: t("planChangedToast", { plan: planName }) });
+   217→        },
+   218→        onError: (error) => {
+   219→          if (error instanceof ApiClientError) {
+   220→            toast({
+   221→              title: error.code === "INVALID_PLAN" ? t("featureUnavailable") : t("loadError"),
+   222→              description: error.message,
+   223→              variant: "destructive",
+   224→            });
+   225→          }
+   226→        },
+   227→      },
+   228→    );
+   229→  };
+   230→
+   231→  const onCancel = () => {
+   232→    cancelSub.mutate(undefined, {
+   233→      onSuccess: () => {
+   234→        setCancelDialogOpen(false);
+   235→        toast({ title: t("canceledToast") });
+   236→      },
+   237→      onError: (error) => {
+   238→        setCancelDialogOpen(false);
+   239→        toast({
+   240→          title: t("reactivateFailed"),
+   241→          description: error.message,
+   242→          variant: "destructive",
+   243→        });
+   244→      },
+   245→    });
+   246→  };
+   247→
+   248→  const onReactivate = () => {
+   249→    reactivate.mutate(undefined, {
+   250→      onSuccess: () => toast({ title: t("reactivatedToast") }),
+   251→      onError: (error) =>
+   252→        toast({
+   253→          title: t("reactivateFailed"),
+   254→          description: error.message,
+   255→          variant: "destructive",
+   256→        }),
+   257→    });
+   258→  };
+   259→
+   260→  // ---- loading / error states ----------------------------------------------
+   261→  if (subscriptionQ.isLoading) {
+   262→    return (
+   263→      <div className="space-y-4">
+   264→        <PageHeader title={t("title")} subtitle={t("subtitle")} />
+   265→        <Card>
+   266→          <CardContent className="space-y-3 p-6">
+   267→            <Skeleton className="h-6 w-40" />
+   268→            <Skeleton className="h-4 w-64" />
+   269→            <Skeleton className="h-4 w-48" />
+   270→          </CardContent>
+   271→        </Card>
+   272→      </div>
+   273→    );
+   274→  }
+   275→
+   276→  if (subscriptionQ.isError || !sub) {
+   277→    return (
+   278→      <div className="space-y-4">
+   279→        <PageHeader title={t("title")} subtitle={t("subtitle")} />
+   280→        <EmptyState
+   281→          icon={CircleAlert}
+   282→          title={t("loadError")}
+   283→          description={
+   284→            subscriptionQ.error instanceof Error ? subscriptionQ.error.message : undefined
+   285→          }
+   286→        />
+   287→      </div>
+   288→    );
+   289→  }
+   290→
+   291→  const isCanceledActive = sub.status === "CANCELED" && sub.cancelAtPeriodEnd;
+   292→  const onFallback = sub.effectivePlanCode !== sub.plan.code;
+   293→  const locale = uiLocale;
+   294→
+   295→  return (
+   296→    <div className="space-y-4" data-testid="billing-view">
+   297→      <PageHeader title={t("title")} subtitle={t("subtitle")} />
+   298→
+   299→      {/* ---- Current plan ---------------------------------------------------- */}
+   300→      <Card>
+   301→        <CardHeader className="pb-3">
+   302→          <div className="flex flex-wrap items-start justify-between gap-2">
+   303→            <div>
+   304→              <CardTitle className="flex items-center gap-2 text-base">
+   305→                <CreditCard className="text-muted-foreground size-4" aria-hidden="true" />
+   306→                {t("currentPlan")}
+   307→              </CardTitle>
+   308→              <CardDescription className="mt-1">{business.name}</CardDescription>
+   309→            </div>
+   310→            <div className="flex items-center gap-2">
+   311→              <Badge
+   312→                variant="secondary"
+   313→                className="font-semibold"
+   314→                data-testid="billing-plan-code"
+   315→              >
+   316→                {sub.plan.name}
+   317→              </Badge>
+   318→              <StatusBadge status={sub.status} />
+   319→            </div>
+   320→          </div>
+   321→        </CardHeader>
+   322→        <CardContent className="space-y-3 pt-0">
+   323→          {onFallback ? (
+   324→            <div
+   325→              className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400"
+   326→              role="status"
+   327→            >
+   328→              <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+   329→              <span>{t("fallbackNotice")}</span>
+   330→            </div>
+   331→          ) : null}
+   332→          {isCanceledActive && sub.currentPeriodEnd ? (
+   333→            <div
+   334→              className="flex items-start gap-2 rounded-md border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-sm text-orange-700 dark:text-orange-400"
+   335→              role="status"
+   336→            >
+   337→              <CalendarClock className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+   338→              <span>{t("canceledNotice", { date: formatDate(sub.currentPeriodEnd, locale) })}</span>
+   339→            </div>
+   340→          ) : null}
+   341→
+   342→          <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+   343→            <div className="flex items-center justify-between gap-4 sm:justify-start">
+   344→              <dt className="text-muted-foreground">{t("period")}</dt>
+   345→              <dd className="font-medium">
+   346→                {sub.currentPeriodEnd
+   347→                  ? `${formatDate(sub.currentPeriodStart, locale)} → ${formatDate(
+   348→                      sub.currentPeriodEnd,
+   349→                      locale,
+   350→                    )}`
+   351→                  : "—"}
+   352→              </dd>
+   353→            </div>
+   354→            {sub.inTrial && sub.trialEnd ? (
+   355→              <div className="flex items-center justify-between gap-4 sm:justify-start">
+   356→                <dt className="text-muted-foreground">{t("trialEnds")}</dt>
+   357→                <dd className="font-medium">{formatDate(sub.trialEnd, locale)}</dd>
+   358→              </div>
+   359→            ) : null}
+   360→          </dl>
+   361→
+   362→          {canManage ? (
+   363→            <div className="flex flex-wrap gap-2 pt-2">
+   364→              <Button
+   365→                size="sm"
+   366→                variant="outline"
+   367→                onClick={() => setPlanDialogOpen(true)}
+   368→                data-testid="billing-switch"
+   369→              >
+   370→                {t("changePlan")}
+   371→              </Button>
+   372→              {isCanceledActive ? (
+   373→                <Button
+   374→                  size="sm"
+   375→                  variant="outline"
+   376→                  onClick={onReactivate}
+   377→                  disabled={reactivate.isPending}
+   378→                  data-testid="billing-reactivate"
+   379→                >
+   380→                  {reactivate.isPending ? (
+   381→                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   382→                  ) : null}
+   383→                  {t("reactivate")}
+   384→                </Button>
+   385→              ) : sub.status === "ACTIVE" || sub.status === "TRIALING" ? (
+   386→                <Button
+   387→                  size="sm"
+   388→                  variant="ghost"
+   389→                  className="text-destructive hover:text-destructive"
+   390→                  onClick={() => setCancelDialogOpen(true)}
+   391→                  data-testid="billing-cancel"
+   392→                >
+   393→                  {t("cancelSub")}
+   394→                </Button>
+   395→              ) : null}
+   396→            </div>
+   397→          ) : (
+   398→            <p className="text-muted-foreground flex items-center gap-1.5 pt-2 text-xs">
+   399→              <ShieldCheck className="size-3.5" aria-hidden="true" />
+   400→              {t("ownerOnly")}
+   401→            </p>
+   402→          )}
+   403→        </CardContent>
+   404→      </Card>
+   405→
+   406→      {/* ---- AI usage (Prompt 21 §52/§53/§54) -------------------------------- */}
+   407→      <Card data-testid="usage-card">
+   408→        <CardHeader className="pb-3">
+   409→          <CardTitle className="flex items-center gap-2 text-base">
+   410→            <Sparkles className="text-muted-foreground size-4" aria-hidden="true" />
+   411→            {t("usage.title")}
+   412→          </CardTitle>
+   413→          <CardDescription>{t("usage.subtitle")}</CardDescription>
+   414→        </CardHeader>
+   415→        <CardContent className="space-y-4">
+   416→          {usageQ.isLoading ? (
+   417→            <div className="space-y-2">
+   418→              <Skeleton className="h-5 w-full" />
+   419→              <Skeleton className="h-5 w-3/4" />
+   420→            </div>
+   421→          ) : usageQ.isError || !usageQ.data ? (
+   422→            <p className="text-muted-foreground text-sm">{t("usage.unavailable")}</p>
+   423→          ) : (
+   424→            <>
+   425→              <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+   426→                <span>
+   427→                  {t("usage.currentPeriod")}:{" "}
+   428→                  {formatDate(usageQ.data.period.start, locale)}
+   429→                  {usageQ.data.period.end
+   430→                    ? ` → ${formatDate(usageQ.data.period.end, locale)}`
+   431→                    : ""}
+   432→                </span>
+   433→              </div>
+   434→              <UsageMetricRow
+   435→                metric="AI_REQUESTS"
+   436→                m={usageQ.data.metrics.AI_REQUESTS}
+   437→                periodEnd={usageQ.data.period.end}
+   438→                locale={locale}
+   439→              />
+   440→              <UsageMetricRow
+   441→                metric="AI_MESSAGES"
+   442→                m={usageQ.data.metrics.AI_MESSAGES}
+   443→                periodEnd={usageQ.data.period.end}
+   444→                locale={locale}
+   445→              />
+   446→              {/* AI_TOKENS is recorded-when-reported (§14) — shown only when
+   447→                  real provider data exists; never displayed as a quota. */}
+   448→              {usageQ.data.metrics.AI_TOKENS.used > 0 ? (
+   449→                <UsageMetricRow
+   450→                  metric="AI_TOKENS"
+   451→                  m={usageQ.data.metrics.AI_TOKENS}
+   452→                  periodEnd={usageQ.data.period.end}
+   453→                  locale={locale}
+   454→                />
+   455→              ) : null}
+   456→              {canManage &&
+   457→              (usageQ.data.metrics.AI_REQUESTS.level === "reached" ||
+   458→                usageQ.data.metrics.AI_MESSAGES.level === "reached") ? (
+   459→                <Button
+   460→                  size="sm"
+   461→                  variant="outline"
+   462→                  onClick={() => setPlanDialogOpen(true)}
+   463→                  data-testid="usage-switch-plan"
+   464→                >
+   465→                  {t("usage.reachedAction")}
+   466→                </Button>
+   467→              ) : null}
+   468→              <p className="text-muted-foreground flex items-start gap-1.5 text-xs">
+   469→                <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+   470→                {t("usage.serverAuthoritative")}
+   471→              </p>
+   472→            </>
+   473→          )}
+   474→        </CardContent>
+   475→      </Card>
+   476→
+   477→      {/* ---- Entitlements ------------------------------------------------------ */}
+   478→      <Card>
+   479→        <CardHeader className="pb-3">
+   480→          <CardTitle className="text-base">{t("entitlementsTitle")}</CardTitle>
+   481→          <CardDescription>{t("usageBar")}</CardDescription>
+   482→        </CardHeader>
+   483→        <CardContent className="space-y-4">
+   484→          {entitlementsQ.isLoading ? (
+   485→            <div className="space-y-2">
+   486→              <Skeleton className="h-5 w-full" />
+   487→              <Skeleton className="h-5 w-full" />
+   488→              <Skeleton className="h-5 w-2/3" />
+   489→            </div>
+   490→          ) : (
+   491→            entitlements.map((e) => {
+   492→              const u = usage?.[e.code];
+   493→              const pct = u ? usagePercent(u.used, u.limit) : null;
+   494→              const over = u !== undefined && u.limit !== null && u.used > u.limit;
+   495→              const at = u !== undefined && u.limit !== null && u.used === u.limit;
+   496→              return (
+   497→                <div key={e.code} data-testid={`entitlement-${e.code}`} className="space-y-1.5">
+   498→                  <div className="flex items-center justify-between gap-4 text-sm">
+   499→                    <span className="flex items-center gap-2">
+   500→                      {t(`entitlement.${e.code}` as "entitlement.CUSTOMERS_MAX")}
+   501→                      {over ? (
+   502→                        <Badge
+   503→                          variant="outline"
+   504→                          className="border-destructive/40 bg-destructive/10 text-destructive"
+   505→                        >
+   506→                          {t("overLimit")}
+   507→                        </Badge>
+   508→                      ) : at ? (
+   509→                        <Badge
+   510→                          variant="outline"
+   511→                          className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+   512→                        >
+   513→                          {t("atLimit")}
+   514→                        </Badge>
+   515→                      ) : null}
+   516→                    </span>
+   517→                    {e.type === "BOOLEAN" ? (
+   518→                      e.value === true ? (
+   519→                        <Badge
+   520→                          variant="outline"
+   521→                          className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+   522→                        >
+   523→                          <BadgeCheck className="size-3.5" aria-hidden="true" />
+   524→                          {t("included")}
+   525→                        </Badge>
+   526→                      ) : (
+   527→                        <Badge variant="outline" className="text-muted-foreground">
+   528→                          {t("notIncluded")}
+   529→                        </Badge>
+   530→                      )
+   531→                    ) : (
+   532→                      <span className="text-muted-foreground font-medium">
+   533→                        {e.value === null
+   534→                          ? t("unlimited")
+   535→                          : u
+   536→                            ? t("limitOf", { used: u.used, limit: e.value as number })
+   537→                            : t("limitOf", { used: 0, limit: e.value as number })}
+   538→                      </span>
+   539→                    )}
+   540→                  </div>
+   541→                  {pct !== null ? (
+   542→                    <Progress
+   543→                      value={pct}
+   544→                      aria-label={t(`entitlement.${e.code}` as "entitlement.CUSTOMERS_MAX")}
+   545→                      className={cn("h-1.5", over && "[&>div]:bg-destructive")}
+   546→                    />
+   547→                  ) : null}
+   548→                </div>
+   549→              );
+   550→            })
+   551→          )}
+   552→          <Separator />
+   553→          <p className="text-muted-foreground flex items-start gap-1.5 text-xs">
+   554→            <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+   555→            {t("noPaymentBadge")}
+   556→          </p>
+   557→        </CardContent>
+   558→      </Card>
+   559→
+   560→      {/* ---- History ----------------------------------------------------------- */}
+   561→      <Card>
+   562→        <CardHeader className="pb-3">
+   563→          <CardTitle className="flex items-center gap-2 text-base">
+   564→            <History className="text-muted-foreground size-4" aria-hidden="true" />
+   565→            {t("historyTitle")}
+   566→          </CardTitle>
+   567→        </CardHeader>
+   568→        <CardContent>
+   569→          {eventsQ.isLoading ? (
+   570→            <div className="space-y-2">
+   571→              <Skeleton className="h-4 w-full" />
+   572→              <Skeleton className="h-4 w-3/4" />
+   573→            </div>
+   574→          ) : !eventsQ.data || eventsQ.data.items.length === 0 ? (
+   575→            <p className="text-muted-foreground text-sm">{t("historyEmpty")}</p>
+   576→          ) : (
+   577→            <ol className="space-y-3">
+   578→              {eventsQ.data.items.map((ev) => (
+   579→                <li key={ev.id} className="flex items-start gap-3 text-sm">
+   580→                  <span
+   581→                    className="bg-primary/10 text-primary mt-1 size-2 shrink-0 rounded-full"
+   582→                    aria-hidden="true"
+   583→                  />
+   584→                  <div className="min-w-0 flex-1">
+   585→                    <p className="font-medium">
+   586→                      {t(`event_${ev.type}` as "event_CREATED")}
+   587→                      {ev.fromPlanCode && ev.toPlanCode && ev.fromPlanCode !== ev.toPlanCode ? (
+   588→                        <span className="text-muted-foreground font-normal">
+   589→                          {" "}
+   590→                          · {ev.fromPlanCode} → {ev.toPlanCode}
+   591→                        </span>
+   592→                      ) : null}
+   593→                    </p>
+   594→                    <p className="text-muted-foreground text-xs">
+   595→                      {formatDate(ev.createdAt, locale)}
+   596→                      {ev.actor?.name ? ` · ${ev.actor.name}` : ""}
+   597→                    </p>
+   598→                  </div>
+   599→                </li>
+   600→              ))}
+   601→            </ol>
+   602→          )}
+   603→        </CardContent>
+   604→      </Card>
+   605→
+   606→      {/* ---- Plan switch dialog (internal, no payment) ------------------------- */}
+   607→      <AlertDialog open={planDialogOpen} onOpenChange={setPlanDialogOpen}>
+   608→        <AlertDialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+   609→          <AlertDialogHeader>
+   610→            <AlertDialogTitle>{t("changePlanTitle")}</AlertDialogTitle>
+   611→            <AlertDialogDescription>{t("changePlanDesc")}</AlertDialogDescription>
+   612→          </AlertDialogHeader>
+   613→          <div className="space-y-2" data-testid="billing-plan-options">
+   614→            {(catalogQ.data?.plans ?? [])
+   615→              .filter((p) => p.selfService)
+   616→              .map((p) => (
+   617→              <button
+   618→                key={p.code}
+   619→                type="button"
+   620→                disabled={p.code === sub.plan.code || changePlan.isPending}
+   621→                onClick={() => onSwitch(p.code, p.name)}
+   622→                data-testid={`plan-option-${p.code}`}
+   623→                className={cn(
+   624→                  "w-full rounded-lg border p-3 text-start transition-colors",
+   625→                  p.code === sub.plan.code
+   626→                    ? "border-primary/40 bg-primary/5 cursor-default"
+   627→                    : "hover:bg-accent",
+   628→                )}
+   629→              >
+   630→                <div className="flex items-center justify-between gap-2">
+   631→                  <span className="text-sm font-semibold">{p.name}</span>
+   632→                  {p.code === sub.plan.code ? (
+   633→                    <Badge variant="secondary">{t("currentPlan")}</Badge>
+   634→                  ) : (
+   635→                    <span className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+   636→                      {catalogQ.data?.definitions
+   637→                        .filter((d) => d.type === "LIMIT")
+   638→                        .map((d) => {
+   639→                          const v = p.entitlements[d.code];
+   640→                          return (
+   641→                            <span key={d.code} className="whitespace-nowrap">
+   642→                              {t(`entitlement.${d.code}` as "entitlement.CUSTOMERS_MAX")}:{" "}
+   643→                              <span className="font-medium">
+   644→                                {v === null ? t("unlimited") : (v as number)}
+   645→                              </span>
+   646→                            </span>
+   647→                          );
+   648→                        })}
+   649→                    </span>
+   650→                  )}
+   651→                </div>
+   652→                <p className="text-muted-foreground mt-1 text-xs">{p.description}</p>
+   653→              </button>
+   654→            ))}
+   655→          </div>
+   656→          <AlertDialogFooter>
+   657→            <AlertDialogCancel disabled={changePlan.isPending}>
+   658→              {tCommon("cancel")}
+   659→            </AlertDialogCancel>
+   660→          </AlertDialogFooter>
+   661→        </AlertDialogContent>
+   662→      </AlertDialog>
+   663→
+   664→      {/* ---- Cancel confirmation ------------------------------------------------ */}
+   665→      <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+   666→        <AlertDialogContent>
+   667→          <AlertDialogHeader>
+   668→            <AlertDialogTitle>{t("cancelTitle")}</AlertDialogTitle>
+   669→            <AlertDialogDescription>
+   670→              {t("cancelDesc", { date: formatDate(sub.currentPeriodEnd, locale) })}
+   671→            </AlertDialogDescription>
+   672→          </AlertDialogHeader>
+   673→          <AlertDialogFooter>
+   674→            <AlertDialogCancel disabled={cancelSub.isPending}>{tCommon("cancel")}</AlertDialogCancel>
+   675→            <AlertDialogAction
+   676→              onClick={(e) => {
+   677→                e.preventDefault();
+   678→                onCancel();
+   679→              }}
+   680→              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+   681→              data-testid="billing-cancel-confirm"
+   682→            >
+   683→              {cancelSub.isPending ? (
+   684→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   685→              ) : null}
+   686→              {t("cancelConfirm")}
+   687→            </AlertDialogAction>
+   688→          </AlertDialogFooter>
+   689→        </AlertDialogContent>
+   690→      </AlertDialog>
+   691→    </div>
+   692→  );
+   693→}
+   694→

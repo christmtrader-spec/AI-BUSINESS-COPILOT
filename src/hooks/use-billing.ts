@@ -35,6 +35,8 @@ export type PlanCatalogPayload = {
     unit: string | null;
     description: string;
   }>;
+  /** Prompt 22 — settlement currency of the server price catalog (EUR). */
+  settlementCurrency: string;
   plans: Array<{
     code: string;
     name: string;
@@ -42,6 +44,8 @@ export type PlanCatalogPayload = {
     sortOrder: number;
     /** false for customizable plans (ENTERPRISE) — excluded from switching. */
     selfService: boolean;
+    /** Server-authoritative pricing (null for FREE / ENTERPRISE). */
+    pricing: { monthlyMinor: number; yearlyMinor: number; currency: string } | null;
     entitlements: Record<string, number | null | boolean>;
   }>;
 };
@@ -190,4 +194,121 @@ export function useReactivateSubscription() {
       api("/api/v1/billing/reactivate", { method: "POST", body: JSON.stringify({}) }),
     onSuccess: () => invalidate(),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 22 — payment provider abstraction (sandbox checkout). The UI never
+// supplies amounts: it sends { planCode, billingPeriod } and everything
+// else (price, provider, state) comes from the server (§23/§24).
+// ---------------------------------------------------------------------------
+
+export type CheckoutSessionDto = {
+  id: string;
+  status: "PENDING" | "SUCCEEDED" | "FAILED" | "EXPIRED" | "CANCELED";
+  planCode: string;
+  billingPeriod: "MONTHLY" | "YEARLY";
+  provider: string;
+  amountMinor: number;
+  currency: string;
+  expiresAt: string;
+  completedAt: string | null;
+  fulfilledAt: string | null;
+  createdAt: string;
+  redirectUrl: string | null;
+};
+
+export type CheckoutSessionPayload = { checkoutSession: CheckoutSessionDto };
+
+export type PaymentsPayload = {
+  items: Array<{
+    id: string;
+    checkoutSessionId: string;
+    provider: string;
+    status: string;
+    planCode: string;
+    billingPeriod: "MONTHLY" | "YEARLY";
+    amountMinor: number;
+    currency: string;
+    processedAt: string;
+  }>;
+  total: number;
+};
+
+export const CHECKOUT_KEYS = {
+  payments: ["billing", "payments"] as const,
+};
+
+export function useCreateCheckout() {
+  const invalidate = useInvalidateBilling();
+  return useMutation<CheckoutSessionPayload, Error, { planCode: string; billingPeriod: string }>({
+    mutationFn: (input) =>
+      api("/api/v1/billing/checkout", { method: "POST", body: JSON.stringify(input) }),
+    onSuccess: () => invalidate(),
+  });
+}
+
+/** Poll the checkout session while the sandbox dialog is open (3s). */
+export function useCheckoutSession(id: string | null, active = true) {
+  return useQuery<CheckoutSessionPayload>({
+    queryKey: ["billing", "checkout", id],
+    queryFn: () => api(`/api/v1/billing/checkout/${id}`),
+    enabled: !!id && active,
+    refetchInterval: (query) => {
+      const st = query.state.data?.checkoutSession.status;
+      return st === "PENDING" ? 3000 : false;
+    },
+  });
+}
+
+export function useSimulateCheckout() {
+  const invalidate = useInvalidateBilling();
+  return useMutation<CheckoutSessionPayload, Error, { id: string; outcome: "succeeded" | "failed" }>({
+    mutationFn: ({ id, outcome }) =>
+      api(`/api/v1/billing/checkout/${id}/simulate`, {
+        method: "POST",
+        body: JSON.stringify({ outcome }),
+      }),
+    onSuccess: () => invalidate(),
+  });
+}
+
+export function usePayments(enabled = true) {
+  return useQuery<PaymentsPayload>({
+    queryKey: CHECKOUT_KEYS.payments,
+    queryFn: () => api("/api/v1/billing/payments?take=20"),
+    enabled,
+    staleTime: 15_000,
+  });
+}
+
+/** Download the payments CSV (blob → object URL → anchor click). */
+export async function downloadPaymentsCsv(businessId?: string | null): Promise<number> {
+  const res = await fetch("/api/v1/billing/payments?format=csv", {
+    credentials: "same-origin",
+    headers: businessId ? { "x-business-id": businessId } : undefined,
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body.error?.message) message = body.error.message;
+    } catch {
+      /* keep status fallback */
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const disp = res.headers.get("content-disposition") ?? "";
+  a.download = /filename="?([^"]+)"?/.exec(disp)?.[1] ?? "payments.csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  // The honest row count: header line + data lines in the blob text.
+  const text = await blob.text();
+  const lines = text.split(/\r\n/).filter((l) => l.length > 0);
+  return Math.max(0, lines.length - 1);
 }
