@@ -353,16 +353,17 @@ console.log("\nC — webhook security");
   });
   check("C6 verified event for unknown session → 200 ignored (no gateway retry storm)", unknownSession.status === 200 && unknownSession.json?.data?.ignored === "unknown-session");
 
-  // Amount mismatch → fail closed, session FAILED, plan unchanged
+  // Amount mismatch → fail closed, session RECONCILIATION_REQUIRED (Prompt 23
+  // §21/§45 — never silently FAILED, never activated), plan unchanged
   const mismatchBody = buildMockEventBody("checkout.succeeded", session.id, { amountMinor: 1, currency: "EUR" });
   const mismatch = await api(`${url}/mock`, {
     method: "POST",
     body: mismatchBody,
     headers: Object.fromEntries([...buildMockEventHeaders(mismatchBody).entries()]),
   });
-  check("C7 amount mismatch → 200 with sessionStatus FAILED", mismatch.status === 200 && mismatch.json?.data?.sessionStatus === "FAILED");
+  check("C7 amount mismatch → 200 with sessionStatus RECONCILIATION_REQUIRED", mismatch.status === 200 && mismatch.json?.data?.sessionStatus === "RECONCILIATION_REQUIRED");
   const sAfter = await api(`/api/v1/billing/checkout/${session.id}`, { jar: ownerJar, headers: ctxHeader(businessId) });
-  check("C8 session recorded FAILED (never fulfilled)", sAfter.json?.data?.checkoutSession?.status === "FAILED" && sAfter.json?.data?.checkoutSession?.fulfilledAt === null);
+  check("C8 session recorded RECONCILIATION_REQUIRED with AMOUNT_MISMATCH reason (never fulfilled)", sAfter.json?.data?.checkoutSession?.status === "RECONCILIATION_REQUIRED" && sAfter.json?.data?.checkoutSession?.reconciliationReason === "AMOUNT_MISMATCH" && sAfter.json?.data?.checkoutSession?.fulfilledAt === null);
   const txMismatch = await prisma.paymentTransaction.findFirst({ where: { checkoutSessionId: session.id }, orderBy: { processedAt: "desc" } });
   check("C9 FAILED transaction recorded with amount-mismatch reason", txMismatch?.status === "FAILED" && JSON.parse(txMismatch.metaJson ?? "{}").reason === "amount-mismatch");
 

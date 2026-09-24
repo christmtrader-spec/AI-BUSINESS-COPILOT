@@ -13,7 +13,15 @@
 import { useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { AlertTriangle, CheckCircle2, CreditCard, Loader2, ShieldCheck, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  CreditCard,
+  ExternalLink,
+  Loader2,
+  ShieldCheck,
+  XCircle,
+} from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { ApiClientError } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
@@ -82,11 +90,21 @@ export function CheckoutDialog({
       toast({ title: t("failureToast"), variant: "destructive" });
     } else if (status === "EXPIRED") {
       toast({ title: t("expiredToast") });
+    } else if (status === "RECONCILIATION_REQUIRED") {
+      toast({ title: t("reconciliationToast") });
     }
   }, [status]);
 
   const busy = simulate.isPending;
-  const terminal = status === "SUCCEEDED" || status === "FAILED" || status === "EXPIRED";
+  const isRealProvider = !!session && session.provider !== "mock";
+  const terminal =
+    status === "SUCCEEDED" || status === "FAILED" || status === "EXPIRED" || status === "RECONCILIATION_REQUIRED";
+
+  // Prompt 23 §40 — the frontend may REDIRECT to the provider's hosted
+  // checkout (from the server-stored trusted URL), but the success decision
+  // always comes back through server verification. The user never edits
+  // amount/currency/business here (§111) — every value is read-only from
+  // the server-authoritative session.
 
   const onSimulate = (outcome: "succeeded" | "failed") => {
     if (!checkoutId) return;
@@ -141,6 +159,12 @@ export function CheckoutDialog({
           <div className="space-y-4" data-testid="checkout-body">
             <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
               <div className="flex items-center justify-between gap-4 sm:justify-start">
+                <dt className="text-muted-foreground">{t("business")}</dt>
+                <dd className="font-medium" data-testid="checkout-business">
+                  {session.businessName}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-4 sm:justify-start">
                 <dt className="text-muted-foreground">{t("amount")}</dt>
                 <dd className="text-base font-semibold" data-testid="checkout-amount">
                   {amount}
@@ -171,9 +195,11 @@ export function CheckoutDialog({
                       ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
                       : status === "FAILED"
                         ? "border-destructive/40 bg-destructive/10 text-destructive"
-                        : status === "PENDING"
-                          ? "border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-400"
-                          : "text-muted-foreground border-border bg-muted",
+                        : status === "RECONCILIATION_REQUIRED"
+                          ? "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-400"
+                          : status === "PENDING"
+                            ? "border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                            : "text-muted-foreground border-border bg-muted",
                   )}
                   data-testid="checkout-status"
                 >
@@ -181,6 +207,8 @@ export function CheckoutDialog({
                     <CheckCircle2 className="size-3" aria-hidden="true" />
                   ) : status === "FAILED" ? (
                     <XCircle className="size-3" aria-hidden="true" />
+                  ) : status === "RECONCILIATION_REQUIRED" ? (
+                    <AlertTriangle className="size-3" aria-hidden="true" />
                   ) : null}
                   {t(`status_${status}` as "status_PENDING")}
                 </Badge>
@@ -198,7 +226,32 @@ export function CheckoutDialog({
 
             <Separator />
 
-            {!terminal ? (
+            {!terminal && isRealProvider ? (
+              <>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    // §40 — redirect to the provider-hosted checkout from the
+                    // server-stored trusted URL; success is decided ONLY by
+                    // server verification after the return.
+                    if (session?.redirectUrl) {
+                      window.location.assign(session.redirectUrl);
+                    }
+                  }}
+                  disabled={!session?.redirectUrl}
+                  data-testid="checkout-go-provider"
+                >
+                  <ExternalLink className="size-4" aria-hidden="true" />
+                  {t("goToProvider")}
+                </Button>
+                <p className="text-muted-foreground flex items-start gap-1.5 text-xs">
+                  <ShieldCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  {t("providerNote")}
+                </p>
+              </>
+            ) : null}
+
+            {!terminal && !isRealProvider ? (
               <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
@@ -225,17 +278,25 @@ export function CheckoutDialog({
                   "flex items-center gap-2 rounded-md px-3 py-2 text-sm",
                   status === "SUCCEEDED"
                     ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                    : "border border-destructive/30 bg-destructive/10 text-destructive",
+                    : status === "RECONCILIATION_REQUIRED"
+                      ? "border border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-400"
+                      : "border border-destructive/30 bg-destructive/10 text-destructive",
                 )}
                 role="status"
                 data-testid="checkout-terminal"
               >
                 {status === "SUCCEEDED" ? (
                   <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
+                ) : status === "RECONCILIATION_REQUIRED" ? (
+                  <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
                 ) : (
                   <XCircle className="size-4 shrink-0" aria-hidden="true" />
                 )}
-                {status === "SUCCEEDED" ? t("successToast") : t("failureToast")}
+                {status === "SUCCEEDED"
+                  ? t("successToast")
+                  : status === "RECONCILIATION_REQUIRED"
+                    ? t("reconciliationToast")
+                    : t("failureToast")}
               </div>
             )}
           </div>

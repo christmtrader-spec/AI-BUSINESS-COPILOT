@@ -880,6 +880,39 @@ const en = {
       canceledToast: "Checkout canceled",
       createFailed: "Unable to start checkout.",
       conflict: "This checkout is already finalized.",
+      business: "Business",
+      goToProvider: "Proceed to secure payment page",
+      providerNote:
+        "You will complete the payment on the provider's secure page. When you return, we verify it server-side — the status here updates only after that verification.",
+      status_RECONCILIATION_REQUIRED: "Verification required",
+      reconciliationToast: "Payment verification requires additional processing",
+    },
+    return: {
+      verifyingTitle: "Verifying your payment…",
+      verifyingBody:
+        "We are confirming the payment with the provider. This page updates automatically — do not close it yet.",
+      pendingTitle: "Your payment is being verified",
+      pendingBody:
+        "We could not confirm the final state yet. We keep checking until {date}; you can also re-check manually.",
+      successTitle: "Payment successful",
+      successBody: "Your plan has been activated. Thank you for upgrading!",
+      failedTitle: "Payment failed",
+      failedBody:
+        "The provider confirmed the payment did not complete. You can start a new payment at any time.",
+      expiredTitle: "Payment expired",
+      expiredBody: "This payment session expired. Start a new payment whenever you are ready.",
+      reconciliationTitle: "Verification requires additional processing",
+      reconciliationBody:
+        "There is a discrepancy that needs manual review. You will not be charged twice — our team will reconcile this case and your subscription stays unchanged meanwhile.",
+      canceledTitle: "Payment canceled",
+      canceledBody: "No payment was completed for this session.",
+      business: "Business",
+      plan: "Plan",
+      provider: "Provider",
+      verifyNow: "Check again",
+      goBilling: "Go to subscription",
+      rateLimited: "Too many checks",
+      verifyFailed: "Could not check right now",
     },
     payments: {
       title: "Payment history",

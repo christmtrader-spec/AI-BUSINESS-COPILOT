@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { api } from "@/lib/api-client";
@@ -27,6 +27,7 @@ import { BusinessSettingsView } from "../settings/business-settings-view";
 import { MembersView } from "../settings/members-view";
 import { ProfileView } from "../settings/profile-view";
 import { SubscriptionView } from "../billing/subscription-view";
+import { PaymentReturnView } from "../billing/payment-return-view";
 import { AuditView } from "../audit/audit-view";
 import { ComingSoonView } from "./coming-soon-view";
 
@@ -109,6 +110,26 @@ export function AppShell({
 
   const viewKey = viewKeyOf(view);
 
+  // Prompt 23 §41 — the provider-callback return page. `?payment_return=<id>`
+  // is set by OUR callback API (built from the configured base URL, never a
+  // user-supplied URL). The view renders ONLY server-verified state.
+  const [paymentReturnSessionId, clearPaymentReturn] = usePaymentReturnSessionId();
+
+  // Dismiss the return view as soon as the user navigates elsewhere
+  // (sidebar/⌘K pushState navigation fires no popstate — watch the view key).
+  const prevViewKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevViewKeyRef.current === null) {
+      prevViewKeyRef.current = viewKey;
+      return;
+    }
+    if (prevViewKeyRef.current !== viewKey) {
+      prevViewKeyRef.current = viewKey;
+      clearPaymentReturn();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewKey]);
+
   return (
     <SidebarProvider>
       <AppSidebar membership={membership} side={dir === "rtl" ? "right" : "left"} />
@@ -122,6 +143,14 @@ export function AppShell({
         </a>
         <AppHeader />
         <main id="main-content" className="flex-1 p-4 sm:p-6">
+          {paymentReturnSessionId ? (
+            <div className="mx-auto w-full max-w-6xl">
+              <PaymentReturnView
+                sessionId={paymentReturnSessionId}
+                onDone={clearPaymentReturn}
+              />
+            </div>
+          ) : (
           <div className="mx-auto w-full max-w-6xl">
             <div key={viewKey} className="animate-in fade-in slide-in-from-bottom-1 duration-300">
               {view.kind === "dashboard" ? <DashboardView membership={membership!} /> : null}
@@ -172,6 +201,7 @@ export function AppShell({
               ) : null}
             </div>
           </div>
+          )}
         </main>
         <footer className="border-t">
           <div className="text-muted-foreground mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-1 px-4 py-3 text-xs sm:flex-row">
@@ -194,4 +224,36 @@ export function useMembershipsQuery(enabled: boolean) {
     enabled,
     staleTime: 60_000,
   });
+}
+
+/**
+ * Prompt 23 §41 — reads `?payment_return=<sessionId>` (set ONLY by our own
+ * callback API). Value is validated shape-wise (cuid-ish length bound);
+ * the session itself is re-authorized server-side, so a forged id simply
+ * renders a 404-ish "unknown" state — never another tenant's data.
+ * Listens to popstate so browser back/forward and the view's own
+ * clear() stay in sync.
+ */
+function usePaymentReturnSessionId(): [string | null, () => void] {
+  const read = () => {
+    try {
+      const raw = new URLSearchParams(window.location.search).get("payment_return");
+      return raw && raw.length >= 20 && raw.length <= 40 && /^[a-zA-Z0-9_-]+$/.test(raw) ? raw : null;
+    } catch {
+      return null;
+    }
+  };
+  const [sessionId, setSessionId] = useState<string | null>(read);
+  useEffect(() => {
+    const sync = () => setSessionId(read());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+  const clear = () => {
+    // Strip ONLY the ?payment_return query — never touch the hash (the view
+    // may be navigating via the app hash-router at the same time).
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.hash}`);
+    setSessionId(null);
+  };
+  return [sessionId, clear];
 }

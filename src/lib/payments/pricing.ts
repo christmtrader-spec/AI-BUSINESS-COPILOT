@@ -24,6 +24,14 @@ import { isBillingPeriod, type BillingPeriod } from "@/lib/billing/state-machine
 
 export const SETTLEMENT_CURRENCY = "EUR";
 
+/**
+ * Prompt 23 §13 — pricing snapshot version. Every checkout session records
+ * THIS value alongside amountMinor/currency, proving which catalog edition
+ * priced the payment even if prices change later. Bump ONLY when PLAN_PRICES
+ * or SETTLEMENT_CURRENCY semantics change.
+ */
+export const PRICING_VERSION = "v1-2026-09-eur";
+
 /** YEARLY = 12 monthly payments → 10 (2 months free). Deterministic. */
 export const YEARLY_MONTHS_CHARGED = 10;
 

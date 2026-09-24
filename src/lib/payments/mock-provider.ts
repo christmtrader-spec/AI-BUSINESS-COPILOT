@@ -92,8 +92,17 @@ export const mockProvider: PaymentProvider = {
   displayName: "Sandbox (Mock)",
   mode: "SANDBOX",
   configured: true,
+  capabilities: {
+    // Test adapter: accepts every settlement currency so any catalog works.
+    currencies: ["*"],
+    webhooks: true, // signed in-process webhook events (the real contract)
+    serverVerification: false, // no external truth to verify against — the
+    // session row itself is the mock gateway's state.
+    redirectCallback: false, // in-app dialog, no provider-hosted page
+  },
 
   async createCheckout(input: CreateCheckoutInput): Promise<CreatedCheckout> {
+    void input.callbackUrl; // mock ignores it (in-app hosted page)
     // Deterministic ref: our session id echoed with a scheme prefix.
     const providerRef = `mock_${input.checkoutSessionId}`;
     return {

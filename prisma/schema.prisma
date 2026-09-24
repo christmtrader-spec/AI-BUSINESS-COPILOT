@@ -639,7 +639,12 @@ model UsageEvent {
 //   the idempotent Prompt-20 changePlan(service) — never the reverse, and
 //   never any client-asserted "paid" state.
 //
-// Lifecycle:  PENDING → SUCCEEDED | FAILED | EXPIRED | CANCELED  (terminal).
+// Lifecycle:  PENDING → SUCCEEDED | FAILED | EXPIRED | CANCELED            (terminal)
+//                      ↘ RECONCILIATION_REQUIRED                            (terminal,
+//   Prompt 23: amount/currency/reference discrepancies from a REAL provider
+//   verification are NEVER auto-resolved and NEVER silently "failed" — the
+//   discrepancy is recorded (reconciliationReason + metaJson) and the case
+//   waits for operator review. See docs/billing/payment-reconciliation.md.
 // ---------------------------------------------------------------------------
 
 model CheckoutSession {
@@ -653,7 +658,8 @@ model CheckoutSession {
 
   // Provider slug: "mock" (sandbox) today; registry-gated (fail closed).
   provider     String
-  // Provider-side reference (e.g. mock_… / cs_live_…) — unique per provider.
+  // Provider-side reference (mock_… / Zarinpal Authority / cs_live_…) —
+  // unique per provider.
   providerRef  String
 
   // Settlement currency is the PLAN CATALOG currency (EUR), independent of
@@ -661,8 +667,18 @@ model CheckoutSession {
   amountMinor  Int
   currency     String   @default("EUR")
 
-  // PENDING | SUCCEEDED | FAILED | EXPIRED | CANCELED
+  // PENDING | SUCCEEDED | FAILED | EXPIRED | CANCELED | RECONCILIATION_REQUIRED
   status       String   @default("PENDING")
+  // Prompt 23 §45 — why this session needs manual reconciliation:
+  // AMOUNT_MISMATCH | CURRENCY_MISMATCH | UNKNOWN_PROVIDER_STATE | PROVIDER_TIMEOUT
+  reconciliationReason String?
+
+  // Prompt 23 §13 — pricing snapshot reference. The exact catalog version
+  // whose amountMinor/currency this session froze at creation time, so a
+  // later price change can never retroactively re-price an open intent.
+  pricingVersion String?
+  // Prompt 23 §149 — which user (owner/admin) initiated this payment.
+  initiatedByUserId String?
 
   expiresAt    DateTime
   completedAt  DateTime?

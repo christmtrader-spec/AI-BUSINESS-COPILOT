@@ -204,7 +204,7 @@ export function useReactivateSubscription() {
 
 export type CheckoutSessionDto = {
   id: string;
-  status: "PENDING" | "SUCCEEDED" | "FAILED" | "EXPIRED" | "CANCELED";
+  status: "PENDING" | "SUCCEEDED" | "FAILED" | "EXPIRED" | "CANCELED" | "RECONCILIATION_REQUIRED";
   planCode: string;
   billingPeriod: "MONTHLY" | "YEARLY";
   provider: string;
@@ -215,6 +215,12 @@ export type CheckoutSessionDto = {
   fulfilledAt: string | null;
   createdAt: string;
   redirectUrl: string | null;
+  /** Prompt 23 §45 — set only on RECONCILIATION_REQUIRED sessions. */
+  reconciliationReason: string | null;
+  /** Prompt 23 §13 — catalog edition that priced this intent. */
+  pricingVersion: string | null;
+  /** Prompt 23 §110 — the business being charged. */
+  businessName: string;
 };
 
 export type CheckoutSessionPayload = { checkoutSession: CheckoutSessionDto };
@@ -257,6 +263,23 @@ export function useCheckoutSession(id: string | null, active = true) {
       const st = query.state.data?.checkoutSession.status;
       return st === "PENDING" ? 3000 : false;
     },
+  });
+}
+
+/**
+ * Prompt 23 §20/§68 — deliberate, user-driven server-side verification
+ * (bounded: 10/min server-side; the browser NEVER decides the outcome).
+ */
+export function useVerifyCheckout() {
+  const invalidate = useInvalidateBilling();
+  return useMutation<
+    { session: CheckoutSessionPayload["checkoutSession"] | null; verification: string },
+    Error,
+    { id: string }
+  >({
+    mutationFn: ({ id }) =>
+      api(`/api/v1/billing/checkout/${id}/verify`, { method: "POST" }),
+    onSuccess: () => invalidate(),
   });
 }
 

@@ -16,9 +16,9 @@
  *   ProcessedWebhookEvent) and a type from a closed union.
  */
 
-export type ProviderSlug = "mock";
+export type ProviderSlug = "mock" | "zarinpal";
 
-export const PROVIDER_SLUGS = ["mock"] as const satisfies readonly ProviderSlug[];
+export const PROVIDER_SLUGS = ["mock", "zarinpal"] as const satisfies readonly ProviderSlug[];
 
 export function isProviderSlug(value: unknown): value is ProviderSlug {
   return typeof value === "string" && (PROVIDER_SLUGS as readonly string[]).includes(value);
@@ -35,6 +35,23 @@ export type CreateCheckoutInput = {
   billingPeriod: "MONTHLY" | "YEARLY";
   amountMinor: number;
   currency: string;
+  /** Prompt 23 §18 — built from the CONFIGURED app base URL by the
+   *  service; adapters must never derive it from request headers. */
+  callbackUrl: string;
+};
+
+/** Prompt 23 §81 — what a provider can do in THIS runtime (static, safe). */
+export type ProviderCapabilities = {
+  /** Settlement currencies the adapter accepts at session creation. */
+  currencies: readonly string[];
+  /** Provider PUSHES webhook events (POST /api/v1/webhooks/payments/<slug>).
+   *  false → callback + server-side verification is the authoritative
+   *  mechanism (documented — Prompt 23 §29). */
+  webhooks: boolean;
+  /** Adapter implements verifyPayment() (server-side verification, §20). */
+  serverVerification: boolean;
+  /** Provider redirects the user back to GET /api/v1/payments/callback/<slug>. */
+  redirectCallback: boolean;
 };
 
 export type CreatedCheckout = {
@@ -65,6 +82,36 @@ export class WebhookVerificationError extends Error {
   }
 }
 
+/** A provider redirect callback could not be resolved to an attempt. */
+export class CallbackParseError extends Error {
+  constructor(message = "Invalid provider callback") {
+    super(message);
+    this.name = "CallbackParseError";
+  }
+}
+
+/**
+ * Normalized server-side verification result (Prompt 23 §20/§34/§35/§36).
+ * The SERVICE — never the adapter — compares amounts/currencies against
+ * the session snapshot and decides state transitions.
+ */
+export type VerifyPaymentResult =
+  | {
+      /** Provider authoritatively confirmed the payment. */
+      outcome: "SUCCEEDED";
+      /** Stable provider event/transaction id — the idempotency anchor. */
+      providerEventId: string;
+      /** Provider-reported amount/currency (provider units already normalized). */
+      amountMinor: number;
+      currency: string;
+      providerTxnRef?: string;
+    }
+  | { outcome: "NOT_PAID"; reason: string }
+  | { outcome: "FAILED"; reason: string }
+  /** Unknown/ambiguous outcome (timeout, malformed, contradiction) —
+   *  NEVER mapped to success or failure (§35/§36). */
+  | { outcome: "UNKNOWN"; reason: string };
+
 /** The provider contract — every adapter implements exactly this. */
 export interface PaymentProvider {
   readonly slug: ProviderSlug;
@@ -72,6 +119,7 @@ export interface PaymentProvider {
   readonly mode: ProviderMode;
   /** Whether this provider is configured in the CURRENT environment. */
   readonly configured: boolean;
+  readonly capabilities: ProviderCapabilities;
   createCheckout(input: CreateCheckoutInput): Promise<CreatedCheckout>;
   /**
    * Verify + parse a webhook delivery. Throws WebhookVerificationError on
@@ -81,6 +129,23 @@ export interface PaymentProvider {
   verifyWebhook(rawBody: string, headers: Headers): ProviderWebhookEvent;
   /** Authoritative session status for reconciliation (lazy expiry / heal). */
   getSessionStatus(providerRef: string): Promise<"PENDING" | "SUCCEEDED" | "FAILED" | "EXPIRED">;
+  /**
+   * Server-side verification (Prompt 23 §20) — MANDATORY for redirect-based
+   * real providers. Present exactly when capabilities.serverVerification.
+   * Pure provider call: returns the provider's normalized claim; the service
+   * validates it against the internal snapshot.
+   */
+  verifyPayment?(input: {
+    providerRef: string;
+    expectedAmountMinor: number;
+    expectedCurrency: string;
+  }): Promise<VerifyPaymentResult>;
+  /**
+   * Parse a redirect callback's query params down to the providerRef ONLY
+   * (Prompt 23 §19 — callback values are UNTRUSTED; query status flags are
+   * never success evidence). Present exactly when capabilities.redirectCallback.
+   */
+  parseCallback?(params: URLSearchParams): { providerRef: string };
 }
 
 /** Events a provider emits (closed union — unknown types are ignored). */
