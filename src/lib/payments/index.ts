@@ -1,7 +1,10 @@
 /**
- * Payments lib barrel — Prompt 22 + Prompt 23. Import surface for routes and UI.
+ * Payments lib barrel — Prompt 22 + Prompt 23 + Prompt 24. Import surface
+ * for routes and UI.
  */
 export * from "./pricing";
+export * from "./pricing-service";
+export * from "./pricing-seed-data";
 export * from "./types";
 export * from "./signature";
 export * from "./registry";

@@ -193,14 +193,27 @@ export const billingCancelSchema = z.object({}).strict();
 export const billingReactivateSchema = z.object({}).strict();
 
 /**
- * POST /api/v1/billing/checkout — Prompt 22. The browser supplies ONLY the
- * target plan + period; the amount comes from the server price catalog
- * (src/lib/payments/pricing.ts) and is never client-supplied.
+ * POST /api/v1/billing/checkout — Prompt 22 + Prompt 24 §95. The browser
+ * supplies ONLY the target plan + period + (optionally) the desired
+ * settlement currency; the amount and price version are resolved and
+ * snapshotted SERVER-side (PricingService) and are never client-supplied.
+ * `.strict()` (Prompt 24 §80): any extra field — an `amount`, a
+ * `priceVersion`, anything — is a 400 rejection, not a silent ignore.
  */
-export const billingCheckoutSchema = z.object({
-  planCode: planCodeSchema,
-  billingPeriod: z.enum(["MONTHLY", "YEARLY"]).default("MONTHLY"),
-});
+export const billingCheckoutSchema = z
+  .object({
+    planCode: planCodeSchema,
+    billingPeriod: z.enum(["MONTHLY", "YEARLY"]).default("MONTHLY"),
+    // Prompt 24 §41 — validated against the settlement allowlist by the
+    // PricingService; arbitrary currency codes are 422 CURRENCY_NOT_SUPPORTED.
+    currency: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z]{3}$/, "currency must be a 3-letter ISO 4217 code")
+      .transform((c) => c.toUpperCase())
+      .optional(),
+  })
+  .strict();
 
 /** POST /api/v1/billing/checkout/[id]/simulate — sandbox provider only. */
 export const billingSimulateSchema = z.object({

@@ -64,8 +64,8 @@ function check(name, cond, detail = "") {
 
 /* ------------------------- service-level imports -------------------------- */
 
-const { priceFor, priceCatalog, PLAN_PRICES, SETTLEMENT_CURRENCY } = await import(
-  "../src/lib/payments/pricing.ts"
+const { resolvePrice, priceCatalogForCurrency, providerSupportsCurrency } = await import(
+  "../src/lib/payments/pricing-service.ts"
 );
 const { buildSignatureHeader, verifySignatureHeader, getWebhookSecret } = await import(
   "../src/lib/payments/signature.ts"
@@ -176,18 +176,42 @@ console.log(`\n=== Prompt 22 — payment provider abstraction (IP ${TEST_IP}) ==
 
 /* ============================== A — pricing =============================== */
 
-console.log("A — pricing catalog (server-authoritative)");
-check("A1 monthly price STARTER = 900 EUR minor", priceFor("STARTER", "MONTHLY")?.amountMinor === 900);
-check("A2 yearly price BUSINESS = 19000 (10×)", priceFor("BUSINESS", "YEARLY")?.amountMinor === 19000);
-check("A3 currency settlement is EUR", priceFor("PRO", "MONTHLY")?.currency === SETTLEMENT_CURRENCY && SETTLEMENT_CURRENCY === "EUR");
-check("A4 FREE not purchasable", priceFor("FREE", "MONTHLY") === null);
-check("A5 ENTERPRISE not purchasable (not self-service)", priceFor("ENTERPRISE", "MONTHLY") === null);
-check(
-  "A6 catalog covers exactly the 3 paid plans",
-  JSON.stringify(priceCatalog().map((p) => p.planCode).sort()) ===
-    JSON.stringify(["BUSINESS", "PRO", "STARTER"]),
-);
-check("A7 catalog amounts deterministic", priceCatalog().every((p) => p.monthlyMinor === PLAN_PRICES[p.planCode] && p.yearlyMinor === p.monthlyMinor * 10));
+console.log("A — pricing catalog (PricingService → PriceBook/PlanPrice DB, Prompt 24)");
+const eurStarterM = await resolvePrice({ planCode: "STARTER", billingPeriod: "MONTHLY" });
+const eurBusinessY = await resolvePrice({ planCode: "BUSINESS", billingPeriod: "YEARLY" });
+const eurProM = await resolvePrice({ planCode: "PRO", billingPeriod: "MONTHLY" });
+check("A1 monthly price STARTER = 900 EUR minor (EUR-v1 book)", eurStarterM.amountMinor === 900 && eurStarterM.currency === "EUR");
+check("A2 yearly price BUSINESS = 19000 — explicit row, not computed", eurBusinessY.amountMinor === 19000 && eurBusinessY.currency === "EUR");
+check("A3 resolution names the EUR_STANDARD v1-2026-09 book", eurProM.priceBookCode === "EUR_STANDARD" && eurProM.priceVersion === "v1-2026-09");
+{
+  let freeRejected = false;
+  try { await resolvePrice({ planCode: "FREE", billingPeriod: "MONTHLY" }); } catch (e) { freeRejected = e?.code === "PLAN_NOT_PURCHASABLE"; }
+  check("A4 FREE not purchasable (PLAN_NOT_PURCHASABLE §38)", freeRejected);
+}
+{
+  let entRejected = false;
+  try { await resolvePrice({ planCode: "ENTERPRISE", billingPeriod: "MONTHLY" }); } catch (e) { entRejected = e?.code === "PLAN_NOT_PURCHASABLE"; }
+  check("A5 ENTERPRISE not purchasable (not self-service §39)", entRejected);
+}
+{
+  const catalog = await priceCatalogForCurrency();
+  const codes = [...catalog.byPlan.entries()].filter(([, v]) => v.availability === "AVAILABLE").map(([k]) => k).sort();
+  check("A6 catalog prices exactly the 3 paid plans (AVAILABLE)", JSON.stringify(codes) === JSON.stringify(["BUSINESS", "PRO", "STARTER"]));
+  check("A6b FREE/ENTERPRISE carry no price rows", catalog.byPlan.get("FREE")?.availability === "NOT_PURCHASABLE" && catalog.byPlan.get("ENTERPRISE")?.availability === "NOT_SELF_SERVICE");
+  check("A6c supported currencies honest (no IRR book → EUR only)", JSON.stringify(catalog.supportedCurrencies) === JSON.stringify(["EUR"]));
+}
+{
+  // A7 — DB is the authority: 6 explicit rows, yearly amounts stored verbatim.
+  const book = await prisma.priceBook.findUnique({ where: { code_version: { code: "EUR_STANDARD", version: "v1-2026-09" } }, include: { prices: true } });
+  const byKey = new Map((book?.prices ?? []).map((r) => [`${r.planCode}/${r.billingPeriod}`, r.amountMinor]));
+  check(
+    "A7 DB amounts authoritative (900/9000/1900/19000/4900/49000)",
+    byKey.get("STARTER/MONTHLY") === 900 && byKey.get("STARTER/YEARLY") === 9000 &&
+    byKey.get("BUSINESS/MONTHLY") === 1900 && byKey.get("BUSINESS/YEARLY") === 19000 &&
+    byKey.get("PRO/MONTHLY") === 4900 && byKey.get("PRO/YEARLY") === 49000,
+  );
+  check("A7b mock provider is currency-agnostic (capability-driven §47)", providerSupportsCurrency({ capabilities: { currencies: ["*"] } }, "EUR"));
+}
 
 /* ============================ A2 — signatures ============================= */
 
@@ -251,7 +275,7 @@ check("B0.1 business id resolved", !!businessId);
     headers: ctxHeader(businessId),
     body: { planCode: "FREE", billingPeriod: "MONTHLY" },
   });
-  check("B2 FREE checkout → 422 CHECKOUT_NOT_ALLOWED", freeAttempt.status === 422 && freeAttempt.json?.error?.code === "CHECKOUT_NOT_ALLOWED", freeAttempt.text?.slice(0, 120));
+  check("B2 FREE checkout → 422 PLAN_NOT_PURCHASABLE (Prompt 24 §38)", freeAttempt.status === 422 && freeAttempt.json?.error?.code === "PLAN_NOT_PURCHASABLE", freeAttempt.text?.slice(0, 120));
 
   const entAttempt = await api("/api/v1/billing/checkout", {
     method: "POST",
@@ -259,7 +283,7 @@ check("B0.1 business id resolved", !!businessId);
     headers: ctxHeader(businessId),
     body: { planCode: "ENTERPRISE", billingPeriod: "MONTHLY" },
   });
-  check("B3 ENTERPRISE checkout → 422 (not self-service)", entAttempt.status === 422 && entAttempt.json?.error?.code === "CHECKOUT_NOT_ALLOWED");
+  check("B3 ENTERPRISE checkout → 422 PLAN_NOT_PURCHASABLE (Prompt 24 §39)", entAttempt.status === 422 && entAttempt.json?.error?.code === "PLAN_NOT_PURCHASABLE");
 
   const outsiderAttempt = await api("/api/v1/billing/checkout", {
     method: "POST",

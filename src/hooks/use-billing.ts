@@ -35,8 +35,11 @@ export type PlanCatalogPayload = {
     unit: string | null;
     description: string;
   }>;
-  /** Prompt 22 — settlement currency of the server price catalog (EUR). */
+  /** Prompt 24 — settlement currency THIS catalog is priced in (explicit
+   *  request or the documented deployment default — never browser-derived). */
   settlementCurrency: string;
+  /** Prompt 24 §92 — currencies with an active, effective price book. */
+  supportedCurrencies: string[];
   plans: Array<{
     code: string;
     name: string;
@@ -44,8 +47,16 @@ export type PlanCatalogPayload = {
     sortOrder: number;
     /** false for customizable plans (ENTERPRISE) — excluded from switching. */
     selfService: boolean;
-    /** Server-authoritative pricing (null for FREE / ENTERPRISE). */
-    pricing: { monthlyMinor: number; yearlyMinor: number; currency: string } | null;
+    /** Prompt 24 §52 — honest availability in the catalog currency. */
+    availability: "AVAILABLE" | "NOT_PURCHASABLE" | "NOT_SELF_SERVICE" | "NOT_PRICED";
+    /** Server-authoritative pricing from the active price book
+     *  (null for FREE / ENTERPRISE / unpriced currencies). */
+    pricing: {
+      monthlyMinor: number;
+      yearlyMinor: number;
+      currency: string;
+      priceVersion: string;
+    } | null;
     entitlements: Record<string, number | null | boolean>;
   }>;
 };
@@ -219,6 +230,8 @@ export type CheckoutSessionDto = {
   reconciliationReason: string | null;
   /** Prompt 23 §13 — catalog edition that priced this intent. */
   pricingVersion: string | null;
+  /** Prompt 24 §30 — readable code of the price book that priced this intent. */
+  priceBookCode: string | null;
   /** Prompt 23 §110 — the business being charged. */
   businessName: string;
 };

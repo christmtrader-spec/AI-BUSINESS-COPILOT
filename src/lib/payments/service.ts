@@ -29,17 +29,9 @@ import { changePlan, invalidateBillingCache } from "@/lib/billing";
 import { isBillingPeriod, type BillingPeriod } from "@/lib/billing/state-machine";
 import { validatePaymentConfig } from "./config";
 import { buildMockEventBody, buildMockEventHeaders } from "./mock-provider";
-import { priceFor, PRICING_VERSION } from "./pricing";
+import { providerSupportsCurrency, resolvePrice } from "./pricing-service";
 import { defaultProvider, isProviderUsable, resolveProvider } from "./registry";
 import { CallbackParseError, WebhookVerificationError, type ProviderWebhookEvent } from "./types";
-
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
-function checkoutNotAllowed(message: string, details?: unknown): ApiError {
-  return new ApiError(422, "CHECKOUT_NOT_ALLOWED", message, details);
-}
 
 // ---------------------------------------------------------------------------
 // DTOs
@@ -62,6 +54,8 @@ export type CheckoutSessionDto = {
   reconciliationReason: string | null;
   /** Prompt 23 §13 — catalog edition that priced this intent. */
   pricingVersion: string | null;
+  /** Prompt 24 §30 — readable code of the price book that priced this intent. */
+  priceBookCode: string | null;
   /** Prompt 23 §110 — confirmation screen shows the charged business. */
   businessName: string;
 };
@@ -90,6 +84,7 @@ type SessionRow = {
   status: string;
   reconciliationReason: string | null;
   pricingVersion: string | null;
+  priceBookCode: string | null;
   expiresAt: Date;
   completedAt: Date | null;
   fulfilledAt: Date | null;
@@ -128,6 +123,7 @@ function sessionDto(
     redirectUrl: s.status === "PENDING" ? redirectUrl : null,
     reconciliationReason: s.reconciliationReason,
     pricingVersion: s.pricingVersion,
+    priceBookCode: s.priceBookCode,
     businessName,
   };
 }
@@ -160,7 +156,7 @@ export async function expireStaleSessions(businessId?: string): Promise<number> 
 
 export async function createCheckout(
   businessId: string,
-  input: { planCode: string; billingPeriod: string },
+  input: { planCode: string; billingPeriod: string; currency?: string },
   opts: { actorId?: string | null } = {},
 ): Promise<CheckoutSessionDto> {
   // Prompt 23 §88 — a disabled or mis-configured payment system refuses to
@@ -170,24 +166,16 @@ export async function createCheckout(
     throw new ApiError(422, "PAYMENTS_UNAVAILABLE", "Payment initiation is not available.");
   }
 
-  const price = priceFor(input.planCode, input.billingPeriod);
-  if (!price) {
-    // FREE needs no payment; ENTERPRISE is not self-service (§38).
-    throw checkoutNotAllowed(
-      "This plan cannot be purchased through self-service checkout.",
-      { planCode: input.planCode },
-    );
-  }
+  // Prompt 24 §54 — resolve plan → price → provider IN ORDER. resolvePrice
+  // validates the plan (purchasable + active), the currency (allowlist) and
+  // the book window, and throws the structured §55 codes — the browser
+  // never influences anything beyond { planCode, billingPeriod, currency }.
+  const price = await resolvePrice({
+    planCode: input.planCode,
+    billingPeriod: input.billingPeriod,
+    currency: input.currency,
+  });
   const billingPeriod = price.billingPeriod;
-
-  // The plan must exist AND be active (defense in depth — priceFor already
-  // guarantees it is a known purchasable code).
-  const plan = await db.plan.findUnique({ where: { code: input.planCode } });
-  if (!plan || !plan.active) {
-    throw checkoutNotAllowed("The requested plan is not available.", {
-      planCode: input.planCode,
-    });
-  }
 
   const provider = defaultProvider();
 
@@ -201,11 +189,12 @@ export async function createCheckout(
     throw new ApiError(404, "BUSINESS_NOT_FOUND", "Business not found.");
   }
 
-  // Prompt 23 §52 — the provider must actually support the settlement
-  // currency. No silent conversion, ever: an unsupported currency is a
-  // 422 before ANY provider interaction.
-  const providerCurrencies = provider.capabilities.currencies;
-  if (!providerCurrencies.includes("*") && !providerCurrencies.includes(price.currency)) {
+  // Prompt 23 §52 / Prompt 24 §16-§17 — the provider must actually support
+  // the settlement currency, decided ONLY by its declared capabilities (§47:
+  // no `if provider === …` anywhere). No silent conversion, no silent
+  // provider switch: an unsupported currency is a 422 before ANY provider
+  // interaction (§17/§18).
+  if (!providerSupportsCurrency(provider, price.currency)) {
     throw new ApiError(
       422,
       "PROVIDER_CURRENCY_UNSUPPORTED",
@@ -235,7 +224,9 @@ export async function createCheckout(
       amountMinor: price.amountMinor,
       currency: price.currency,
       status: "PENDING",
-      pricingVersion: PRICING_VERSION, // §13 price snapshot reference
+      pricingVersion: price.priceVersion, // §13/§30 price snapshot reference
+      priceBookId: price.priceBookId, // §29/§30 immutable book reference
+      priceBookCode: price.priceBookCode,
       initiatedByUserId: opts.actorId ?? null, // §149 payment initiator
       expiresAt: new Date(Date.now() + 30 * 60 * 1000),
       metaJson: JSON.stringify({ mode: provider.mode, displayName: provider.displayName }),
@@ -278,7 +269,8 @@ export async function createCheckout(
         amountMinor: price.amountMinor,
         currency: price.currency,
         provider: provider.slug,
-        pricingVersion: PRICING_VERSION,
+        pricingVersion: price.priceVersion,
+        priceBookCode: price.priceBookCode,
       },
     });
 

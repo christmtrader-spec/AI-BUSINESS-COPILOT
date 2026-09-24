@@ -676,7 +676,16 @@ model CheckoutSession {
   // Prompt 23 §13 — pricing snapshot reference. The exact catalog version
   // whose amountMinor/currency this session froze at creation time, so a
   // later price change can never retroactively re-price an open intent.
+  // Prompt 24: new sessions store the resolving PriceBook's version here and
+  // the book references below; pre-Prompt-24 sessions keep the legacy value
+  // ("v1-2026-09-eur") with null book refs — never reinterpreted (§67/§68).
   pricingVersion String?
+  // Prompt 24 §29/§30 — immutable price-book snapshot reference.
+  priceBookId   String?
+  priceBook     PriceBook? @relation(fields: [priceBookId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Denormalized readable code (EUR_STANDARD) — the session stays
+  // interpretable even though ids are opaque.
+  priceBookCode String?
   // Prompt 23 §149 — which user (owner/admin) initiated this payment.
   initiatedByUserId String?
 
@@ -731,4 +740,70 @@ model ProcessedWebhookEvent {
 
   @@unique([provider, eventId])
   @@index([receivedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 24 — currency-aware pricing (price books + versioned plan prices).
+//
+// A PriceBook is a complete, versioned pricing catalog for ONE settlement
+// currency; PlanPrice rows are its immutable per-plan/per-period amounts.
+// Rules baked into this schema (docs/billing/pricing-architecture.md):
+// - Price changes create a NEW PriceBook version row — PlanPrice amounts are
+//   never mutated after creation (§8/§36: no retroactive repricing).
+// - A book that any CheckoutSession references can NEVER be deleted
+//   (CheckoutSession.priceBookId is onDelete: Restrict) — history is kept.
+// - Resolution picks the newest ACTIVE, currently-effective book per
+//   currency (effectiveFrom/effectiveTo, server time only — §9/§33).
+// - Amounts are INTEGER minor units in the book's currency exponent
+//   (EUR=2 cents, IRR=0 rials) — never floats (§22/§23).
+// ---------------------------------------------------------------------------
+
+model PriceBook {
+  id            String   @id @default(cuid())
+  // Stable commercial code — never encodes prices inside the code (§70).
+  // EUR_STANDARD | IRR_IRAN | (harness-only: *_TEST books).
+  code          String
+  // Readable, unique version per code (§69): v1-2026-09 …
+  version       String
+  // ISO 4217 settlement currency — validated against the currency metadata
+  // layer (src/lib/payments/currency.ts) at seed and resolution time.
+  currency      String
+  // Only active books participate in resolution (§10 step 4).
+  active        Boolean  @default(false)
+  effectiveFrom DateTime @default(now())
+  // Books expire automatically after effectiveTo (§9/§33).
+  effectiveTo   DateTime?
+  description   String   @default("")
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  prices           PlanPrice[]
+  checkoutSessions CheckoutSession[]
+
+  @@unique([code, version])
+  @@index([currency, active])
+}
+
+model PlanPrice {
+  id            String    @id @default(cuid())
+  priceBookId   String
+  priceBook     PriceBook @relation(fields: [priceBookId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  // Plan identity stays FREE|STARTER|BUSINESS|PRO|ENTERPRISE — prices are
+  // separate rows, never new plan codes (§6: no STARTER_EUR / STARTER_IRR).
+  planCode      String
+  // MONTHLY | YEARLY — explicit rows for each period; yearly amounts are
+  // stored, never computed from monthly at runtime (§21/§61).
+  billingPeriod String
+  // Integer minor units of the book currency. Positive for purchasable
+  // plans; FREE/ENTERPRISE have NO rows at all (§38/§39).
+  amountMinor   Int
+  // Retiring a single plan's price deactivates the row — amounts are never
+  // edited (§104).
+  active        Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([priceBookId, planCode, billingPeriod])
+  @@index([priceBookId, active])
 }

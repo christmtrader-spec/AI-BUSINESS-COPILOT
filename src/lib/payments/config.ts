@@ -25,6 +25,8 @@
  * Secrets NEVER appear in blockers — only variable NAMES (§10/§56).
  */
 
+import { isSupportedSettlementCurrency } from "./currency";
+
 export type PaymentEnv = "mock" | "sandbox" | "production";
 
 export const PAYMENT_ENVS: readonly PaymentEnv[] = ["mock", "sandbox", "production"];
@@ -171,4 +173,21 @@ export function paymentConfigSummary(): {
     productionLike: cfg.productionLike,
     blockers: cfg.blockers,
   };
+}
+
+/**
+ * Prompt 24 §42/§97 — the deployment's DEFAULT platform settlement currency
+ * used when a checkout/catalog request does not name one. NEVER derived
+ * from browser locale/IP/UI text:
+ * - PAYMENT_SETTLEMENT_CURRENCY (validated against the settlement allowlist)
+ *   wins when set — an operator's explicit choice.
+ * - Otherwise "EUR": the documented default while EUR-v1 is the only
+ *   activated price book. Switching the default to IRR is an explicit
+ *   operator action (activate an IRR book + set this variable) — it is
+ *   never chosen silently, and it never changes historical sessions.
+ */
+export function defaultSettlementCurrency(): string {
+  const raw = process.env.PAYMENT_SETTLEMENT_CURRENCY?.trim().toUpperCase();
+  if (raw && isSupportedSettlementCurrency(raw)) return raw;
+  return "EUR";
 }

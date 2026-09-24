@@ -177,14 +177,35 @@ const sess1 = s1.json?.data?.checkoutSession;
 check("P2.2 snapshot: businessName present + pricingVersion recorded", sess1?.businessName === "P23 Real Provider Shop" && typeof sess1?.pricingVersion === "string" && sess1.pricingVersion.length > 0, JSON.stringify(sess1));
 check("P2.3 snapshot amount authoritative: 1900 EUR (BUSINESS monthly)", sess1?.amountMinor === 1900 && sess1?.currency === "EUR");
 
-console.log("\nP3 — tamper-proofing (§12/§116-§118)");
+console.log("\nP3 — tamper-proofing (Prompt 24 §78-§80: reject, never accept)");
+// §80 — ANY extra client field (amountMinor/discount/paid) is a REJECTION
+// now (strict schema), not a silent ignore.
+const sTamper = await api("/api/v1/billing/checkout", {
+  method: "POST", jar: ownerJar, headers: ctxHeader(businessId),
+  body: { planCode: "STARTER", billingPeriod: "MONTHLY", amountMinor: 1, discount: 100, paid: true },
+});
+check("P3.1 client-supplied amount/discount fields REJECTED (422 strict §80)", sTamper.status === 422 && sTamper.json?.error?.code === "VALIDATION_ERROR", sTamper.text?.slice(0, 120));
+// §78 — a client cannot buy at another currency's price either: IRR has no
+// configured book → structured 422, NEVER a fallback to EUR.
+const sIrr = await api("/api/v1/billing/checkout", {
+  method: "POST", jar: ownerJar, headers: ctxHeader(businessId),
+  body: { planCode: "STARTER", billingPeriod: "MONTHLY", currency: "IRR" },
+});
+check("P3.2 currency=IRR with no IRR book → 422 PRICEBOOK_NOT_FOUND (no fallback §50)", sIrr.status === 422 && sIrr.json?.error?.code === "PRICEBOOK_NOT_FOUND", sIrr.text?.slice(0, 160));
+// §41 — arbitrary currency codes never reach resolution.
+const sBadCur = await api("/api/v1/billing/checkout", {
+  method: "POST", jar: ownerJar, headers: ctxHeader(businessId),
+  body: { planCode: "STARTER", billingPeriod: "MONTHLY", currency: "BTC" },
+});
+check("P3.3 arbitrary currency BTC → 422 CURRENCY_NOT_SUPPORTED (§41)", sBadCur.status === 422 && sBadCur.json?.error?.code === "CURRENCY_NOT_SUPPORTED", sBadCur.text?.slice(0, 160));
+// Clean request still succeeds at the AUTHORITATIVE price.
 const s2 = await api("/api/v1/billing/checkout", {
   method: "POST", jar: ownerJar, headers: ctxHeader(businessId),
-  body: { planCode: "STARTER", billingPeriod: "MONTHLY", amountMinor: 1, currency: "IRR", discount: 100, paid: true },
+  body: { planCode: "STARTER", billingPeriod: "MONTHLY" },
 });
-check("P3.1 client-supplied amount/currency/discount ignored → 201", s2.status === 201, s2.text?.slice(0, 120));
-check("P3.2 session uses authoritative price (900 EUR), not the tampered 1 IRR", s2.json?.data?.checkoutSession?.amountMinor === 900 && s2.json?.data?.checkoutSession?.currency === "EUR");
-check("P3.3 new checkout canceled the previous PENDING one (duplicate protection §15)", s2.json?.data?.checkoutSession?.id !== sess1.id && (await prisma.checkoutSession.findUnique({ where: { id: sess1.id } })).status === "CANCELED");
+check("P3.4 clean checkout → 201 with authoritative price", s2.status === 201, s2.text?.slice(0, 120));
+check("P3.5 session uses authoritative price (900 EUR, EUR-v1 book §30)", s2.json?.data?.checkoutSession?.amountMinor === 900 && s2.json?.data?.checkoutSession?.currency === "EUR" && s2.json?.data?.checkoutSession?.priceBookCode === "EUR_STANDARD");
+check("P3.6 new checkout canceled the previous PENDING one (duplicate protection §15)", s2.json?.data?.checkoutSession?.id !== sess1.id && (await prisma.checkoutSession.findUnique({ where: { id: sess1.id } })).status === "CANCELED");
 
 console.log("\nP4 — verify endpoint (§20/§63/§68/§79)");
 const verify = (id, jar, bizId) =>
