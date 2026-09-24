@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { api } from "@/lib/api-client";
@@ -115,20 +115,22 @@ export function AppShell({
   // user-supplied URL). The view renders ONLY server-verified state.
   const [paymentReturnSessionId, clearPaymentReturn] = usePaymentReturnSessionId();
 
-  // Dismiss the return view as soon as the user navigates elsewhere
-  // (sidebar/⌘K pushState navigation fires no popstate — watch the view key).
-  const prevViewKeyRef = useRef<string | null>(null);
+  // Dismiss the return view as soon as the user navigates elsewhere.
+  // Navigation is compared by VIEW OBJECT IDENTITY, not viewKey: on a fresh
+  // `/?payment_return=<id>` load the underlying view is already the default
+  // dashboard, so clicking «Dashboard» produces the SAME viewKey and would
+  // never dismiss. navigate()/replaceView() always pass a fresh object.
+  const prevViewRef = useRef<AppView | null>(null);
   useEffect(() => {
-    if (prevViewKeyRef.current === null) {
-      prevViewKeyRef.current = viewKey;
+    if (prevViewRef.current === null) {
+      prevViewRef.current = view;
       return;
     }
-    if (prevViewKeyRef.current !== viewKey) {
-      prevViewKeyRef.current = viewKey;
+    if (prevViewRef.current !== view) {
+      prevViewRef.current = view;
       clearPaymentReturn();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewKey]);
+  }, [view, clearPaymentReturn]);
 
   return (
     <SidebarProvider>
@@ -249,11 +251,11 @@ function usePaymentReturnSessionId(): [string | null, () => void] {
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
   }, []);
-  const clear = () => {
+  const clear = useCallback(() => {
     // Strip ONLY the ?payment_return query — never touch the hash (the view
     // may be navigating via the app hash-router at the same time).
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.hash}`);
     setSessionId(null);
-  };
+  }, []);
   return [sessionId, clear];
 }
