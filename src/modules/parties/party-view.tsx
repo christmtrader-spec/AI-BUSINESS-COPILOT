@@ -7,7 +7,7 @@ import { Download, Pencil, Plus, Trash2, Users } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useBillingErrorText } from "@/hooks/use-billing-error-text";
 import { api, ApiClientError } from "@/lib/api-client";
-import { downloadCsv, exportStamp, toCsv } from "@/lib/csv";
+import { downloadCsv, exportStamp, fetchAllPages, toCsv } from "@/lib/csv";
 import { can, asRole, type Role } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
@@ -149,15 +149,19 @@ export function PartyView({
     dateStyle: "medium",
   });
 
-  // Export the full (soft-delete-aware) list — up to 500 rows — as CSV.
+  // Export the full (soft-delete-aware) list as CSV. BUGFIX (r23): the old
+  // single pageSize=500 request was silently clamped to 100 by the server's
+  // listParams cap AND the toast reported res.total — larger books lost rows
+  // while claiming otherwise. fetchAllPages walks every page (up to a sane
+  // 1000-row bound) and the toast now states the REAL exported count.
   const exportMutation = useMutation({
     mutationFn: async () => {
-      const res = await api<PartyPage>(
-        `${API_BASE[kind]}?q=&page=1&pageSize=500`,
+      const { rows, total, truncated } = await fetchAllPages<Party>((page, pageSize) =>
+        api<PartyPage>(`${API_BASE[kind]}?q=&page=${page}&pageSize=${pageSize}`),
       );
       const csv = toCsv(
         [t("colName"), t("colContact"), t("colNote"), t("colCreated")],
-        res.items.map((p) => [
+        rows.map((p) => [
           p.name,
           [p.phone, p.email].filter(Boolean).join(" "),
           p.note ?? "",
@@ -165,9 +169,14 @@ export function PartyView({
         ]),
       );
       downloadCsv(`${kind}s-${exportStamp()}.csv`, csv);
-      return res.total;
+      return { exported: rows.length, total, truncated };
     },
-    onSuccess: (count) => toast({ title: t("exportedToast", { count }) }),
+    onSuccess: ({ exported, total, truncated }) =>
+      toast({
+        title: truncated
+          ? tCommon("exportedTruncated", { count: exported, total })
+          : t("exportedToast", { count: exported }),
+      }),
     onError: () => toast({ title: tErrors("generic"), variant: "destructive" }),
   });
 

@@ -3,9 +3,10 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { CalendarDays, Eye, Plus, ShoppingCart, Trash2, X } from "lucide-react";
+import { CalendarDays, Download, Eye, Plus, ShoppingCart, Trash2, X } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
+import { downloadCsv, exportStamp, fetchAllPages, toCsv } from "@/lib/csv";
 import { can, asRole, type Role } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
@@ -132,6 +133,41 @@ export function SalesView({
   // loaded page count only (no invented numbers).
   const items = data?.items ?? [];
 
+  // Export invoices as CSV — mirrors the ACTIVE filters (search/status/month)
+  // so the file always matches what the user sees; fetchAllPages walks the
+  // server's 100-row page cap and reports truncation honestly (r23).
+  const exportMutation = useMutation({
+    mutationFn: async () => {
+      const { rows, total: grand, truncated } = await fetchAllPages<SaleRow>((pg, pageSize) =>
+        api<SalesPage>(
+          `/api/v1/sales?q=${encodeURIComponent(q)}&page=${pg}&pageSize=${pageSize}${statusQs}${monthQs}`,
+        ),
+      );
+      const csv = toCsv(
+        [t("colInvoice"), t("colDate"), t("colCustomer"), t("colTotal"), t("colPaid"), t("colBalance"), t("colStatus"), t("colNote")],
+        rows.map((s) => [
+          `INV-${String(s.number).padStart(4, "0")}`,
+          fmtDate(business, s.issueDate),
+          s.customerName ?? "—",
+          fmtMoney(business, s.totalMinor),
+          fmtMoney(business, s.paidMinor),
+          fmtMoney(business, s.balanceMinor),
+          s.status,
+          s.note ?? "",
+        ]),
+      );
+      downloadCsv(`sales-${exportStamp()}.csv`, csv);
+      return { exported: rows.length, total: grand, truncated };
+    },
+    onSuccess: ({ exported, total: grand, truncated }) =>
+      toast({
+        title: truncated
+          ? tCommon("exportedTruncated", { count: exported, total: grand })
+          : tCommon("exportedCount", { count: exported }),
+      }),
+    onError: () => toast({ title: tCommon("exportFailed"), variant: "destructive" }),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => api(`/api/v1/sales/${id}`, { method: "DELETE" }),
     onSuccess: () => {
@@ -191,12 +227,23 @@ export function SalesView({
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
-          writable ? (
-            <Button onClick={() => setFormOpen(true)} size="sm">
-              <Plus className="size-4" aria-hidden="true" />
-              {t("newInvoice")}
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exportMutation.isPending}
+              onClick={() => exportMutation.mutate()}
+            >
+              <Download className="size-4" aria-hidden="true" />
+              {exportMutation.isPending ? tCommon("exportingCsv") : tCommon("exportCsv")}
             </Button>
-          ) : null
+            {writable ? (
+              <Button onClick={() => setFormOpen(true)} size="sm">
+                <Plus className="size-4" aria-hidden="true" />
+                {t("newInvoice")}
+              </Button>
+            ) : null}
+          </>
         }
       />
 

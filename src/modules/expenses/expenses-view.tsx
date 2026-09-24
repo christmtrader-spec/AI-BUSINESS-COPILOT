@@ -3,9 +3,10 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { Banknote, CalendarDays, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
+import { Banknote, CalendarDays, Download, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
+import { downloadCsv, exportStamp, fetchAllPages, toCsv } from "@/lib/csv";
 import { can, asRole, type Role } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
 import { MoneyInput, moneyToMinorOrNull } from "@/components/shared/table-kit";
@@ -224,18 +225,64 @@ export function ExpensesView({
 
   const items = data?.items ?? [];
 
+  // Export expenses as CSV — mirrors the ACTIVE filters (search/status/month)
+  // so the file matches the visible list; fetchAllPages walks the server's
+  // 100-row page cap and reports truncation honestly (r23).
+  const exportMutation = useMutation({
+    mutationFn: async () => {
+      const { rows, total: grand, truncated } = await fetchAllPages<ExpenseRow>((pg, pageSize) =>
+        api<ExpensesPage>(
+          `/api/v1/expenses?q=${encodeURIComponent(q)}&page=${pg}&pageSize=${pageSize}${statusQs}${monthQs}`,
+        ),
+      );
+      const csv = toCsv(
+        [t("colDate"), t("colCategory"), t("colSupplier"), t("colAmount"), t("colPaid"), t("colBalance"), t("colStatus"), t("colNote")],
+        rows.map((e) => [
+          fmtDate(business, e.spentAt),
+          e.category,
+          e.supplierName ?? "—",
+          fmtMoney(business, e.amountMinor),
+          fmtMoney(business, e.paidMinor),
+          fmtMoney(business, e.balanceMinor),
+          e.status,
+          e.note ?? "",
+        ]),
+      );
+      downloadCsv(`expenses-${exportStamp()}.csv`, csv);
+      return { exported: rows.length, total: grand, truncated };
+    },
+    onSuccess: ({ exported, total: grand, truncated }) =>
+      toast({
+        title: truncated
+          ? tCommon("exportedTruncated", { count: exported, total: grand })
+          : tCommon("exportedCount", { count: exported }),
+      }),
+    onError: () => toast({ title: tCommon("exportFailed"), variant: "destructive" }),
+  });
+
   return (
     <div className="space-y-6" data-view="module:expenses">
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
-          writable ? (
-            <Button onClick={openCreate} size="sm">
-              <Plus className="size-4" aria-hidden="true" />
-              {t("addExpense")}
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exportMutation.isPending}
+              onClick={() => exportMutation.mutate()}
+            >
+              <Download className="size-4" aria-hidden="true" />
+              {exportMutation.isPending ? tCommon("exportingCsv") : tCommon("exportCsv")}
             </Button>
-          ) : null
+            {writable ? (
+              <Button onClick={openCreate} size="sm">
+                <Plus className="size-4" aria-hidden="true" />
+                {t("addExpense")}
+              </Button>
+            ) : null}
+          </>
         }
       />
 

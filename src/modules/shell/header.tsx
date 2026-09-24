@@ -53,6 +53,9 @@ export function LocaleSwitcher() {
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
   const tShell = useTranslations("shell");
+  // Localized mode labels shared with the ⌘K palette (common.palette.theme.*)
+  // — raw "light/dark/system" leaked English into the fa UI (r23 bug #12).
+  const tCommon = useTranslations("common");
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -69,7 +72,7 @@ export function ThemeToggle() {
             className={theme === mode ? "bg-accent" : ""}
           >
             <Check className={`size-4 ${theme === mode ? "opacity-100" : "opacity-0"}`} aria-hidden="true" />
-            <span className="capitalize">{mode}</span>
+            <span>{tCommon(`palette.theme.${mode}`)}</span>
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

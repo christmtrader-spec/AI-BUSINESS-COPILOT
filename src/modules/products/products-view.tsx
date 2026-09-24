@@ -3,12 +3,13 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { ArrowLeftRight, Package, Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowLeftRight, Download, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useBillingErrorText } from "@/hooks/use-billing-error-text";
 import { api, ApiClientError } from "@/lib/api-client";
 import { can, type Role } from "@/lib/rbac";
 import { formatMoney, fromMinor } from "@/lib/money";
+import { downloadCsv, exportStamp, fetchAllPages, toCsv } from "@/lib/csv";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -174,6 +175,53 @@ export function ProductsView({
   const total = data?.total ?? 0;
   const fmt = (minor: number) => formatMoney(minor, business);
 
+  // Export the full catalog (current search applied — the visible list is
+  // the mental model) as CSV. fetchAllPages walks the server's 100-row
+  // page cap honestly and reports truncation (r23).
+  const dateFmt = new Intl.DateTimeFormat(business.locale === "fa" ? "fa-IR" : "en-US", {
+    dateStyle: "medium",
+  });
+  const exportMutation = useMutation({
+    mutationFn: async () => {
+      const { rows, total: grand, truncated } = await fetchAllPages<Product>((page, pageSize) =>
+        api<ProductPage>(
+          `/api/v1/products?q=${encodeURIComponent(q)}&page=${page}&pageSize=${pageSize}`,
+        ),
+      );
+      const csv = toCsv(
+        [
+          t("colProduct"),
+          t("sku"),
+          t("unit"),
+          t("salePrice"),
+          t("costPrice"),
+          t("colStock"),
+          t("lowStockAt"),
+          t("colActive"),
+          t("colCreated"),
+        ],
+        rows.map((p) => [
+          p.name,
+          p.sku ?? "",
+          p.unit ?? "",
+          fmt(p.salePriceMinor),
+          fmt(p.costPriceMinor),
+          p.stockQty,
+          p.lowStockAt,
+          p.isActive ? tCommon("yes") : tCommon("no"),
+          dateFmt.format(new Date(p.createdAt)),
+        ]),
+      );
+      downloadCsv(`products-${exportStamp()}.csv`, csv);
+      return { exported: rows.length, total: grand, truncated };
+    },
+    onSuccess: ({ exported, total: grand, truncated }) =>
+      toast({
+        title: truncated ? tCommon("exportedTruncated", { count: exported, total: grand }) : tCommon("exportedCount", { count: exported }),
+      }),
+    onError: () => toast({ title: tCommon("exportFailed"), variant: "destructive" }),
+  });
+
   function stockBadge(p: Product) {
     if (p.stockQty <= 0) {
       return <Badge variant="destructive">{t("stockOut")}</Badge>;
@@ -194,12 +242,23 @@ export function ProductsView({
         title={tNav("products")}
         subtitle={t("priceNote")}
         actions={
-          writable ? (
-            <Button onClick={openCreate} size="sm">
-              <Plus className="size-4" aria-hidden="true" />
-              {t("add")}
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exportMutation.isPending}
+              onClick={() => exportMutation.mutate()}
+            >
+              <Download className="size-4" aria-hidden="true" />
+              {exportMutation.isPending ? tCommon("exportingCsv") : tCommon("exportCsv")}
             </Button>
-          ) : null
+            {writable ? (
+              <Button onClick={openCreate} size="sm">
+                <Plus className="size-4" aria-hidden="true" />
+                {t("add")}
+              </Button>
+            ) : null}
+          </>
         }
       />
 

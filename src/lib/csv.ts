@@ -55,3 +55,32 @@ export function downloadCsv(filename: string, csv: string): void {
 export function exportStamp(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
+export type PagedPayload<T> = { items: T[]; total: number };
+
+/**
+ * Walk a paginated list endpoint end-to-end for exports. The server caps
+ * pageSize at 100 (listParams), so a single oversized page request silently
+ * truncates — exports MUST page through instead. Stops at maxRows (sane
+ * client-side bound) and reports honestly whether the result is truncated.
+ */
+export async function fetchAllPages<T>(
+  fetchPage: (page: number, pageSize: number) => Promise<PagedPayload<T>>,
+  maxRows = 1000,
+): Promise<{ rows: T[]; total: number; truncated: boolean }> {
+  const pageSize = 100; // mirrors the server's listParams pageSize cap
+  const first = await fetchPage(1, pageSize);
+  const total = first.total;
+  const rows: T[] = [...first.items];
+  if (rows.length > 0 && rows.length < total) {
+    const maxPages = Math.ceil(maxRows / pageSize);
+    const wantedPages = Math.ceil(total / pageSize);
+    for (let p = 2; p <= Math.min(wantedPages, maxPages); p++) {
+      const res = await fetchPage(p, pageSize);
+      rows.push(...res.items);
+      if (res.items.length < pageSize) break;
+    }
+  }
+  const truncated = rows.length < total;
+  return { rows: rows.slice(0, maxRows), total, truncated };
+}
