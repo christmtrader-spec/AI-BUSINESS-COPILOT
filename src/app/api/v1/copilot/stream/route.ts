@@ -37,6 +37,8 @@ import {
   recordAiTokenUsage,
   releaseAiOperation,
 } from "@/lib/billing";
+import { attributeAiCost } from "@/lib/ai/cost/ledger";
+import { assertAiCostGuard } from "@/lib/ai/cost/governance";
 import { buildCopilotGrounding } from "@/lib/ai/snapshot";
 import { AiUnavailableError, getAI, type AiMessage } from "@/lib/ai/provider";
 
@@ -61,6 +63,15 @@ export const POST = route(async (req: NextRequest) => {
   }
 
   const input = await copilotAskSchema.parse(await req.json());
+
+  // Prompt 26 §70 — request-level COST GUARD at the AI execution boundary.
+  // Default OFF; never evaluated from React; fail-open on monitoring failure.
+  const guard = await assertAiCostGuard({ businessId: authCtx.businessId });
+  if (guard.blocked) {
+    throw new ApiError(429, "AI_COST_GUARD_BLOCKED", "AI usage is temporarily paused by a cost protection policy.", {
+      reasons: guard.reasons,
+    });
+  }
 
   // Usage metering BEFORE the stream opens (§44). A quota rejection is a
   // plain structured 422 JSON response — the stream never starts.
@@ -107,6 +118,7 @@ export const POST = route(async (req: NextRequest) => {
   // delivered anything (failure/abort before the first delta).
   let producedAnyDelta = false;
   let providerUsage: import("@/lib/billing").AiProviderUsage | null = null;
+  let providerModel: string | null = null;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -115,8 +127,9 @@ export const POST = route(async (req: NextRequest) => {
       };
       try {
         send({ meta: { ...grounding.meta, requestId } });
-        for await (const delta of getAI().chatStream(messages, (usage) => {
+        for await (const delta of getAI().chatStream(messages, (usage, model) => {
           providerUsage = usage;
+          providerModel = model;
         })) {
           if (abortSignal.aborted) {
             status = "aborted";
@@ -162,8 +175,30 @@ export const POST = route(async (req: NextRequest) => {
           await releaseAiOperation(businessId, requestId, {
             reason: status === "aborted" ? "stream-aborted-empty" : status === "failed" ? "stream-failed" : "no-output",
           });
-        } else if (providerUsage) {
-          await recordAiTokenUsage(businessId, requestId, providerUsage, { provider: "z-ai" });
+        } else {
+          if (providerUsage) {
+            await recordAiTokenUsage(businessId, requestId, providerUsage, {
+              provider: "z-ai",
+              ...(providerModel ? { model: providerModel } : {}),
+            });
+          }
+          // Prompt 26 — COST ATTRIBUTION (fail-safe, §29/§30): the response
+          // is already delivered; attribution MUST never break it. With no
+          // provider token metadata the cost is honestly UNKNOWN
+          // (TOKENS_MISSING) and reconciliation may revisit it later.
+          void attributeAiCost({
+            businessId,
+            requestId,
+            provider: "z-ai",
+            model: providerModel,
+            usage: providerUsage
+              ? {
+                  inputTokens: providerUsage.inputTokens ?? null,
+                  outputTokens: providerUsage.outputTokens ?? null,
+                  totalTokens: providerUsage.totalTokens ?? null,
+                }
+              : null,
+          });
         }
 
         // Audit on close — never break the response, but be loud on failure.

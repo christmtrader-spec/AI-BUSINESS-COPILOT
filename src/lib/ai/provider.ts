@@ -25,6 +25,11 @@ export type AiChatResult = {
   text: string;
   /** Normalized provider usage — null when the provider reports none. */
   usage: AiProviderUsage | null;
+  /**
+   * Model identifier EXACTLY as reported by the provider — null when the
+   * transport exposes nothing trustworthy (Prompt 26 §81: never invented).
+   */
+  model: string | null;
 };
 
 export interface AIProvider {
@@ -33,13 +38,13 @@ export interface AIProvider {
   /**
    * Stream a chat turn as incremental text deltas (Phase 06).
    * Implementations must yield at least one delta or throw AiUnavailableError.
-   * `onUsage` (optional) receives normalized provider usage when the
-   * transport genuinely exposes it (e.g. a final SSE usage frame) — it is
-   * invoked at most once per stream, never with fabricated values.
+   * `onUsage` (optional) receives normalized provider usage — and the
+   * provider-reported model identifier, when the transport genuinely
+   * exposes one — at most once per stream, never with fabricated values.
    */
   chatStream(
     messages: AiMessage[],
-    onUsage?: (usage: AiProviderUsage) => void,
+    onUsage?: (usage: AiProviderUsage, model: string | null) => void,
   ): AsyncGenerator<string, void, undefined>;
 }
 
@@ -48,6 +53,15 @@ export class AiUnavailableError extends Error {
     super(message);
     this.name = "AiUnavailableError";
   }
+}
+
+/** Honest model extraction — ONLY a non-empty string the provider sent (§81). */
+function extractModel(raw: unknown): string | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const value = (raw as { model?: unknown }).model;
+  return typeof value === "string" && value.trim().length > 0 && value.length <= 128
+    ? value.trim()
+    : null;
 }
 
 /** Normalize an OpenAI-style usage object; null when nothing usable (§14). */
@@ -75,7 +89,7 @@ function normalizeUsage(raw: unknown): AiProviderUsage | null {
  */
 async function* sseDeltas(
   stream: ReadableStream<Uint8Array>,
-  onUsage?: (usage: AiProviderUsage) => void,
+  onUsage?: (usage: AiProviderUsage, model: string | null) => void,
 ): AsyncGenerator<string, void, undefined> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -96,6 +110,7 @@ async function* sseDeltas(
           const json = JSON.parse(data) as {
             choices?: Array<{ delta?: { content?: string }; message?: { content?: string } }>;
             usage?: unknown;
+            model?: unknown;
           };
           const choice = json.choices?.[0];
           const delta = choice?.delta?.content ?? choice?.message?.content;
@@ -104,7 +119,7 @@ async function* sseDeltas(
             const normalized = normalizeUsage(json.usage);
             if (normalized) {
               usageSeen = true;
-              onUsage?.(normalized);
+              onUsage?.(normalized, extractModel(json));
             }
           }
         } catch {
@@ -129,12 +144,13 @@ class ZaiProvider implements AIProvider {
     // Record ONLY what the provider actually reported (§14) — the field is
     // optional on the wire and stays null when absent.
     const usage = normalizeUsage((completion as { usage?: unknown }).usage);
-    return { text: content, usage };
+    const model = extractModel(completion);
+    return { text: content, usage, model };
   }
 
   async *chatStream(
     messages: AiMessage[],
-    onUsage?: (usage: AiProviderUsage) => void,
+    onUsage?: (usage: AiProviderUsage, model: string | null) => void,
   ): AsyncGenerator<string, void, undefined> {
     const zai = await ZAI.create();
     const body = {
@@ -161,11 +177,12 @@ class ZaiProvider implements AIProvider {
     const payload = res as {
       choices?: Array<{ message?: { content?: string } }>;
       usage?: unknown;
+      model?: unknown;
     };
     const content = payload?.choices?.[0]?.message?.content?.trim() ?? "";
     if (!content) throw new AiUnavailableError("Empty completion.");
     const usage = normalizeUsage(payload?.usage);
-    if (usage) onUsage?.(usage);
+    if (usage) onUsage?.(usage, extractModel(payload));
     yield content;
   }
 }

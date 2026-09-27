@@ -75,6 +75,44 @@ export function AppRoot() {
     };
   }, []);
 
+  // Prompt 25 — pricing CTA intent continuation. Query params are STRICTLY
+  // allowlisted (plan code / period / currency — never amounts or book ids);
+  // the intent is parked in sessionStorage for the onboarding flow and the
+  // URL is cleaned so a refresh cannot replay the funnel event.
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const intent = sp.get("intent");
+    if (!intent) return;
+    const planCodes = ["FREE", "STARTER", "BUSINESS", "PRO", "ENTERPRISE"];
+    const period = sp.get("billingPeriod");
+    const currency = sp.get("currency");
+    const payload = {
+      plan: planCodes.includes(intent) ? intent : null,
+      billingPeriod: period === "MONTHLY" || period === "YEARLY" ? period : null,
+      currency: currency && /^[A-Za-z]{3}$/.test(currency) ? currency.toUpperCase() : null,
+    };
+    try {
+      window.sessionStorage.setItem("abc:pricingIntent", JSON.stringify(payload));
+    } catch {
+      // storage unavailable — the flow simply loses its preselection
+    }
+    // Funnel: arriving on the auth screen from a pricing CTA = signup start
+    // (anonymous identity comes from the server-issued funnel cookie).
+    void fetch("/api/public/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        eventType: "SIGNUP_STARTED",
+        planCode: payload.plan,
+        billingPeriod: payload.billingPeriod,
+        currency: payload.currency,
+        source: "pricing-cta",
+        route: "auth",
+      }),
+    }).catch(() => undefined);
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+
   // Post-auth invite re-entry: once authenticated, a parked invite token
   // takes priority over the default landing view (exactly once).
   useEffect(() => {

@@ -76,6 +76,13 @@ function formatDate(iso: string | null, locale: string): string {
   }
 }
 
+/** Display-only remaining trial days (server state stays the authority). */
+function trialDaysRemaining(trialEndIso: string): number {
+  const end = Date.parse(trialEndIso);
+  if (Number.isNaN(end)) return 0;
+  return Math.max(0, Math.ceil((end - Date.now()) / 86_400_000));
+}
+
 function StatusBadge({ status }: { status: string }) {
   const t = useTranslations("billing");
   const tone =
@@ -363,6 +370,18 @@ export function SubscriptionView({ business, role }: { business: BusinessSummary
             >
               <CalendarClock className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
               <span>{t("canceledNotice", { date: formatDate(sub.currentPeriodEnd, locale) })}</span>
+            </div>
+          ) : null}
+          {/* Prompt 25 — trial banner: honest TRIALING state (plan + end date
+              + remaining days). FREE (plan) ≠ TRIALING (status) — distinct. */}
+          {sub.inTrial && sub.trialEnd ? (
+            <div
+              className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400"
+              role="status"
+              data-testid="billing-trial-banner"
+            >
+              <Sparkles className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              <span>{t("trialBanner", { plan: sub.plan.name, date: formatDate(sub.trialEnd, locale), days: trialDaysRemaining(sub.trialEnd) })}</span>
             </div>
           ) : null}
 

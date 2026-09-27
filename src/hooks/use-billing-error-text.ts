@@ -47,6 +47,13 @@ export function useBillingErrorText() {
           return t("featureLockedCsv");
         }
         break;
+      // Prompt 25 — trial funnel errors (honest, localized).
+      case "TRIAL_DISABLED":
+        return t("trialDisabled");
+      case "NO_BUSINESS":
+        return t("noBusiness");
+      case "BUSINESS_NOT_ELIGIBLE":
+        return t("businessNotEligible");
     }
     return err.message;
   };

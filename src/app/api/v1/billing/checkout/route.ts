@@ -18,6 +18,7 @@ import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { billingCheckoutSchema } from "@/lib/schemas";
 import { rateLimit } from "@/lib/rate-limit";
 import { createCheckout } from "@/lib/payments";
+import { recordCommercialEvent } from "@/lib/billing/events";
 
 export const dynamic = "force-dynamic";
 
@@ -34,5 +35,17 @@ export const POST = route(async (req: NextRequest) => {
 
   const input = await parseBody(req, billingCheckoutSchema);
   const session = await createCheckout(ctx.businessId, input, { actorId: ctx.userId });
+
+  // Funnel: CHECKOUT_CREATED (fire-safe analytics, idempotent per session).
+  void recordCommercialEvent({
+    eventType: "CHECKOUT_CREATED",
+    userId: ctx.userId,
+    businessId: ctx.businessId,
+    planCode: session.planCode,
+    billingPeriod: input.billingPeriod,
+    currency: session.currency,
+    dedupeKey: `checkout:${session.id}`,
+  });
+
   return ok({ checkoutSession: session }, 201);
 });

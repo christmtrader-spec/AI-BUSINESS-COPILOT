@@ -10,6 +10,7 @@ import { db } from "@/lib/db";
 import { ApiError, getClientIp, ok, parseBody, route } from "@/lib/api-helpers";
 import { rateLimit } from "@/lib/rate-limit";
 import { passwordSchema } from "@/lib/auth-security";
+import { recordCommercialEvent } from "@/lib/billing/events";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +43,14 @@ export const POST = route(async (req: NextRequest) => {
       locale: "en",
     },
     select: { id: true, email: true, name: true },
+  });
+
+  // Funnel: SIGNUP_COMPLETED (once per user). Analytics are fire-safe —
+  // a failure here must never fail the signup itself.
+  void recordCommercialEvent({
+    eventType: "SIGNUP_COMPLETED",
+    userId: user.id,
+    dedupeKey: `signup:${user.id}`,
   });
 
   return ok({ user }, 201);

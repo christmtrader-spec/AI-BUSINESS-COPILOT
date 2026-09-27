@@ -362,13 +362,27 @@ try {
   const subTotal = await prisma.subscription.count();
   check("B1. every business has exactly one subscription", bizTotal === subTotal, `${bizTotal} vs ${subTotal}`);
   const freePlan = await prisma.plan.findUnique({ where: { code: "FREE" } });
+  // Prompt 25/26 evolution: a business on a PAID plan is legitimate when it
+  // arrived through the TRIAL flow (TRIALING + a TRIAL_STARTED event) — the
+  // "no random paid assignment" invariant now means: every non-FREE
+  // subscription must be a properly evented trial (checked below) or, after
+  // real payments activate someday, an evented checkout fulfillment.
   const nonFreeExisting = await prisma.subscription.count({
     where: { planId: { not: freePlan.id } },
   });
+  const nonFreeProperlyEvented = await prisma.subscription.count({
+    where: {
+      planId: { not: freePlan.id },
+      OR: [
+        { status: "TRIALING", events: { some: { type: "TRIAL_STARTED" } } },
+        { events: { some: { type: { in: ["PLAN_CHANGED", "TRIAL_ENDED"] } } } },
+      ],
+    },
+  });
   check(
-    "B2. all existing businesses sit on FREE (no random paid assignment)",
-    nonFreeExisting === 0,
-    `nonFree=${nonFreeExisting}`,
+    "B2. non-FREE businesses only via properly evented flows (trial/plan-change)",
+    nonFreeExisting === nonFreeProperlyEvented,
+    `nonFree=${nonFreeExisting} evented=${nonFreeProperlyEvented}`,
   );
   // B3 (r22 redesign): the original check counted a MUTABLE global counter
   // (all seed-backfill CREATED events >= 17), which regresses whenever a

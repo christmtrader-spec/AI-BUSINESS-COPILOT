@@ -165,6 +165,35 @@ const en = {
     creating: "Creating…",
     successToast: "Business created. Welcome aboard!",
     signOutInstead: "Sign out instead",
+    steps: {
+      account: "Account",
+      business: "Business",
+      trial: "Free trial",
+      workspace: "Workspace",
+    },
+    trialTitle: "Try a paid plan, free",
+    trialOffer:
+      "Start a {days}-day free trial of the {plan} plan for this business. No payment needed — the trial simply ends.",
+    trialFromPricing: "From pricing: {plan}",
+    trialPoint1: "Full {plan} limits for the whole trial window.",
+    trialPoint2: "When the trial ends, the business falls back to Free automatically.",
+    trialPoint3: "One trial per business — starting is optional.",
+    trialSkip: "Skip for now",
+    trialStart: "Start {days}-day trial",
+    trialStartedToast: "Trial started — enjoy!",
+    doneTitle: "Your workspace is ready",
+    doneSubtitle: "{name} has been created. Everything below is optional — your data is safe either way.",
+    doneGo: "Go to dashboard",
+    checklist: {
+      customers: "Add your first customer",
+      products: "Add your first product",
+      sales: "Record your first sale",
+      team: "Invite a team member",
+      copilot: "Ask the AI copilot something",
+      trial: "Free trial active",
+    },
+    checklistNote: "This list reflects your real workspace data on the server — it is never faked locally.",
+    optionalStep: "optional",
   },
   shell: {
     businesses: "Businesses",
@@ -783,6 +812,8 @@ const en = {
     status_PAUSED: "Paused",
     period: "Current period",
     trialEnds: "Trial ends",
+    trialBanner:
+      "Free trial of the {plan} plan is active — full access until {date} ({days} days left). Nothing is charged when it ends.",
     canceledNotice: "Canceled — access continues until {date}.",
     fallbackNotice: "Paid features are inactive — the business runs on Free entitlements. Your data is intact.",
     entitlementsTitle: "Features & limits",
@@ -959,6 +990,9 @@ const en = {
     planLimitProducts: "Your current plan allows up to {limit} products. Upgrade your plan to add more.",
     planLimitBusinesses: "Your current plan allows up to {limit} business. Upgrade your plan for more.",
     featureLockedCsv: "CSV export is not available on your current plan. Upgrade to unlock it.",
+    trialDisabled: "Free trials are not available right now.",
+    noBusiness: "Create your business first — trials belong to a business, not an account.",
+    businessNotEligible: "This business cannot start a free trial (already used or currently on a paid plan).",
   },
   copilot: {
     title: "AI Copilot",
@@ -1066,6 +1100,70 @@ const en = {
     joinNotFoundDesc: "This link is invalid, was mistyped, or no longer exists.",
     joinAlreadyMember: "You are already a member of this business.",
     joinAlreadyMemberHint: "Accepting gives you this role — you already have access to this workspace.",
+  },
+
+  // Prompt 25 — public pricing page (/pricing).
+  pricing: {
+    heroTitle: "Simple pricing, honest numbers",
+    heroSubtitle:
+      "Pick a plan for your business. Prices below come live from the platform's price catalog — the same server-side source that bills real subscriptions.",
+    trialBadge: "{days}-day free trial included",
+    billingToggleLabel: "Billing period",
+    billing: {
+      monthly: "Monthly",
+      yearly: "Yearly",
+    },
+    currencyLabel: "Currency",
+    openApp: "Open app",
+    toggleTheme: "Toggle theme",
+    popular: "Most popular",
+    freeLabel: "Free",
+    freeNote: "The deterministic default plan — every business starts here.",
+    contactSales: "Contact sales",
+    customQuote: "Negotiated per organization.",
+    perMonth: "/month",
+    perYear: "/year",
+    settlementNote: "Settlement currency: {currency}",
+    priceNotConfigured: "Pricing not yet configured",
+    priceNotConfiguredNote:
+      "This plan has no price in this currency yet — it cannot be purchased (and is never shown as “Free”).",
+    paymentDisabledNote:
+      "Online payment is not active yet — you can create your account now and pay when billing goes live.",
+    contactUnavailable: "Sales contact is not configured yet",
+    loadError: "Could not load pricing. Please try again.",
+    cta: {
+      startFree: "Create free account",
+      startTrial: "Start {days}-day free trial",
+      startTrialGeneric: "Start free trial",
+      getStarted: "Get started",
+      contactSales: "Contact sales",
+    },
+    compare: {
+      title: "Compare all plans",
+      feature: "Feature",
+      included: "Included",
+      notIncluded: "Not included",
+      unlimited: "Unlimited",
+      sourceNote:
+        "Entitlements are the server-enforced plan definitions — exactly what the app applies to your business.",
+    },
+    features: {
+      CUSTOMERS_MAX: "Customers",
+      PRODUCTS_MAX: "Products",
+      TEAM_MEMBERS_MAX: "Team members",
+      BUSINESSES_MAX: "Businesses",
+      AI_REQUESTS_MAX: "AI requests / month",
+      AI_MESSAGES_MAX: "AI messages / month",
+      AI_COPILOT: "AI copilot",
+      ADVANCED_REPORTS: "Advanced reports",
+      CSV_EXPORT: "CSV export",
+    },
+    footer: {
+      honestPrices:
+        "Prices are read live from the platform's versioned price catalog — the numbers on this page are always the numbers the server charges.",
+      currencyNote:
+        "Prices are shown in the platform settlement currency. Your business display currency is independent and never converted here.",
+    },
   },
 };
 

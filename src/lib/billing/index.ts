@@ -10,3 +10,7 @@ export * from "./errors";
 export * from "./state-machine";
 export * from "./service";
 export * from "./usage";
+export * from "./events";
+export * from "./trial-config";
+export * from "./trial";
+export * from "./public-pricing";

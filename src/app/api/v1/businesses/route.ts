@@ -18,7 +18,7 @@ import { ApiError, ok, parseBody, route } from "@/lib/api-helpers";
 import { audit } from "@/lib/audit";
 import { findCurrency } from "@/lib/currencies";
 import { rateLimit } from "@/lib/rate-limit";
-import { assertWithinBusinessesLimitTx, ensureSubscription } from "@/lib/billing";
+import { assertWithinBusinessesLimitTx, ensureSubscription, recordCommercialEvent } from "@/lib/billing";
 
 export const dynamic = "force-dynamic";
 
@@ -138,8 +138,20 @@ export const POST = route(async (req: NextRequest) => {
 
       return created;
     },
-    { isolationLevel: "Serializable" },
+    // Prompt 26 note: SQLite serializes writers — the cost-attribution and
+    // conversion-event writes add light contention to this Serializable
+    // transaction, so it needs the SAME explicit timeout the Prompt-21
+    // metering transactions use (default 5s proved too tight, P2028).
+    { isolationLevel: "Serializable", timeout: 30_000, maxWait: 5_000 },
   );
+
+  // Funnel: BUSINESS_CREATED (once per business, fire-safe analytics).
+  void recordCommercialEvent({
+    eventType: "BUSINESS_CREATED",
+    userId,
+    businessId: business.id,
+    dedupeKey: `business:${business.id}`,
+  });
 
   return ok(
     {

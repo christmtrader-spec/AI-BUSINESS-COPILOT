@@ -30,6 +30,9 @@ export const BILLING_ERROR_CODES = [
   "BUSINESS_NOT_ELIGIBLE",
   "USAGE_LIMIT_REACHED",
   "BILLING_UNAVAILABLE",
+  // Prompt 25 — free trial
+  "TRIAL_DISABLED",
+  "NO_BUSINESS",
 ] as const;
 
 export type BillingErrorCode = (typeof BILLING_ERROR_CODES)[number];
@@ -43,6 +46,8 @@ const STATUS_BY_CODE: Record<BillingErrorCode, number> = {
   BUSINESS_NOT_ELIGIBLE: 422,
   USAGE_LIMIT_REACHED: 422,
   BILLING_UNAVAILABLE: 503,
+  TRIAL_DISABLED: 422,
+  NO_BUSINESS: 422,
 };
 
 export class BillingError extends ApiError {

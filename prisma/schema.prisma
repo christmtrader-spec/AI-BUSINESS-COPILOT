@@ -807,3 +807,181 @@ model PlanPrice {
   @@unique([priceBookId, planCode, billingPeriod])
   @@index([priceBookId, active])
 }
+
+// ---------------------------------------------------------------------------
+// Prompt 25 — commercial conversion events (funnel analytics, INTERNAL).
+//
+// Server-authoritative conversion tracking for the pricing→signup→business→
+// trial funnel. Data-minimization rules (docs/marketing/conversion-events.md):
+// - eventType comes ONLY from the fixed directory (COMMERCIAL_EVENT_TYPES in
+//   src/lib/billing/events.ts) — arbitrary names are rejected at the API.
+// - ALLOWED payload dimensions: planCode/billingPeriod/currency/locale/
+//   source/route (+ identities). NEVER emails, customer data, AI prompts,
+//   payment data or raw IPs.
+// - anonymousSessionKey is a server-issued random cookie UUID for public
+//   visitors — never a browser fingerprint. userId/businessId are set from
+//   the authenticated session only, never from the request body.
+// - dedupeKey gives lifecycle-once events (e.g. ONBOARDING_COMPLETED per
+//   business) a real unique constraint; nullable keys never collide, so
+//   repeatable events stay repeatable.
+// - Timestamps are ALWAYS server-generated — the browser is never the time
+//   authority (§Prompt25: server-authoritative conversion events).
+// ---------------------------------------------------------------------------
+
+model CommercialEvent {
+  id                  String   @id @default(cuid())
+  // Fixed directory value only (validated at every write path).
+  eventType           String
+  anonymousSessionKey String?
+  userId              String?
+  businessId          String?
+  // Optional commercial dimension — allowlisted enum values only.
+  planCode            String?
+  billingPeriod       String?
+  currency            String?
+  source              String?
+  route               String?
+  // Server-generated idempotency anchor (e.g. `businessId` for the one-time
+  // ONBOARDING_COMPLETED event). Null → not idempotency-gated.
+  dedupeKey           String?
+  createdAt           DateTime @default(now())
+
+  @@unique([eventType, dedupeKey])
+  @@index([eventType, createdAt])
+  @@index([businessId, createdAt])
+  @@index([userId, createdAt])
+  @@index([anonymousSessionKey, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 26 — AI COST GOVERNANCE (provider cost ledger, unit economics).
+//
+// HARD DOMAIN SEPARATION (docs/ai/ai-cost-architecture.md):
+//   CUSTOMER PRICE (Plan/PlanPrice/PricingService)
+//     != AI PROVIDER COST (AiCostRate/AiCostRecord).
+//   Neither is ever inferred from the other. No FX. No estimated cost.
+//
+// Precision model (§21):
+//   1 currency MINOR unit = 1,000,000 NANO-MINOR units. Rates and costs are
+//   BigInt nano-minor — NEVER floats, never JavaScript `number` money.
+//
+// Honesty model (§32/§33/§163):
+//   UNKNOWN cost = NULL amount + status UNKNOWN + a stable unknownReason.
+//   UNKNOWN is NEVER zero and never estimated. Historical usage keeps cost
+//   UNKNOWN until a VERIFIED rate exists for its exact usage timestamp.
+//
+// Idempotency (§15/§31): usageEventId UNIQUE and (businessId, requestId)
+// UNIQUE — a replayed attribution can never double-count cost.
+// ---------------------------------------------------------------------------
+
+model AiCostRate {
+  id            String    @id @default(cuid())
+  // Provider slug (e.g. "z-ai") — the provider abstraction identifier.
+  provider      String
+  // EXACT model identifier as reported by the provider, or the explicit
+  // reserved mapping "DEFAULT" (only where provider semantics make it
+  // legitimate — never a fuzzy fallback, §33/§106).
+  model         String
+  // ISO 4217 pricing currency of the RATE (provider pricing currency —
+  // never assumed equal to business or settlement currency, §24).
+  currency      String
+  // Immutable human version id (e.g. "2026-09-v1"). New price → new version.
+  version       String
+  // nano-minor units per 1K tokens (1 minor unit = 1,000,000 nano-minor).
+  inputRateNanoMinorPer1K  BigInt
+  outputRateNanoMinorPer1K BigInt
+  // Effective window (UTC). usageTimestamp decides which version applies —
+  // no retroactive application of later rates (§104).
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  // Deactivation only — used rates are never deleted (§12).
+  active        Boolean   @default(true)
+  // TEST | PRODUCTION — completely separate domains (§6).
+  environment   String
+  // Production verification evidence (§8): a PRODUCTION rate is unusable
+  // for attribution without ALL three fields set.
+  verifiedAt      DateTime?
+  verifiedBy      String?
+  sourceReference String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, model, currency, version, environment])
+  @@index([provider, model, environment, active, effectiveFrom, effectiveTo])
+  @@index([currency, environment, active])
+}
+
+model AiCostRecord {
+  id            String   @id @default(cuid())
+  // The authoritative usage event this cost belongs to (Prompt 21 ledger).
+  usageEventId  String   @unique
+  // Logical AI operation correlation (Prompt 21 requestId semantics).
+  requestId     String
+  businessId    String
+  usagePeriodId String?
+  // Plan snapshot AT USAGE TIME (§25) — later plan changes never rewrite it.
+  planCodeAtUsage String
+  provider      String
+  model         String
+  // Snapshot of the resolved rate (§13) — reconstructs the calculation even
+  // if the rate row is later deactivated. Null for UNKNOWN-without-rate.
+  currency      String?
+  rateId        String?
+  rateVersion   String?
+  environment   String?
+  inputRateNanoMinorPer1K  BigInt?
+  outputRateNanoMinorPer1K BigInt?
+  // Normalized token snapshot (§37) — provider-independent accounting shape.
+  inputTokens   Int?
+  outputTokens  Int?
+  totalTokens   Int?
+  // COMPLETE | PARTIAL | TOTAL_ONLY | NONE (§16).
+  tokenStatus   String
+  // KNOWN | UNKNOWN (§17). KNOWN ⇒ costNanoMinor non-null; UNKNOWN ⇒ null.
+  costStatus    String
+  costNanoMinor BigInt?
+  // RATE_NOT_FOUND | MODEL_UNKNOWN | TOKENS_MISSING | PARTIAL_TOKEN_DATA |
+  // CURRENCY_NOT_CONFIGURED | PROVIDER_NOT_CONFIGURED | ENVIRONMENT_MISMATCH
+  // | RATE_NOT_VERIFIED | AMBIGUOUS_RATE (§18).
+  unknownReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([businessId, requestId])
+  @@index([businessId, createdAt])
+  @@index([provider, model, createdAt])
+  @@index([costStatus, createdAt])
+  @@index([rateId])
+  @@index([usagePeriodId])
+}
+
+model AiCostAnomaly {
+  id           String   @id @default(cuid())
+  // SPIKE_USAGE | SPIKE_TOKENS | SPIKE_COST | HIGH_UNKNOWN_RATIO |
+  // RATE_MISSING | BUSINESS_CONCENTRATION (§65).
+  type         String
+  // INFO | WARNING | CRITICAL.
+  severity     String
+  businessId   String?
+  provider     String?
+  model        String?
+  windowStart  DateTime
+  windowEnd    DateTime
+  // Metric name + exact serialized values (integer strings for counts/costs,
+  // integer basis-point strings for ratios — documented per metric, §119).
+  metric       String
+  baseline     String?
+  currentValue String?
+  // OPEN | ACKNOWLEDGED | RESOLVED (§120).
+  status       String   @default("OPEN")
+  // Idempotent emission: one anomaly per (type, window, scope).
+  dedupeKey    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([type, dedupeKey])
+  @@index([status, createdAt])
+  @@index([businessId, createdAt])
+}

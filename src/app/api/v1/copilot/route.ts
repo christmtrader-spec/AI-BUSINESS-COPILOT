@@ -25,6 +25,8 @@ import { copilotAskSchema } from "@/lib/schemas";
 import { rateLimit } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
 import { assertFeatureAccess, meterAiOperation, recordAiTokenUsage, releaseAiOperation } from "@/lib/billing";
+import { attributeAiCost } from "@/lib/ai/cost/ledger";
+import { assertAiCostGuard } from "@/lib/ai/cost/governance";
 import { buildCopilotGrounding } from "@/lib/ai/snapshot";
 import { AiUnavailableError, getAI, type AiChatResult, type AiMessage } from "@/lib/ai/provider";
 
@@ -47,6 +49,15 @@ export const POST = route(async (req: NextRequest) => {
   }
 
   const input = await parseBody(req, copilotAskSchema);
+
+  // Prompt 26 §70 — request-level COST GUARD at the AI execution boundary
+  // (default OFF; fail-open on monitoring failure; never evaluated in React).
+  const guard = await assertAiCostGuard({ businessId: ctx.businessId });
+  if (guard.blocked) {
+    throw new ApiError(429, "AI_COST_GUARD_BLOCKED", "AI usage is temporarily paused by a cost protection policy.", {
+      reasons: guard.reasons,
+    });
+  }
 
   // Usage metering (Prompt 21 §44 pipeline: authenticate → authorize →
   // entitlement → quota → meter → call AI → finalize). The server decides
@@ -103,8 +114,28 @@ export const POST = route(async (req: NextRequest) => {
   // Success: the charge stands. Record provider token usage when genuinely
   // reported (§14) — never fabricated.
   if (result.usage) {
-    await recordAiTokenUsage(ctx.businessId, requestId, result.usage, { provider: "z-ai" });
+    await recordAiTokenUsage(ctx.businessId, requestId, result.usage, {
+      provider: "z-ai",
+      ...(result.model ? { model: result.model } : {}),
+    });
   }
+
+  // Prompt 26 — COST ATTRIBUTION (fail-safe §29/§30): the response was
+  // delivered; attribution failures are logged, never thrown, and a
+  // token-less response is honestly UNKNOWN (TOKENS_MISSING).
+  void attributeAiCost({
+    businessId: ctx.businessId,
+    requestId,
+    provider: "z-ai",
+    model: result.model,
+    usage: result.usage
+      ? {
+          inputTokens: result.usage.inputTokens ?? null,
+          outputTokens: result.usage.outputTokens ?? null,
+          totalTokens: result.usage.totalTokens ?? null,
+        }
+      : null,
+  });
 
   await audit({
     businessId: ctx.businessId,

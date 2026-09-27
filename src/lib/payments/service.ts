@@ -25,7 +25,7 @@
 import { db } from "@/lib/db";
 import { ApiError } from "@/lib/api-helpers";
 import { audit } from "@/lib/audit";
-import { changePlan, invalidateBillingCache } from "@/lib/billing";
+import { changePlan, invalidateBillingCache, recordCommercialEvent } from "@/lib/billing";
 import { isBillingPeriod, type BillingPeriod } from "@/lib/billing/state-machine";
 import { validatePaymentConfig } from "./config";
 import { buildMockEventBody, buildMockEventHeaders } from "./mock-provider";
@@ -368,6 +368,15 @@ async function fulfillSession(s: SessionRow, source: string): Promise<SessionRow
     data: { fulfilledAt: new Date() },
   });
   invalidateBillingCache(s.businessId);
+  // Funnel: CHECKOUT_COMPLETED (Prompt 25) — fire-safe analytics, idempotent
+  // per session; payment truth itself stays in the checkout session row.
+  void recordCommercialEvent({
+    eventType: "CHECKOUT_COMPLETED",
+    businessId: s.businessId,
+    planCode: s.planCode,
+    currency: s.currency,
+    dedupeKey: `checkout-done:${s.id}`,
+  });
   return done;
 }
 
