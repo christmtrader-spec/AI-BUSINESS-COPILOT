@@ -39,6 +39,7 @@ model User {
   chatMessages ChatMessage[]
   passwordResetTokens PasswordResetToken[]
   subscriptionEvents SubscriptionEvent[]
+  legalAcceptances LegalAcceptance[]
 }
 
 // ---------------------------------------------------------------------------
@@ -984,4 +985,41 @@ model AiCostAnomaly {
   @@unique([type, dedupeKey])
   @@index([status, createdAt])
   @@index([businessId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 27 — LEGAL ACCEPTANCE (append-only record of policy acceptance).
+//
+// Honesty law (Prompt 27 §53–§58/§105/§162–§166):
+//  - APPEND-ONLY: acceptedAt/documentType/documentVersion are never mutated
+//    after the fact. A new policy version means a NEW row — prior accepted
+//    versions are never overwritten (§54/§55).
+//  - The full legal text is NEVER stored in the database — rows reference
+//    documentType + version from the structured content registry (§56).
+//  - IDEMPOTENT: unique (userId, documentType, documentVersion) — repeated
+//    acceptance of the same version does not create duplicates (§164).
+//  - Server-authoritative: userId and documentVersion are resolved by the
+//    server from the session and the current content registry; the client
+//    can never submit a version (§163).
+//  - Lifecycle: rows cascade with the User (§166 — documented in the data
+//    deletion matrix, no orphans are left behind).
+// ---------------------------------------------------------------------------
+model LegalAcceptance {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // privacy | terms (cookies is informational and not an accepted contract).
+  documentType    String
+  // Deterministic version id from the content registry (e.g. "2026-09-v1").
+  documentVersion String
+  // UI locale at acceptance time (en | fa).
+  locale          String
+  // Minimal technical evidence only (§165) — nullable, never required.
+  ip              String?
+  userAgent       String?
+  acceptedAt      DateTime @default(now())
+
+  @@unique([userId, documentType, documentVersion])
+  @@index([userId, acceptedAt])
+  @@index([documentType, documentVersion])
 }

@@ -1,14 +1,9 @@
-User-agent: Googlebot
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Twitterbot
-Allow: /
-
-User-agent: facebookexternalhit
-Allow: /
+# robots.txt — Prompt 27 (§63/§64)
+# Public legal pages (/privacy /terms /ai-data-use /cookies) and /pricing are
+# intentionally indexable. The JSON API is not a crawl surface. There is no
+# sitemap yet; nothing internal (/platform /dashboard /settings /internal)
+# exists as a crawlable route in this SPA, and no sitemap may ever list them.
 
 User-agent: *
 Allow: /
+Disallow: /api

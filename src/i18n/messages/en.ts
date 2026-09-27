@@ -1165,6 +1165,68 @@ const en = {
         "Prices are shown in the platform settlement currency. Your business display currency is independent and never converted here.",
     },
   },
+  legal: {
+    footer: {
+      privacy: "Privacy",
+      terms: "Terms",
+      aiDataUse: "AI Data Use",
+      cookies: "Cookies",
+      ariaLabel: "Legal",
+      transparencyNote: "Public legal pages reflect the service's actual behavior.",
+      honestNote:
+        "These documents describe what the service actually does today. Where something is not configured, it says so instead of assuming.",
+    },
+    doc: {
+      version: "Version {version}",
+      lastUpdated: "Last updated {date}",
+      effectiveDate: "Effective date: {date}",
+      effectiveDateNotConfigured: "Effective date: not yet configured",
+      onThisPage: "On this page",
+      print: "Print",
+      toggleTheme: "Toggle theme",
+      openApp: "Open app",
+      contact: {
+        title: "Contact details",
+        note:
+          "Produced from the service's live configuration — invented addresses are never shown.",
+        notConfigured: "Not currently configured",
+        company: "Company legal name",
+        privacy: "Privacy contact",
+        legal: "Legal contact",
+        support: "Support contact",
+        security: "Security contact",
+      },
+    },
+    auth: {
+      acceptPrefix: "I have read and accept the",
+      acceptTerms: "Terms of Service",
+      acceptAnd: "and the",
+      acceptPrivacy: "Privacy Policy",
+      acceptRequired:
+        "Please accept the Terms of Service and the Privacy Policy to create your account.",
+      legalLinksLabel: "Legal",
+      aiDataUseLink: "AI Data Use",
+    },
+    settings: {
+      title: "Legal & Privacy",
+      description:
+        "The versions that govern this service, and your acceptance records.",
+      currentVersions: "Current documents",
+      termsLabel: "Terms of Service",
+      privacyLabel: "Privacy Policy",
+      aiDataUseLabel: "AI Data Use",
+      cookiesLabel: "Cookie Policy",
+      privacyContact: "Privacy contact",
+      notConfigured: "Not currently configured",
+      openDoc: "Open",
+      acceptancesTitle: "Your acceptances",
+      noAcceptances:
+        "No acceptance recorded yet — this account predates legal acceptance tracking.",
+      acceptedVersion: "Version",
+      acceptedAt: "Accepted",
+      loadError: "Could not load legal information.",
+    },
+  },
 };
 
 export default en;

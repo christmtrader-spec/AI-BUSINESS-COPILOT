@@ -10,6 +10,7 @@ import { useAppStore } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 type AuthErrors = {
@@ -346,6 +347,10 @@ export function AuthView() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Prompt 27 §53/§58: explicit legal acceptance — UNCHECKED by default, with
+  // links to the actual documents BEFORE acceptance. Required by the signup UI.
+  const [acceptedLegal, setAcceptedLegal] = useState(false);
+  const tLegal = useTranslations("legal.auth");
 
   const signInMutation = useMutation({
     mutationFn: async () => {
@@ -371,7 +376,13 @@ export function AuthView() {
     mutationFn: async () => {
       await api("/api/v1/auth/register", {
         method: "POST",
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({
+          name,
+          email,
+          password,
+          // Server resolves the accepted document versions (Prompt 27 §163).
+          acceptedLegal: acceptedLegal ? { terms: true, privacy: true } : undefined,
+        }),
       });
       const res = await signIn("credentials", { redirect: false, email, password });
       if (!res || res.error) throw new Error(res?.error ?? "CredentialsSignin");
@@ -406,6 +417,12 @@ export function AuthView() {
     if (mode === "signup") {
       if (password !== confirmPassword) {
         setError(t("errors.passwordMismatch"));
+        return;
+      }
+      if (!acceptedLegal) {
+        // Honest gate: the product requires explicit acceptance before an
+        // account is created (Prompt 27 §53) — the API records the versions.
+        setError(tLegal("acceptRequired"));
         return;
       }
       registerMutation.mutate();
@@ -572,6 +589,41 @@ export function AuthView() {
                 </div>
               ) : null}
 
+              {mode === "signup" ? (
+                <div className="flex items-start gap-2.5">
+                  <Checkbox
+                    id="acceptLegal"
+                    checked={acceptedLegal}
+                    onCheckedChange={(v) => setAcceptedLegal(v === true)}
+                    className="mt-0.5"
+                    required
+                  />
+                  <Label
+                    htmlFor="acceptLegal"
+                    className="text-muted-foreground text-start text-xs leading-5 font-normal"
+                  >
+                    {tLegal("acceptPrefix")}{" "}
+                    <a
+                      href="/terms"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary underline-offset-4 hover:underline"
+                    >
+                      {tLegal("acceptTerms")}
+                    </a>{" "}
+                    {tLegal("acceptAnd")}{" "}
+                    <a
+                      href="/privacy"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary underline-offset-4 hover:underline"
+                    >
+                      {tLegal("acceptPrivacy")}
+                    </a>
+                  </Label>
+                </div>
+              ) : null}
+
               {error ? (
                 <p className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm" role="alert">
                   {error}
@@ -613,6 +665,38 @@ export function AuthView() {
                 <ShieldCheck className="me-1.5 inline size-3.5" aria-hidden="true" />
                 {t("privacyNote")}
               </div>
+
+              {/* Legal links (Prompt 27 §60/§149) — real public documents,
+                  localized labels, new tab so form state survives. */}
+              <p className="text-muted-foreground text-center text-xs">
+                {tLegal("legalLinksLabel")}:{" "}
+                <a
+                  href="/privacy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-foreground underline-offset-4 hover:underline"
+                >
+                  {tLegal("acceptPrivacy")}
+                </a>
+                {" · "}
+                <a
+                  href="/terms"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-foreground underline-offset-4 hover:underline"
+                >
+                  {tLegal("acceptTerms")}
+                </a>
+                {" · "}
+                <a
+                  href="/ai-data-use"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-foreground underline-offset-4 hover:underline"
+                >
+                  {tLegal("aiDataUseLink")}
+                </a>
+              </p>
             </form>
           </CardContent>
         </Card>

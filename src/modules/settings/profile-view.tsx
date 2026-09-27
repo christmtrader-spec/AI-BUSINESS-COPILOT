@@ -4,7 +4,7 @@ import { useState } from "react";
 import { signOut } from "next-auth/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { KeyRound, Loader2, Save, TriangleAlert, UserRound } from "lucide-react";
+import { KeyRound, Loader2, Save, Scale, TriangleAlert, UserRound } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
 import { localeLabel, LOCALES } from "@/i18n/config";
@@ -28,6 +28,19 @@ import { PageHeader } from "@/components/shared/primitives";
 
 type Me = { id: string; name: string | null; email: string; locale: string; createdAt: string };
 type OwnedBusiness = { id: string; name: string; members: number };
+/** Minimal legal metadata (Prompt 27 §161) — nothing internal crosses the API. */
+type LegalDocMeta = {
+  documentType: string;
+  version: string;
+  effectiveDate: string | null;
+  lastUpdated: string;
+};
+type LegalAcceptanceRecord = {
+  documentType: string;
+  documentVersion: string;
+  locale: string;
+  acceptedAt: string;
+};
 
 /** Narrows the 409 OWNED_BUSINESS_BLOCKED details into the owned-business list. */
 function ownedBusinessesOf(err: unknown): OwnedBusiness[] {
@@ -51,6 +64,7 @@ export function ProfileView() {
   const tAuth = useTranslations("auth");
   const tErrors = useTranslations("errors");
   const tCommon = useTranslations("common");
+  const tLegal = useTranslations("legal.settings");
   const queryClient = useQueryClient();
   const locale = useAppStore((s) => s.locale);
   const setLocale = useAppStore((s) => s.setLocale);
@@ -59,6 +73,35 @@ export function ProfileView() {
     queryKey: ["me"],
     queryFn: () => api("/api/v1/me", { businessId: null }),
   });
+
+  // Legal & Privacy section (Prompt 27 §103–§105): current document versions
+  // and the CURRENT USER's own acceptance records (server session-resolved).
+  const {
+    data: legalDocs,
+    isError: legalDocsError,
+  } = useQuery<LegalDocMeta[]>({
+    queryKey: ["legal-documents"],
+    queryFn: async () => {
+      const res = (await api("/api/v1/legal/documents", {
+        businessId: null,
+      })) as { documents: LegalDocMeta[] };
+      return res.documents;
+    },
+    staleTime: 5 * 60_000,
+  });
+  const {
+    data: legalAcceptances,
+    isError: legalAcceptancesError,
+  } = useQuery<LegalAcceptanceRecord[]>({
+    queryKey: ["legal-acceptances"],
+    queryFn: async () => {
+      const res = (await api("/api/v1/legal/acceptance", {
+        businessId: null,
+      })) as { acceptances: LegalAcceptanceRecord[] };
+      return res.acceptances;
+    },
+  });
+  void legalAcceptancesError;
 
   const [name, setName] = useState("");
   const [syncedName, setSyncedName] = useState<string | null>(null);
@@ -330,6 +373,89 @@ export function ProfileView() {
             </SelectContent>
           </Select>
           <p className="text-muted-foreground text-xs">{t("languageHint")}</p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Scale className="text-primary size-4" aria-hidden="true" />
+            {tLegal("title")}
+          </CardTitle>
+          <CardDescription className="text-muted-foreground">
+            {tLegal("description")}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {legalDocsError ? (
+            <p className="text-muted-foreground text-sm">{tLegal("loadError")}</p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-muted-foreground text-xs font-medium">{tLegal("currentVersions")}</p>
+              <ul className="divide-y rounded-md border text-sm">
+                {(legalDocs ?? []).map((d) => (
+                  <li key={d.documentType} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                    <span className="font-medium">
+                      {d.documentType === "terms"
+                        ? tLegal("termsLabel")
+                        : d.documentType === "privacy"
+                          ? tLegal("privacyLabel")
+                          : d.documentType === "ai-data-use"
+                            ? tLegal("aiDataUseLabel")
+                            : tLegal("cookiesLabel")}
+                    </span>
+                    <span className="flex items-center gap-3">
+                      <span className="text-muted-foreground text-xs" dir="ltr">
+                        v{d.version}
+                      </span>
+                      <a
+                        href={d.documentType === "ai-data-use" ? "/ai-data-use" : `/${d.documentType}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary text-xs underline-offset-4 hover:underline"
+                      >
+                        {tLegal("openDoc")}
+                      </a>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <p className="text-muted-foreground text-xs font-medium">{tLegal("acceptancesTitle")}</p>
+            {(legalAcceptances ?? []).length === 0 ? (
+              <p className="text-muted-foreground text-sm">{tLegal("noAcceptances")}</p>
+            ) : (
+              <ul className="divide-y rounded-md border text-sm">
+                {(legalAcceptances ?? []).map((a) => (
+                  <li key={`${a.documentType}-${a.documentVersion}-${a.acceptedAt}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                    <span className="font-medium">
+                      {a.documentType === "terms" ? tLegal("termsLabel") : tLegal("privacyLabel")}
+                    </span>
+                    <span className="text-muted-foreground text-xs" dir="ltr">
+                      v{a.documentVersion} · {new Intl.DateTimeFormat(locale === "fa" ? "fa-IR" : "en-US", {
+                        dateStyle: "medium",
+                      }).format(new Date(a.acceptedAt))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <p className="text-muted-foreground text-xs">
+            {tLegal("privacyContact")}:{" "}
+            <a
+              href="/privacy#contact-details"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              {tLegal("privacyLabel")}
+            </a>
+          </p>
         </CardContent>
       </Card>
 

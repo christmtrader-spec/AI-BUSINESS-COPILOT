@@ -1,0 +1,960 @@
+     1→"use client";
+     2→
+     3→import { useMemo, useRef, useState } from "react";
+     4→import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+     5→import { useTranslations } from "next-intl";
+     6→import {
+     7→  Check,
+     8→  Coins,
+     9→  DatabaseBackup,
+    10→  FileJson,
+    11→  Globe2,
+    12→  Loader2,
+    13→  Save,
+    14→  ScanSearch,
+    15→  Settings2,
+    16→  ShieldAlert,
+    17→  TriangleAlert,
+    18→  Trash2,
+    19→  UploadCloud,
+    20→} from "lucide-react";
+    21→import { toast } from "@/hooks/use-toast";
+    22→import { api, ApiClientError } from "@/lib/api-client";
+    23→import { CURRENCIES, findCurrency } from "@/lib/currencies";
+    24→import { formatMoney, toMinor } from "@/lib/money";
+    25→import { asRole, can, type Role } from "@/lib/rbac";
+    26→import { cn } from "@/lib/utils";
+    27→import {
+    28→  BACKUP_SCHEMA_ID,
+    29→  IMPORT_ENTITIES,
+    30→  type ImportConflict,
+    31→  type ImportReport,
+    32→} from "@/lib/backup-schema";
+    33→import { useAppStore } from "@/store/app-store";
+    34→import { Button } from "@/components/ui/button";
+    35→import { Input } from "@/components/ui/input";
+    36→import { Label } from "@/components/ui/label";
+    37→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    38→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+    39→import { Separator } from "@/components/ui/separator";
+    40→import {
+    41→  AlertDialog,
+    42→  AlertDialogAction,
+    43→  AlertDialogCancel,
+    44→  AlertDialogContent,
+    45→  AlertDialogDescription,
+    46→  AlertDialogFooter,
+    47→  AlertDialogHeader,
+    48→  AlertDialogTitle,
+    49→} from "@/components/ui/alert-dialog";
+    50→import { Badge } from "@/components/ui/badge";
+    51→import { PageHeader } from "@/components/shared/primitives";
+    52→import type { BusinessSummary } from "../shell/types";
+    53→
+    54→const FALLBACK_TIMEZONES = ["UTC", "Asia/Tehran", "Asia/Dubai", "Europe/London", "Europe/Berlin", "America/New_York", "America/Los_Angeles", "Asia/Tokyo"];
+    55→
+    56→function timezoneOptions(): string[] {
+    57→  try {
+    58→    const list = Intl.supportedValuesOf("timeZone");
+    59→    if (Array.isArray(list) && list.length > 0) return list;
+    60→  } catch {
+    61→    // older engines
+    62→  }
+    63→  return FALLBACK_TIMEZONES;
+    64→}
+    65→
+    66→export function BusinessSettingsView({ business }: { business: BusinessSummary }) {
+    67→  const t = useTranslations("settings");
+    68→  const tCommon = useTranslations("common");
+    69→  const tErrors = useTranslations("errors");
+    70→  const queryClient = useQueryClient();
+    71→  const activeId = useAppStore((s) => s.activeBusinessId);
+    72→
+    73→  const { data: fresh } = useQuery<BusinessSummary>({
+    74→    queryKey: ["business", activeId],
+    75→    queryFn: () => api(`/api/v1/businesses/${activeId}`),
+    76→  });
+    77→  const current = fresh ?? business;
+    78→
+    79→  const zones = useMemo(() => timezoneOptions(), []);
+    80→  const [name, setName] = useState(current.name);
+    81→  const [currencyCode, setCurrencyCode] = useState(current.currencyCode);
+    82→  const [symbol, setSymbol] = useState(current.currencySymbol);
+    83→  const [precision, setPrecision] = useState(current.decimalPrecision);
+    84→  const [locale, setLocale] = useState<"en" | "fa">(
+    85→    current.locale === "fa" ? "fa" : "en",
+    86→  );
+    87→  const [timezone, setTimezone] = useState(current.timezone);
+    88→  const [syncedKey, setSyncedKey] = useState(current.id + current.updatedAt);
+    89→  // React "adjust state during render" pattern — avoids setState-in-effect.
+    90→  const currentKey = current.id + current.updatedAt;
+    91→  if (currentKey !== syncedKey) {
+    92→    setSyncedKey(currentKey);
+    93→    setName(current.name);
+    94→    setCurrencyCode(current.currencyCode);
+    95→    setSymbol(current.currencySymbol);
+    96→    setPrecision(current.decimalPrecision);
+    97→    setLocale(current.locale === "fa" ? "fa" : "en");
+    98→    setTimezone(current.timezone);
+    99→  }
+   100→
+   101→  // We read the role from the cached memberships list (AppRoot query).
+   102→  const { data: memberships } = useQuery<{ role: string }[]>({
+   103→    queryKey: ["businesses"],
+   104→    queryFn: () => api("/api/v1/businesses", { businessId: null }),
+   105→    staleTime: 60_000,
+   106→    enabled: false,
+   107→  });
+   108→  const role: Role = asRole(
+   109→    memberships?.find((m) => (m as { business?: { id?: string } }).business?.id === activeId)?.role,
+   110→  );
+   111→  const editable = can(role, "settings:manage");
+   112→
+   113→  const saveMutation = useMutation({
+   114→    mutationFn: async () =>
+   115→      api<BusinessSummary>(`/api/v1/businesses/${activeId}`, {
+   116→        method: "PATCH",
+   117→        body: JSON.stringify({
+   118→          name,
+   119→          currencyCode,
+   120→          currencySymbol: symbol,
+   121→          decimalPrecision: precision,
+   122→          locale,
+   123→          timezone,
+   124→        }),
+   125→      }),
+   126→    onSuccess: () => {
+   127→      toast({ title: t("savedToast") });
+   128→      void queryClient.invalidateQueries({ queryKey: ["businesses"] });
+   129→      void queryClient.invalidateQueries({ queryKey: ["business"] });
+   130→      void queryClient.invalidateQueries({ queryKey: ["audit"] });
+   131→    },
+   132→    onError: (err) => {
+   133→      toast({
+   134→        title: err instanceof ApiClientError ? err.message : t("saveError"),
+   135→        variant: "destructive",
+   136→      });
+   137→    },
+   138→  });
+   139→
+   140→  const preview = useMemo(() => {
+   141→    try {
+   142→      return formatMoney(toMinor("1234.5", precision), {
+   143→        currencyCode,
+   144→        currencySymbol: symbol,
+   145→        decimalPrecision: precision,
+   146→        locale,
+   147→      });
+   148→    } catch {
+   149→      return "—";
+   150→    }
+   151→  }, [precision, currencyCode, symbol, locale]);
+   152→
+   153→  const [exporting, setExporting] = useState(false);
+   154→
+   155→  async function exportData() {
+   156→    setExporting(true);
+   157→    try {
+   158→      const res = await fetch(`/api/v1/businesses/${activeId}/export`, {
+   159→        credentials: "same-origin",
+   160→        headers: activeId ? { "x-business-id": activeId } : undefined,
+   161→      });
+   162→      if (!res.ok) {
+   163→        let message = t("exportError");
+   164→        try {
+   165→          const body = (await res.json()) as {
+   166→            error?: { message?: string; code?: string };
+   167→          };
+   168→          if (body.error?.code === "RATE_LIMITED") message = t("exportRateLimited");
+   169→          else if (body.error?.message) message = body.error.message;
+   170→        } catch {
+   171→          // keep default
+   172→        }
+   173→        throw new Error(message);
+   174→      }
+   175→      const blob = await res.blob();
+   176→      const url = URL.createObjectURL(blob);
+   177→      const a = document.createElement("a");
+   178→      a.href = url;
+   179→      const dispo = res.headers.get("content-disposition") ?? "";
+   180→      const match = /filename="([^"]+)"/.exec(dispo);
+   181→      a.download = match?.[1] ?? `backup-${Date.now()}.json`;
+   182→      document.body.appendChild(a);
+   183→      a.click();
+   184→      a.remove();
+   185→      URL.revokeObjectURL(url);
+   186→      toast({ title: t("exportedToast") });
+   187→    } catch (err) {
+   188→      toast({
+   189→        title: err instanceof Error ? err.message : t("exportError"),
+   190→        variant: "destructive",
+   191→      });
+   192→    } finally {
+   193→      setExporting(false);
+   194→    }
+   195→  }
+   196→
+   197→  // ---- Restore from backup (OWNER-only) ------------------------------------
+   198→  const isOwner = role === "OWNER";
+   199→  const fileInputRef = useRef<HTMLInputElement>(null);
+   200→  const [restoreFile, setRestoreFile] = useState<{
+   201→    name: string;
+   202→    size: number;
+   203→    body: unknown;
+   204→    currencyCode: string;
+   205→  } | null>(null);
+   206→  const [restoreBusy, setRestoreBusy] = useState<"dry_run" | "merge" | null>(null);
+   207→  const [restoreReport, setRestoreReport] = useState<ImportReport | null>(null);
+   208→  const [restoreError, setRestoreError] = useState<string | null>(null);
+   209→  const [confirmOpen, setConfirmOpen] = useState(false);
+   210→  const [restoreIdMode, setRestoreIdMode] = useState<"keep" | "new">("keep");
+   211→
+   212→  // ---- Danger zone (OWNER-only): permanent business deletion ----------------
+   213→  const [dangerOpen, setDangerOpen] = useState(false);
+   214→  const [confirmText, setConfirmText] = useState("");
+   215→
+   216→  type DangerCounts = {
+   217→    customers: number;
+   218→    suppliers: number;
+   219→    products: number;
+   220→    sales: number;
+   221→    expenses: number;
+   222→    payments: number;
+   223→  };
+   224→  const { data: dangerCounts, isLoading: countsLoading } = useQuery<DangerCounts>({
+   225→    queryKey: ["business", activeId, "danger"],
+   226→    queryFn: () => api(`/api/v1/businesses/${activeId}/danger`),
+   227→    enabled: dangerOpen && isOwner,
+   228→    staleTime: 0,
+   229→  });
+   230→
+   231→  const deleteBusiness = useMutation({
+   232→    mutationFn: async () => {
+   233→      const res = await fetch(`/api/v1/businesses/${activeId}`, {
+   234→        method: "DELETE",
+   235→        credentials: "same-origin",
+   236→        headers: {
+   237→          "content-type": "application/json",
+   238→          ...(activeId ? { "x-business-id": activeId } : {}),
+   239→        },
+   240→        body: JSON.stringify({ confirmName: confirmText }),
+   241→      });
+   242→      const body = (await res.json().catch(() => null)) as {
+   243→        ok?: boolean;
+   244→        error?: { code?: string };
+   245→      } | null;
+   246→      if (!res.ok || !body?.ok) {
+   247→        if (body?.error?.code === "CONFIRM_MISMATCH") throw new Error(t("dangerMismatch"));
+   248→        if (body?.error?.code === "RATE_LIMITED") throw new Error(t("exportRateLimited"));
+   249→        throw new Error(t("dangerDeleteFailed"));
+   250→      }
+   251→      return true;
+   252→    },
+   253→    onSuccess: () => {
+   254→      toast({ title: t("dangerDeletedToast") });
+   255→      setDangerOpen(false);
+   256→      // Everything this business owned is gone — drop all cached queries so
+   257→      // no view can flash stale tenant data; AppRoot switches to another
+   258→      // business (or onboarding) once the memberships list refetches.
+   259→      void queryClient.invalidateQueries();
+   260→      useAppStore.getState().navigate({ kind: "dashboard" }, { replace: true });
+   261→    },
+   262→    onError: (err) =>
+   263→      toast({
+   264→        title: err instanceof Error ? err.message : t("dangerDeleteFailed"),
+   265→        variant: "destructive",
+   266→      }),
+   267→  });
+   268→
+   269→  const nameMatches = confirmText === current.name;
+   270→
+   271→  const resetRestore = () => {
+   272→    setRestoreFile(null);
+   273→    setRestoreReport(null);
+   274→    setRestoreError(null);
+   275→    if (fileInputRef.current) fileInputRef.current.value = "";
+   276→  };
+   277→
+   278→  async function onRestoreFileChange(file: File | undefined) {
+   279→    setRestoreReport(null);
+   280→    setRestoreError(null);
+   281→    if (!file) {
+   282→      setRestoreFile(null);
+   283→      return;
+   284→    }
+   285→    if (file.size > 25 * 1024 * 1024) {
+   286→      setRestoreFile(null);
+   287→      setRestoreError(t("restoreFileError"));
+   288→      return;
+   289→    }
+   290→    try {
+   291→      const text = await file.text();
+   292→      const json = JSON.parse(text) as {
+   293→        $schema?: string;
+   294→        business?: { currencyCode?: string };
+   295→      };
+   296→      if (json?.$schema !== BACKUP_SCHEMA_ID) {
+   297→        setRestoreFile(null);
+   298→        setRestoreError(t("restoreInvalidFile"));
+   299→        return;
+   300→      }
+   301→      setRestoreFile({
+   302→        name: file.name,
+   303→        size: file.size,
+   304→        body: json,
+   305→        currencyCode: json.business?.currencyCode ?? "?",
+   306→      });
+   307→    } catch {
+   308→      setRestoreFile(null);
+   309→      setRestoreError(t("restoreInvalidFile"));
+   310→    }
+   311→  }
+   312→
+   313→  async function runRestore(mode: "dry_run" | "merge") {
+   314→    if (!restoreFile || !activeId) return;
+   315→    setRestoreBusy(mode);
+   316→    setRestoreError(null);
+   317→    try {
+   318→      const res = await fetch(
+   319→        `/api/v1/businesses/${activeId}/import?mode=${mode}&ids=${restoreIdMode}`,
+   320→        {
+   321→        method: "POST",
+   322→        credentials: "same-origin",
+   323→        headers: {
+   324→          "content-type": "application/json",
+   325→          ...(activeId ? { "x-business-id": activeId } : {}),
+   326→        },
+   327→        body: JSON.stringify(restoreFile.body),
+   328→      });
+   329→      const body = (await res.json()) as {
+   330→        ok?: boolean;
+   331→        data?: { report: ImportReport };
+   332→        error?: { code?: string; message?: string };
+   333→      };
+   334→      if (!res.ok || !body?.ok || !body.data) {
+   335→        setRestoreReport(null);
+   336→        if (body?.error?.code === "INVALID_BACKUP") setRestoreError(t("restoreInvalidFile"));
+   337→        else if (body?.error?.code === "PERMISSION_DENIED") setRestoreError(t("restoreOwnerOnly"));
+   338→        else if (body?.error?.code === "RATE_LIMITED") setRestoreError(t("exportRateLimited"));
+   339→        else setRestoreError(t("restoreFailed"));
+   340→        return;
+   341→      }
+   342→      setRestoreReport(body.data.report);
+   343→      if (mode === "merge") {
+   344→        toast({ title: t("restoreDone") });
+   345→        void queryClient.invalidateQueries();
+   346→        resetRestore();
+   347→      }
+   348→    } catch {
+   349→      setRestoreError(t("restoreFailed"));
+   350→    } finally {
+   351→      setRestoreBusy(null);
+   352→      setConfirmOpen(false);
+   353→    }
+   354→  }
+   355→
+   356→  const entityLabelKey: Record<(typeof IMPORT_ENTITIES)[number], string> = {
+   357→    customers: "entityCustomers",
+   358→    suppliers: "entitySuppliers",
+   359→    products: "entityProducts",
+   360→    inventoryAdjustments: "entityAdjustments",
+   361→    sales: "entitySales",
+   362→    expenses: "entityExpenses",
+   363→    payments: "entityPayments",
+   364→  };
+   365→
+   366→  function renderConflict(c: ImportConflict) {
+   367→    return (
+   368→      <li key={`${c.entity}-${c.reason}-${c.ref}`} className="flex items-start gap-1.5">
+   369→        <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+   370→        <span dir="ltr">
+   371→          <span className="font-medium">{c.ref}</span> — {t(`restoreReason_${c.reason}` as "restoreReason_DUPLICATE_ID")}
+   372→        </span>
+   373→      </li>
+   374→    );
+   375→  }
+   376→
+   377→  return (
+   378→    <div className="mx-auto max-w-3xl space-y-6" data-view="settings:business">
+   379→      <PageHeader title={t("title")} subtitle={t("subtitle")} />
+   380→
+   381→      <form
+   382→        onSubmit={(e) => {
+   383→          e.preventDefault();
+   384→          if (editable) saveMutation.mutate();
+   385→        }}
+   386→        className="space-y-4"
+   387→        noValidate
+   388→      >
+   389→        <Card>
+   390→          <CardHeader>
+   391→            <CardTitle className="flex items-center gap-2 text-base">
+   392→              <Settings2 className="text-primary size-4" aria-hidden="true" />
+   393→              {t("sectionGeneral")}
+   394→            </CardTitle>
+   395→          </CardHeader>
+   396→          <CardContent className="space-y-4">
+   397→            <div className="space-y-2">
+   398→              <Label htmlFor="set-name">{t("businessName")}</Label>
+   399→              <Input
+   400→                id="set-name"
+   401→                value={name}
+   402→                onChange={(e) => setName(e.target.value)}
+   403→                disabled={!editable}
+   404→                maxLength={120}
+   405→                required
+   406→              />
+   407→            </div>
+   408→          </CardContent>
+   409→        </Card>
+   410→
+   411→        <Card>
+   412→          <CardHeader>
+   413→            <CardTitle className="flex items-center gap-2 text-base">
+   414→              <Coins className="text-primary size-4" aria-hidden="true" />
+   415→              {t("sectionCurrency")}
+   416→            </CardTitle>
+   417→            <CardDescription>{t("currencyHint")}</CardDescription>
+   418→          </CardHeader>
+   419→          <CardContent className="grid gap-4 sm:grid-cols-3">
+   420→            <div className="space-y-2">
+   421→              <Label htmlFor="set-currency">{t("currency")}</Label>
+   422→              <Select
+   423→                value={currencyCode}
+   424→                onValueChange={(v) => {
+   425→                  setCurrencyCode(v);
+   426→                  const c = findCurrency(v);
+   427→                  if (c) {
+   428→                    setSymbol(c.symbol);
+   429→                    setPrecision(c.precision);
+   430→                  }
+   431→                }}
+   432→                disabled={!editable}
+   433→              >
+   434→                <SelectTrigger id="set-currency" dir="ltr" className="w-full">
+   435→                  <SelectValue />
+   436→                </SelectTrigger>
+   437→                <SelectContent className="max-h-72">
+   438→                  {CURRENCIES.map((c) => (
+   439→                    <SelectItem key={c.code} value={c.code}>
+   440→                      {c.code} · {c.symbol} — {c.name}
+   441→                    </SelectItem>
+   442→                  ))}
+   443→                </SelectContent>
+   444→              </Select>
+   445→            </div>
+   446→            <div className="space-y-2">
+   447→              <Label htmlFor="set-symbol">{t("symbol")}</Label>
+   448→              <Input
+   449→                id="set-symbol"
+   450→                value={symbol}
+   451→                onChange={(e) => setSymbol(e.target.value)}
+   452→                disabled={!editable}
+   453→                dir="ltr"
+   454→                maxLength={8}
+   455→                required
+   456→              />
+   457→            </div>
+   458→            <div className="space-y-2">
+   459→              <Label htmlFor="set-precision">{t("precision")}</Label>
+   460→              <Select
+   461→                value={String(precision)}
+   462→                onValueChange={(v) => setPrecision(Number(v))}
+   463→                disabled={!editable}
+   464→              >
+   465→                <SelectTrigger id="set-precision" className="w-full">
+   466→                  <SelectValue />
+   467→                </SelectTrigger>
+   468→                <SelectContent>
+   469→                  {[0, 1, 2, 3, 4].map((p) => (
+   470→                    <SelectItem key={p} value={String(p)}>
+   471→                      {p}
+   472→                    </SelectItem>
+   473→                  ))}
+   474→                </SelectContent>
+   475→              </Select>
+   476→            </div>
+   477→            <div className="bg-muted/40 sm:col-span-3 flex items-center justify-between rounded-lg border px-4 py-3">
+   478→              <span className="text-sm font-medium">{t("preview")}</span>
+   479→              <span className="bg-background rounded-md border px-3 py-1.5 text-sm font-semibold tabular-nums">
+   480→                {preview}
+   481→              </span>
+   482→            </div>
+   483→          </CardContent>
+   484→        </Card>
+   485→
+   486→        <Card>
+   487→          <CardHeader>
+   488→            <CardTitle className="flex items-center gap-2 text-base">
+   489→              <Globe2 className="text-primary size-4" aria-hidden="true" />
+   490→              {t("sectionLocale")}
+   491→            </CardTitle>
+   492→          </CardHeader>
+   493→          <CardContent className="grid gap-4 sm:grid-cols-2">
+   494→            <div className="space-y-2">
+   495→              <Label htmlFor="set-locale">{t("locale")}</Label>
+   496→              <Select value={locale} onValueChange={(v) => setLocale(v as "en" | "fa")} disabled={!editable}>
+   497→                <SelectTrigger id="set-locale" className="w-full">
+   498→                  <SelectValue />
+   499→                </SelectTrigger>
+   500→                <SelectContent>
+   501→                  <SelectItem value="en">English (LTR)</SelectItem>
+   502→                  <SelectItem value="fa">فارسی (RTL)</SelectItem>
+   503→                </SelectContent>
+   504→              </Select>
+   505→            </div>
+   506→            <div className="space-y-2">
+   507→              <Label htmlFor="set-timezone">{t("timezone")}</Label>
+   508→              <Select value={timezone} onValueChange={setTimezone} disabled={!editable}>
+   509→                <SelectTrigger id="set-timezone" dir="ltr" className="w-full">
+   510→                  <SelectValue />
+   511→                </SelectTrigger>
+   512→                <SelectContent className="max-h-72">
+   513→                  {zones.map((z) => (
+   514→                    <SelectItem key={z} value={z}>
+   515→                      {z}
+   516→                    </SelectItem>
+   517→                  ))}
+   518→                </SelectContent>
+   519→              </Select>
+   520→            </div>
+   521→          </CardContent>
+   522→        </Card>
+   523→
+   524→        <Separator />
+   525→
+   526→        <div className="flex justify-end gap-2">
+   527→          <Button type="submit" disabled={!editable || saveMutation.isPending}>
+   528→            {saveMutation.isPending ? (
+   529→              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   530→            ) : (
+   531→              <Save className="size-4" aria-hidden="true" />
+   532→            )}
+   533→            {saveMutation.isPending ? tCommon("saving") : tCommon("save")}
+   534→          </Button>
+   535→        </div>
+   536→      </form>
+   537→
+   538→      {editable ? (
+   539→        <Card>
+   540→          <CardHeader>
+   541→            <CardTitle className="flex items-center gap-2 text-base">
+   542→              <DatabaseBackup className="text-primary size-4" aria-hidden="true" />
+   543→              {t("dataSection")}
+   544→            </CardTitle>
+   545→            <CardDescription>{t("dataSectionDesc")}</CardDescription>
+   546→          </CardHeader>
+   547→          <CardContent className="space-y-3">
+   548→            <div className="text-muted-foreground grid gap-2 text-xs sm:grid-cols-2">
+   549→              <p className="flex items-start gap-2">
+   550→                <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+   551→                {t("dataIncludes1")}
+   552→              </p>
+   553→              <p className="flex items-start gap-2">
+   554→                <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+   555→                {t("dataIncludes2")}
+   556→              </p>
+   557→            </div>
+   558→            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/30 px-4 py-3">
+   559→              <p className="text-muted-foreground text-xs">{t("dataNote")}</p>
+   560→              <Button
+   561→                type="button"
+   562→                variant="outline"
+   563→                size="sm"
+   564→                onClick={() => void exportData()}
+   565→                disabled={exporting}
+   566→              >
+   567→                {exporting ? (
+   568→                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   569→                ) : (
+   570→                  <DatabaseBackup className="size-4" aria-hidden="true" />
+   571→                )}
+   572→                {exporting ? t("exporting") : t("exportAction")}
+   573→              </Button>
+   574→            </div>
+   575→          </CardContent>
+   576→        </Card>
+   577→      ) : null}
+   578→
+   579→      {isOwner ? (
+   580→        <Card>
+   581→          <CardHeader>
+   582→            <CardTitle className="flex items-center gap-2 text-base">
+   583→              <UploadCloud className="text-primary size-4" aria-hidden="true" />
+   584→              {t("restoreSection")}
+   585→            </CardTitle>
+   586→            <CardDescription>{t("restoreSectionDesc")}</CardDescription>
+   587→          </CardHeader>
+   588→          <CardContent className="space-y-3">
+   589→            {/* File picker */}
+   590→            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed bg-muted/30 px-4 py-4">
+   591→              <div
+   592→                className={cn(
+   593→                  "flex size-10 shrink-0 items-center justify-center rounded-lg border",
+   594→                  restoreFile ? "border-emerald-500/30 bg-emerald-500/10" : "bg-background",
+   595→                )}
+   596→                aria-hidden="true"
+   597→              >
+   598→                {restoreFile ? (
+   599→                  <FileJson className="size-5 text-emerald-600 dark:text-emerald-400" />
+   600→                ) : (
+   601→                  <FileJson className="text-muted-foreground size-5" />
+   602→                )}
+   603→              </div>
+   604→              <div className="min-w-0 flex-1">
+   605→                <p className="truncate text-sm font-medium" dir="auto">
+   606→                  {restoreFile ? restoreFile.name : t("restoreFileHint")}
+   607→                </p>
+   608→                {restoreFile ? (
+   609→                  <p className="text-muted-foreground text-xs tabular-nums" dir="ltr">
+   610→                    {(restoreFile.size / 1024).toFixed(1)} KB
+   611→                  </p>
+   612→                ) : null}
+   613→              </div>
+   614→              <input
+   615→                ref={fileInputRef}
+   616→                type="file"
+   617→                accept="application/json,.json"
+   618→                className="sr-only"
+   619→                id="restore-file-input"
+   620→                onChange={(e) => void onRestoreFileChange(e.target.files?.[0])}
+   621→              />
+   622→              <Button
+   623→                type="button"
+   624→                variant="outline"
+   625→                size="sm"
+   626→                className="shrink-0"
+   627→                onClick={() => fileInputRef.current?.click()}
+   628→              >
+   629→                {restoreFile ? t("restoreChangeFile") : t("restoreChooseFile")}
+   630→              </Button>
+   631→            </div>
+   632→
+   633→            {restoreError ? (
+   634→              <div
+   635→                className="border-destructive/30 bg-destructive/5 text-destructive flex items-start gap-2 rounded-lg border px-3.5 py-2.5 text-sm"
+   636→                role="alert"
+   637→              >
+   638→                <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+   639→                <span>{restoreError}</span>
+   640→              </div>
+   641→            ) : null}
+   642→
+   643→            {/* ID handling mode */}
+   644→            <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t("restoreIdMode")}>
+   645→              {(
+   646→                [
+   647→                  { value: "keep", label: t("restoreIdKeep"), hint: t("restoreIdKeepHint") },
+   648→                  { value: "new", label: t("restoreIdNew"), hint: t("restoreIdNewHint") },
+   649→                ] as const
+   650→              ).map((opt) => (
+   651→                <button
+   652→                  key={opt.value}
+   653→                  type="button"
+   654→                  role="radio"
+   655→                  aria-checked={restoreIdMode === opt.value}
+   656→                  onClick={() => {
+   657→                    setRestoreIdMode(opt.value);
+   658→                    setRestoreReport(null);
+   659→                  }}
+   660→                  className={cn(
+   661→                    "rounded-lg border p-3 text-start transition-colors",
+   662→                    restoreIdMode === opt.value
+   663→                      ? "border-primary bg-primary/5 ring-primary/20 ring-1"
+   664→                      : "hover:bg-muted/40 border-border",
+   665→                  )}
+   666→                >
+   667→                  <span className="flex items-center gap-2 text-sm font-medium">
+   668→                    <span
+   669→                      className={cn(
+   670→                        "flex size-4 shrink-0 items-center justify-center rounded-full border",
+   671→                        restoreIdMode === opt.value ? "border-primary" : "border-muted-foreground/40",
+   672→                      )}
+   673→                      aria-hidden="true"
+   674→                    >
+   675→                      {restoreIdMode === opt.value ? (
+   676→                        <span className="bg-primary size-2 rounded-full" />
+   677→                      ) : null}
+   678→                    </span>
+   679→                    {opt.label}
+   680→                  </span>
+   681→                  <span className="text-muted-foreground mt-1 block text-xs">{opt.hint}</span>
+   682→                </button>
+   683→              ))}
+   684→            </div>
+   685→
+   686→            {/* Actions */}
+   687→            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/30 px-4 py-3">
+   688→              <p className="text-muted-foreground max-w-md text-xs">{t("restoreIgnoredNote")}</p>
+   689→              <div className="flex shrink-0 gap-2">
+   690→                <Button
+   691→                  type="button"
+   692→                  variant="outline"
+   693→                  size="sm"
+   694→                  onClick={() => void runRestore("dry_run")}
+   695→                  disabled={!restoreFile || restoreBusy !== null}
+   696→                >
+   697→                  {restoreBusy === "dry_run" ? (
+   698→                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   699→                  ) : (
+   700→                    <ScanSearch className="size-4" aria-hidden="true" />
+   701→                  )}
+   702→                  {restoreBusy === "dry_run" ? t("restoreAnalyzing") : t("restoreAnalyze")}
+   703→                </Button>
+   704→                <Button
+   705→                  type="button"
+   706→                  size="sm"
+   707→                  onClick={() => setConfirmOpen(true)}
+   708→                  disabled={!restoreReport || restoreReport.mode !== "dry_run" || restoreBusy !== null || restoreReport.wouldCreate === 0}
+   709→                >
+   710→                  {restoreBusy === "merge" ? (
+   711→                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   712→                  ) : (
+   713→                    <UploadCloud className="size-4" aria-hidden="true" />
+   714→                  )}
+   715→                  {restoreBusy === "merge" ? t("restoreImporting") : t("restoreImport")}
+   716→                </Button>
+   717→              </div>
+   718→            </div>
+   719→
+   720→            {/* Analysis report */}
+   721→            {restoreReport ? (
+   722→              <div className="space-y-3 rounded-lg border p-4">
+   723→                <div className="flex flex-wrap items-center justify-between gap-2">
+   724→                  <div>
+   725→                    <p className="text-sm font-semibold">{t("restoreReportTitle")}</p>
+   726→                    {restoreReport.exportedAt ? (
+   727→                      <p className="text-muted-foreground text-xs tabular-nums" dir="ltr">
+   728→                        {new Date(restoreReport.exportedAt).toLocaleString(locale === "fa" ? "fa-IR" : "en-GB", {
+   729→                          dateStyle: "medium",
+   730→                          timeStyle: "short",
+   731→                        })}
+   732→                      </p>
+   733→                    ) : null}
+   734→                  </div>
+   735→                  <Badge
+   736→                    variant="outline"
+   737→                    className={
+   738→                      restoreReport.mode === "dry_run"
+   739→                        ? "border-border text-muted-foreground bg-muted/40"
+   740→                        : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+   741→                    }
+   742→                  >
+   743→                    {restoreReport.mode === "dry_run"
+   744→                      ? t("restoreReportWouldCreate", { count: restoreReport.wouldCreate })
+   745→                      : t("restoreReportCreated", { count: restoreReport.created })}
+   746→                  </Badge>
+   747→                </div>
+   748→
+   749→                {!restoreReport.businessMatch ? (
+   750→                  <p className="text-amber-700 dark:text-amber-400 flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
+   751→                    <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+   752→                    {t("restoreBusinessMismatch")}
+   753→                  </p>
+   754→                ) : null}
+   755→                {!restoreReport.currencyMatch ? (
+   756→                  <p className="text-amber-700 dark:text-amber-400 flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
+   757→                    <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+   758→                    {t("restoreCurrencyMismatch", {
+   759→                      backup: restoreFile?.currencyCode ?? "?",
+   760→                      current: current.currencyCode,
+   761→                    })}
+   762→                  </p>
+   763→                ) : null}
+   764→
+   765→                <ul className="grid gap-x-4 gap-y-1.5 text-xs sm:grid-cols-2">
+   766→                  {IMPORT_ENTITIES.map((entity) => {
+   767→                    const r = restoreReport.entities[entity];
+   768→                    return (
+   769→                      <li
+   770→                        key={entity}
+   771→                        className="bg-muted/40 flex items-center justify-between gap-2 rounded-md border px-3 py-2"
+   772→                      >
+   773→                        <span className="font-medium">{t(entityLabelKey[entity] as "entityCustomers")}</span>
+   774→                        <span className="flex shrink-0 items-center gap-1.5 tabular-nums">
+   775→                          {r.toCreate > 0 ? (
+   776→                            <Badge variant="outline" className="h-5 border-emerald-500/40 bg-emerald-500/10 px-1.5 text-[10px] text-emerald-700 dark:text-emerald-400">
+   777→                              +{r.toCreate} {t("restoreNew")}
+   778→                            </Badge>
+   779→                          ) : null}
+   780→                          {r.existing > 0 ? (
+   781→                            <Badge variant="outline" className="text-muted-foreground h-5 px-1.5 text-[10px]">
+   782→                              {r.existing} {t("restoreExisting")}
+   783→                            </Badge>
+   784→                          ) : null}
+   785→                          {r.invalid > 0 ? (
+   786→                            <Badge variant="outline" className="h-5 border-amber-500/40 bg-amber-500/10 px-1.5 text-[10px] text-amber-700 dark:text-amber-400">
+   787→                              {r.invalid} {t("restoreSkipped")}
+   788→                            </Badge>
+   789→                          ) : null}
+   790→                          {r.total === 0 ? (
+   791→                            <span className="text-muted-foreground text-[10px]">—</span>
+   792→                          ) : null}
+   793→                        </span>
+   794→                      </li>
+   795→                    );
+   796→                  })}
+   797→                </ul>
+   798→
+   799→                {restoreReport.conflicts.length > 0 ? (
+   800→                  <div className="space-y-1.5">
+   801→                    <p className="text-xs font-semibold">
+   802→                      {t("restoreConflicts")} ({restoreReport.conflicts.length})
+   803→                    </p>
+   804→                    <ul className="space-y-1 text-xs">
+   805→                      {restoreReport.conflicts.slice(0, 12).map(renderConflict)}
+   806→                    </ul>
+   807→                    {restoreReport.conflicts.length > 12 ? (
+   808→                      <p className="text-muted-foreground text-[11px] tabular-nums" dir="ltr">
+   809→                        +{restoreReport.conflicts.length - 12}…
+   810→                      </p>
+   811→                    ) : null}
+   812→                  </div>
+   813→                ) : null}
+   814→              </div>
+   815→            ) : null}
+   816→          </CardContent>
+   817→        </Card>
+   818→      ) : (
+   819→        <Card>
+   820→          <CardContent className="text-muted-foreground flex items-center gap-2 px-4 py-3 text-xs">
+   821→            <ShieldAlert className="size-4 shrink-0" aria-hidden="true" />
+   822→            {t("restoreOwnerOnly")}
+   823→          </CardContent>
+   824→        </Card>
+   825→      )}
+   826→
+   827→      {/* Import confirmation */}
+   828→      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+   829→        <AlertDialogContent>
+   830→          <AlertDialogHeader>
+   831→            <AlertDialogTitle>{t("restoreConfirmTitle")}</AlertDialogTitle>
+   832→            <AlertDialogDescription>
+   833→              {t("restoreConfirmDesc", {
+   834→                count: restoreReport?.wouldCreate ?? 0,
+   835→              })}
+   836→            </AlertDialogDescription>
+   837→          </AlertDialogHeader>
+   838→          <AlertDialogFooter>
+   839→            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+   840→            <AlertDialogAction onClick={() => void runRestore("merge")}>
+   841→              {restoreBusy === "merge" ? (
+   842→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   843→              ) : (
+   844→                <UploadCloud className="size-4" aria-hidden="true" />
+   845→              )}
+   846→              {t("restoreConfirmAction")}
+   847→            </AlertDialogAction>
+   848→          </AlertDialogFooter>
+   849→        </AlertDialogContent>
+   850→      </AlertDialog>
+   851→
+   852→      {/* ---- Danger zone (OWNER-only) ---- */}
+   853→      {isOwner ? (
+   854→        <Card className="border-destructive/40 bg-destructive/5">
+   855→          <CardHeader>
+   856→            <CardTitle className="text-destructive flex items-center gap-2 text-base">
+   857→              <ShieldAlert className="size-4" aria-hidden="true" />
+   858→              {t("dangerSection")}
+   859→            </CardTitle>
+   860→            <CardDescription className="text-muted-foreground">{t("dangerDesc")}</CardDescription>
+   861→          </CardHeader>
+   862→          <CardContent>
+   863→            <Button
+   864→              type="button"
+   865→              variant="destructive"
+   866→              className="gap-2"
+   867→              onClick={() => {
+   868→                setConfirmText("");
+   869→                setDangerOpen(true);
+   870→              }}
+   871→            >
+   872→              <Trash2 className="size-4" aria-hidden="true" />
+   873→              {t("dangerDeleteAction")}
+   874→            </Button>
+   875→          </CardContent>
+   876→        </Card>
+   877→      ) : null}
+   878→
+   879→      {/* Delete confirmation — typed name + live record counts */}
+   880→      <AlertDialog
+   881→        open={dangerOpen}
+   882→        onOpenChange={(open) => {
+   883→          setDangerOpen(open);
+   884→          if (!open) {
+   885→            setConfirmText("");
+   886→            deleteBusiness.reset();
+   887→          }
+   888→        }}
+   889→      >
+   890→        <AlertDialogContent>
+   891→          <AlertDialogHeader>
+   892→            <AlertDialogTitle>
+   893→              {t("dangerDialogTitle", { name: current.name })}
+   894→            </AlertDialogTitle>
+   895→            <AlertDialogDescription asChild>
+   896→              <div className="space-y-2">
+   897→                <p>
+   898→                  {countsLoading || !dangerCounts
+   899→                    ? t("dangerLoadingCounts")
+   900→                    : t("dangerDialogDesc", {
+   901→                        customers: dangerCounts.customers,
+   902→                        suppliers: dangerCounts.suppliers,
+   903→                        products: dangerCounts.products,
+   904→                        sales: dangerCounts.sales,
+   905→                        expenses: dangerCounts.expenses,
+   906→                        payments: dangerCounts.payments,
+   907→                      })}
+   908→                </p>
+   909→                <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+   910→                  <TriangleAlert className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+   911→                  {t("dangerDialogExportHint")}
+   912→                  <button
+   913→                    type="button"
+   914→                    onClick={() => void exportData()}
+   915→                    className="text-foreground inline-flex items-center gap-1 font-medium underline underline-offset-2"
+   916→                  >
+   917→                    <DatabaseBackup className="size-3.5" aria-hidden="true" />
+   918→                    {t("dangerDialogExportNow")}
+   919→                  </button>
+   920→                </p>
+   921→              </div>
+   922→            </AlertDialogDescription>
+   923→          </AlertDialogHeader>
+   924→          <div className="space-y-2">
+   925→            <Label htmlFor="danger-confirm">{t("dangerTypePrompt", { name: current.name })}</Label>
+   926→            <Input
+   927→              id="danger-confirm"
+   928→              value={confirmText}
+   929→              onChange={(e) => setConfirmText(e.target.value)}
+   930→              autoComplete="off"
+   931→              maxLength={120}
+   932→            />
+   933→            {confirmText.length > 0 && !nameMatches ? (
+   934→              <p className="text-destructive text-xs">{t("dangerMismatch")}</p>
+   935→            ) : null}
+   936→          </div>
+   937→          <AlertDialogFooter>
+   938→            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+   939→            <AlertDialogAction
+   940→              className="bg-destructive hover:bg-destructive/90 text-white"
+   941→              disabled={!nameMatches || deleteBusiness.isPending}
+   942→              onClick={(e) => {
+   943→                e.preventDefault(); // keep the dialog open until the DELETE resolves
+   944→                deleteBusiness.mutate();
+   945→              }}
+   946→            >
+   947→              {deleteBusiness.isPending ? (
+   948→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   949→              ) : (
+   950→                <Trash2 className="size-4" aria-hidden="true" />
+   951→              )}
+   952→              {t("dangerConfirmAction")}
+   953→            </AlertDialogAction>
+   954→          </AlertDialogFooter>
+   955→        </AlertDialogContent>
+   956→      </AlertDialog>
+   957→    </div>
+   958→  );
+   959→}
+   960→

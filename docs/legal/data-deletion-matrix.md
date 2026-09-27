@@ -1,0 +1,137 @@
+# Data Deletion Matrix — AI Business Copilot
+
+**Document ID:** LEGAL-DDM-v1
+**Phase:** Prompt 27 documentation (§22/§76) — **STATUS: DESCRIPTIVE MATRIX** (states below are exactly what the shipped code does)
+**Source of truth:** `prisma/schema.prisma` (cascade/SetNull relations, re-verified line-by-line while writing this matrix), `DELETE /api/v1/me` (Prompt 18 account lifecycle), `DELETE /api/v1/businesses/[id]` + `/danger` (Prompt 7-era owner flow)
+**Companion docs:** `docs/legal/data-processing-inventory.md` · `docs/legal/data-retention-inventory.md` · `docs/legal/user-data-rights.md` · `docs/security/account-lifecycle.md` · sibling Prompt 27 docs: `docs/legal/data-flow.md` · `docs/legal/service-providers.md`
+
+> **Honesty rules.** NO compliance claim. Every cell uses only states the implementation
+> supports: `DELETED` / `ANONYMIZED` / `RETAINED` / `DEPENDENT` / `NOT CURRENTLY AUTOMATED` /
+> `UNKNOWN-REVIEW REQUIRED` / `CURRENTLY NOT EXPLICITLY CONFIGURED` / `NOT IMPLEMENTED`.
+> No invented grace periods, no invented anonymization. Schema note: the Phase-0 audit
+> summarized some user relations as cascades; the schema was re-verified — actor-style relations
+> (`Payment.actor`, `InventoryAdjustment.actor`, `BusinessInvite.createdBy/acceptedBy`,
+> `SubscriptionEvent.actor`, `AuditLog.actor`) are **`onDelete: SetNull`**: the row survives, the
+> personal actor link is removed.
+
+---
+
+## 1. Two different operations — do not conflate
+
+| | **DELETE ACCOUNT** — `DELETE /api/v1/me` | **DELETE BUSINESS** — `DELETE /api/v1/businesses/[id]` |
+|---|---|---|
+| Who | The account owner themselves | Business OWNER only (RBAC-enforced) |
+| Gates | Fresh-session assertion + current password + typed `"DELETE"` + rate limit 5/15 min | Typed **current business name** confirmation; `GET .../danger` returns counts first |
+| Scope | The user row + user-personal data (memberships, chats, reset tokens, legal acceptances) + actor-link nulling | One `db.business.delete` — every business-scoped table cascades |
+| Platform effect | Writes audit `auth.account_deleted` with `businessId` null (platform-level, RETAINED) | No platform-level tombstone; the tenant audit trail itself is cascaded away |
+| Blocking rule | **409 `OWNED_BUSINESS_BLOCKED`** while the user owns any business (structured error incl. the owned list) | Account deletion of the owner is unaffected (business already gone) |
+| What it can never do | Delete businesses of others, their data, or platform ledgers | Delete the (former) owner's account, other businesses, or the no-FK platform ledgers |
+
+## 2. Deletion matrix
+
+**User Deletion** = effect of `DELETE /api/v1/me`. **Business Deletion** = effect of
+`DELETE /api/v1/businesses/[id]`. **Independent Retention** = what exists outside both
+operations. Status vocabulary as in the banner.
+
+| Data Type | User Deletion | Business Deletion | Independent Retention | Status |
+|---|---|---|---|---|
+| User | **DELETED** (hard `user.delete`, gated) | n/a — blocked first (`OWNED_BUSINESS_BLOCKED`) | Kept while account exists; no TTL | DEPENDENT |
+| Business | n/a — owner-block prevents user deletion; business itself untouched | **DELETED** (OWNER-only, typed name) | Kept while tenant exists | DEPENDENT |
+| Membership | **DELETED** (cascade); businesses of others survive | **DELETED** (cascade) | — | DEPENDENT |
+| Customer | NOT AFFECTED (business-owned) | **DELETED** (hard cascade, incl. soft-deleted rows) | Soft delete (`deletedAt`) retains history; no purge | DEPENDENT |
+| Supplier | NOT AFFECTED (business-owned) | **DELETED** (hard cascade, incl. soft-deleted) | Soft delete; no purge | DEPENDENT |
+| Product | NOT AFFECTED (business-owned) | **DELETED** (cascade) | Soft delete on product rows; no purge | DEPENDENT |
+| Sale | NOT AFFECTED (business-owned) | **DELETED** (`Sale`+`SaleItem` cascade) | Soft delete retains history; no purge | DEPENDENT |
+| Expense | NOT AFFECTED (business-owned) | **DELETED** (cascade) | Soft delete; no purge | DEPENDENT |
+| Payment | NOT AFFECTED; `actorId` **SetNull** (link removed, record stays with business) | **DELETED** (cascade) | Soft delete/reversal; no purge | DEPENDENT |
+| AI Session | **DELETED** (cascade); also user-initiated per-session delete | **DELETED** (cascade) | — | DEPENDENT |
+| AI Message | **DELETED** (cascade via session and direct user relation) | **DELETED** (cascade) | Failed requests never synced (local only) | DEPENDENT |
+| Usage (UsagePeriod/UsageCounter/UsageEvent) | NOT AFFECTED (business-scoped) | **DELETED** (cascade) | — | DEPENDENT |
+| Subscription (+ SubscriptionEvent) | NOT AFFECTED; event `actorId` **SetNull** | **DELETED** (cascade) | Ended subscriptions never deleted by design while the business lives (`docs/billing/subscription-lifecycle.md`) | DEPENDENT |
+| Checkout (CheckoutSession) | NOT AFFECTED (business-scoped) | **DELETED** (cascade) | 30-min session expiry (lazy) is a lifecycle state, not deletion | DEPENDENT |
+| Payment Transaction | NOT AFFECTED (business-scoped) | **DELETED** (cascade; idempotency anchor `[provider, providerEventId]` goes with it) | — | DEPENDENT |
+| Audit Log | Log rows **RETAINED**; `actorId` **SetNull** (**ANONYMIZED** actor link — not row deletion); platform-level rows (`businessId` null, e.g. `auth.account_deleted`) **RETAINED** | **DELETED** — the entire tenant trail cascades with the business | Append-only; no update/delete endpoints; no purge job | DEPENDENT (tenant trail) / RETAINED (platform rows) |
+| Commercial Events | NOT AFFECTED — `userId?` is a plain String, no FK; dangling id remains (not ANONYMIZED) | NOT AFFECTED — `businessId?` plain String, no FK; dangling id remains | **RETAINED** unconditionally; no TTL, no purge | RETAINED |
+| AI Cost (AiCostRecord, AiCostAnomaly) | NOT AFFECTED (no user FK; user linkage absent by design) | NOT AFFECTED — `businessId` plain String; dangling id remains | **RETAINED** — never auto-deleted, no delete path | RETAINED |
+| Contact Lead | — | — | — | **NOT IMPLEMENTED** (no model, no storage) |
+| LegalAcceptance | **DELETED** (cascade) | NOT AFFECTED (user-level evidence) | Append-only while account exists | DEPENDENT |
+| PasswordResetToken | **DELETED** (cascade) | NOT AFFECTED (user-level) | 30-min single-use expiry + opportunistic cleanup | DEPENDENT + time-based |
+
+## 3. Dependency walk-through (documentation-only "dry run")
+
+This is an on-paper walk-through of what each operation touches, in dependency order. **No
+mutation happens here and no dry-run/preview API is implemented** — the closest shipped feature
+is `GET /api/v1/businesses/[id]/danger` (pre-deletion counts). Any automated preview would be
+**NOT IMPLEMENTED** today.
+
+```
+USER ──DELETE /api/v1/me──▶  [gate: fresh session + password + "DELETE" + 5/15min]
+  ├─ deletes: User · Memberships · ChatSessions+ChatMessages · PasswordResetTokens
+  │           · LegalAcceptances
+  ├─ nulls (SetNull): Payment.actor · InventoryAdjustment.actor · SubscriptionEvent.actor
+  │           · BusinessInvite.createdBy/acceptedBy · AuditLog.actor
+  ├─ BLOCKS (409 OWNED_BUSINESS_BLOCKED + owned list) while user owns ANY business
+  └─ survives: businesses of others + ALL business data · CommercialEvent (userId dangling)
+              · AiCostRecord/AiCostAnomaly/AiCostRate · ProcessedWebhookEvent
+              · platform audit rows (auth.account_deleted, businessId=null)
+
+BUSINESS ──DELETE /api/v1/businesses/[id]──▶  [gate: OWNER + GET /danger counts + typed name]
+  ├─ single db.business.delete cascades: BusinessMember · BusinessInvite · Customer · Supplier
+  │           · Product · InventoryAdjustment · Sale(+SaleItem) · Expense · Payment
+  │           · ChatSession(+ChatMessage) · UsagePeriod(+UsageCounter+UsageEvent)
+  │           · Subscription(+SubscriptionEvent) · CheckoutSession(+PaymentTransaction)
+  │           · AuditLog (entire tenant trail)
+  └─ survives: owner/members User rows · CommercialEvent (businessId dangling)
+              · AiCostRecord/AiCostAnomaly/AiCostRate · ProcessedWebhookEvent
+              · platform-level audit rows
+```
+
+Policy-dependent leftovers (survive both operations; **what remains is a policy question, not a
+code path** — see `docs/legal/data-retention-inventory.md` §4): the four no-FK ledgers plus
+dangling id strings. Nothing rewrites or anonymizes them — NOT CURRENTLY AUTOMATED.
+
+## 4. Deletion-ownership rules
+
+1. **A member cannot delete business-owned data via account deletion.** Customers, suppliers,
+   products, sales, expenses, payments, usage, subscriptions, checkout/payment transactions belong
+   to the business context. Account deletion cascades only user-personal rows; it never reaches
+   business tables (and for the businesses a user merely belongs to, even the membership rows
+   disappear while the business and its data survive untouched).
+2. **Owner-block:** account deletion returns **409 `OWNED_BUSINESS_BLOCKED`** with the list of
+   owned businesses while the user owns any of them. The user must delete or transfer each
+   business first — the platform never deletes a business as a side effect of account deletion.
+3. **Business deletion is OWNER-only** and requires typing the **current** business name (not a
+   fixed phrase), after seeing real counts via `/danger`. One transaction, one `business.delete`
+   — the cascade is the deletion mechanism, so partial states are not possible.
+4. **No role can delete audit history**: `AuditLog` has no update/delete endpoints at all; the
+   only way tenant audit rows leave the database is business deletion itself.
+
+## 5. Structured-error honesty
+
+- Account deletion while owning businesses fails with **409 `OWNED_BUSINESS_BLOCKED`** and an
+  owned-business list in the payload — the client can render exactly what blocks the operation;
+  nothing fails silently or "cleans up around" the blocker.
+- Other gates surface as structured errors too: fresh-session failure, wrong password, missing
+  typed `"DELETE"` confirmation, and the 5-per-15-min rate limit (429). Business deletion fails
+  closed on role (non-OWNER), name mismatch, and rate limiting — no partial deletion is ever
+  attempted before all gates pass (counts via `/danger` are read-only).
+- Per-session AI data removal is separate and narrower: `DELETE /api/v1/copilot/sessions/[id]`
+  removes one conversation (session + messages) for the owning user — it is not an account-level
+  operation and appears in `docs/legal/user-data-rights.md` §2 as a product control.
+
+## 6. Current state (honest)
+
+- **DELETED is real but only via two operations** (account, business) plus two narrow extras
+  (per-session copilot delete; reset-token expiry+cleanup). There is no bulk erasure, no
+  scheduled purge, no anonymization job — all NOT CURRENTLY AUTOMATED.
+- **ANONYMIZED appears exactly once** in this matrix: audit-log actor links nulled by SetNull on
+  account deletion. Dangling CommercialEvent/AiCostRecord ids after business deletion are
+  **RETAINED as-is**, not anonymized — whether that needs rework is UNKNOWN-REVIEW REQUIRED.
+- Deleting the tenant audit trail with the business is the implemented behavior; whether an
+  operation requires preserving parts of it is an unmade policy decision (CURRENTLY NOT EXPLICITLY
+  CONFIGURED).
+- Contact leads: NOT IMPLEMENTED — there is nothing to delete.
+- Cross-checks: category definitions in `docs/legal/data-processing-inventory.md`; retention
+  statuses in `docs/legal/data-retention-inventory.md`; how a person reaches the two operations
+  from the product in `docs/legal/user-data-rights.md`; public descriptions on `/privacy`,
+  `/terms`, `/ai-data-use`, `/cookies` (content version `2026-09-v1`).

@@ -1,0 +1,127 @@
+{
+  "generatedAt": "2026-09-27T09:16:25.193Z",
+  "verdict": "PARTIALLY_READY",
+  "note": "Public legal readiness is not a legal compliance certification.",
+  "legalReviewRequired": true,
+  "tools": [
+    {
+      "name": "legal-content-review",
+      "exitCode": 0,
+      "passed": true,
+      "skipped": false
+    },
+    {
+      "name": "privacy-inventory",
+      "exitCode": 0,
+      "passed": true,
+      "skipped": false
+    },
+    {
+      "name": "privacy-deletion-check",
+      "exitCode": 0,
+      "passed": true,
+      "skipped": false
+    },
+    {
+      "name": "public-trust-config-check",
+      "exitCode": 0,
+      "passed": true,
+      "skipped": false
+    },
+    {
+      "name": "public-legal-links-check",
+      "exitCode": 0,
+      "passed": true,
+      "skipped": false
+    }
+  ],
+  "categories": [
+    {
+      "name": "Legal Identity",
+      "status": "NOT_CONFIGURED",
+      "reason": "PUBLIC_COMPANY_LEGAL_NAME unset — honest fallback rendered"
+    },
+    {
+      "name": "Privacy Contact",
+      "status": "NOT_CONFIGURED",
+      "reason": "PRIVACY_CONTACT_EMAIL unset"
+    },
+    {
+      "name": "Legal Contact",
+      "status": "NOT_CONFIGURED",
+      "reason": "LEGAL_CONTACT_EMAIL unset"
+    },
+    {
+      "name": "Support Contact",
+      "status": "NOT_CONFIGURED",
+      "reason": "PUBLIC_SUPPORT_EMAIL unset"
+    },
+    {
+      "name": "Security Contact",
+      "status": "NOT_CONFIGURED",
+      "reason": "SECURITY_CONTACT_EMAIL unset"
+    },
+    {
+      "name": "Privacy Policy",
+      "status": "READY",
+      "reason": "page live, EN/FA, claim-safe (legal review pending)"
+    },
+    {
+      "name": "Terms",
+      "status": "READY",
+      "reason": "page live, implementation-aware billing/trial language (legal review pending)"
+    },
+    {
+      "name": "AI Data Use",
+      "status": "READY",
+      "reason": "page live, provider-agnostic disclosure, no model claims"
+    },
+    {
+      "name": "Data Inventory",
+      "status": "READY",
+      "reason": "docs/legal/data-processing-inventory.md consistent with schema"
+    },
+    {
+      "name": "Deletion Matrix",
+      "status": "READY",
+      "reason": "fixture-verified cascade behavior matches the documented matrix"
+    },
+    {
+      "name": "Retention Matrix",
+      "status": "PARTIAL",
+      "reason": "documented honestly; explicit retention policies are CURRENTLY NOT EXPLICITLY CONFIGURED"
+    },
+    {
+      "name": "Provider Disclosure",
+      "status": "READY",
+      "reason": "ACTIVE/CONFIGURED_NOT_ACTIVE/PLANNED states match adapters+env"
+    },
+    {
+      "name": "HTTPS",
+      "status": "NOT_CONFIGURED",
+      "reason": "PUBLIC_BASE_URL not set to an https origin"
+    },
+    {
+      "name": "Public Base URL",
+      "status": "NOT_CONFIGURED",
+      "reason": "canonical/OG/sitemap stay relative until configured"
+    },
+    {
+      "name": "Payments",
+      "status": "BLOCKED",
+      "reason": "production payment not activated (merchant credentials + legal review)"
+    }
+  ],
+  "notConfigured": [
+    "Legal Identity",
+    "Privacy Contact",
+    "Legal Contact",
+    "Support Contact",
+    "Security Contact",
+    "HTTPS",
+    "Public Base URL"
+  ],
+  "blockers": [
+    "Payments: production payment not activated (merchant credentials + legal review)"
+  ]
+}

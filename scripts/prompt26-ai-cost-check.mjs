@@ -680,16 +680,30 @@ console.log("\nL — live AI copilot smoke (real request)");
   function newJar() { return { cookies: new Map(), header() { return [...this.cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; "); }, get(s) { for (const [k, v] of this.cookies) if (k.endsWith(s)) return v; } }; }
 
   const jar = newJar();
+  // Dedicated fresh smoke user per run (Prompt-27 hardening): sara's oldest
+  // business exhausted its FREE AI_MESSAGES quota (25/25 within the current
+  // usage period — accumulated harness state, not a code regression), and
+  // sara also sits at her BUSINESSES_MAX. A per-run user + business gives the
+  // smoke a deterministic fresh quota and leaves zero state behind.
+  const smokeEmail = `p26-smoke-${Date.now()}@check.local`;
+  const regRes = await api("/api/v1/auth/register", { method: "POST", body: { name: "P26 Smoke", email: smokeEmail, password: "P26-Smoke-2026!", acceptedLegal: { terms: true, privacy: true } } });
+  check("L0 smoke user registered", regRes.status === 201, `${regRes.status} ${String(regRes.text ?? "").slice(0, 100)}`);
   const csrf = await api("/api/auth/csrf", { jar });
   const csrfToken = jar.get("csrf-token") ? decodeURIComponent(jar.get("csrf-token")).split("|")[0] : csrf.json?.csrfToken;
-  await api("/api/auth/callback/credentials", { method: "POST", jar, headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ csrfToken, email: "sara@copilot.dev", password: "testpass123", callbackUrl: `${BASE}/`, json: "true" }).toString() });
+  await api("/api/auth/callback/credentials", { method: "POST", jar, headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ csrfToken, email: smokeEmail, password: "P26-Smoke-2026!", callbackUrl: `${BASE}/`, json: "true" }).toString() });
   if (!jar.get("session-token")) {
-    check("L0 sara login (smoke prerequisite)", false, "login failed");
+    check("L0 smoke login (prerequisite)", false, "login failed");
   } else {
-    const memberships = await prisma.businessMember.findMany({ where: { user: { email: "sara@copilot.dev" } }, include: { business: true }, orderBy: { business: { createdAt: "asc" } } });
-    const biz = memberships[0]?.business;
-    if (!biz) {
-      check("L0 sara business exists", false, "no membership");
+    // Fresh smoke business per run: a per-run user+business isolates the live
+    // sara's oldest business, whose FREE AI_MESSAGES quota accumulates across
+    // rounds within the same usage period (25/25 reached) — a STATE failure,
+    // not a code regression. A fresh business carries a deterministic FREE
+    // subscription and a fresh quota (billing logic untouched).
+    const createRes = await api("/api/v1/businesses", { method: "POST", jar, body: { name: `P26 Smoke ${Date.now()}`, currencyCode: "EUR" } });
+    check("L0 fresh smoke business created", createRes.status === 201, `${createRes.status} ${String(createRes.text).slice(0, 100)}`);
+    const biz = createRes.json?.data?.business;
+    if (!biz?.id) {
+      check("L0 smoke business available", false, "no business id");
     } else {
       const beforeEvents = await prisma.usageEvent.count({ where: { businessId: biz.id, metric: "AI_REQUESTS" } });
       const beforeCost = await prisma.aiCostRecord.count({ where: { businessId: biz.id } });
@@ -709,6 +723,12 @@ console.log("\nL — live AI copilot smoke (real request)");
       check("L5 honest cost state (UNKNOWN until a verified rate exists)", cost.costStatus === "UNKNOWN" && cost.costNanoMinor === null && ["RATE_NOT_FOUND", "RATE_NOT_VERIFIED", "MODEL_UNKNOWN", "PROVIDER_NOT_CONFIGURED"].includes(cost.unknownReason ?? ""), safeStr({ status: cost.costStatus, reason: cost.unknownReason }));
       check("L6 no prompt/response stored in the cost ledger", !JSON.stringify(cost).toLowerCase().includes("how many customers"));
       check("L7 plan snapshot present", typeof cost.planCodeAtUsage === "string" && cost.planCodeAtUsage.length > 0);
+
+      // Teardown: business first (owner-block), then the account itself.
+      const delRes = await api(`/api/v1/businesses/${biz.id}`, { method: "DELETE", jar, headers: { "x-business-id": biz.id }, body: { confirmName: biz.name } });
+      check("L8 smoke business torn down", delRes.status === 200, `${delRes.status} ${String(delRes.text).slice(0, 100)}`);
+      const delAcc = await api("/api/v1/me", { method: "DELETE", jar, body: { password: "P26-Smoke-2026!", confirmation: "DELETE" } });
+      check("L9 smoke account torn down (no acceptance orphans)", delAcc.status === 200, `${delAcc.status} ${String(delAcc.text).slice(0, 100)}`);
     }
   }
 }

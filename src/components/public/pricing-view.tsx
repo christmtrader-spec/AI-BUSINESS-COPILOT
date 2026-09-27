@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PublicFooter } from "@/components/public/public-footer";
 import type { PublicPlanDTO, PublicPricingDTO } from "@/lib/billing/public-pricing";
 import { currencyMinorDigits, minorToMajor } from "@/lib/payments/currency";
 
@@ -477,13 +478,10 @@ export function PricingPublicView() {
         ) : null}
       </main>
 
-      {/* Sticky-to-bottom footer */}
-      <footer className="border-t">
-        <div className="text-muted-foreground mx-auto w-full max-w-6xl space-y-2 px-4 py-6 text-xs">
-          <p>{t("footer.honestPrices")}</p>
-          <p>{t("footer.currencyNote")}</p>
-        </div>
-      </footer>
+      {/* Sticky-to-bottom footer with legal links (Prompt 27 §59/§101) */}
+      <PublicFooter
+        notes={[t("footer.honestPrices"), t("footer.currencyNote")]}
+      />
     </div>
   );
 }
