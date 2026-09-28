@@ -61,5 +61,13 @@ db/backups/
 # placeholder template MUST be version-controlled:
 !.env.example
 
+# Prompt 29 §63 — database files must NEVER be version-controlled (they
+# contain tenant data + password hashes). .env was untracked with
+# `git rm --cached` (Prompt 29); history review is an operator action.
+db/*.db
+db/*.db-*
+*.sqlite
+*.sqlite3
+
 # NOTE: prisma/migrations/ is deliberately NOT ignored — migration files
 # are immutable release artifacts and MUST be version-controlled.

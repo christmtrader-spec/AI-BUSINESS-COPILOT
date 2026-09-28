@@ -31,6 +31,12 @@ Probability: High / Medium / Low
 | R15 | Permission model drift (frontend-only hiding) | High | Medium | RBAC enforced server-side in API pipeline (A02); permission matrix single source (`lib/rbac.ts`); authorization tests |
 | R16 | Timezone/locale bugs corrupting day-boundary reports | High | Medium | UTC storage (A07); business timezone applied only at aggregation/display boundaries; date-boundary unit tests for metrics |
 | R17 | Schema drift around money fields (new dev adds Float) | High | Low | Constitution + TDR guardrails; code review checklist; money helpers are the only sanctioned math path |
+| R18 | Production configuration drift (env missing/invalid between environments, half-configured email, bad URLs) | High | Medium | `src/lib/config/production.ts` single validator (startup fail-fast, exit 1 on mandatory problems); `node scripts/production-config-check.mjs` operator gate (exit 0 required, statuses only, never values); `/api/ready` `configuration` component surfaces drift continuously; environment-separation law (§123, env-vars doc §Rules) |
+| R19 | Backup verification failure (backup exists but is corrupt/unrestorable, or silently goes stale) | High | Medium | `scripts/verify-backup.mjs` checksum+integrity gate (SHA-256 vs sidecar, integrity/quick/FK checks — mismatch = immediate FAIL); `scripts/restore-drill.mjs` proves restorability on an isolated clone and records PASS/FAIL to `db/backups/last-restore-drill.json`; readiness `backups` component (BACKUP_STALE past `BACKUP_MAX_AGE_HOURS`) and `restoreDrill` component (STALE/BLOCKED); §45 migration gate refuses to migrate without a verified backup |
+| R20 | Email delivery failure (SMTP outage, misconfig, hanging send) blocks password recovery | Medium | Medium | Bounded timeout (`EMAIL_TIMEOUT_MS` 1000..60000 + adapter-level race — a send can never hang a request); safe error classes (`SMTP_TIMEOUT`/`SMTP_AUTH_FAILED`/`SMTP_CONNECTION_FAILED`/`SMTP_DELIVERY_FAILED`); send-before-persist (no token persisted when delivery fails, §13); readiness `email` component (NOT_CONFIGURED/READY/BLOCKED — honest, no fake readiness); uniform 503 preserves anti-enumeration |
+| R21 | Insufficient observability (incidents uncorrelatable, secrets leaking into logs) | High | Medium | `X-Request-ID` on every API response (bounded client values, malformed replaced by UUID); structured redacted JSON logging with fixed event vocabulary + coarse error classes (`src/lib/observability/*`); recursive secret redaction + size/depth bounds enforced in the logger; contract documented in `docs/security/observability-and-logging.md` (§169) |
+| R22 | Unsafe release (unverified artifact, ungated migration, no recovery anchor) | High | Medium | `scripts/release-preflight.mjs` (artifact + version authority + env contract); §45 migration gate (`production-preflight.mjs --gate` — refuses without verified backup/valid schema/readable migration state); isolated build procedure (§67/§69, stale-Turbopack lesson); full rollback policy documented (`docs/deployment/release-rollback.md` §118/§119 — forward-only migrations, verified-backup restore, never automatic) |
+| R23 | Stale development/build artifacts (prisma generate → stale Turbopack cache, duplicate dev servers corrupting `.next`) | Medium | High | Documented generate→restart discipline (r28 worklog incident: ALWAYS restart dev server after `prisma generate`; `rm -rf .next` when in doubt); isolated build procedure (§67/§69 — never build against a running dev server); duplicate-start guards (`scripts/dev-guard.cjs` port/process checks, `scripts/keep-dev-up.cjs` PID lockfile — dev tooling, pattern for production process manager); release-preflight verifies the artifact after an isolated build |
 
 ---
 
@@ -53,3 +59,14 @@ Probability: High / Medium / Low
   documented.
 - R11 partial (AI cost) — accepted for MVP with rate limiting; revisit with
   usage data.
+
+## 4. Prompt 29 additions (R18–R23)
+
+Added by the Prompt 29 reliability/observability round; severities reflect
+the state AFTER the shipped mitigations (drift/staleness detection is now
+continuous via readiness; recovery remains manual by design — see
+`docs/deployment/production-operations.md` §120 and
+`docs/deployment/release-rollback.md` §118/§119). Residual gaps recorded
+honestly: backup scheduling/offsite/encryption are operator duties
+(application-level backup encryption NOT IMPLEMENTED, §59); no paging or
+automated alerting exists; rate limiting stays process-local (§74).

@@ -1,9 +1,9 @@
 # Production Deployment Checklist (AI Business Copilot)
 
-**Document ID:** DEPLOY-CHECKLIST-v1.1
-**Phase:** Prompt 17 (created) · revised Prompt 18 (build gate, auth) & Prompt 19 (migration baseline, guards, health probe)
+**Document ID:** DEPLOY-CHECKLIST-v1.2
+**Phase:** Prompt 17 (created) · revised Prompt 18 (build gate, auth) & Prompt 19 (migration baseline, guards, health probe) · revised Prompt 29 (config check, readiness, backup automation, observability — §12)
 **Stack:** Next.js 16 App Router standalone · Prisma 6.11.1 + SQLite (`db/custom.db`) · NextAuth v4 · Caddy reverse proxy
-**Companions:** `docs/deployment/backup-restore-plan.md` · `docs/database/migration-workflow.md` · `docs/database/prompt19-baseline.md` · `docs/deployment/environment-variables.md`
+**Companions:** `docs/deployment/backup-restore-plan.md` · `docs/database/migration-workflow.md` · `docs/database/prompt19-baseline.md` · `docs/deployment/environment-variables.md` · Prompt 29 runbooks: `docs/deployment/production-operations.md` · `docs/deployment/first-production-deploy.md` · `docs/deployment/release-rollback.md` · `docs/security/observability-and-logging.md`
 
 All commands assume the repo root `/home/z/my-project`.
 
@@ -89,11 +89,14 @@ variables are added. Minimum set:
 | `NEXTAUTH_SECRET` | ✅ **prod throws without it** | NextAuth v4 JWT/JWE signing + encryption key (`src/lib/auth.ts:24-28`; production fails fast via next-auth's `NO_SECRET`) | Dev has a stable literal fallback (`auth.ts:26-28`) that is **disabled in production**; generate with `openssl rand -hex 32` (TDR §5, `:135`); rotating invalidates all sessions (`:132`) |
 | `NEXTAUTH_URL` | ✅ | Canonical origin NextAuth issues cookies against (TDR §5, `:133`) | Must match the externally reachable origin (scheme + host) or CSRF/session cookies fail behind the proxy |
 
-Also in `.env.example` (used by the Prompt-18 auth flows):
-`APP_BASE_URL` (base for password-reset links — never derived from request
-headers) and the reserved `EMAIL_*` block. Production **without**
-`EMAIL_SERVER_HOST` makes password-reset requests return a uniform `503`
-(`docs/security/password-recovery.md` §8/§11). No SMTP adapter is wired yet.
+Also in `.env.example`: `APP_BASE_URL` (base for password-reset links —
+never derived from request headers) and the `EMAIL_*` block. **Prompt 29
+update:** the real SMTP adapter is now wired (`src/lib/email/smtp-provider.ts`);
+production transport requires ALL of `EMAIL_SERVER_HOST` + `EMAIL_SERVER_PORT`
++ `EMAIL_FROM` (+ consistent credentials) with `EMAIL_SECURE=true` explicitly
+set — without a configured transport, password-reset requests STILL return a
+uniform `503` (`docs/security/password-recovery.md` §8/§11; honest 503, no
+fake readiness).
 
 **No other secrets exist** in this project today: the AI provider SDK is
 keyed through the platform, no SMTP credentials configured, no payment
@@ -156,15 +159,24 @@ Execute in order; do not skip verification steps:
 ## 8. Logs
 
 - stdout → `server.log` via the §2 command (`tee`); dev log is `dev.log`
-  (`package.json:6,8`).
-- The Prisma client logs every query (`log: ['query']`, `src/lib/db.ts:10`) —
-  expect chatty logs; watch disk usage and consider raising log level in a
-  future hardening pass (out of scope here).
+  (`package.json:6,8`). **Log rotation is the process manager's job, not the
+  app's** (Prompt 29 §38).
+- **Prompt 29 update:** the app now emits STRUCTURED JSON lines
+  (`src/lib/observability/logger.ts`) with recursive secret redaction and a
+  fixed event vocabulary; **production Prisma logging is warn + error only**
+  (`src/lib/db.ts:17-20`) — the old "logs every query" behavior is now
+  development-only. Full contract: `docs/security/observability-and-logging.md`.
 - The request pipeline returns generic errors to users and keeps diagnostics
   server-side (Constitution §7 "Error Handling",
   `docs/PROJECT-CONSTITUTION.md:361-364`).
 
 ## 9. Rollback plan
+
+Full policy (Prompt 29 §118/§119): **`docs/deployment/release-rollback.md`**
+— application rollback = redeploy previous artifact; database rollback is
+NEVER automatic (no `prisma migrate down`); recovery = verified backup
+restore (manual operator procedure) or a corrective ADDITIVE migration.
+Summary:
 
 1. **Application:** keep the previous release directory. Deployments go to a
    new tree (e.g. `/srv/app-<date>/.next/standalone`); on failure, stop the
@@ -203,3 +215,29 @@ Execute in order; do not skip verification steps:
   (`docs/deployment/backup-restore-plan.md` — the file-restore path was
   drill-verified on a clone in Prompt 19)
 - [ ] Launch-copy checklist reviewed (`docs/marketing/launch-readiness.md` §3)
+- [ ] Prompt 29 §12 checklist below: `production-config-check` exit 0,
+  `/api/ready` not blocked, verified backup + restore drill, request-ID and
+  logging policy confirmed
+
+## 12. Prompt 29 production tooling (config check, readiness, backup, observability)
+
+Prompt 29 added the deployment-safety tooling. The full operating sequence
+lives in **`docs/deployment/production-operations.md`** (§120 runbook); first
+bring-up in **`docs/deployment/first-production-deploy.md`** (§121). The
+go-live additions:
+
+| # | Check | How | Pass |
+|---|---|---|---|
+| 1 | **Production configuration** | `NODE_ENV=production node scripts/production-config-check.mjs` — mirrors `src/lib/config/production.ts` (startup + `/api/ready` authority); statuses only, never secret values | **exit 0** (`ACCEPTABLE`) BEFORE production startup; INVALID blocking findings must be fixed (advisory NOT_CONFIGURED states are honest and acceptable) |
+| 2 | **Email readiness** | `/api/ready` component `email` | CONFIGURED transport → `READY`; unconfigured → honest `NOT_CONFIGURED` (password reset returns uniform 503); invalid → `BLOCKED` (fix before launch) |
+| 3 | **Backup verification** | `node scripts/backup-db.mjs` then `node scripts/verify-backup.mjs <file>` | exit 0; sidecar `verified=true`; readiness `backups` not `STALE`/`NOT_CONFIGURED` (`BACKUP_MAX_AGE_HOURS`, default 26h) |
+| 4 | **Restore drill** | `node scripts/restore-drill.mjs` (isolated tmp clone; refuses production targets — exit 2/exit 3; writes `db/backups/last-restore-drill.json`) | `PASS` recorded; readiness `restoreDrill` READY (goes `STALE` past `RESTORE_DRILL_MAX_AGE_DAYS`, default 30) |
+| 5 | **Readiness endpoint** | `curl -fsS http://localhost:3000/api/ready` | 200; overall `ready`/`degraded` (never `blocked`); statuses + version only — public-safe |
+| 6 | **Request ID** | any API response | `X-Request-ID` present (8–64 chars `[A-Za-z0-9._-]` honored; malformed replaced by server UUID) |
+| 7 | **Logging policy** | observe `server.log` | JSON lines; production Prisma warn+error only; 4xx quiet / 5xx structured; no stack traces unless `SECURE_SERVER_DIAGNOSTICS=true` deliberately set; redaction per `docs/security/observability-and-logging.md` |
+| 8 | **Release preflight** | `node scripts/release-preflight.mjs` after an isolated `bun run build` | exit 0 — version authority in sync, standalone artifact + static + public present, Prisma client generated, migrations dir populated, `.env.example` contract intact |
+
+Migration gate reminder: before every `bun run db:migrate:deploy`, run
+`node scripts/production-preflight.mjs --gate` — it refuses (exit 1) without
+a verified backup, a readable migration state, a reachable database, or a
+valid schema (§45).

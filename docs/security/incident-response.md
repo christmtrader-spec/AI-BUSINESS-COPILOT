@@ -1,9 +1,9 @@
 # Incident Response Runbook
 
-**Document ID:** SEC-IR-v1
-**Round:** r27-docs-c
+**Document ID:** SEC-IR-v2
+**Round:** r27-docs-c · Prompt 29 update (request correlation, structured events, backup/restore evidence)
 **Spec refs:** Prompt-spec §70 (incident process), §201 (runbook); §147/§238/§240 (internal-only)
-**Basis:** `src/lib/audit.ts` + `AuditLog`, `src/lib/rate-limit.ts`, `dev.log`, `db/backups/` convention, `docs/database/migration-workflow.md`, `src/lib/auth.ts` (NEXTAUTH_SECRET), `src/lib/ai/cost/*`.
+**Basis:** `src/lib/audit.ts` + `AuditLog`, `src/lib/rate-limit.ts`, `src/lib/observability/*` (Prompt 29), `dev.log` / `server.log`, `db/backups/` convention, `docs/database/migration-workflow.md`, `src/lib/auth.ts` (NEXTAUTH_SECRET), `src/lib/ai/cost/*`.
 
 > **INTERNAL DOCUMENT — never linked from public pages.** This is the
 > operator runbook for responding to security incidents. It contains no
@@ -31,8 +31,9 @@
 |---|---|---|
 | Audit log | `AuditLog` table via `src/lib/audit.ts` | before/after JSON, IP, user-agent, actor; append-only; platform events have `businessId: null` |
 | Rate-limit counters | `src/lib/rate-limit.ts` | in-memory, per-process — lost on restart; useful only while the process lives |
-| Dev/runtime log | `dev.log` | AI failures, audit-write failures, server errors land in console output |
-| DB snapshots | `db/backups/` | operator-made pre-migration snapshots (e.g. `pre-prompt22-*.db`); **not an automated backup system** — existence of a snapshot for a given date is never assumed |
+| Dev/runtime log | `server.log` (prod) / `dev.log` (dev) | **Prompt 29:** structured JSON lines — one object per line, `requestId` on every request-scoped record; grep-able, redacted (§5 below) |
+| DB backups | `db/backups/` via `scripts/backup-db.mjs` + `scripts/verify-backup.mjs` | **Prompt 29 automation:** timestamped artifacts + SHA-256 sidecars; restore drill `scripts/restore-drill.mjs` records PASS/FAIL to `db/backups/last-restore-drill.json`. Scheduling is the operator's job (not auto-installed, §109) — existence of a backup for a given date is still never assumed |
+| Readiness signal | `GET /api/ready` (Prompt 29) | public-safe component statuses (`blocked` = database/migrations/mandatory config; `backups`/`restoreDrill` staleness) — useful as an incident impact check, not a root-cause source |
 | Migration discipline | `prisma/migrations/`, `docs/database/migration-workflow.md` | schema changes are forward-only migrations; recovery can rebuild schema, not necessarily data |
 | AI usage/cost ledger | `UsageEvent`, `AiCostRecord`, `AiCostAnomaly` | per-request token/cost trail for anomaly review |
 | Session invalidation | `User.sessionVersion` + `NEXTAUTH_SECRET` rotation | per-user bump or global JWT re-sign invalidation |
@@ -131,7 +132,67 @@ timeline, root cause, evidence inventory, severity call, what the runbook
 lacked, and concrete follow-ups (files, owners). Gaps become risks in
 `docs/RISK-REGISTER.md`.
 
-## 4. Example walkthrough — leaked AI provider key
+## 5. Request correlation & structured logging (Prompt 29 §24–§34, §80–§85)
+
+### Correlating a request across proxy + app + logs
+
+- **Every API response carries `X-Request-ID`** (route wrapper in
+  `src/lib/api-helpers.ts`; `/api/health` and `/api/ready` echo it too).
+  Ask the reporter for it, or read it from the browser network panel.
+- A client-supplied ID is honored only if 8–64 chars of `[A-Za-z0-9._-]`;
+  anything malformed is replaced by a server-generated UUID — an attacker
+  cannot poison the correlation stream.
+- **Search the logs by requestId** (all lines of a request carry the same
+  value):
+
+  ```bash
+  grep -F '"requestId":"<ID>"' server.log
+  ```
+
+- Widen the window by `route` and `ts`; pair with durable `AuditLog` rows
+  (actor/IP/before-after) for the same time frame.
+
+### Structured events and error classes
+
+- Fixed event vocabulary: `src/lib/observability/events.ts` — full catalog
+  and emission status in `docs/security/observability-and-logging.md` §5
+  (`api.request.failed`, `api.request.rate_limited`, `auth.password_reset.*`,
+  `database.connection.failed`, …).
+- Coarse error classes for triage: `validation`, `authentication`,
+  `authorization`, `rate_limit`, `not_found`, `conflict`, `dependency`,
+  `database`, `provider`, `timeout`, `internal` — mapped from HTTP status;
+  no internal detail ever leaves the server in an event.
+- Log-level discipline: expected 4xx are quiet (DEBUG; visible via domain
+  audit); 5xx-mapped states WARN; unhandled 500 ERROR with bounded
+  `errorName`/`errorMessage` — no bodies, no parameters.
+
+### Redaction guarantees (what is safe to paste into tickets)
+
+- Secret-shaped keys (`password`, `token`, `secret`, `authorization`,
+  `cookie`, `database_url`, `nextauth_secret`, `email_server_password`,
+  `merchant`, …) are `[REDACTED]` **recursively**, enforced in the logger
+  itself (§33).
+- Oversized string values are DROPPED to a length marker, never sliced — a
+  sensitive suffix cannot survive truncation (§34). Metadata is bounded
+  (8 KB / depth 4 / 20 array items / 40 object keys).
+- Stack traces never appear in production logs unless
+  `SECURE_SERVER_DIAGNOSTICS=true` was deliberately enabled (§28).
+
+### Backup / restore drill as incident recovery evidence
+
+- Before disruptive containment steps, snapshot the DB with
+  `node scripts/backup-db.mjs` (transaction-consistent, checksummed) — this
+  doubles as the forensic copy.
+- The **verified backup** (sidecar `verified=true` after
+  `scripts/verify-backup.mjs`) is the recovery anchor; the restore drill
+  (`scripts/restore-drill.mjs`, isolated temp clone, checksum-first) proves
+  restorability WITHOUT touching production and records PASS/FAIL in
+  `db/backups/last-restore-drill.json`.
+- Recovery procedures: `docs/deployment/production-operations.md` (runbook)
+  and `docs/deployment/release-rollback.md` (§118/§119). The production DB
+  is never overwritten automatically.
+
+## 6. Example walkthrough — leaked AI provider key
 
 Scenario: a `Z_AI_*` provider credential was committed to a public fork.
 
@@ -168,13 +229,19 @@ Scenario: a `Z_AI_*` provider credential was committed to a public fork.
 
 - The runbook is **procedural, not operational**: there is no on-call
   rotation, no paging, no ticketing system, no automated alerting. Detection
-  depends on humans reading logs/ledgers or external reports.
-- `db/backups/` snapshots are operator-made (pre-migration convention); no
-  scheduled backup job exists, so recovery-point objectives cannot be stated.
+  depends on humans reading logs/ledgers or external reports. (Prompt 29
+  improves the *material* — request IDs, structured redacted events,
+  readiness statuses — but nothing pages anyone.)
+- Backup automation SCRIPTS now exist (`scripts/backup-db.mjs` /
+  `verify-backup.mjs` / `restore-drill.mjs` / `prune-backups.mjs`), but
+  **scheduling is operator duty** (not auto-installed, §109) — recovery-point
+  objectives still cannot be stated until the operator actually schedules
+  them, and offsite + encryption remain manual (APPLICATION-LEVEL BACKUP
+  ENCRYPTION NOT IMPLEMENTED, §59).
 - Rate-limit counters and in-process state are lost on restart — post-incident
   analysis of abuse patterns may be impossible after containment restarts.
 - No timeframe commitments anywhere; Legal Review owns all external
   communication decisions and has not yet reviewed this document.
-- Missing tooling noted for the postmortem loop: automated secret scanning
-  (see `docs/ai/ai-data-security.md` verification section) and scheduled DB
-  backups (`docs/deployment/backup-restore-plan.md`).
+- Structured logs are stdout-only with operator-managed retention/rotation —
+  evidence older than the log retention is gone; durable facts live in the
+  audit tables.

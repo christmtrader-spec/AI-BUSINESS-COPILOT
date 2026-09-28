@@ -1,23 +1,25 @@
 /**
  * GET /api/v1/platform/system — safe readiness view (§59/§60/§85/§122).
  *
- * Every component reports ONLY: READY | NOT_CONFIGURED | BLOCKED | DISABLED.
- * NO secrets, NO raw environment dump (§85) — statuses are derived facts
- * from configuration/config modules/database state. Prompt-27 trust
- * configuration is REUSED (publicPlatformConfigSummary), never duplicated
- * (§60). Retention policy remains honestly reported as not configured
- * (§67/§118 — no invented periods).
+ * Prompt 29 §43: readiness computation is SHARED with /api/ready via
+ * src/lib/observability/readiness.ts — this route consumes the same result
+ * and adds operator-level detail. No duplicated readiness logic.
+ *
+ * Every component reports ONLY a status word plus safe detail strings
+ * (counts, never values). NO secrets, NO raw environment dump (§85).
+ * Prompt-27 trust configuration is REUSED (publicPlatformConfigSummary),
+ * never duplicated (§60). Retention policy remains honestly reported as not
+ * configured (§67/§118 — no invented periods).
  */
 import { NextRequest } from "next/server";
 import { route } from "@/lib/api-helpers";
 import { getPlatformContext, requirePlatformPermission } from "@/lib/platform/auth";
 import { platformOk } from "@/lib/platform/http";
-import { db } from "@/lib/db";
 import { publicPlatformConfigSummary } from "@/lib/legal/public-config";
-import { getAiCostHealth } from "@/lib/ai/cost/economics";
-import { listProviders } from "@/lib/payments/registry";
 import { getAiCostConfig } from "@/lib/ai/cost/config";
 import { getTrialConfig } from "@/lib/billing/trial-config";
+import { listProviders } from "@/lib/payments/registry";
+import { computeReadiness, type ReadinessComponent } from "@/lib/observability/readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -27,71 +29,68 @@ export const GET = route(async (req: NextRequest) => {
   const ctx = await getPlatformContext(req);
   requirePlatformPermission(ctx, "platform:system:read");
 
-  // Database + migration state (no connection strings).
-  let database: Status = "BLOCKED";
-  let migrationsApplied = 0;
-  let migrationsPending = 0;
-  try {
-    migrationsPending = await db.$queryRawUnsafe<number>(`
-      SELECT COUNT(*) as c FROM "_prisma_migrations" WHERE finished_at IS NULL
-    `).then((rows: unknown) => {
-      const arr = rows as Array<{ c: number | bigint }>;
-      return Number(arr[0]?.c ?? 0);
-    });
-    migrationsApplied = await db.$queryRawUnsafe<number>(`
-      SELECT COUNT(*) as c FROM "_prisma_migrations" WHERE finished_at IS NOT NULL
-    `).then((rows: unknown) => {
-      const arr = rows as Array<{ c: number | bigint }>;
-      return Number(arr[0]?.c ?? 0);
-    });
-    database = "READY";
-  } catch {
-    database = "BLOCKED";
-  }
+  const r = await computeReadiness();
 
-  // Payment readiness — honest, capability-derived (§123).
-  const providers = listProviders();
-  const activePaymentProviders = providers.filter((p) => p.usable && p.mode === "production");
-  const paymentStatus: Status =
-    activePaymentProviders.length > 0 ? "READY" : "NOT_CONFIGURED";
-
-  // AI provider + rate configuration (§124).
-  let aiProviderConfigured = false;
-  try {
-    const { getAI } = await import("@/lib/ai/provider");
-    const ai = getAI();
-    aiProviderConfigured = !!ai;
-  } catch {
-    aiProviderConfigured = false;
-  }
-  const health = await getAiCostHealth(30);
-  const aiRateStatus: Status =
-    health.verifiedRates > 0 ? "READY" : "NOT_CONFIGURED";
-
+  // Detailed AI-cost/guard/trial state (unchanged semantics).
   const costConfig = getAiCostConfig();
   const guardStatus: Status = costConfig.guardEnabled ? "READY" : "DISABLED";
+  const trialCfg = getTrialConfig();
+  const trialStatus: Status = trialCfg.enabled ? "READY" : "DISABLED";
+
+  // Payment capability detail (honest, capability-derived, §123).
+  const providers = listProviders();
+  const activePaymentProviders = providers.filter((p) => p.usable && p.mode === "production");
 
   // Trust configuration (Prompt 27 reuse, §60/§122).
   const trust = publicPlatformConfigSummary();
   const trustStatus = (s: string): Status =>
     s === "CONFIGURED" ? "READY" : s === "INVALID" ? "BLOCKED" : "NOT_CONFIGURED";
 
-  // Trial configuration state.
-  const trialCfg = getTrialConfig();
-  const trialStatus: Status = trialCfg.enabled ? "READY" : "DISABLED";
+  const map = (c: ReadinessComponent): Status =>
+    c === "READY" || c === "PARTIAL"
+      ? "READY"
+      : c === "DISABLED"
+        ? "DISABLED"
+        : c === "NOT_CONFIGURED" || c === "STALE" || c === "REQUIRES_REVIEW"
+          ? "NOT_CONFIGURED"
+          : "BLOCKED";
+
+  const lastBackup = r.internal.lastBackup;
+  const drill = r.internal.lastRestoreDrill;
 
   return platformOk({
     generatedAt: new Date().toISOString(),
+    overall: r.ready,
+    version: r.version,
     components: [
-      { key: "database", status: database, detail: "connectivity" },
+      { key: "database", status: map(r.components.database), detail: "connectivity" },
       {
         key: "migrations",
-        status: migrationsPending === 0 ? "READY" : "BLOCKED",
-        detail: `${migrationsApplied} applied / ${migrationsPending} pending`,
+        status: map(r.components.migrations),
+        detail: `${r.internal.migrationsApplied} applied / ${r.internal.migrationsPending} pending`,
       },
-      { key: "payments", status: paymentStatus, detail: activePaymentProviders.length > 0 ? "production provider active" : "no production provider active (sandbox only)" },
-      { key: "aiProvider", status: aiProviderConfigured ? "READY" : "NOT_CONFIGURED", detail: null },
-      { key: "aiCostRates", status: aiRateStatus, detail: `${health.verifiedRates} verified production-eligible rate(s)` },
+      {
+        key: "configuration",
+        status: map(r.components.configuration),
+        detail: r.internal.blockingProblems.length === 0 ? "mandatory production config satisfied" : `${r.internal.blockingProblems.length} blocking problem(s)`,
+      },
+      {
+        key: "email",
+        status: map(r.components.email),
+        detail:
+          r.components.email === "READY"
+            ? "SMTP transport configured"
+            : r.components.email === "BLOCKED"
+              ? "SMTP configuration invalid"
+              : "EMAIL_TRANSPORT_NOT_CONFIGURED",
+      },
+      { key: "payments", status: map(r.components.payments), detail: activePaymentProviders.length > 0 ? "production provider active" : "no production provider active (sandbox only)" },
+      { key: "aiProvider", status: r.components.aiCostRates === "READY" ? ("READY" as Status) : ("NOT_CONFIGURED" as Status), detail: null },
+      {
+        key: "aiCostRates",
+        status: map(r.components.aiCostRates),
+        detail: r.components.aiCostRates === "READY" ? "verified production-eligible rate(s) exist" : "no verified production rate (0)",
+      },
       { key: "aiCostGuard", status: guardStatus, detail: costConfig.guardEnabled ? "enabled" : "disabled (default)" },
       { key: "publicUrl", status: trustStatus(trust.publicBaseUrl.status), detail: null },
       { key: "https", status: trustStatus(trust.httpsOrigin.status), detail: null },
@@ -100,7 +99,28 @@ export const GET = route(async (req: NextRequest) => {
       { key: "privacyContact", status: trustStatus(trust.privacyContact.status), detail: null },
       { key: "legalContact", status: trustStatus(trust.legalContact.status), detail: null },
       { key: "securityContact", status: trustStatus(trust.securityContact.status), detail: null },
+      {
+        key: "legalReview",
+        status: r.components.legal === "READY" ? ("READY" as Status) : ("NOT_CONFIGURED" as Status),
+        detail: r.components.legal === "READY" ? "legal review completed" : "REQUIRES_REVIEW (effectiveDate pending)",
+      },
       { key: "trials", status: trialStatus, detail: trialCfg.enabled ? `${trialCfg.trialDays}d configured` : "disabled by configuration" },
+      {
+        key: "backups",
+        status: map(r.components.backups),
+        detail:
+          lastBackup && lastBackup.exists
+            ? `last backup ${lastBackup.verified ? "verified" : "UNVERIFIED"}${lastBackup.ageHours !== null ? `, ~${lastBackup.ageHours}h old` : ""}`
+            : "no verified backup manifest found",
+      },
+      {
+        key: "restoreDrill",
+        status: map(r.components.restoreDrill),
+        detail:
+          drill && drill.ranAt
+            ? `last drill ${drill.result}${drill.ageDays !== null ? `, ~${Math.round(drill.ageDays)}d ago` : ""}`
+            : "RESTORE_DRILL_NOT_RUN",
+      },
       {
         key: "retentionPolicy",
         // §67/§118 — honest: no automatic deletion policy is configured.

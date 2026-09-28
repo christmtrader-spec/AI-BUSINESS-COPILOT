@@ -16,6 +16,35 @@ Two layers of protection, both already supported by shipped code:
 
 ---
 
+## 0. Prompt 29 automation (implemented)
+
+Prompt 29 shipped the backup/verify/drill/prune automation. These scripts are
+the PRIMARY procedure from now on; the manual procedures below (§2 cold copy
+/ §4 file restore) remain documented as **fallback** when the tooling cannot
+run (e.g. scripting environment unavailable).
+
+| Script | What it does | Exit codes |
+|---|---|---|
+| `scripts/backup-db.mjs` | SQLite **`VACUUM INTO`** snapshot through a separate read-only connection — a **transaction-consistent online backup** (never a byte-copy of a live file, §47; bounded retry on SQLITE_BUSY, fail-safe if no consistent snapshot is obtainable). Computes **SHA-256** and validates the fresh artifact (`integrity_check` / `quick_check` / `foreign_key_check`) BEFORE declaring it valid (§50/§112/§114). Writes a **sidecar JSON** (§48) with timestamp, size, checksum, migration count, app version, environment, masked source path — never secrets. **Never overwrites** an existing backup (timestamped name, existence aborts, §46). | 0 = created + validated · 1 = failure (no valid backup declared) |
+| `scripts/verify-backup.mjs <file>` | Verifies WITHOUT altering the artifact: file exists/non-empty; **SHA-256 checksum vs sidecar** (mismatch = immediate FAIL, §113); opens as SQLite; integrity/quick/FK checks; migration metadata readable. On success it flips the sidecar's `verified=true` — the only mutation (metadata sidecar, never the `.db`). | 0 = verified · 1 = FAILED · 2 = usage |
+| `scripts/restore-drill.mjs` | Automated restore drill that **never touches production**: picks the named or latest VERIFIED backup; **checksum verified FIRST** (§113); copies to an **isolated tmp clone** (`os.tmpdir`); integrity checks on the clone; **entity row-count probes** (User, Business, Subscription, Customer, Product, Sale, Expense, AuditLog, UsageEvent, AiCostRecord, PlatformAuditLog — read-only); `prisma migrate status` against the clone for migration compatibility (§116); per-check **PASS/FAIL** report written to **`db/backups/last-restore-drill.json`** (read by the readiness component). **Refuses production targets (exit 2)** and refuses in-place restore even with `--allow-production-restore` (**exit 3 — in-place restore is NOT implemented**); the production DB is never overwritten automatically. | 0 = PASS · 1 = FAIL · 2 = production target rejected · 3 = in-place restore not implemented · 4 = usage |
+| `scripts/prune-backups.mjs` | Optional LOCAL retention cleanup. **Dry-run by default**; deletions only with explicit `--apply`. **Never deletes a backup without checksum metadata (sidecar)** — such artifacts are reported and SKIPPED (§56); the newest sidecar'd backup is always kept. Retention model: newest N distinct DAY + newest N distinct WEEK snapshots (`BACKUP_RETENTION_DAILY` default 7, `BACKUP_RETENTION_WEEKLY` default 4). **These are OPERATIONAL backup policies, NOT legal data-retention periods** (§57). | 0 = ok (dry-run or applied) · 1 = usage/IO error |
+
+Honest state (unchanged by the automation):
+
+- **Offsite copies remain a MANUAL operator duty** — no script ships backups
+  off-host; same-box backups do not survive disk loss. Verify the copy's
+  checksum at the destination.
+- **APPLICATION-LEVEL BACKUP ENCRYPTION NOT IMPLEMENTED** (§59 — verbatim).
+  The application does not encrypt backup artifacts; the operator MUST
+  encrypt at rest / in transit off-host (e.g. `age`/`gpg`, or provider-side
+  encryption at rest). Backups contain password hashes + session data —
+  treat them as the most sensitive artifact (§60).
+- Scheduling is the operator's decision — cron/systemd EXAMPLES (not
+  auto-installed, §109) live in `docs/deployment/production-operations.md` §4.
+
+---
+
 ## 1. What must be backed up
 
 | Artifact | Backup? | Why |
@@ -32,9 +61,12 @@ else exists.
 
 ---
 
-## 2. Backup procedure (SQLite db file)
+## 2. Backup procedure (SQLite db file) — MANUAL FALLBACK
 
 SQLite is a live file — never copy it with `cp` while the server writes.
+Prompt 29 note: the PRIMARY procedure is now `node scripts/backup-db.mjs` +
+`node scripts/verify-backup.mjs <file>` (§0 above) — the options below are
+the fallback when the script tooling cannot run.
 
 ### Option A — cold copy (simplest, default)
 
@@ -112,7 +144,15 @@ encrypted under a **different** key than the db backups (separation of
 secrets from data). Keys/procedures live with the operator's secrets manager,
 never in this repo.
 
-## 4. Restore procedure (db file)
+## 4. Restore procedure (db file) — MANUAL OPERATOR PROCEDURE
+
+Prompt 29 note: restore remains a MANUAL, documented operator procedure —
+nothing in the tooling ever overwrites the production database
+automatically (`scripts/restore-drill.mjs` refuses production targets,
+exit 2 / exit 3). Verify the chosen backup with
+`node scripts/verify-backup.mjs <file>` BEFORE this procedure, and run
+`node scripts/restore-drill.mjs` on the isolated clone first whenever time
+allows.
 
 ```bash
 # 1. STOP the server (kill the §2 process; verify port 3000 is free)
@@ -230,8 +270,15 @@ shipped and rate-limited:
 ## 7. Checklist sign-off
 
 - [ ] Daily Option-B job live, artifacts land off-host encrypted *(recommended — not yet implemented)*
+      Prompt 29 update: the automation SCRIPTS now exist (`scripts/backup-db.mjs`
+      + `verify-backup.mjs` + `prune-backups.mjs`); SCHEDULING them is the
+      operator's step (cron/systemd examples, `production-operations.md` §4 —
+      not auto-installed, §109). Offsite + encryption remain manual (§59).
 - [ ] Pre-upgrade cold snapshots on every deploy (production-checklist §9) — **done for the Prompt-19 baseline; standing rule** (`docs/database/migration-workflow.md` §3/§6)
-- [ ] Retention prune (7 daily / 4 weekly) running *(recommended — not yet implemented)*
+      Prompt 29 update: every deploy takes a script backup + verification
+      FIRST (`production-operations.md` §1 sequence; §45 migration gate
+      refuses to open without a verified backup).
+- [ ] Retention prune (7 daily / 4 weekly) running *(recommended — not yet implemented; script exists: `node scripts/prune-backups.mjs`, dry-run default, `--apply` to delete)*
 - [ ] `.env` backed up separately under a different key *(recommended — operator task at deploy time)*
 - [x] File-restore drill completed on a clone (§4.1, Prompt 19, 2026-09-23):
       integrity ok, FK check clean, counts/money match the inventory,

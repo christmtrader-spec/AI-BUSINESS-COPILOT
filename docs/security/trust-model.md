@@ -1,9 +1,9 @@
 # Trust Model — AI Business Copilot
 
-**Document ID:** SEC-TRUST-v1
-**Round:** r27-docs-c
+**Document ID:** SEC-TRUST-v2
+**Round:** r27-docs-c · Prompt 29 update (operational trust additions, §10)
 **Spec refs:** Prompt-spec §199 (trust model); §147/§238/§240 (internal-only placement)
-**Basis:** `src/lib/tenant.ts`, `src/lib/rbac.ts`, `src/lib/auth.ts`, `src/lib/auth-security.ts`, `src/lib/ai/provider.ts`, `src/lib/ai/snapshot.ts`, `src/lib/audit.ts`, `src/lib/payments/*`, `prisma/schema.prisma`, `next.config.ts`.
+**Basis:** `src/lib/tenant.ts`, `src/lib/rbac.ts`, `src/lib/auth.ts`, `src/lib/auth-security.ts`, `src/lib/ai/provider.ts`, `src/lib/ai/snapshot.ts`, `src/lib/audit.ts`, `src/lib/payments/*`, `src/lib/email/*`, `src/lib/observability/*`, `prisma/schema.prisma`, `next.config.ts`.
 **Companion docs:** `docs/security/authentication-current-state.md`, `docs/security/data-classification.md`, `docs/security/account-lifecycle.md`, `docs/ai/ai-cost-architecture.md`.
 
 > **INTERNAL DOCUMENT.** This file lives in `docs/security/` and is never linked
@@ -56,10 +56,15 @@ deliberately do **not** make. Every section ends in observable code, not intent.
   register 10/15 min per IP, password-change 10/15 min, reset request
   5/15 min per IP and 3/hour per email, reset confirm per-IP and per-token,
   account deletion 5/15 min. Full table: `docs/security/authentication-current-state.md` §4.
-- **Password reset stores only a SHA-256 hash** of a single-use 30-minute
+- **Password reset stores only a SHA-256 hash**
+  of a single-use 30-minute
   token; `requestedIp`/`userAgent` are recorded for after-the-fact review.
-  Email delivery uses a dev console transport today; production email is
-  **not configured and fails closed** (`503 RESET_DELIVERY_UNAVAILABLE`).
+  Email delivery: a real SMTP adapter exists (Prompt 29, behind the same
+  `EmailProvider` seam); **production stays NOT_CONFIGURED until the operator
+  supplies valid settings** — it still fails closed with the uniform
+  `503 RESET_DELIVERY_UNAVAILABLE` (no fake readiness), and the reset token
+  is persisted ONLY after successful delivery (send-before-persist, §13 of
+  the reset doc).
 - **Account deletion** requires password + typed `DELETE` + a fresh-session
   gate, is blocked with `409 OWNED_BUSINESS_BLOCKED` while the user owns a
   business, and writes platform-level audit `auth.account_deleted`.
@@ -155,14 +160,47 @@ from the copilot.
 - Financial rows use soft delete (`deletedAt`); no purge job exists — rows
   persist until business deletion.
 
-## 9. Explicit non-claims
+## 9. Operational trust additions (Prompt 29)
+
+Boundaries introduced by the Prompt 29 reliability/observability work, each
+ending in observable code:
+
+- **SMTP credentials are server-only and never logged.**
+  `EMAIL_SERVER_PASSWORD` is parsed in `src/lib/email/config.ts`, passed to
+  nodemailer in-process, and NEVER returned by any status/report/DTO/audit —
+  and even if code tried, the structured logger redacts
+  `email_server_password`-shaped keys by construction (§9/§33).
+- **Backups are the most sensitive artifact.** A database backup contains
+  password hashes AND session data — it must be stored encrypted / at-rest
+  protected, never web-served, never committed, and copied offsite (manual
+  operator duty) under encryption. **APPLICATION-LEVEL BACKUP ENCRYPTION NOT
+  IMPLEMENTED** (§59 — verbatim): the app does not encrypt backup artifacts;
+  the operator owns at-rest/off-host protection (§60).
+- **Observability redacts secrets by construction.** Redaction is enforced
+  inside the logger (recursive key rules, oversized values DROPPED not
+  sliced, bounded depth/size) — not delegated to call-site discipline
+  (`docs/security/observability-and-logging.md` §4). Stack traces are absent
+  from production logs unless `SECURE_SERVER_DIAGNOSTICS=true` is set
+  deliberately (§28).
+- **The readiness endpoint is public-safe by construction.**
+  `GET /api/ready` (and `publicReadinessDTO`) exposes overall
+  ready/degraded/blocked + per-component status words + version ONLY — no
+  migration names, no counts, no file paths, no backup names/timestamps, no
+  provider model names, no AI cost figures, no SMTP details (§42/§93/§172).
+  Detailed diagnostics stay in the operator-only Platform System view.
+
+## 10. Explicit non-claims
 
 We do **not** claim:
 
-1. **No CSP.** `next.config.ts` configures no security headers; there is no
-   Content-Security-Policy today.
+1. **No full CSP.** Only `frame-ancestors 'none'` is configured
+   (`next.config.ts`, Prompt 29 §98) alongside `X-Frame-Options: DENY`,
+   `nosniff`, `Referrer-Policy`, `Permissions-Policy`; HSTS only when
+   `PUBLIC_BASE_URL` is https. A full script/style CSP is future hardening —
+   not claimed today.
 2. **No encryption-at-rest claim.** SQLite storage is not field-level
-   encrypted; nothing in this repo asserts otherwise.
+   encrypted; nothing in this repo asserts otherwise. Backup artifacts are
+   likewise unencrypted at the application level (§9 above).
 3. **No transport guarantee.** HTTPS depends on hosting/deployment config
    (`PUBLIC_BASE_URL` https-flag is surfaced as readiness signal only); the
    application itself makes no transport promise.
@@ -175,11 +213,17 @@ We do **not** claim:
 
 - Enforced today: per-query tenancy, six-role RBAC with rank hierarchy,
   sessionVersion invalidation, rate limits, append-only audit, single AI seam
-  with structural context minimization, payment/AI-cost separation.
-- Gaps and dependencies: no CSP/security headers configured; transport and
-  at-rest protections are deployment concerns outside this repo; production
-  email and live payments are not configured (both fail closed); rate
-  limiting is in-memory only; legal/compliance review outstanding
-  (see `docs/audit/production-monetization-baseline.md`).
-- This model is a snapshot of the code as of r27-docs-c; any boundary change
-  must update this document in the same round.
+  with structural context minimization, payment/AI-cost separation,
+  request-ID correlation + redacted structured logging, fail-fast production
+  configuration gate, backup/verify/drill tooling with production-restore
+  refusal (all Prompt 29 unless noted).
+- Gaps and dependencies: full CSP is future hardening (frame-ancestors only);
+  transport and at-rest protections are deployment concerns outside this
+  repo; backup offsite copies and encryption are manual operator duties
+  (application-level backup encryption NOT IMPLEMENTED); production email
+  stays NOT_CONFIGURED until an operator supplies valid SMTP settings (fails
+  closed) and live payments are not configured (both fail closed); rate
+  limiting is in-memory, process-local only; legal/compliance review
+  outstanding (see `docs/audit/production-monetization-baseline.md`).
+- This model is a snapshot of the code as of the Prompt 29 round; any
+  boundary change must update this document in the same round.
