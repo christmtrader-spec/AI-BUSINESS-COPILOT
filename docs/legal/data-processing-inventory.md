@@ -122,6 +122,13 @@ summarized; the authoritative policy table is `docs/legal/data-retention-invento
 | Webhook replay ledger | `ProcessedWebhookEvent` | Replay protection for payment webhooks | S: provider event ids | Event ids originate from the payment provider | No | RETAINED (no purge path) | INTERNAL |
 | Contact leads | — no `ContactLead` model, no contact form; the pricing "Contact sales" CTA is a `mailto:` driven by `NEXT_PUBLIC_SALES_CONTACT` (disabled when unset) | — | — | No | No | **NOT IMPLEMENTED** — nothing is collected or stored | n/a |
 
+### 4.6 Platform operator data (Prompt 28)
+
+| Category | Examples (where stored) | Purpose · actor/context | Origin | Third-party processed | Exported? | Deleted? · Retention status | Class |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Platform operator records | `PlatformOperator` — id, `userId` (UNIQUE, ON DELETE CASCADE), `role`, `active`, timestamps | Authorizing the internal platform control plane (`/api/v1/platform/*`) · the operator (bootstrap via offline CLI or a super admin in the console) | S: id/active · O: role assignment (existing user only — no new identity data is collected; email/name live in `User`) | No | No | DELETED with the user account (cascade) — a deleted account can never leave a privileged row behind | HIGHLY_SENSITIVE (grants privileged access) |
+| Platform audit logs | `PlatformAuditLog` — operatorId (SetNull), `operatorRole` snapshot, action, entity/target references (plain strings, NO business FK), reason, sanitized before/after JSON, `requestId`, `ip?`, `userAgent?` | Tamper-evident history of sensitive operator actions (billing ops, session invalidation, operator management, AI-cost ops, pricing ops) · platform operators with `platform:audit:read` | S: operation envelopes · O: the human-written reason | No | No | RETAINED under business deletion by design (no business FK); operator link ANONYMIZED via SetNull when the operator row disappears; **retention period: CURRENTLY NOT EXPLICITLY CONFIGURED** | CONFIDENTIAL (contains IPs, user agents, operator/target references) |
+
 ## 5. Business data vs personal data
 
 The tenant/business split is the backbone of this inventory, and it is deliberately conservative:

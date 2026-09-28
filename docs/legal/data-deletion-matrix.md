@@ -56,6 +56,8 @@ operations. Status vocabulary as in the banner.
 | Contact Lead | — | — | — | **NOT IMPLEMENTED** (no model, no storage) |
 | LegalAcceptance | **DELETED** (cascade) | NOT AFFECTED (user-level evidence) | Append-only while account exists | DEPENDENT |
 | PasswordResetToken | **DELETED** (cascade) | NOT AFFECTED (user-level) | 30-min single-use expiry + opportunistic cleanup | DEPENDENT + time-based |
+| PlatformOperator (Prompt 28) | **DELETED** (cascade via `userId` — a deleted account can never leave a privileged row behind; no orphan, no silent preserved access) | NOT AFFECTED (platform-level; unrelated to business deletion) | Exists while the backing user exists; `active=false` is reversible deactivation, not deletion | DEPENDENT |
+| PlatformAuditLog (Prompt 28) | Rows **RETAINED**; `operatorId` **SetNull** (operator link removed, row stays — role is snapshotted so the record stays interpretable) | NOT AFFECTED — deliberately NO business foreign key; target ids are plain strings, so platform audit survives business deletion by design | Append-orientation: no update/delete code paths; **retention period CURRENTLY NOT EXPLICITLY CONFIGURED** (no purge job, no invented number) | RETAINED (retention policy undefined) |
 
 ## 3. Dependency walk-through (documentation-only "dry run")
 

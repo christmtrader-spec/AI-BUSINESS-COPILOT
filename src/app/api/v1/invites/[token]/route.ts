@@ -8,14 +8,15 @@
  * authorizes via the opaque one-time token. The token grants nothing
  * besides the described membership, and only while PENDING + unexpired.
  */
-import { NextRequest } from "next/server";
 import { getServerSession } from "next-auth";
+import { NextRequest } from "next/server";
 import { ApiError, ok, route } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { authOptions } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { asRole, ROLES } from "@/lib/rbac";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { assertFreshSession } from "@/lib/auth-security";
 
 export const dynamic = "force-dynamic";
 
@@ -44,11 +45,8 @@ function statusOf(
 
 export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   const { token } = await params;
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as { id?: string } | undefined)?.id;
-  if (!session || !userId) {
-    throw new ApiError(401, "UNAUTHENTICATED", "Please sign in to continue.");
-  }
+  // Prompt 18 §16 freshness gate (r28 hardening).
+  const userId = await assertFreshSession(await getServerSession(authOptions));
 
   const invite = await findInvite(token);
   if (!invite || !ROLES.includes(asRole(invite.role) as never)) {
@@ -71,11 +69,8 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
 
 export const POST = route(async (req: NextRequest, { params }: RouteParams) => {
   const { token } = await params;
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as { id?: string } | undefined)?.id;
-  if (!session || !userId) {
-    throw new ApiError(401, "UNAUTHENTICATED", "Please sign in to continue.");
-  }
+  // Prompt 18 §16 freshness gate (r28 hardening).
+  const userId = await assertFreshSession(await getServerSession(authOptions));
 
   // Brute-force guard: token guessing is capped hard.
   const rl = rateLimit(`invite-accept:${userId}`, 10, 5 * 60 * 1000);

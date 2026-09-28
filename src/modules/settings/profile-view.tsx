@@ -24,6 +24,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Activity } from "lucide-react";
+import { usePlatformSelf } from "@/modules/platform/use-platform-self";
 import { PageHeader } from "@/components/shared/primitives";
 
 type Me = { id: string; name: string | null; email: string; locale: string; createdAt: string };
@@ -105,6 +107,9 @@ export function ProfileView() {
 
   const [name, setName] = useState("");
   const [syncedName, setSyncedName] = useState<string | null>(null);
+
+  // Prompt 28 — operator capability probe (only when the profile renders).
+  const { data: platformSelf } = usePlatformSelf(true);
   // React "adjust state during render" pattern — avoids setState-in-effect.
   if (me && me.name !== syncedName) {
     setSyncedName(me.name);
@@ -375,6 +380,32 @@ export function ProfileView() {
           <p className="text-muted-foreground text-xs">{t("languageHint")}</p>
         </CardContent>
       </Card>
+
+      {/* Prompt 28 — platform console entry. Rendered ONLY when the server
+          says this user is a platform operator (§16): tenants never see the
+          entry point, and the entry itself is verified again server-side. */}
+      {platformSelf ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Activity className="text-primary size-4" aria-hidden="true" />
+              {t("platformCardTitle")}
+            </CardTitle>
+            <CardDescription className="text-muted-foreground">
+              {t("platformCardDesc")}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button
+              variant="outline"
+              onClick={() => useAppStore.getState().navigate({ kind: "platform", section: "overview" })}
+            >
+              <Activity className="size-4" aria-hidden="true" />
+              {t("platformCardOpen")}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>

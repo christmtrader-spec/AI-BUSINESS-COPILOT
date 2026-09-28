@@ -11,6 +11,7 @@ import { ProfileView } from "@/modules/settings/profile-view";
 import { OnboardingView, type CreatedBusiness } from "@/modules/onboarding/onboarding-view";
 import { JoinInviteView } from "@/modules/settings/join-invite-view";
 import { AppShell, useMembershipsQuery } from "./app-shell";
+import { PlatformRoot } from "@/modules/platform/platform-root";
 
 /**
  * Root orchestrator (single-page app shell).
@@ -165,6 +166,13 @@ export function AppRoot() {
   // may have zero businesses yet (that is the whole point of the link).
   if (view.kind === "join") {
     return <JoinInviteView token={view.token} />;
+  }
+
+  // Prompt 28 — the platform console is its OWN workspace: it renders
+  // without any business context (an operator may own zero businesses) and
+  // enforces its own authorization internally (server-derived, §11).
+  if (view.kind === "platform") {
+    return <PlatformRoot />;
   }
 
   if (isError) {

@@ -98,3 +98,11 @@ Two different kinds of "retained" exist and must not be conflated:
   this document intentionally does not guess the numbers. Legal pages (version `2026-09-v1`)
   make the same honest statements to users and carry the internal `legalReviewRequired` marker
   with `effectiveDate` null until review closes.
+
+## Platform operator data (Prompt 28 addition)
+
+| Data | Retention policy | Status |
+| --- | --- | --- |
+| `PlatformOperator` rows | Exist while the backing user exists (ON DELETE CASCADE). Deactivation is reversible state, not deletion. | Explicit: tied to account lifetime |
+| `PlatformAuditLog` rows | No automatic deletion, archival or purge path exists anywhere in the code. | **CURRENTLY NOT EXPLICITLY CONFIGURED** — no retention period is defined or invented; a written retention decision is a legal/operational task that has not happened yet |
+| Sanitized audit payloads | Size-bounded at write time (≤8,000 chars per payload, values truncated); no time-based cleanup | Unbounded in time (see row above) |

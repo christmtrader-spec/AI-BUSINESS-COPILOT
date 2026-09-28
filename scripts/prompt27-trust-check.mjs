@@ -255,6 +255,7 @@ for (const forbidden of ["passwordHash", "tokenHash", "costNanoMinor", "rateVers
 }
 
 // No tenant-facing AI-cost route may exist (P26 §220 — enforced structurally).
+const sep = process.platform === "win32" ? "\\" : "/";
 function* walk(dir) {
   for (const entry of readdirSync(dir)) {
     const p = join(dir, entry);
@@ -263,7 +264,12 @@ function* walk(dir) {
     else if (entry === "route.ts") yield p;
   }
 }
-const costRoutes = [...walk(`${ROOT}/src/app/api`)].filter((f) => /cost|rate/i.test(f));
+// Prompt 28 evolution: the /api/v1/platform/* namespace is the INTERNAL
+// operator control plane (platform:ai-cost:* gated, reauth + audited) — it
+// is NOT tenant-facing. The invariant stays: no TENANT route may touch cost.
+const costRoutes = [...walk(`${ROOT}/src/app/api`)].filter(
+  (f) => /cost|rate/i.test(f) && !f.includes(`${sep}platform${sep}`),
+);
 check("no tenant-facing AI cost routes exist", costRoutes.length === 0, costRoutes.join(", ") || "ok");
 
 /* ------------------------- F/G/H. Public honesty -------------------------- */

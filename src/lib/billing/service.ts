@@ -822,6 +822,112 @@ export async function reactivateSubscription(
 }
 
 /**
+ * Pause (Prompt 28 §25) — the ACTIVE → PAUSED path the state machine has
+ * always declared (nothing set PAUSED before Prompt 28). Operator-only in
+ * practice: the caller (platform API) enforces platform authorization;
+ * the SERVICE enforces the domain invariants:
+ *  - only ACTIVE → PAUSED (state machine §46);
+ *  - entitlements become unavailable the honest way — the effective plan
+ *    falls back to FREE-level features via the standard decidePlan path
+ *    (PAUSED is not an entitled status), data is never touched;
+ *  - no payment success is fabricated, no checkout is created;
+ *  - idempotent (§48): pausing a PAUSED subscription is a no-op;
+ *  - the matching SubscriptionEvent (PAUSED) + tenant audit are written in
+ *    the SAME transaction, and the entitlement cache is invalidated.
+ */
+export async function pauseSubscription(
+  businessId: string,
+  opts: { actorId?: string | null; source?: string; reason?: string } = {},
+): Promise<SubscriptionMutationResult> {
+  const result = await db.$transaction(
+    async (tx) => {
+      const sub = await loadSubscription(tx, businessId);
+      if (!sub) throw new BillingError("SUBSCRIPTION_NOT_FOUND", "No subscription exists for this business.");
+      const fromStatus = asSubscriptionStatus(sub.status);
+      if (fromStatus === "PAUSED") return { sub, changed: false as const };
+      assertTransition(fromStatus, "PAUSED");
+
+      const updated = await tx.subscription.update({
+        where: { id: sub.id },
+        data: { status: "PAUSED" },
+        include: { plan: true },
+      });
+      await eventAndAudit(tx, {
+        businessId,
+        subscriptionId: sub.id,
+        type: "PAUSED",
+        fromStatus,
+        toStatus: "PAUSED",
+        fromPlanCode: sub.plan.code,
+        data: { source: opts.source ?? "platform-admin", ...(opts.reason ? { reason: opts.reason.slice(0, 300) } : {}) },
+        actorId: opts.actorId ?? null,
+        auditAction: "billing.subscription_paused",
+        auditBefore: { status: fromStatus, planCode: sub.plan.code },
+        auditAfter: { status: "PAUSED" },
+      });
+      return { sub: updated as SubRow, changed: true as const };
+    },
+    { isolationLevel: "Serializable" },
+  );
+  invalidateBillingCache(businessId);
+  const decision = decidePlan(result.sub);
+  return {
+    subscription: subscriptionDto(
+      result.sub,
+      decision.kind === "own-plan" ? result.sub.plan.code : FREE_PLAN_CODE,
+      decision.entitled,
+    ),
+    changed: result.changed,
+  };
+}
+
+/**
+ * Resume (Prompt 28 §26) — the PAUSED → ACTIVE path. Only a PAUSED
+ * subscription can resume (idempotent on ACTIVE), the event is RESUMED and
+ * the entitlement cache is invalidated so paid features return instantly.
+ */
+export async function resumePausedSubscription(
+  businessId: string,
+  opts: { actorId?: string | null; source?: string; reason?: string } = {},
+): Promise<SubscriptionMutationResult> {
+  const result = await db.$transaction(
+    async (tx) => {
+      const sub = await loadSubscription(tx, businessId);
+      if (!sub) throw new BillingError("SUBSCRIPTION_NOT_FOUND", "No subscription exists for this business.");
+      const fromStatus = asSubscriptionStatus(sub.status);
+      if (fromStatus === "ACTIVE") return { sub, changed: false as const };
+      assertTransition(fromStatus, "ACTIVE");
+
+      const updated = await tx.subscription.update({
+        where: { id: sub.id },
+        data: { status: "ACTIVE" },
+        include: { plan: true },
+      });
+      await eventAndAudit(tx, {
+        businessId,
+        subscriptionId: sub.id,
+        type: "RESUMED",
+        fromStatus,
+        toStatus: "ACTIVE",
+        fromPlanCode: sub.plan.code,
+        data: { source: opts.source ?? "platform-admin", ...(opts.reason ? { reason: opts.reason.slice(0, 300) } : {}) },
+        actorId: opts.actorId ?? null,
+        auditAction: "billing.subscription_resumed",
+        auditBefore: { status: fromStatus },
+        auditAfter: { status: "ACTIVE" },
+      });
+      return { sub: updated as SubRow, changed: true as const };
+    },
+    { isolationLevel: "Serializable" },
+  );
+  invalidateBillingCache(businessId);
+  return {
+    subscription: subscriptionDto(result.sub, result.sub.plan.code, true),
+    changed: result.changed,
+  };
+}
+
+/**
  * Trial capability (§19) — domain support WITHOUT business policy: nothing
  * calls this automatically, there is no self-service UI, and the API
  * surface (POST /api/v1/billing/trial) is disabled unless the operator

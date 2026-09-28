@@ -427,12 +427,35 @@ async function main() {
   // 7. COPILOT STREAM SMOKE — real SSE round-trip: meta → deltas → done.
   // Asserts the grounding meta event (with counts) arrives first and at
   // least one answer delta follows. This consumes one real AI call.
+  // DURABLE FIX (P28, mirrors P26 BUG #5): the probe runs against a FRESH
+  // per-run business (the throwaway owner's), because sara's long-lived
+  // shop accumulates FREE-plan AI quota across rounds and would 422
+  // forever. The stream business is deleted right after, restoring the
+  // throwaway owner's BUSINESSES_MAX headroom for section 8.
+  let streamBizName: string | null = null;
   {
     try {
-      const f = jarFetch(sara);
+      const streamBiz = await api(smk, "/api/v1/businesses", undefined, {
+        method: "POST",
+        body: JSON.stringify({
+          name: `Smoke Stream Biz ${Date.now()}`,
+          currencyCode: "USD",
+          locale: "en",
+          timezone: "UTC",
+        }),
+      });
+      const SB = streamBiz.body?.data?.business?.id as string | undefined;
+      streamBizName = (streamBiz.body?.data?.business?.name as string) ?? null;
+      record(
+        "fixtures: fresh stream business created",
+        (streamBiz.status === 200 || streamBiz.status === 201) && !!SB,
+        `status ${streamBiz.status}`,
+      );
+      if (!SB) throw new Error("no stream business id");
+      const f = jarFetch(smk);
       const res = await f("/api/v1/copilot/stream", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-business-id": BID },
+        headers: { "content-type": "application/json", "x-business-id": SB },
         body: JSON.stringify({
           question: "How is my cash flow? (smoke probe)",
           days: 30,
@@ -470,6 +493,18 @@ async function main() {
         `${deltaCount} delta events`,
       );
       record("copilot stream: terminal done event", sawDone);
+      // Restore the throwaway owner's headroom (self-cleanup, §104-style).
+      if (SB && streamBizName) {
+        const del = await api(smk, `/api/v1/businesses/${SB}`, SB, {
+          method: "DELETE",
+          body: JSON.stringify({ confirmName: streamBizName }),
+        });
+        record(
+          "fixtures: stream business deleted (headroom restored)",
+          del.status === 200 || del.status === 204,
+          `status ${del.status}`,
+        );
+      }
     } catch (err) {
       record("copilot stream smoke", false, String(err));
     }

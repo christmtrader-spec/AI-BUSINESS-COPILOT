@@ -103,3 +103,25 @@ export function publicLegalConfigDTO(): PublicLegalConfigDTO {
     httpsOrigin: c.httpsOrigin,
   };
 }
+
+/**
+ * Prompt 28 — compact status map for the platform system/overview views.
+ * Values are NOT included here (only statuses) — the platform system view
+ * derives its honest READY/NOT_CONFIGURED/BLOCKED/DISABLED labels from
+ * this summary without ever dumping the environment (§59/§85).
+ */
+export function publicPlatformConfigSummary(): Record<
+  string,
+  { status: PublicConfigStatus | "DISABLED" }
+> {
+  const c = getPublicLegalConfig();
+  return {
+    legalIdentity: { status: c.companyLegalName.status },
+    publicBaseUrl: { status: c.baseUrl.status },
+    httpsOrigin: { status: c.httpsOrigin ? "CONFIGURED" : "NOT_CONFIGURED" },
+    supportContact: { status: c.supportEmail.status },
+    privacyContact: { status: c.privacyEmail.status },
+    legalContact: { status: c.legalEmail.status },
+    securityContact: { status: c.securityEmail.status },
+  };
+}

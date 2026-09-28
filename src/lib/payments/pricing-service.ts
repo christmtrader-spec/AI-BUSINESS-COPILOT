@@ -23,6 +23,7 @@
 
 import { db } from "@/lib/db";
 import { ApiError } from "@/lib/api-helpers";
+import { audit } from "@/lib/audit";
 import { FREE_PLAN_CODE } from "@/lib/billing/catalog";
 import { isBillingPeriod, type BillingPeriod } from "@/lib/billing/state-machine";
 import { defaultSettlementCurrency } from "./config";
@@ -351,4 +352,254 @@ export function providerSupportsCurrency(
 ): boolean {
   const list = provider.capabilities.currencies;
   return list.includes("*") || list.includes(currency.toUpperCase());
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 28 — OPERATOR PRICING ADMINISTRATION (§34/§35/§36/§37).
+//
+// Price administration is ENTITLEMENT administration, never payment:
+//  - createPriceBookVersion(): creates a NEW, INACTIVE, immutable book
+//    version. Historical PlanPrice amounts are NEVER mutated and referenced
+//    books are NEVER deleted (schema: CheckoutSession.priceBookId is
+//    onDelete: Restrict). A price change is ALWAYS a new version (§35).
+//  - activatePriceBook(): explicit, validated, audited activation. The only
+//    way pricing changes what customers pay — and the only way to "revert"
+//    is activating another version (§36).
+// Both reject FREE/ENTERPRISE price rows (§38/§39), demand exact integer
+// minor units and never convert currencies (§49: no FX anywhere).
+// ---------------------------------------------------------------------------
+
+type BookPriceInput = { planCode: string; billingPeriod: string; amountMinor: number };
+
+export type CreatePriceBookVersionInput = {
+  code: string;
+  version: string;
+  currency: string;
+  description?: string;
+  effectiveFrom: Date;
+  effectiveTo?: Date | null;
+  prices: BookPriceInput[];
+};
+
+/** Purchasable self-service plan rows required in EVERY book (§38/§39). */
+const REQUIRED_BOOK_PLANS = ["STARTER", "BUSINESS", "PRO"] as const;
+const REQUIRED_BOOK_PERIODS: readonly BillingPeriod[] = ["MONTHLY", "YEARLY"];
+
+const BOOK_CODE_RE = /^[A-Z0-9][A-Z0-9_]{1,63}$/;
+const BOOK_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$/;
+
+function pricebookError(code: string, message: string, details?: unknown): ApiError {
+  return new ApiError(422, code, message, details);
+}
+
+export async function createPriceBookVersion(
+  input: CreatePriceBookVersionInput,
+): Promise<{ id: string; code: string; version: string; currency: string; active: boolean }> {
+  const code = input.code?.trim() ?? "";
+  const version = input.version?.trim() ?? "";
+  if (!BOOK_CODE_RE.test(code)) {
+    throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "Book code must be 2-64 chars of A-Z, 0-9, underscore.", { field: "code" });
+  }
+  if (!BOOK_VERSION_RE.test(version)) {
+    throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "Version must be 2-64 chars (letters, digits, dot, dash, underscore).", { field: "version" });
+  }
+
+  const currency = normalizeCurrencyCode(input.currency);
+  if (!currency || !isSupportedSettlementCurrency(currency)) {
+    throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "The settlement currency is not supported.", {
+      field: "currency",
+    });
+  }
+  if (!(input.effectiveFrom instanceof Date) || Number.isNaN(input.effectiveFrom.getTime())) {
+    throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "effectiveFrom must be a valid date.", { field: "effectiveFrom" });
+  }
+  if (
+    input.effectiveTo != null &&
+    (!(input.effectiveTo instanceof Date) ||
+      Number.isNaN(input.effectiveTo.getTime()) ||
+      input.effectiveTo.getTime() <= input.effectiveFrom.getTime())
+  ) {
+    throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "effectiveTo must be after effectiveFrom.", {
+      field: "effectiveTo",
+    });
+  }
+
+  // Duplicate version is rejected (§36 duplicate-version validation).
+  const dup = await db.priceBook.findUnique({
+    where: { code_version: { code, version } },
+    select: { id: true },
+  });
+  if (dup) {
+    throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "A book with this code and version already exists.", {
+      reason: "DUPLICATE_VERSION",
+    });
+  }
+
+  // Rows: exactly the required plans × periods, exact positive integers,
+  // NO FREE/ENTERPRISE rows (§38/§39), no duplicates.
+  const seen = new Set<string>();
+  const validated: Array<{ planCode: string; billingPeriod: BillingPeriod; amountMinor: number }> = [];
+  for (const row of input.prices ?? []) {
+    if (!REQUIRED_BOOK_PLANS.includes(row.planCode as (typeof REQUIRED_BOOK_PLANS)[number])) {
+      throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "Only STARTER, BUSINESS and PRO carry prices.", {
+        field: "prices",
+        planCode: row.planCode ?? null,
+      });
+    }
+    if (!isBillingPeriod(row.billingPeriod)) {
+      throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "billingPeriod must be MONTHLY or YEARLY.", {
+        field: "prices",
+      });
+    }
+    const key = `${row.planCode}:${row.billingPeriod}`;
+    if (seen.has(key)) {
+      throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "Duplicate plan/period row.", { field: "prices", key });
+    }
+    seen.add(key);
+    if (!Number.isSafeInteger(row.amountMinor) || row.amountMinor <= 0 || row.amountMinor > MAX_AMOUNT_MINOR) {
+      throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "Amounts must be positive integer minor units.", {
+        field: "prices",
+        planCode: row.planCode,
+        billingPeriod: row.billingPeriod,
+      });
+    }
+    const plan = await db.plan.findUnique({ where: { code: row.planCode }, select: { active: true } });
+    if (!plan || !plan.active) {
+      throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "Prices can only be created for active plans.", {
+        field: "prices",
+        planCode: row.planCode,
+      });
+    }
+    validated.push({ planCode: row.planCode, billingPeriod: row.billingPeriod, amountMinor: row.amountMinor });
+  }
+
+  // Completeness (§36): every purchasable plan × every period must exist —
+  // a book that cannot resolve every self-service checkout is invalid.
+  for (const planCode of REQUIRED_BOOK_PLANS) {
+    for (const period of REQUIRED_BOOK_PERIODS) {
+      if (!seen.has(`${planCode}:${period}`)) {
+        throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "The book is missing a required plan price row.", {
+          reason: "MISSING_PLAN_PRICE",
+          planCode,
+          billingPeriod: period,
+        });
+      }
+    }
+  }
+
+  const created = await db.priceBook.create({
+    data: {
+      code,
+      version,
+      currency,
+      active: false, // created INACTIVE — activation is a separate, audited step
+      effectiveFrom: input.effectiveFrom,
+      effectiveTo: input.effectiveTo ?? null,
+      description: (input.description ?? "").slice(0, 300),
+      prices: { create: validated },
+    },
+  });
+  return { id: created.id, code: created.code, version: created.version, currency: created.currency, active: created.active };
+}
+
+/**
+ * Activation (§36): validated, explicit, audited. Overlap law:
+ *  - same code (a new version superseding its predecessor): the predecessor's
+ *    effectiveTo is closed at the new book's effectiveFrom — window metadata
+ *    only; amounts are NEVER touched;
+ *  - any OTHER active book of the same currency overlapping the window is
+ *    REJECTED (no ambiguous resolution, no cross-code surprises).
+ */
+export async function activatePriceBook(
+  bookId: string,
+  opts: { actorId?: string | null } = {},
+): Promise<{ id: string; code: string; version: string; currency: string; active: boolean }> {
+  const book = await db.priceBook.findUnique({ where: { id: bookId }, include: { prices: true } });
+  if (!book) {
+    throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "Price book not found.", { reason: "NOT_FOUND" });
+  }
+  if (book.active && (book.effectiveTo === null || book.effectiveTo.getTime() > Date.now())) {
+    // Already live — idempotent no-op (§74).
+    return { id: book.id, code: book.code, version: book.version, currency: book.currency, active: true };
+  }
+  if (!isSupportedSettlementCurrency(book.currency)) {
+    throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "The book currency is not supported.", { reason: "CURRENCY" });
+  }
+  if (book.effectiveTo !== null && book.effectiveTo.getTime() <= Date.now()) {
+    throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "The book's effective window has already ended.", {
+      reason: "EXPIRED_WINDOW",
+    });
+  }
+  // Completeness at activation time (§36) — plans may have been retired
+  // between creation and activation.
+  const rows = new Set(book.prices.filter((p) => p.active).map((p) => `${p.planCode}:${p.billingPeriod}`));
+  const activePlans = new Set(
+    (await db.plan.findMany({ where: { active: true }, select: { code: true } })).map((p) => p.code),
+  );
+  for (const planCode of REQUIRED_BOOK_PLANS) {
+    if (!activePlans.has(planCode)) {
+      throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "A required plan is no longer active.", {
+        reason: "PLAN_UNAVAILABLE",
+        planCode,
+      });
+    }
+    for (const period of REQUIRED_BOOK_PERIODS) {
+      if (!rows.has(`${planCode}:${period}`)) {
+        throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "The book is missing a required price row.", {
+          reason: "MISSING_PLAN_PRICE",
+          planCode,
+          billingPeriod: period,
+        });
+      }
+    }
+  }
+
+  // Overlap validation against OTHER active books of the same currency.
+  const overlappingActive = await db.priceBook.findMany({
+    where: {
+      currency: book.currency,
+      active: true,
+      id: { not: book.id },
+      effectiveFrom: { lte: book.effectiveTo ?? new Date("9999-12-31T23:59:59.999Z") },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gt: book.effectiveFrom } }],
+    },
+    select: { id: true, code: true, version: true, effectiveFrom: true, effectiveTo: true },
+  });
+  const crossCode = overlappingActive.filter((o) => o.code !== book.code);
+  if (crossCode.length > 0) {
+    throw pricebookError("PLATFORM_PRICEBOOK_INVALID", "Another active book for this currency overlaps the window.", {
+      reason: "OVERLAP",
+      books: crossCode.map((o) => o.code),
+    });
+  }
+  const superseded = overlappingActive.filter(
+    (o) => o.code === book.code && (o.effectiveTo === null || o.effectiveTo.getTime() > book.effectiveFrom.getTime()),
+  );
+
+  const updated = await db.$transaction(async (tx) => {
+    for (const o of superseded) {
+      await tx.priceBook.update({ where: { id: o.id }, data: { effectiveTo: book.effectiveFrom } });
+    }
+    const activated = await tx.priceBook.update({ where: { id: book.id }, data: { active: true } });
+    await audit(
+      {
+        businessId: null,
+        actorId: opts.actorId ?? null,
+        action: "pricing.book_activated",
+        entityType: "PriceBook",
+        entityId: book.id,
+        before: { active: book.active },
+        after: {
+          code: book.code,
+          version: book.version,
+          currency: book.currency,
+          effectiveFrom: book.effectiveFrom.toISOString(),
+          superseded: superseded.map((o) => `${o.code}@${o.version}`),
+        },
+      },
+      tx,
+    );
+    return activated;
+  });
+  return { id: updated.id, code: updated.code, version: updated.version, currency: updated.currency, active: updated.active };
 }

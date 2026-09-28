@@ -106,11 +106,18 @@ not occurred (the `legalReviewRequired` markers are still set).
 - Payments remain `BLOCKED` exactly as documented in
   `docs/billing/payment-production-checklist.md`; no blocker has been
   silently cleared.
-- The readiness check script (`scripts/legal-public-readiness.mjs`) was not
-  found in the repository at documentation time; the automation claim is
-  therefore aspirational, and this snapshot is the result of direct
-  inspection. Re-run against the script once it lands, and re-rate after
-  any config change.
+- The readiness check script (`scripts/legal-public-readiness.mjs`) exists
+  and aggregates the 14 categories into `tool-results/legal-public-readiness.json`;
+  re-run it after any configuration change. The Prompt 28 platform system
+  view (`#/platform/system`) reuses the same configuration modules and
+  reports the same honest statuses (READY / NOT_CONFIGURED / BLOCKED /
+  DISABLED) plus retention honesty (`CURRENTLY NOT EXPLICITLY CONFIGURED`).
+- Prompt 28 additions to the readiness picture: the internal platform
+  control plane is IMPLEMENTED (PlatformOperator + PlatformAuditLog +
+  platform RBAC + operator bootstrap) — this is operational readiness and
+  makes no legal claim; platform audit retention remains
+  `CURRENTLY NOT EXPLICITLY CONFIGURED`.
 - Next actions, in order: configure identity + contacts + HTTPS base URL →
   complete legal review → clear payment activation blockers → enter verified
-  AI production cost rates → re-run automated readiness checks.
+  AI production cost rates → define the platform-audit retention policy →
+  re-run automated readiness checks.

@@ -10,14 +10,15 @@
  * a well-defined entitlement state).
  */
 import { NextRequest } from "next/server";
-import { z } from "zod";
 import { getServerSession } from "next-auth";
+import { z } from "zod";
 import { db } from "@/lib/db";
 import { authOptions } from "@/lib/auth";
 import { ApiError, ok, parseBody, route } from "@/lib/api-helpers";
 import { audit } from "@/lib/audit";
 import { findCurrency } from "@/lib/currencies";
 import { rateLimit } from "@/lib/rate-limit";
+import { assertFreshSession } from "@/lib/auth-security";
 import { assertWithinBusinessesLimitTx, ensureSubscription, recordCommercialEvent } from "@/lib/billing";
 
 export const dynamic = "force-dynamic";
@@ -42,11 +43,10 @@ function slugify(name: string): string {
 }
 
 export const GET = route(async () => {
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as { id?: string } | undefined)?.id;
-  if (!session || !userId) {
-    throw new ApiError(401, "UNAUTHENTICATED", "Please sign in to continue.");
-  }
+  // Prompt 18 §16 freshness gate — a JWT stamped before a password
+  // change/reset or a platform security invalidation can never list
+  // memberships (r28: this route previously bypassed the checkpoint).
+  const userId = await assertFreshSession(await getServerSession(authOptions));
 
   const memberships = await db.businessMember.findMany({
     where: { userId },
@@ -77,11 +77,8 @@ export const GET = route(async () => {
 });
 
 export const POST = route(async (req: NextRequest) => {
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as { id?: string } | undefined)?.id;
-  if (!session || !userId) {
-    throw new ApiError(401, "UNAUTHENTICATED", "Please sign in to continue.");
-  }
+  // Prompt 18 §16 freshness gate (r28 hardening).
+  const userId = await assertFreshSession(await getServerSession(authOptions));
 
   // Audit hardening: bound business creation per user (in-memory MVP limiter).
   const rl = rateLimit(`business:create:${userId}`, 5, 60 * 60_000);

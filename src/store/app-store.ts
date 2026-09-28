@@ -26,7 +26,9 @@ export type AppView =
   | { kind: "join"; token: string }
   | { kind: "forgot-password" }
   | { kind: "reset-password"; token: string }
-  | { kind: "module"; module: string; /** optional sub-resource (e.g. reports ?month=YYYY-MM) */ param?: string };
+  | { kind: "module"; module: string; /** optional sub-resource (e.g. reports ?month=YYYY-MM) */ param?: string }
+  /** Prompt 28 — internal platform console (separate workspace, §15). */
+  | { kind: "platform"; section: PlatformSection };
 
 export const KNOWN_MODULES = [
   "customers",
@@ -44,6 +46,31 @@ export const KNOWN_MODULES = [
 
 export type KnownModule = (typeof KNOWN_MODULES)[number];
 
+/**
+ * Prompt 28 — platform console sections (§15). `security` is the grouped
+ * landing (audit + operators tabs per §87); `ai-cost` carries its internal
+ * tabs inside the view (§38).
+ */
+export const PLATFORM_SECTIONS = [
+  "overview",
+  "businesses",
+  "users",
+  "subscriptions",
+  "payments",
+  "pricing",
+  "ai-cost",
+  "security",
+  "audit",
+  "operators",
+  "system",
+] as const;
+
+export type PlatformSection = (typeof PLATFORM_SECTIONS)[number];
+
+export function isPlatformSection(value: string): value is PlatformSection {
+  return (PLATFORM_SECTIONS as readonly string[]).includes(value);
+}
+
 export function isKnownModule(value: string): value is KnownModule {
   return (KNOWN_MODULES as readonly string[]).includes(value);
 }
@@ -56,7 +83,9 @@ export function viewKeyOf(view: AppView): string {
       ? `join:${view.token}`
       : view.kind === "reset-password"
         ? `reset:${view.token}`
-        : view.kind;
+        : view.kind === "platform"
+          ? `platform:${view.section}`
+          : view.kind;
 }
 
 /**
@@ -89,6 +118,9 @@ export function viewToHash(view: AppView): string | null {
       return "#/settings/billing";
     case "profile":
       return "#/profile";
+    case "platform":
+      // #/platform itself resolves to the overview section (§15).
+      return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
     case "module": {
       if (!isKnownModule(view.module)) return null;
       // Module sub-state deep links (e.g. #/reports?month=YYYY-MM) stay in
@@ -122,6 +154,13 @@ export function hashToView(hash: string): AppView {
   if (path === "settings/members") return { kind: "settings:members" };
   if (path === "settings/billing") return { kind: "settings:billing" };
   if (path === "profile") return { kind: "profile" };
+  // Prompt 28 — platform console deep links (#/platform, #/platform/<section>).
+  if (path === "platform") return { kind: "platform", section: "overview" };
+  if (path.startsWith("platform/")) {
+    const section = path.slice("platform/".length);
+    if (isPlatformSection(section)) return { kind: "platform", section };
+    return { kind: "platform", section: "overview" };
+  }
   if (path.startsWith("join/")) {
     const token = path.slice("join/".length);
     // Opaque invite token: non-empty, bounded length (server validates the rest).

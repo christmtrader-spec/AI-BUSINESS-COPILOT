@@ -40,6 +40,7 @@ model User {
   passwordResetTokens PasswordResetToken[]
   subscriptionEvents SubscriptionEvent[]
   legalAcceptances LegalAcceptance[]
+  platformOperator PlatformOperator?
 }
 
 // ---------------------------------------------------------------------------
@@ -985,6 +986,81 @@ model AiCostAnomaly {
   @@unique([type, dedupeKey])
   @@index([status, createdAt])
   @@index([businessId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 28 — PLATFORM CONTROL PLANE (internal operator layer).
+//
+// HARD DOMAIN SEPARATION (docs/security/platform-admin-security.md):
+//   TENANT domain  (User/Business/BusinessMember + tenant RBAC) is a
+//   completely different authority from the PLATFORM domain. A business
+//   OWNER/ADMIN/... never gains platform access; a PlatformOperator gains
+//   platform access ONLY through its dedicated row + role (server-derived,
+//   never client-asserted).
+//
+// PlatformOperator:
+//  - userId is UNIQUE: one operator record per user, ever.
+//  - User remains the IDENTITY authority: no email/name/password here.
+//  - Deleting the User CASCADES the operator record — a deleted account can
+//    never leave a privileged row behind (no orphans, no silent access).
+//  - active=false instantly blocks every platform API (checked on every
+//    request) WITHOUT touching the user's tenant memberships (§120).
+//  - Roles: PLATFORM_SUPER_ADMIN | PLATFORM_SUPPORT | PLATFORM_BILLING |
+//    PLATFORM_AI_COST | PLATFORM_SECURITY | PLATFORM_READONLY (rbac in
+//    src/lib/platform/rbac.ts — never the tenant role set).
+//
+// PlatformAuditLog:
+//  - Deliberately has NO tenant-Business foreign key: platform audit must
+//    survive business deletion (§9). Target references are plain indexed
+//    strings, never relations.
+//  - operatorId is SetNull when the operator row disappears; the role at
+//    action time is snapshotted so the record stays interpretable.
+//  - Content law (§10): only allowlisted safe fields; never passwords,
+//    tokens, provider secrets, full AI prompts/responses or payment
+//    credentials. JSON payloads are size-bounded at write time.
+// ---------------------------------------------------------------------------
+
+model PlatformOperator {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  auditLogs PlatformAuditLog[]
+
+  @@index([role, active])
+}
+
+model PlatformAuditLog {
+  id               String   @id @default(cuid())
+  operatorId       String?
+  operator         PlatformOperator? @relation(fields: [operatorId], references: [id], onDelete: SetNull)
+  // Role snapshot — survives operator removal (SetNull above).
+  operatorRole     String?
+  action           String
+  entityType       String
+  entityId         String?
+  // Plain references (NO FK): audit outlives users/businesses on purpose.
+  targetUserId     String?
+  targetBusinessId String?
+  reason           String?
+  beforeJson       String?
+  afterJson        String?
+  requestId        String?
+  ip               String?
+  userAgent        String?
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action, createdAt])
+  @@index([entityType, entityId])
+  @@index([operatorId, createdAt])
+  @@index([targetUserId])
+  @@index([targetBusinessId])
+  @@index([requestId])
 }
 
 // ---------------------------------------------------------------------------
