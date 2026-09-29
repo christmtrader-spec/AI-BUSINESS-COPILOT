@@ -96,6 +96,15 @@ export const POST = route(async (req: NextRequest) => {
         data: { passwordHash, sessionVersion: { increment: 1 } },
       });
 
+      // Prompt 30 §361 — registry reflects the global invalidation.
+      await tx.userSession.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      // Prompt 30 §439 — password reset invalidates outstanding MFA login
+      // challenges (the version binding would reject them anyway, §438).
+      await tx.mfaLoginChallenge.deleteMany({ where: { userId: user.id } });
+
       await audit(
         {
           businessId: null,
@@ -113,6 +122,24 @@ export const POST = route(async (req: NextRequest) => {
 
       return undefined;
     });
+
+    // Prompt 30 §88 — durable security activity (§320: after transition).
+    const { SECURITY_EVENTS, recordSecurityEvent } = await import(
+      "@/lib/auth/security-events/service"
+    );
+    const resetUser = await db.passwordResetToken.findFirst({
+      where: { tokenHash },
+      select: { userId: true },
+    });
+    if (resetUser) {
+      await recordSecurityEvent({
+        eventType: SECURITY_EVENTS.passwordResetCompleted,
+        userId: resetUser.userId,
+        success: true,
+        ip,
+        userAgent: req.headers.get("user-agent"),
+      });
+    }
 
     return ok({
       message: `Your password has been changed. Your previous sessions were signed out — please sign in with your new password.`,

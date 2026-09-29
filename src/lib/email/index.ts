@@ -177,3 +177,80 @@ export function buildPasswordResetEmail(input: PasswordResetEmailInput): EmailMe
 
   return { to: input.to, subject, text: body, html };
 }
+
+/* ----------------------- email verification template ----------------------- */
+
+export type EmailVerificationEmailInput = {
+  to: string;
+  recipientName: string | null;
+  verificationUrl: string;
+  minutes: number;
+  locale: "en" | "fa";
+  appName: string;
+};
+
+/**
+ * Localized, branded email-verification email (Prompt 30 §14/§15/§427).
+ * Same hardening as the reset template: EVERY user-controlled value is
+ * escaped BEFORE interpolation (§16 — malicious recipientName/appName can
+ * never produce executable HTML). NEVER contains a password, MFA secret
+ * or recovery codes (§15/§137). The subject carries NO token (§427).
+ */
+export function buildEmailVerificationEmail(input: EmailVerificationEmailInput): EmailMessage {
+  const fa = input.locale === "fa";
+  const appNameSafe = escapeHtml(input.appName);
+  const nameSafe = input.recipientName ? escapeHtml(input.recipientName) : "";
+  const urlSafe = escapeHtml(input.verificationUrl);
+
+  const subject = fa
+    ? `${input.appName} — تأیید نشانی ایمیل`
+    : `${input.appName} — Verify your email address`;
+
+  const greetingHtml = fa
+    ? `سلام ${nameSafe}`.trim()
+    : `Hi ${nameSafe}`.trim();
+
+  const body = fa
+    ? [
+        `${fa ? "سلام" : "Hi"} ${input.recipientName ?? ""}`.trim() + ",",
+        "",
+        "برای تکمیل فعال‌سازی حساب خود، لطفاً نشانی ایمیل خود را تأیید کنید.",
+        `این پیوند فقط ${input.minutes} دقیقه معتبر است و فقط یک‌بار قابل استفاده است:`,
+        input.verificationUrl,
+        "",
+        "اگر شما این درخواست را نداده‌اید، این ایمیل را نادیده بگیرید.",
+        "برای امنیت بیشتر، هرگز این پیوند را با کسی به اشتراک نگذارید.",
+        "",
+        `— تیم ${input.appName}`,
+      ].join("\n")
+    : [
+        `${greetingHtml},`,
+        "",
+        "Please confirm your email address to finish securing your account.",
+        `This link is valid for ${input.minutes} minutes and can be used only once:`,
+        input.verificationUrl,
+        "",
+        "If you did not request this, you can safely ignore this email.",
+        "Never share this link with anyone.",
+        "",
+        `— The ${input.appName} team`,
+      ].join("\n");
+
+  const html = `<!doctype html><html dir="${fa ? "rtl" : "ltr"}" lang="${fa ? "fa" : "en"}"><body style="font-family:system-ui,-apple-system,Segoe UI,Tahoma,sans-serif;background:#f6f7f9;padding:24px;">
+<div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;padding:28px;">
+  <h1 style="font-size:18px;margin:0 0 12px;">${escapeHtml(subject)}</h1>
+  <p style="font-size:14px;line-height:1.7;color:#374151;">${greetingHtml},</p>
+  <p style="font-size:14px;line-height:1.7;color:#374151;">${fa
+    ? `برای تأیید نشانی ایمیل حساب خود روی دکمه زیر بزنید. پیوند ${input.minutes} دقیقه معتبر است و فقط یک‌بار کار می‌کند.`
+    : `Click the button below to verify your account's email address. The link works for ${input.minutes} minutes and only once.`}</p>
+  <p style="text-align:center;margin:24px 0;">
+    <a href="${urlSafe}" style="background:#059669;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-size:14px;display:inline-block;" rel="noopener">${fa ? "تأیید ایمیل" : "Verify email address"}</a>
+  </p>
+  <p style="font-size:12px;line-height:1.7;color:#6b7280;word-break:break-all;">${fa ? "اگر دکمه کار نکرد، این نشانی را در مرورگر خود بگشایید:" : "If the button does not work, paste this address into your browser:"}<br>${urlSafe}</p>
+  <p style="font-size:12px;line-height:1.7;color:#6b7280;">${fa ? "اگر شما این درخواست را نداده‌اید، این ایمیل را نادیده بگیرید." : "If you did not request this, you can safely ignore this email."}</p>
+  <p style="font-size:12px;color:#6b7280;border-top:1px solid #e5e7eb;padding-top:12px;margin-top:18px;">${fa ? "نکته امنیتی: این پیوند را هرگز با کسی به اشتراک نگذارید." : "Security note: never share this link with anyone."}</p>
+</div>
+</body></html>`;
+
+  return { to: input.to, subject, text: body, html };
+}

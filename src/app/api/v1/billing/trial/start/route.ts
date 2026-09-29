@@ -23,6 +23,12 @@ export const POST = route(async (req: NextRequest) => {
   // Trial = a commercial decision about the business → OWNER/ADMIN only.
   requirePermission(ctx, "settings:manage");
 
+  // Prompt 30 §10/§120/§473 — REQUIRED-mode email verification gate.
+  const { assertEmailVerifiedForCommercialAction } = await import(
+    "@/lib/auth/email-verification/gate"
+  );
+  await assertEmailVerifiedForCommercialAction(ctx.userId);
+
   const result = await startBusinessTrial(ctx.businessId, {
     actorId: ctx.userId,
     source: "api",

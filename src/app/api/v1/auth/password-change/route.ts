@@ -16,7 +16,6 @@ import { getServerSession } from "next-auth";
 import { ApiError, getClientIp, ok, parseBody, route } from "@/lib/api-helpers";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { audit } from "@/lib/audit";
 import { rateLimit } from "@/lib/rate-limit";
 import { assertFreshSession, passwordSchema } from "@/lib/auth-security";
 
@@ -78,19 +77,40 @@ export const POST = route(async (req: NextRequest) => {
       where: { id: userId },
       data: { passwordHash: newPasswordHash, sessionVersion: { increment: 1 } },
     });
-    await audit(
-      {
+    // Prompt 30 §219/§361 — the registry REFLECTS the global invalidation:
+    // every registered session is revoked in the same transaction
+    // (sessionVersion remains the actual kill switch, §82).
+    await tx.userSession.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    // Prompt 30 §438 — outstanding MFA login challenges die with the old
+    // security state (version binding also rejects them; belt & suspenders).
+    await tx.mfaLoginChallenge.deleteMany({ where: { userId } });
+    await tx.auditLog.create({
+      data: {
         businessId: null,
         actorId: userId,
         action: "auth.password_changed",
         entityType: "User",
         entityId: userId,
-        after: { sessionsInvalidated: true },
+        afterJson: JSON.stringify({ sessionsInvalidated: true }),
         ip: req.headers.get("x-forwarded-for"),
-        userAgent: req.headers.get("user-agent"),
+        userAgent: req.headers.get("user-agent")?.slice(0, 255) ?? null,
       },
-      tx,
-    );
+    });
+  });
+
+  // Prompt 30 §88 — durable security activity (after the transition, §320).
+  const { SECURITY_EVENTS, recordSecurityEvent } = await import(
+    "@/lib/auth/security-events/service"
+  );
+  await recordSecurityEvent({
+    eventType: SECURITY_EVENTS.passwordChanged,
+    userId,
+    success: true,
+    ip: req.headers.get("x-forwarded-for"),
+    userAgent: req.headers.get("user-agent"),
   });
 
   // Safe response: no secrets, no tokens. The client signs the user out.

@@ -1,6 +1,7 @@
 "use client";
 
-import { signOut, useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
+import { signOutWithRevoke } from "@/lib/sign-out-with-revoke";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { Check, ChevronsUpDown, Languages, LogOut, Moon, Plus, Search, Settings, Sun, UserRound } from "lucide-react";
@@ -168,7 +169,7 @@ export function UserMenu() {
           {tShell("businessSettings")}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => void signOut({ callbackUrl: "/" })}>
+        <DropdownMenuItem onClick={() => void signOutWithRevoke("/")}>
           <LogOut className="size-4" aria-hidden="true" />
           {tCommon("signOut")}
         </DropdownMenuItem>

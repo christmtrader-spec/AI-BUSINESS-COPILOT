@@ -80,6 +80,12 @@ export const POST = route(async (req: NextRequest) => {
   // Prompt 18 §16 freshness gate (r28 hardening).
   const userId = await assertFreshSession(await getServerSession(authOptions));
 
+  // Prompt 30 §10/§120 — REQUIRED-mode email verification gate.
+  const { assertEmailVerifiedForCommercialAction } = await import(
+    "@/lib/auth/email-verification/gate"
+  );
+  await assertEmailVerifiedForCommercialAction(userId);
+
   // Audit hardening: bound business creation per user (in-memory MVP limiter).
   const rl = rateLimit(`business:create:${userId}`, 5, 60 * 60_000);
   if (!rl.allowed) {

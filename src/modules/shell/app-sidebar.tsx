@@ -11,6 +11,7 @@ import {
   PanelLeftOpen,
   ScrollText,
   Settings,
+  ShieldCheck,
   ShoppingCart,
   Truck,
   UserRound,
@@ -63,6 +64,7 @@ type NavItem = {
     | "teamMembers"
     | "settings"
     | "billing"
+    | "security"
     | "profile";
   icon: LucideIcon;
   soon?: boolean;
@@ -94,6 +96,7 @@ const PLATFORM: NavItem[] = [
   { view: { kind: "settings:members" }, labelKey: "teamMembers", icon: Users },
   { view: { kind: "settings:business" }, labelKey: "settings", icon: Settings },
   { view: { kind: "settings:billing" }, labelKey: "billing", icon: CreditCard },
+  { view: { kind: "settings:security" }, labelKey: "security", icon: ShieldCheck },
   { view: { kind: "profile" }, labelKey: "profile", icon: UserRound },
 ];
 

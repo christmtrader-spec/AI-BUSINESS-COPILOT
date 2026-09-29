@@ -45,7 +45,7 @@ const MAX_ARRAY_ITEMS = 20;
 const MAX_OBJECT_KEYS = 40;
 
 const REDACT_KEY_RE =
-  /(password|passwd|secret|token|apikey|api_key|api-key|authorization|cookie|database_url|nextauth_secret|email_server_password|merchant|credential|private_key|client_secret)/i;
+  /(password|passwd|secret|token|apikey|api_key|api-key|authorization|cookie|database_url|nextauth_secret|email_server_password|merchant|credential|private_key|client_secret|otp|mfa|recovery|assertion|challenge)/i;
 const REDACTED = "[REDACTED]";
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {

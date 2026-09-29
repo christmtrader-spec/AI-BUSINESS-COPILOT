@@ -8,6 +8,8 @@ import { dirOf } from "@/i18n/config";
 import { Splash } from "@/components/shared/primitives";
 import { AuthView } from "@/modules/auth/auth-view";
 import { ProfileView } from "@/modules/settings/profile-view";
+import { VerifyEmailView } from "@/modules/settings/verify-email-view";
+import { SecurityCenterView } from "@/modules/settings/security-view";
 import { OnboardingView, type CreatedBusiness } from "@/modules/onboarding/onboarding-view";
 import { JoinInviteView } from "@/modules/settings/join-invite-view";
 import { AppShell, useMembershipsQuery } from "./app-shell";
@@ -154,6 +156,13 @@ export function AppRoot() {
     return <AuthView />;
   }
 
+  // Prompt 30 §250 — the email-verification landing renders BEFORE the
+  // auth gate: the confirm endpoint is anonymous-with-token (§161) and the
+  // success state must be visible even for a signed-out user.
+  if (view.kind === "verify-email") {
+    return <VerifyEmailView token={view.token} />;
+  }
+
   if (!authenticated) {
     return <AuthView />;
   }
@@ -183,14 +192,14 @@ export function AppRoot() {
 
   const list = memberships ?? [];
 
-  // Prompt 18 §35 — account lifecycle operations (profile → change password /
-  // delete account) must NEVER require an active business: a user with zero
-  // businesses can still manage their own account standalone.
-  if (list.length === 0 && view.kind === "profile") {
+  // Prompt 18 §35 / Prompt 30 §92 — account lifecycle operations (profile,
+  // account security) must NEVER require an active business: a user with
+  // zero businesses can still manage their own account standalone.
+  if (list.length === 0 && (view.kind === "profile" || view.kind === "settings:security")) {
     return (
       <main className="bg-background min-h-svh">
         <div className="mx-auto w-full max-w-2xl px-4 py-8">
-          <ProfileView />
+          {view.kind === "settings:security" ? <SecurityCenterView /> : <ProfileView />}
         </div>
       </main>
     );

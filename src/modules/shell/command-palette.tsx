@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useTranslations } from "next-intl";
-import { signOut } from "next-auth/react";
+import { signOutWithRevoke } from "@/lib/sign-out-with-revoke";
 import { useTheme } from "next-themes";
 import {
   ArrowUpRight,
@@ -18,6 +18,7 @@ import {
   Package,
   ScrollText,
   Settings,
+  ShieldCheck,
   ShoppingCart,
   Sun,
   Truck,
@@ -57,6 +58,7 @@ type PaletteNavKey =
   | "audit"
   | "teamMembers"
   | "settings"
+  | "security"
   | "profile";
 
 type PaletteItem = {
@@ -82,6 +84,7 @@ const NAV_ITEMS: PaletteItem[] = [
   { view: { kind: "audit" }, labelKey: "audit", icon: ScrollText, permission: "audit:read" },
   { view: { kind: "settings:members" }, labelKey: "teamMembers", icon: Users },
   { view: { kind: "settings:business" }, labelKey: "settings", icon: Settings },
+  { view: { kind: "settings:security" }, labelKey: "security", icon: ShieldCheck },
   { view: { kind: "profile" }, labelKey: "profile", icon: UserRound },
 ];
 
@@ -195,7 +198,7 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
             value={tCommon("signOut")}
             onSelect={() => {
               setOpen(false);
-              void signOut({ callbackUrl: "/" });
+              void signOutWithRevoke("/");
             }}
           >
             <LogOut className="text-muted-foreground" aria-hidden="true" />

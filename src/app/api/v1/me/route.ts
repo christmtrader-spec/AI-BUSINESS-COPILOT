@@ -42,6 +42,9 @@ const deleteSchema = z.object({
   password: z.string().min(1).max(200),
   /** Explicit typed confirmation phrase (destructive action, §31). */
   confirmation: z.literal("DELETE"),
+  /** Prompt 30 §147 — REQUIRED when the account has MFA enabled: proves
+   * the current TOTP factor. The legacy schema stays compatible (optional). */
+  mfaCode: z.string().trim().min(6).max(12).optional(),
 });
 
 export const GET = route(async () => {
@@ -102,6 +105,35 @@ export const DELETE = route(async (req: NextRequest) => {
     throw new ApiError(400, "INVALID_CURRENT_PASSWORD", "The password is incorrect.");
   }
 
+  // Prompt 30 §147/§471 — MFA-enabled accounts need the current TOTP factor
+  // for deletion. The existing checks are NOT weakened: password + typed
+  // DELETE remain mandatory. (Recovery codes are NOT accepted here — §318:
+  // the documented recovery path for a lost device is disable-MFA first.)
+  const mfaCredential = await db.mfaCredential.findUnique({
+    where: { userId },
+    select: { id: true, enabledAt: true, encryptedSecret: true },
+  });
+  if (mfaCredential?.enabledAt != null) {
+    if (!input.mfaCode) {
+      throw new ApiError(400, "MFA_CODE_REQUIRED", "Enter your authentication code to delete the account.");
+    }
+    const { verifyMfaCodeForCredential } = await import("@/lib/auth/mfa/service");
+    const result = await verifyMfaCodeForCredential(
+      {
+        id: mfaCredential.id,
+        userId,
+        encryptedSecret: mfaCredential.encryptedSecret,
+        enabledAt: mfaCredential.enabledAt,
+        lastUsedTotpStep: null,
+      },
+      input.mfaCode,
+      { enforceReplay: false },
+    );
+    if (!result.ok) {
+      throw new ApiError(400, "MFA_INVALID_CODE", "Invalid authentication code.");
+    }
+  }
+
   // §18.8-10 — ownership constraint: resolve BEFORE destroying anything.
   const owned = await db.business.findMany({
     where: { ownerId: userId },
@@ -137,6 +169,9 @@ export const DELETE = route(async (req: NextRequest) => {
     );
     await tx.user.delete({ where: { id: userId } });
   });
+
+  // §472 — cascade removes UserSession/MFA/recovery/challenge/verification
+  // and SecurityEvent rows (schema onDelete: Cascade, documented §295).
 
   return ok({ deleted: true, sessionsInvalidated: true });
 });

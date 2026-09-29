@@ -20,6 +20,7 @@ import { getAiCostConfig } from "@/lib/ai/cost/config";
 import { getTrialConfig } from "@/lib/billing/trial-config";
 import { listProviders } from "@/lib/payments/registry";
 import { computeReadiness, type ReadinessComponent } from "@/lib/observability/readiness";
+import { getProductionConfigReport } from "@/lib/config/production";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +46,9 @@ export const GET = route(async (req: NextRequest) => {
   const trust = publicPlatformConfigSummary();
   const trustStatus = (s: string): Status =>
     s === "CONFIGURED" ? "READY" : s === "INVALID" ? "BLOCKED" : "NOT_CONFIGURED";
+
+  // Prompt 30 §186 — identity-security posture (same shared report, §43).
+  const report = getProductionConfigReport();
 
   const map = (c: ReadinessComponent): Status =>
     c === "READY" || c === "PARTIAL"
@@ -120,6 +124,23 @@ export const GET = route(async (req: NextRequest) => {
           drill && drill.ranAt
             ? `last drill ${drill.result}${drill.ageDays !== null ? `, ~${Math.round(drill.ageDays)}d ago` : ""}`
             : "RESTORE_DRILL_NOT_RUN",
+      },
+      {
+        // Prompt 30 §186 — MFA capability state (safe: never key material).
+        key: "mfa",
+        status: map(r.components.mfa),
+        detail:
+          report.identitySecurity.mfaState === "DISABLED"
+            ? "MFA_ENABLED=false (capability off)"
+            : report.identitySecurity.mfaState === "ENABLED_CONFIGURED"
+              ? "ENABLED_CONFIGURED (encryption key valid)"
+              : "BLOCKED_CONFIGURATION (encryption key invalid/missing)",
+      },
+      {
+        // Prompt 30 §186 — email-verification mode (safe mode name only).
+        key: "emailVerification",
+        status: map(r.components.emailVerification),
+        detail: `AUTH_EMAIL_VERIFICATION_MODE=${report.identitySecurity.emailVerificationState}`,
       },
       {
         key: "retentionPolicy",

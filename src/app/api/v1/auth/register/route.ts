@@ -2,6 +2,17 @@
  * POST /api/v1/auth/register — create a user account (A14: validation,
  * bcrypt hashing, rate limiting). Does NOT auto-create a business;
  * onboarding does that after first sign-in.
+ *
+ * Prompt 30 (§12/§13) — email verification:
+ *  - mode OFF: unchanged behavior (no verification email, no token).
+ *  - mode OPTIONAL/REQUIRED: after the user row commits, a verification
+ *    email is sent with SEND-BEFORE-PERSIST semantics — the token is
+ *    persisted ONLY after provider.send() resolves (§13). A failed send
+ *    leaves NO token and an honest verificationEmailSent:false — the
+ *    account exists and the user can resend later from the authenticated
+ *    security center (documented §13 policy). No SMTP error is exposed
+ *    and account existence is not affected (registration already reveals
+ *    EMAIL_TAKEN by design — §143 unchanged).
  */
 import { NextRequest } from "next/server";
 import bcrypt from "bcryptjs";
@@ -85,5 +96,47 @@ export const POST = route(async (req: NextRequest) => {
     dedupeKey: `signup:${user.id}`,
   });
 
-  return ok({ user }, 201);
+  // Prompt 30 §12 — verification email per configured mode (default OFF:
+  // existing behavior preserved, §8/§449).
+  const { emailVerificationMode, issueEmailVerificationToken, buildEmailVerificationLink } = await import(
+    "@/lib/auth/email-verification/service"
+  );
+  const mode = emailVerificationMode();
+  let verificationEmailSent: boolean | undefined;
+  if (mode !== "OFF") {
+    try {
+      const { buildEmailVerificationEmail, getEmailProvider } = await import("@/lib/email");
+      const { EMAIL_VERIFICATION_TTL_MINUTES } = await import("@/lib/auth/config");
+      const provider = getEmailProvider(); // throws in production without SMTP (§13-analog)
+      const { generateResetToken, hashResetToken } = await import("@/lib/auth-security");
+      const rawToken = generateResetToken();
+      const verificationUrl = buildEmailVerificationLink(rawToken);
+      const message = buildEmailVerificationEmail({
+        to: user.email,
+        recipientName: user.name,
+        verificationUrl,
+        minutes: EMAIL_VERIFICATION_TTL_MINUTES,
+        locale: "en", // registration is EN-first; the resend endpoint honors the profile locale
+        appName: "AI Business Copilot",
+      });
+      // §12/§13 — DELIVER FIRST; persist only on success (no token that
+      // "appears usable" while nothing went out). The SAME rawToken is
+      // persisted so the emailed link matches the stored hash exactly.
+      await provider.send(message);
+      await issueEmailVerificationToken({
+        userId: user.id,
+        rawToken,
+        ip: getClientIp(req),
+        userAgent: req.headers.get("user-agent"),
+      });
+      verificationEmailSent = true;
+    } catch {
+      // §13 — honest operational state; the account is usable per mode
+      // semantics and the user can resend after signing in. No SMTP error,
+      // no token, no fake success (§221).
+      verificationEmailSent = false;
+    }
+  }
+
+  return ok({ user, verificationEmailSent }, 201);
 });

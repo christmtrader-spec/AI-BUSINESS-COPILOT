@@ -26,6 +26,7 @@ import { CopilotView } from "../copilot/copilot-view";
 import { BusinessSettingsView } from "../settings/business-settings-view";
 import { MembersView } from "../settings/members-view";
 import { ProfileView } from "../settings/profile-view";
+import { SecurityCenterView } from "../settings/security-view";
 import { SubscriptionView } from "../billing/subscription-view";
 import { PaymentReturnView } from "../billing/payment-return-view";
 import { AuditView } from "../audit/audit-view";
@@ -44,6 +45,8 @@ function labelKeyOf(view: AppView): string {
       return "teamMembers";
     case "settings:billing":
       return "billing";
+    case "settings:security":
+      return "security";
     case "profile":
       return "profile";
     case "module": {
@@ -163,6 +166,7 @@ export function AppShell({
               {view.kind === "settings:billing" ? (
                 <SubscriptionView business={membership!.business} role={role} />
               ) : null}
+              {view.kind === "settings:security" ? <SecurityCenterView /> : null}
               {view.kind === "profile" ? <ProfileView /> : null}
               {view.kind === "audit" ? <AuditView membership={membership!} /> : null}
               {view.kind === "module" ? (
@@ -220,11 +224,30 @@ export function AppShell({
 }
 
 export function useMembershipsQuery(enabled: boolean) {
+  const queryClient = useQueryClient();
   return useQuery<BusinessListItem[]>({
     queryKey: ["businesses"],
-    queryFn: () => api("/api/v1/businesses", { businessId: null }),
+    queryFn: async () => {
+      const res = await fetch("/api/v1/businesses", { credentials: "same-origin" });
+      let body: unknown = null;
+      try { body = await res.json(); } catch { /* non-JSON */ };
+      const err = (body as { error?: { code?: string } } | null)?.error;
+      if (!res.ok) {
+        // Prompt 30 §83/§229 — a globally invalidated session (password
+        // change / MFA enable / admin kill switch) must land the user on
+        // the sign-in view, never a permanent splash. Clear the stale
+        // cookie client-side; NextAuth's session state flips to signed-out.
+        if (res.status === 401 || err?.code === "SESSION_INVALIDATED" || err?.code === "SESSION_REVOKED") {
+          queryClient.clear();
+          void import("next-auth/react").then((m) => m.signOut({ redirect: false }));
+        }
+        throw new Error(err?.code ?? `HTTP_${res.status}`);
+      }
+      return (body as { data: BusinessListItem[] }).data;
+    },
     enabled,
     staleTime: 60_000,
+    retry: false,
   });
 }
 

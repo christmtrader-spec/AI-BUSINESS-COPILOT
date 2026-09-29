@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { signOut } from "next-auth/react";
+import { signOutWithRevoke } from "@/lib/sign-out-with-revoke";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import {
@@ -449,7 +449,7 @@ export function OnboardingView({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => void signOut({ callbackUrl: "/" })}
+                    onClick={() => void signOutWithRevoke("/")}
                   >
                     {t("signOutInstead")}
                   </Button>

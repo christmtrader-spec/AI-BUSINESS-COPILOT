@@ -55,6 +55,9 @@ export type ReadinessComponents = {
   legal: ReadinessComponent;
   backups: ReadinessComponent;
   restoreDrill: ReadinessComponent;
+  /** Prompt 30 §186 — identity-security posture (safe states only). */
+  mfa: ReadinessComponent;
+  emailVerification: ReadinessComponent;
 };
 
 export type ReadinessResult = {
@@ -189,6 +192,9 @@ export async function computeReadiness(): Promise<ReadinessResult> {
     legal: "REQUIRES_REVIEW",
     backups: "NOT_CONFIGURED",
     restoreDrill: "NOT_CONFIGURED",
+    // Prompt 30 §186 — honest identity-security states.
+    mfa: "DISABLED",
+    emailVerification: "DISABLED",
   };
   const internal: ReadinessResult["internal"] = {
     migrationsApplied: 0,
@@ -218,6 +224,23 @@ export async function computeReadiness(): Promise<ReadinessResult> {
   const report = getProductionConfigReport();
   internal.blockingProblems = report.blockingProblems;
   components.configuration = report.mandatorySatisfied ? "READY" : "BLOCKED";
+
+  // 2b) Prompt 30 §186 — MFA + email-verification states (§402: explicit,
+  // no hidden behavior). DISABLED/ENABLED_CONFIGURED/BLOCKED map onto the
+  // unified vocabulary; the public DTO does NOT expose them (§187 — only
+  // Platform System shows enabled/configured/blocked).
+  components.mfa =
+    report.identitySecurity.mfaState === "DISABLED"
+      ? "DISABLED"
+      : report.identitySecurity.mfaState === "ENABLED_CONFIGURED"
+        ? "READY"
+        : "BLOCKED";
+  components.emailVerification =
+    report.identitySecurity.emailVerificationState === "OFF"
+      ? "DISABLED"
+      : report.identitySecurity.emailVerificationState === "BLOCKED"
+        ? "BLOCKED"
+        : "READY"; // OPTIONAL/REQUIRED with SMTP → operational
 
   // 3) Email transport (§17/§100 — no fake intermediate states).
   components.email =
@@ -339,6 +362,8 @@ export function publicReadinessDTO(r: ReadinessResult): PublicReadinessDTO {
       legal: rest.components.legal,
       backups: rest.components.backups,
       restoreDrill: rest.components.restoreDrill,
+      // §187 — MFA/encryption state is deliberately NOT public; only the
+      // Platform System view (internal) shows enabled/configured/blocked.
     },
   };
 }

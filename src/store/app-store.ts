@@ -21,6 +21,7 @@ export type AppView =
   | { kind: "settings:business" }
   | { kind: "settings:members" }
   | { kind: "settings:billing" }
+  | { kind: "settings:security" }
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
@@ -28,7 +29,9 @@ export type AppView =
   | { kind: "reset-password"; token: string }
   | { kind: "module"; module: string; /** optional sub-resource (e.g. reports ?month=YYYY-MM) */ param?: string }
   /** Prompt 28 — internal platform console (separate workspace, §15). */
-  | { kind: "platform"; section: PlatformSection };
+  | { kind: "platform"; section: PlatformSection }
+  /** Prompt 30 §250 — email verification landing (token from the email link). */
+  | { kind: "verify-email"; token: string };
 
 export const KNOWN_MODULES = [
   "customers",
@@ -83,9 +86,11 @@ export function viewKeyOf(view: AppView): string {
       ? `join:${view.token}`
       : view.kind === "reset-password"
         ? `reset:${view.token}`
-        : view.kind === "platform"
-          ? `platform:${view.section}`
-          : view.kind;
+        : view.kind === "verify-email"
+          ? `verify:${view.token}`
+          : view.kind === "platform"
+            ? `platform:${view.section}`
+            : view.kind;
 }
 
 /**
@@ -118,6 +123,8 @@ export function viewToHash(view: AppView): string | null {
       return "#/settings/billing";
     case "profile":
       return "#/profile";
+    case "settings:security":
+      return "#/settings/security";
     case "platform":
       // #/platform itself resolves to the overview section (§15).
       return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
@@ -136,6 +143,8 @@ export function viewToHash(view: AppView): string | null {
       return "#/forgot-password";
     case "reset-password":
       return `#/reset-password/${view.token}`;
+    case "verify-email":
+      return `#/verify-email/${view.token}`;
     case "onboarding":
       return null;
   }
@@ -153,6 +162,7 @@ export function hashToView(hash: string): AppView {
   if (path === "settings") return { kind: "settings:business" };
   if (path === "settings/members") return { kind: "settings:members" };
   if (path === "settings/billing") return { kind: "settings:billing" };
+  if (path === "settings/security") return { kind: "settings:security" };
   if (path === "profile") return { kind: "profile" };
   // Prompt 28 — platform console deep links (#/platform, #/platform/<section>).
   if (path === "platform") return { kind: "platform", section: "overview" };
@@ -167,6 +177,12 @@ export function hashToView(hash: string): AppView {
     if (token.length > 0 && token.length <= 128) return { kind: "join", token };
   }
   if (path === "forgot-password") return { kind: "forgot-password" };
+  if (path.startsWith("verify-email/")) {
+    const token = path.slice("verify-email/".length);
+    // Opaque verification token: bounded length; the server validates the rest.
+    if (token.length > 0 && token.length <= 200) return { kind: "verify-email", token };
+    return { kind: "dashboard" };
+  }
   if (path.startsWith("reset-password/")) {
     const token = path.slice("reset-password/".length);
     // Opaque reset token: non-empty, bounded length (server validates the rest).

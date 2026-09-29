@@ -14,7 +14,7 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ApiError } from "@/lib/api-helpers";
 import { asRole, can, type Permission, type Role } from "@/lib/rbac";
-import { sessionVersionOf } from "@/lib/auth-security";
+import { sessionVersionOf, assertSessionRegistry } from "@/lib/auth-security";
 
 export type AuthContext = {
   session: Session;
@@ -70,6 +70,12 @@ export async function getAuthContext(req: Request): Promise<AuthContext> {
       "Your session was invalidated (password changed). Please sign in again.",
     );
   }
+
+  // Prompt 30 §81 — per-device session registry check for sid-bearing
+  // JWTs (revocation/expiry effective immediately on the next request).
+  // Legacy JWTs without sid bypass the registry during the documented
+  // compatibility window (sessionVersion above is still their kill switch).
+  await assertSessionRegistry(session, userId);
 
   return {
     session,

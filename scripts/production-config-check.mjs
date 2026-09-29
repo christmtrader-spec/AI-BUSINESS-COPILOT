@@ -206,6 +206,53 @@ if (env("BACKUP_MAX_AGE_HOURS")) {
   report("BACKUP_MAX_AGE_HOURS", "NOT_CONFIGURED", "default 26h (operational policy, not legal retention)");
 }
 
+/* --------------- 8. identity security (Prompt 30 §185/§186/§401) ---------- */
+section("Identity security (Prompt 30 posture — §185/§186)");
+const mfaOn = (env("MFA_ENABLED") || "").trim().toLowerCase() === "true";
+if (!mfaOn) {
+  report("MFA_ENABLED", "DISABLED", "MFA capability off (default — §184; users unaffected, §403)");
+  const keyAbsent = !env("MFA_ENCRYPTION_KEY");
+  report("MFA_ENCRYPTION_KEY", keyAbsent ? "DISABLED" : "CONFIGURED",
+    keyAbsent ? "not required while MFA is disabled (§401)" : "present (unused while MFA disabled)");
+} else {
+  report("MFA_ENABLED", "CONFIGURED", "MFA capability on — enrolled users require the second factor at login");
+  const key = env("MFA_ENCRYPTION_KEY") || "";
+  // §34/§190 — 32-byte material; validated WITHOUT printing the value.
+  let keyOk = false;
+  if (key.length >= 43 && !/^(.)\1+$/.test(key) && !/changeme|example|placeholder|your-?key|sample|dummy/i.test(key)) {
+    const b64 = key.replace(/-/g, "+").replace(/_/g, "/");
+    try {
+      const decoded = Buffer.from(b64 + "=".repeat((4 - (b64.length % 4)) % 4), "base64");
+      keyOk = decoded.length === 32;
+      if (!keyOk && /^[0-9a-fA-F]{64}$/.test(key)) keyOk = Buffer.from(key, "hex").length === 32;
+    } catch { keyOk = false; }
+  }
+  report("MFA_ENCRYPTION_KEY", keyOk ? "CONFIGURED" : (key ? "INVALID" : "NOT_CONFIGURED"),
+    keyOk ? "32-byte AES-256 key material accepted" : "REQUIRED when MFA_ENABLED=true (§190 fail closed)", { blocking: IS_PROD && !keyOk });
+}
+
+const evMode = (env("AUTH_EMAIL_VERIFICATION_MODE") || "").trim().toUpperCase();
+const evValid = ["OFF", "OPTIONAL", "REQUIRED"].includes(evMode);
+if (!evValid) {
+  report("AUTH_EMAIL_VERIFICATION_MODE", evMode ? "INVALID" : "DISABLED",
+    evMode ? "must be OFF|OPTIONAL|REQUIRED" : "OFF (default — existing users never locked out, §8/§449)",
+    { blocking: IS_PROD && Boolean(evMode) });
+} else if (evMode === "OFF") {
+  report("AUTH_EMAIL_VERIFICATION_MODE", "DISABLED", "no verification enforcement");
+} else {
+  // §185/§401 — REQUIRED without SMTP is BLOCKED (startup blocking in prod).
+  const smtpParts = ["EMAIL_SERVER_HOST", "EMAIL_SERVER_PORT", "EMAIL_FROM"].map(env).filter(Boolean).length;
+  const smtpOk = smtpParts === 3;
+  report("AUTH_EMAIL_VERIFICATION_MODE", evMode === "REQUIRED" && !smtpOk ? "BLOCKED" : "CONFIGURED",
+    evMode === "REQUIRED"
+      ? smtpOk ? "REQUIRED with SMTP transport" : "REQUIRED without SMTP = BLOCKED (§11/§401) — configure EMAIL_* or choose OPTIONAL"
+      : "OPTIONAL — verification available, accounts usable",
+    { blocking: IS_PROD && evMode === "REQUIRED" && !smtpOk });
+}
+report("SESSION_LAST_SEEN_UPDATE_SECONDS", env("SESSION_LAST_SEEN_UPDATE_SECONDS") ? "CONFIGURED" : "NOT_CONFIGURED", "default 300 (write throttle, §85)");
+report("MFA_CHALLENGE_TTL_SECONDS", env("MFA_CHALLENGE_TTL_SECONDS") ? "CONFIGURED" : "NOT_CONFIGURED", "default 300 (§47)");
+report("MFA_STEP_UP_MAX_AGE_SECONDS", env("MFA_STEP_UP_MAX_AGE_SECONDS") ? "CONFIGURED" : "NOT_CONFIGURED", "default 600 (§115)");
+
 /* ------------------------------ summary ----------------------------------- */
 console.log(`\n== RESULT ${"=".repeat(58)}`);
 if (blocking > 0) {

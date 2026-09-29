@@ -26,6 +26,12 @@ export const POST = route(async (req: NextRequest) => {
   const ctx = await getAuthContext(req);
   requirePermission(ctx, "settings:manage");
 
+  // Prompt 30 §10/§120 — REQUIRED-mode email verification gate.
+  const { assertEmailVerifiedForCommercialAction } = await import(
+    "@/lib/auth/email-verification/gate"
+  );
+  await assertEmailVerifiedForCommercialAction(ctx.userId);
+
   const rl = rateLimit(`billing:checkout:${ctx.userId}`, 10, 60_000);
   if (!rl.allowed) {
     throw new ApiError(429, "RATE_LIMITED", "Too many checkout attempts. Please wait a moment.", {

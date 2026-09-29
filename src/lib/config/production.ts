@@ -1,6 +1,8 @@
 import "server-only";
 import { getPublicLegalConfig } from "@/lib/legal/public-config";
 import { resolveEmailTransportConfig } from "@/lib/email/config";
+import { emailVerificationMode, mfaFeatureEnabled } from "@/lib/auth/config";
+import { validateSecretBoxKey } from "@/lib/security/secret-box";
 
 /**
  * Production configuration contract — Prompt 29 §3/§4/§123.
@@ -83,6 +85,19 @@ export type ProductionConfigReport = {
     environment: ConfigEntry;
     guardEnabled: ConfigEntry;
     operatorToken: ConfigEntry;
+  };
+  /**
+   * Prompt 30 identity-security posture (§185/§186). Values only — the
+   * MFA_ENCRYPTION_KEY is NEVER exposed (§188).
+   */
+  identitySecurity: {
+    /** MFA feature state: DISABLED | ENABLED_CONFIGURED | BLOCKED_CONFIGURATION. */
+    mfaState: "DISABLED" | "ENABLED_CONFIGURED" | "BLOCKED_CONFIGURATION";
+    mfaEnabled: ConfigEntry;
+    mfaEncryptionKey: ConfigEntry;
+    /** Email verification mode: OFF | OPTIONAL | REQUIRED | BLOCKED. */
+    emailVerificationState: "OFF" | "OPTIONAL" | "REQUIRED" | "BLOCKED";
+    emailVerificationMode: ConfigEntry;
   };
   /** True when every mandatory entry is CONFIGURED (startup gate, §6). */
   mandatorySatisfied: boolean;
@@ -224,6 +239,44 @@ export function getProductionConfigReport(): ProductionConfigReport {
       : ({ key: "AI_COST_OPERATOR_TOKEN", status: "NOT_CONFIGURED", mandatory: false } as ConfigEntry),
   };
 
+  // --- Prompt 30 identity security (§185/§186/§401) -------------------------
+  // MFA_ENABLED default false → DISABLED (never silently activated, §184);
+  // a missing/invalid MFA_ENCRYPTION_KEY blocks ONLY when MFA is enabled
+  // (§401 — disabled MFA must NOT block startup).
+  const mfaOn = mfaFeatureEnabled();
+  const mfaEnabledEntry: ConfigEntry = mfaOn
+    ? { key: "MFA_ENABLED", status: "CONFIGURED", mandatory: false }
+    : { key: "MFA_ENABLED", status: "DISABLED", mandatory: false, reason: "DEFAULT_OFF" };
+  const keyStatus = validateSecretBoxKey(process.env.MFA_ENCRYPTION_KEY);
+  const mfaEncryptionKey: ConfigEntry = !mfaOn
+    ? { key: "MFA_ENCRYPTION_KEY", status: "DISABLED", mandatory: false, reason: "MFA_DISABLED" }
+    : keyStatus.ok
+      ? { key: "MFA_ENCRYPTION_KEY", status: "CONFIGURED", mandatory: false }
+      : { key: "MFA_ENCRYPTION_KEY", status: "INVALID", mandatory: false, reason: keyStatus.reason };
+  const mfaState: "DISABLED" | "ENABLED_CONFIGURED" | "BLOCKED_CONFIGURATION" = !mfaOn
+    ? "DISABLED"
+    : keyStatus.ok
+      ? "ENABLED_CONFIGURED"
+      : "BLOCKED_CONFIGURATION";
+
+  const evModeRaw = (process.env.AUTH_EMAIL_VERIFICATION_MODE ?? "").trim().toUpperCase();
+  const evModeValid = ["OFF", "OPTIONAL", "REQUIRED"].includes(evModeRaw);
+  const evMode = emailVerificationMode();
+  const smtpOk = email.status === "CONFIGURED";
+  // §11/§185/§401 — REQUIRED without SMTP is BLOCKED (never silently
+  // downgraded to OFF); OFF/OPTIONAL never require SMTP (§185).
+  const emailVerificationState: "OFF" | "OPTIONAL" | "REQUIRED" | "BLOCKED" =
+    !evModeValid
+      ? "BLOCKED" // INVALID → BLOCKED (§402 — explicit, no hidden behavior)
+      : evMode === "REQUIRED" && !smtpOk
+        ? "BLOCKED"
+        : evMode;
+  const emailVerificationModeEntry: ConfigEntry = !evModeValid
+    ? { key: "AUTH_EMAIL_VERIFICATION_MODE", status: "INVALID", mandatory: false, reason: "OFF_OPTIONAL_REQUIRED" }
+    : evMode === "OFF"
+      ? { key: "AUTH_EMAIL_VERIFICATION_MODE", status: "DISABLED", mandatory: false, reason: "DEFAULT_OFF" }
+      : { key: "AUTH_EMAIL_VERIFICATION_MODE", status: "CONFIGURED", mandatory: false };
+
   // --- blocking problems (§5/§6) --------------------------------------------
   const blockingProblems: string[] = [];
   const mandatoryFail = (e: ConfigEntry, label: string) => {
@@ -241,6 +294,15 @@ export function getProductionConfigReport(): ProductionConfigReport {
   if (isProduction) {
     // §10 — an INVALID email config is a real security-posture problem.
     if (email.status === "INVALID") blockingProblems.push(`EMAIL:${email.problem ?? "INVALID"}`);
+    // §185/§190 — MFA enabled without valid key material fails closed.
+    if (mfaState === "BLOCKED_CONFIGURATION") {
+      blockingProblems.push("MFA_ENCRYPTION_KEY:INVALID_OR_MISSING");
+    }
+    // §185 — REQUIRED email verification without SMTP is a blocking
+    // misconfiguration (never silently downgraded to OFF, §11).
+    if (emailVerificationState === "BLOCKED") {
+      blockingProblems.push("EMAIL_VERIFICATION:BLOCKED");
+    }
   }
 
   return {
@@ -258,6 +320,13 @@ export function getProductionConfigReport(): ProductionConfigReport {
     email,
     payments,
     aiCost,
+    identitySecurity: {
+      mfaState,
+      mfaEnabled: mfaEnabledEntry,
+      mfaEncryptionKey: mfaEncryptionKey,
+      emailVerificationState,
+      emailVerificationMode: emailVerificationModeEntry,
+    },
     mandatorySatisfied,
     blockingProblems,
   };

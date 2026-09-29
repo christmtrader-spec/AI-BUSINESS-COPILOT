@@ -25,6 +25,10 @@ model User {
   // account security events. JWTs carry the version they were issued with;
   // a mismatch means the session was invalidated and must re-authenticate.
   sessionVersion Int            @default(0)
+  // Prompt 30 §3 — email ownership verification. NULL = not verified;
+  // non-null = verified. NEVER inferred from email formatting, and existing
+  // accounts are NOT bulk-marked verified (§225 — no evidence exists).
+  emailVerifiedAt DateTime?
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 
@@ -41,6 +45,155 @@ model User {
   subscriptionEvents SubscriptionEvent[]
   legalAcceptances LegalAcceptance[]
   platformOperator PlatformOperator?
+
+  // Prompt 30 — identity security v2 (§294). All cascade with the user so
+  // account deletion removes every user-owned security record (§295).
+  emailVerificationTokens EmailVerificationToken[]
+  mfaCredential           MfaCredential?
+  mfaRecoveryCodes        MfaRecoveryCode[]
+  mfaLoginChallenges      MfaLoginChallenge[]
+  sessions                UserSession[]
+  securityEvents          SecurityEvent[]
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 30 — email ownership verification (§4). ONLY the SHA-256 HASH of a
+// one-time verification token is stored; the raw token exists exclusively
+// inside the emailed link. Single active token per user is enforced in the
+// service layer (outstanding tokens are invalidated when a new one is issued,
+// §7). Purpose-separated from PasswordResetToken (§314/§315): a verification
+// token can never reset a password and vice versa.
+// ---------------------------------------------------------------------------
+model EmailVerificationToken {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  requestedIp String?
+  userAgent   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 30 — TOTP MFA credential (§32). The TOTP secret is stored ENCRYPTED
+// (AES-256-GCM secret-box; key lives ONLY in the MFA_ENCRYPTION_KEY env var,
+// never in the database §33/§34). enabledAt NULL = pending setup (never
+// trusted by login — §38); non-null = active. userId unique guarantees at
+// most one credential per user (§213).
+// ---------------------------------------------------------------------------
+model MfaCredential {
+  id             String    @id @default(cuid())
+  userId         String    @unique
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  encryptedSecret String
+  // secret-box format version (§35/§191 — future key rotation, documented).
+  secretVersion  Int       @default(1)
+  enabledAt      DateTime?
+  // Replay protection state (§45): the last TOTP time-step accepted at login.
+  // A code from the same (or older) step can never be accepted twice. NULL
+  // until the first successful login after enrollment.
+  lastUsedTotpStep Int?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([userId, enabledAt])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 30 — one-time MFA recovery codes (§59). Hash-only persistence
+// (SHA-256 of the normalized code — high-entropy random, never a user
+// secret worth a slow hash). Single use is claimed atomically (§62).
+// ---------------------------------------------------------------------------
+model MfaRecoveryCode {
+  id       String    @id @default(cuid())
+  userId   String
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash String    @unique
+  usedAt   DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId, usedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 30 — short-lived pre-auth MFA login challenge (§47). Password
+// success alone NEVER creates a session when MFA is enabled (§54): the
+// client receives only this bounded challenge. Hash-only storage; single
+// use claimed atomically (§50); bound to the user's sessionVersion so a
+// password change mid-challenge kills the challenge (§437/§438). The one-
+// time assertion hash (§53) is stored here after successful code
+// verification and consumed inside NextAuth authorize().
+// ---------------------------------------------------------------------------
+model MfaLoginChallenge {
+  id                        String    @id @default(cuid())
+  userId                    String
+  user                      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challengeHash             String    @unique
+  expiresAt                 DateTime
+  usedAt                    DateTime?
+  attemptCount              Int       @default(0)
+  assertionHash             String?   @unique
+  assertionUsedAt           DateTime?
+  sessionVersionAtChallenge Int
+  createdAt                 DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 30 — server-side session registry (§70). JWTs remain the transport;
+// this table adds per-device revocation. sessionTokenHash = SHA-256(sid) —
+// the raw sid/JWT is NEVER stored (§71/§72). IP is stored HASHED (§75 — the
+// choice and its limits are documented; this is not strong anonymization).
+// ---------------------------------------------------------------------------
+model UserSession {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionTokenHash String   @unique
+  createdAt       DateTime  @default(now())
+  lastSeenAt      DateTime  @default(now())
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  // Bounded user-agent snapshot (max 255 chars, §233) and derived safe
+  // device label (e.g. "Chrome on Windows" — never a fingerprint, §74/§232).
+  userAgent       String?
+  deviceLabel     String?
+  ipHash          String?
+  createdFrom     String    @default("login")
+  updatedAt       DateTime  @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 30 — durable security activity (§89). FIXED event vocabulary only
+// (§423 — never client-supplied). No secrets, no OTP, no raw IPs, no bodies
+// (§90). Cascade-deleted with the user: security history does NOT survive
+// account deletion (privacy-first choice, documented §295/§296).
+// ---------------------------------------------------------------------------
+model SecurityEvent {
+  id         String    @id @default(cuid())
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventType  String
+  sessionId  String?
+  ipHash     String?
+  userAgent  String?
+  success    Boolean
+  reasonCode String?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([eventType, createdAt])
 }
 
 // ---------------------------------------------------------------------------

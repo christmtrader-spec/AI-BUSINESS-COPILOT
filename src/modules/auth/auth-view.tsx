@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { InputOTP, InputOTPGroup, InputOTPSlot, InputOTPSeparator } from "@/components/ui/input-otp";
 
 type AuthErrors = {
   invalidCredentials: string;
@@ -347,6 +348,16 @@ export function AuthView() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  // Prompt 30 §46/§109 — the MFA login step machine. Password success with
+  // MFA enabled NEVER creates a session (authorize throws the fixed
+  // MFA_REQUIRED code); the client then obtains a SHORT-LIVED challenge,
+  // collects the TOTP/recovery code, and exchanges it for a ONE-TIME
+  // assertion that completes the real NextAuth login.
+  const [mfaStage, setMfaStage] = useState<"idle" | "challenge" | "code">("idle");
+  const [mfaChallenge, setMfaChallenge] = useState<string | null>(null);
+  const [mfaMethod, setMfaMethod] = useState<"TOTP" | "RECOVERY_CODE">("TOTP");
+  const [mfaCode, setMfaCode] = useState("");
   // Prompt 27 §53/§58: explicit legal acceptance — UNCHECKED by default, with
   // links to the actual documents BEFORE acceptance. Required by the signup UI.
   const [acceptedLegal, setAcceptedLegal] = useState(false);
@@ -364,11 +375,116 @@ export function AuthView() {
       void queryClient.invalidateQueries({ queryKey: ["me"] });
     },
     onError: (err) => {
+      // Prompt 30 §110 — MFA_REQUIRED arrives ONLY after the password was
+      // verified inside authorize(); switch to the bounded MFA step.
+      if (err.message === "MFA_REQUIRED") {
+        void startMfaChallenge();
+        return;
+      }
       setError(
         err instanceof ApiClientError
           ? mapApiError(err, authErrorMessages)
           : mapSignInError(err.message, authErrorMessages),
       );
+    },
+  });
+
+  // Step 2 of the MFA flow (§46): re-verify the password at the dedicated
+  // endpoint to obtain the challenge token (rate-limited, hash-only server
+  // state, bound to the user's sessionVersion).
+  const startMfaChallenge = () => {
+    setMfaStage("challenge");
+    mfaChallengeMutation.mutate();
+  };
+
+  const mfaChallengeMutation = useMutation({
+    mutationFn: async () =>
+      api<{ mfaRequired: boolean; challenge: string; expiresAt: string }>(
+        "/api/v1/auth/mfa/challenge",
+        { method: "POST", body: JSON.stringify({ email, password }), businessId: null },
+      ),
+    onSuccess: (res) => {
+      setMfaChallenge(res.challenge);
+      setMfaStage("code");
+      setMfaCode("");
+      setError(null);
+    },
+    onError: (err) => {
+      setMfaStage("idle");
+      if (err instanceof ApiClientError) {
+        if (err.code === "MFA_NOT_ENABLED") {
+          // The account has no MFA (state changed mid-flow) — retry plain.
+          signInMutation.mutate();
+          return;
+        }
+        if (err.code === "RATE_LIMITED") {
+          setError(t("mfaRateLimited"));
+          return;
+        }
+        if (err.code === "INVALID_CREDENTIALS") {
+          setError(authErrorMessages.invalidCredentials);
+          return;
+        }
+      }
+      setError(authErrorMessages.generic);
+    },
+  });
+
+  // Step 3 (§51): exchange challenge + code for the one-time assertion,
+  // then complete the REAL NextAuth sign-in with it (§52 — the final JWT
+  // is still issued by NextAuth only).
+  const mfaCompleteMutation = useMutation({
+    mutationFn: async () => {
+      const assertion = await api<{ assertion: string }>("/api/v1/auth/mfa/complete", {
+        method: "POST",
+        body: JSON.stringify({ challenge: mfaChallenge, code: mfaCode, method: mfaMethod }),
+        businessId: null,
+      });
+      const res = await signIn("credentials", {
+        redirect: false,
+        email,
+        mfaAssertion: assertion.assertion,
+      });
+      if (!res || res.error) throw new Error(res?.error ?? "CredentialsSignin");
+      return res;
+    },
+    onSuccess: () => {
+      setMfaStage("idle");
+      setMfaChallenge(null);
+      setMfaCode("");
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: ["businesses"] });
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
+    },
+    onError: (err) => {
+      if (err instanceof ApiClientError) {
+        if (err.code === "MFA_INVALID_CODE") {
+          setError(t("mfaInvalidCode"));
+          setMfaCode("");
+          return;
+        }
+        if (err.code === "MFA_CHALLENGE_EXPIRED" || err.code === "MFA_CHALLENGE_INVALID") {
+          setError(t("mfaChallengeExpired"));
+          return;
+        }
+        if (err.code === "MFA_RATE_LIMITED" || err.code === "RATE_LIMITED") {
+          setError(t("mfaRateLimited"));
+          return;
+        }
+        if (err.code === "MFA_RECOVERY_CODE_INVALID" || err.code === "MFA_RECOVERY_CODE_USED") {
+          setError(t("mfaInvalidCode"));
+          setMfaCode("");
+          return;
+        }
+      }
+      // Assertion replay/expiry inside authorize(): restart the MFA step.
+      if (err.message === "MFA_REQUIRED") {
+        setError(t("mfaChallengeExpired"));
+        setMfaStage("idle");
+        setMfaChallenge(null);
+        return;
+      }
+      setError(authErrorMessages.generic);
     },
   });
 
@@ -497,6 +613,22 @@ export function AuthView() {
             onRequestNewLink={() => {
               setError(null);
               navigate({ kind: "forgot-password" });
+            }}
+          />
+        ) : mfaStage === "code" ? (
+          <MfaLoginCard
+            error={error}
+            method={mfaMethod}
+            setMethod={setMfaMethod}
+            code={mfaCode}
+            setCode={setMfaCode}
+            busy={mfaCompleteMutation.isPending}
+            onSubmit={() => mfaCompleteMutation.mutate()}
+            onRestart={() => {
+              setMfaStage("idle");
+              setMfaChallenge(null);
+              setMfaCode("");
+              setError(null);
             }}
           />
         ) : (
@@ -703,5 +835,128 @@ export function AuthView() {
         )}
       </div>
     </div>
+  );
+}
+
+/* ------------------------- MFA login card (§110-§111) ---------------------- */
+
+/**
+ * Second-factor step — rendered ONLY after the password was verified inside
+ * authorize() (the MFA_REQUIRED code never leaks account state before that,
+ * §280). Generic error copy (§111); OTP input accepts digits + paste
+ * (§101); proper labels beyond placeholders (§102); the code is never
+ * placed in any URL (§101).
+ */
+function MfaLoginCard({
+  error,
+  method,
+  setMethod,
+  code,
+  setCode,
+  busy,
+  onSubmit,
+  onRestart,
+}: {
+  error: string | null;
+  method: "TOTP" | "RECOVERY_CODE";
+  setMethod: (m: "TOTP" | "RECOVERY_CODE") => void;
+  code: string;
+  setCode: (c: string) => void;
+  busy: boolean;
+  onSubmit: () => void;
+  onRestart: () => void;
+}) {
+  const t = useTranslations("auth");
+
+  return (
+    <Card className="w-full max-w-md shadow-sm">
+      <CardHeader className="space-y-1.5">
+        <CardTitle className="flex items-center gap-2 text-2xl">
+          <ShieldCheck className="h-5 w-5 text-primary" aria-hidden />
+          {t("mfaTitle")}
+        </CardTitle>
+        <CardDescription>{t("mfaSubtitle")}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!busy) onSubmit();
+          }}
+          className="space-y-4"
+          noValidate
+        >
+          {method === "TOTP" ? (
+            <div className="space-y-2">
+              <Label htmlFor="mfa-otp">{t("mfaCodeLabel")}</Label>
+              <InputOTP
+                maxLength={6}
+                value={code}
+                onChange={setCode}
+                containerClassName="justify-start"
+              >
+                <InputOTPGroup dir="ltr">
+                  <InputOTPSlot index={0} />
+                  <InputOTPSlot index={1} />
+                  <InputOTPSlot index={2} />
+                </InputOTPGroup>
+                <InputOTPSeparator />
+                <InputOTPGroup dir="ltr">
+                  <InputOTPSlot index={3} />
+                  <InputOTPSlot index={4} />
+                  <InputOTPSlot index={5} />
+                </InputOTPGroup>
+              </InputOTP>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="mfa-recovery">{t("mfaRecoveryLabel")}</Label>
+              <Input
+                id="mfa-recovery"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder={t("mfaRecoveryPlaceholder")}
+                autoComplete="off"
+                className="font-mono"
+                dir="ltr"
+                maxLength={64}
+              />
+            </div>
+          )}
+          {error ? (
+            <p className={errorBoxClass} role="alert">
+              {error}
+            </p>
+          ) : null}
+          <Button type="submit" className="w-full" disabled={busy || code.length === 0}>
+            {busy ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <LogIn className="h-4 w-4" aria-hidden="true" />
+            )}
+            {t("mfaVerify")}
+          </Button>
+          <div className="flex items-center justify-between text-sm">
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
+              onClick={() => {
+                setMethod(method === "TOTP" ? "RECOVERY_CODE" : "TOTP");
+                setCode("");
+              }}
+            >
+              {method === "TOTP" ? t("mfaUseRecovery") : t("mfaUseAuthenticator")}
+            </button>
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
+              onClick={onRestart}
+            >
+              {t("mfaRestart")}
+            </button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
   );
 }

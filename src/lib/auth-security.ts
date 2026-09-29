@@ -64,7 +64,15 @@ export function safeHashEquals(a: string, b: string): boolean {
   return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
-/* --------------------------- session invalidation -------------------------- */
+/* --------------------------- session invalidation --------------------------
+ *
+ * Prompt 30 update (§81/§82/§83): the two freshness gates below now ALSO
+ * validate the per-device session registry for sid-bearing JWTs: the sid
+ * must exist, belong to the caller, be un-revoked and un-expired. JWTs
+ * issued BEFORE Prompt 30 carry no sid and keep working during the
+ * documented compatibility window (§83/§228): sessionVersion + user checks
+ * still apply; only the per-device registry is bypassed.
+ * -------------------------------------------------------------------------- */
 
 /**
  * Session-version comparison (Prompt 18 §16).
@@ -75,6 +83,9 @@ export function safeHashEquals(a: string, b: string): boolean {
  * This is enforced at BOTH enforcement points:
  *  - getAuthContext (business-scoped APIs) — via the membership's user row,
  *  - assertFreshSession (account-scoped APIs: /me, password change).
+ *
+ * Prompt 30 adds the per-device registry check (§81) for sid-bearing JWTs:
+ * revocation is immediate on the NEXT request through either checkpoint.
  *
  * Honest limitation (documented): with the JWT strategy, invalidation takes
  * effect on the NEXT request that passes through one of these checkpoints —
@@ -87,6 +98,29 @@ export function safeHashEquals(a: string, b: string): boolean {
 export function sessionVersionOf(session: Session | null): number {
   const v = (session?.user as { sessionVersion?: unknown } | undefined)?.sessionVersion;
   return typeof v === "number" && Number.isInteger(v) ? v : 0;
+}
+
+/** The sid from a session (undefined for legacy JWTs — compat window §83). */
+export function sidOf(session: Session | null): string | null {
+  const sid = (session?.user as { sid?: unknown } | undefined)?.sid;
+  return typeof sid === "string" && sid.length > 0 ? sid : null;
+}
+
+/**
+ * Per-device registry gate (§81). Throws 401 SESSION_REVOKED /
+ * SESSION_INVALIDATED on any registry failure. Legacy JWTs (no sid) pass —
+ * compatibility window (§83/§228); sessionVersion remains their kill switch.
+ */
+export async function assertSessionRegistry(session: Session | null, userId: string): Promise<string | null> {
+  const sid = sidOf(session);
+  if (!sid) return null; // legacy JWT — documented compat window
+  const { checkSessionRegistry } = await import("@/lib/auth/sessions/service");
+  const result = await checkSessionRegistry(sid, userId);
+  if (result.ok) return result.sessionId;
+  if (result.reason === "REVOKED") {
+    throw new ApiError(401, "SESSION_REVOKED", "This device was signed out. Please sign in again.");
+  }
+  throw new ApiError(401, "SESSION_INVALIDATED", "This session is no longer valid. Please sign in again.");
 }
 
 /**
@@ -115,6 +149,8 @@ export async function assertFreshSession(session: Session | null): Promise<strin
       "Your session was invalidated (password changed). Please sign in again.",
     );
   }
+  // Prompt 30 §81 — per-device registry check (sid-bearing sessions).
+  await assertSessionRegistry(session, userId);
   return userId;
 }
 
