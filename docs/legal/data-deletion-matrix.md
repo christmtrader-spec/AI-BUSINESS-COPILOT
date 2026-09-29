@@ -47,6 +47,8 @@ operations. Status vocabulary as in the banner.
 | AI Session | **DELETED** (cascade); also user-initiated per-session delete | **DELETED** (cascade) | — | DEPENDENT |
 | AI Message | **DELETED** (cascade via session and direct user relation) | **DELETED** (cascade) | Failed requests never synced (local only) | DEPENDENT |
 | Usage (UsagePeriod/UsageCounter/UsageEvent) | NOT AFFECTED (business-scoped) | **DELETED** (cascade) | — | DEPENDENT |
+| DataExportJob (Prompt 31) | NOT AFFECTED (business-owned) | **DELETED** (cascade) | Job row tied to business lifetime; its artifact file expires at the operational TTL and is removed by `scripts/prune-expired-exports.mjs` | DEPENDENT + operational TTL |
+| DataImportJob (Prompt 31) | NOT AFFECTED (business-owned) | **DELETED** (cascade) | Staged upload file deleted on cancel and by the TTL (`IMPORT_FILE_TTL_HOURS`) via `scripts/prune-expired-imports.mjs`; error-report metadata lives with the row | DEPENDENT + operational TTL |
 | Subscription (+ SubscriptionEvent) | NOT AFFECTED; event `actorId` **SetNull** | **DELETED** (cascade) | Ended subscriptions never deleted by design while the business lives (`docs/billing/subscription-lifecycle.md`) | DEPENDENT |
 | Checkout (CheckoutSession) | NOT AFFECTED (business-scoped) | **DELETED** (cascade) | 30-min session expiry (lazy) is a lifecycle state, not deletion | DEPENDENT |
 | Payment Transaction | NOT AFFECTED (business-scoped) | **DELETED** (cascade; idempotency anchor `[provider, providerEventId]` goes with it) | — | DEPENDENT |

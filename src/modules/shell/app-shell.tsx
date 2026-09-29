@@ -27,6 +27,7 @@ import { BusinessSettingsView } from "../settings/business-settings-view";
 import { MembersView } from "../settings/members-view";
 import { ProfileView } from "../settings/profile-view";
 import { SecurityCenterView } from "../settings/security-view";
+import { DataPortabilityView } from "../settings/data-portability/data-portability-view";
 import { SubscriptionView } from "../billing/subscription-view";
 import { PaymentReturnView } from "../billing/payment-return-view";
 import { AuditView } from "../audit/audit-view";
@@ -47,6 +48,8 @@ function labelKeyOf(view: AppView): string {
       return "billing";
     case "settings:security":
       return "security";
+    case "settings:data":
+      return "dataPortability";
     case "profile":
       return "profile";
     case "module": {
@@ -167,6 +170,7 @@ export function AppShell({
                 <SubscriptionView business={membership!.business} role={role} />
               ) : null}
               {view.kind === "settings:security" ? <SecurityCenterView /> : null}
+              {view.kind === "settings:data" ? <DataPortabilityView role={role} /> : null}
               {view.kind === "profile" ? <ProfileView /> : null}
               {view.kind === "audit" ? <AuditView membership={membership!} /> : null}
               {view.kind === "module" ? (

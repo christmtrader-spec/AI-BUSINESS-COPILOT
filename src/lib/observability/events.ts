@@ -27,6 +27,8 @@ export const OPERATIONAL_EVENTS = {
   backupCreated: "backup.created",
   backupVerificationFailed: "backup.verification_failed",
   restoreDrillFailed: "restore.drill.failed",
+  portabilityExportFailed: "portability.export.failed",
+  portabilityImportFailed: "portability.import.failed",
 } as const;
 
 export type OperationalEvent = (typeof OPERATIONAL_EVENTS)[keyof typeof OPERATIONAL_EVENTS];

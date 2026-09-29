@@ -261,6 +261,31 @@ valid platform roles only; explicit `--yes` or typed confirmation; the
 command runs on the host with the production env, not through the web tier.
 Full policy: `docs/security/platform-admin-security.md`.
 
+## 11b. Data portability storage + cleanup (Prompt 31 §255)
+
+- **Storage root**: `DATA_PORTABILITY_ROOT` (default `var/data-portability/`) —
+  non-public by construction; preflight (`scripts/production-preflight.mjs`,
+  section 11) blocks roots inside web-served directories and checks
+  writability. Include the directory in volume planning: artifacts are
+  single-node local files (no cloud object storage is implemented).
+- **Cleanup schedule** (cron examples, dry-run first, then apply):
+
+  ```bash
+  bun scripts/prune-expired-exports.mjs          # report (dry run)
+  bun scripts/prune-expired-exports.mjs --apply  # remove expired export artifacts
+  bun scripts/prune-expired-imports.mjs          # report (dry run)
+  bun scripts/prune-expired-imports.mjs --apply  # expire + remove staged uploads
+  ```
+
+  Both scripts never delete audit records; the import pruner never touches a
+  job stuck in COMMITTING (crash-recovery ownership belongs to the stale-job
+  detector, which marks it FAILED with "no partial data was written").
+- **Readiness**: `/api/ready` and Platform System expose `portabilityStorage`
+  (READY / NOT_CONFIGURED / BLOCKED — status only, no paths, §305/§358).
+- **Single-node law**: exports/imports are process-local file operations; a
+  multi-instance deployment must first provide a shared filesystem or object
+  storage ADR (documented limitation, `docs/security/data-portability.md` §9).
+
 ## 12. Related procedures
 
 - Rollback: `docs/deployment/release-rollback.md` (§118/§119) — forward-only

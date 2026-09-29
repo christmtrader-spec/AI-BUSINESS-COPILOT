@@ -22,6 +22,8 @@ export type AppView =
   | { kind: "settings:members" }
   | { kind: "settings:billing" }
   | { kind: "settings:security" }
+  /** Prompt 31 — customer data portability center (#/data, §123/§186). */
+  | { kind: "settings:data" }
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
@@ -125,6 +127,8 @@ export function viewToHash(view: AppView): string | null {
       return "#/profile";
     case "settings:security":
       return "#/settings/security";
+    case "settings:data":
+      return "#/data";
     case "platform":
       // #/platform itself resolves to the overview section (§15).
       return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
@@ -163,6 +167,7 @@ export function hashToView(hash: string): AppView {
   if (path === "settings/members") return { kind: "settings:members" };
   if (path === "settings/billing") return { kind: "settings:billing" };
   if (path === "settings/security") return { kind: "settings:security" };
+  if (path === "data") return { kind: "settings:data" };
   if (path === "profile") return { kind: "profile" };
   // Prompt 28 — platform console deep links (#/platform, #/platform/<section>).
   if (path === "platform") return { kind: "platform", section: "overview" };

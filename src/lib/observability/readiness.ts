@@ -58,6 +58,8 @@ export type ReadinessComponents = {
   /** Prompt 30 §186 — identity-security posture (safe states only). */
   mfa: ReadinessComponent;
   emailVerification: ReadinessComponent;
+  /** Prompt 31 §305 — portability storage posture (safe state only). */
+  portabilityStorage: ReadinessComponent;
 };
 
 export type ReadinessResult = {
@@ -195,6 +197,8 @@ export async function computeReadiness(): Promise<ReadinessResult> {
     // Prompt 30 §186 — honest identity-security states.
     mfa: "DISABLED",
     emailVerification: "DISABLED",
+    // Prompt 31 §305 — honest portability storage state.
+    portabilityStorage: "NOT_CONFIGURED",
   };
   const internal: ReadinessResult["internal"] = {
     migrationsApplied: 0,
@@ -317,6 +321,23 @@ export async function computeReadiness(): Promise<ReadinessResult> {
     components.restoreDrill = "NOT_CONFIGURED";
   }
 
+  // 7b) Prompt 31 §305 — portability storage (probe write, safe status only;
+  // NO paths). Vocabulary mapping: READY→READY · INVALID root→BLOCKED ·
+  // NOT_WRITABLE→NOT_CONFIGURED (configured but unusable). Degraded, never
+  // a core blocker — the product serves with exports/imports unavailable.
+  try {
+    const { probeStorageHealth } = await import("@/lib/data-portability/config");
+    const storage = probeStorageHealth();
+    components.portabilityStorage =
+      storage.status === "READY"
+        ? "READY"
+        : storage.status === "INVALID"
+          ? "BLOCKED"
+          : "NOT_CONFIGURED";
+  } catch {
+    components.portabilityStorage = "NOT_CONFIGURED";
+  }
+
   // 8) Overall (§40/§41): blocked only for CORE failures; optional gaps are
   // degraded, not blocked.
   const coreFailed =
@@ -324,7 +345,7 @@ export async function computeReadiness(): Promise<ReadinessResult> {
     components.migrations === "BLOCKED" ||
     components.configuration === "BLOCKED";
   const degraded = (
-    ["email", "aiCostRates", "backups", "restoreDrill", "legal"] as const
+    ["email", "aiCostRates", "backups", "restoreDrill", "legal", "portabilityStorage"] as const
   ).some((k) => components[k] !== "READY");
 
   const result: ReadinessResult = {
@@ -362,6 +383,8 @@ export function publicReadinessDTO(r: ReadinessResult): PublicReadinessDTO {
       legal: rest.components.legal,
       backups: rest.components.backups,
       restoreDrill: rest.components.restoreDrill,
+      // §305/§358 — portability storage status WITHOUT paths/secrets.
+      portabilityStorage: rest.components.portabilityStorage,
       // §187 — MFA/encryption state is deliberately NOT public; only the
       // Platform System view (internal) shows enabled/configured/blocked.
     },

@@ -27,7 +27,7 @@
  */
 import { loadProjectEnv } from "./lib/env-loader.mjs";
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, readdirSync, readFileSync, statSync, accessSync, constants } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, accessSync, constants, mkdirSync } from "node:fs";
 import { isAbsolute, join, resolve, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -199,9 +199,47 @@ const aiEnv = env("AI_COST_ENVIRONMENT");
 pass(`AI_COST_ENVIRONMENT=${aiEnv || (IS_PROD ? "(defaults PRODUCTION in prod)" : "(defaults TEST in dev)")}`);
 console.log("  · verified production rate count is DB state — Platform System shows it (0 = honest NOT_CONFIGURED, §178)");
 
-/* --------------------- 11. health/readiness compatibility ----------------- */
-section("11. Health/Readiness endpoints (when the app is reachable)");
+/* ------------------- 11. data portability (Prompt 31 §180) ----------------- */
+section("11. Data portability storage (§180/§305)");
+{
+  const configured = env("DATA_PORTABILITY_ROOT");
+  const root = configured
+    ? (isAbsolute(configured) ? configured : join(ROOT, configured))
+    : join(ROOT, "var", "data-portability");
+  const resolved = resolve(root);
+  const segments = resolved.split(/[\\/]/).filter(Boolean);
+  const webServed = segments.some((s) => ["public", ".next", "static", "node_modules"].includes(s));
+  if (webServed) {
+    block(`DATA_PORTABILITY_ROOT resolves inside a web-served directory — customer artifacts would be publicly reachable (§304)`);
+  } else {
+    pass(`portability root non-public (${configured ? "configured" : "default var/data-portability"})`);
+  }
+  try {
+    accessSync(resolved, constants.W_OK);
+    pass("portability storage writable");
+  } catch {
+    try {
+      mkdirSync(resolved, { recursive: true });
+      accessSync(resolved, constants.W_OK);
+      pass("portability storage created + writable");
+    } catch {
+      warn("PORTABILITY_STORAGE_NOT_WRITABLE — exports/imports unavailable until the directory is writable (§305)");
+    }
+  }
+  // Limit sanity (§182/§183): integers when set; defaults are conservative.
+  for (const [k, min] of [["EXPORT_FILE_TTL_HOURS", 1], ["EXPORT_MAX_RECORDS", 100], ["EXPORT_MAX_BYTES", 1024], ["IMPORT_FILE_TTL_HOURS", 1], ["IMPORT_MAX_BYTES", 1024], ["IMPORT_MAX_ERRORS", 10], ["MAX_ACTIVE_EXPORTS_PER_BUSINESS", 1], ["MAX_ACTIVE_IMPORTS_PER_BUSINESS", 1]]) {
+    const v = env(k);
+    if (!v) continue;
+    const n = Number(v);
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n < min) warn(`${k}=${v} invalid (integer ≥ ${min}) — runtime falls back to the documented default`);
+    else pass(`${k}=${n}`);
+  }
+}
+
+/* --------------------- 12. health/readiness compatibility ----------------- */
+section("12. Health/Readiness endpoints (when the app is reachable)");
 console.log("  · liveness: GET /api/health · readiness: GET /api/ready (documented in production-operations.md §94)");
+console.log("  · readiness components include portabilityStorage (§305/§358 — status only, no paths)");
 console.log("  · probe them AFTER start; this preflight does not require the app to be running");
 
 /* --------------------------------- result --------------------------------- */

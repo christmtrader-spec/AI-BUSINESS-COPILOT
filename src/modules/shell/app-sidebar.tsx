@@ -4,6 +4,7 @@ import {
   BarChart3,
   Bot,
   CreditCard,
+  FolderSync,
   HandCoins,
   LayoutDashboard,
   Package,
@@ -65,6 +66,7 @@ type NavItem = {
     | "settings"
     | "billing"
     | "security"
+    | "dataPortability"
     | "profile";
   icon: LucideIcon;
   soon?: boolean;
@@ -95,6 +97,7 @@ const PLATFORM: NavItem[] = [
   { view: { kind: "audit" }, labelKey: "audit", icon: ScrollText },
   { view: { kind: "settings:members" }, labelKey: "teamMembers", icon: Users },
   { view: { kind: "settings:business" }, labelKey: "settings", icon: Settings },
+  { view: { kind: "settings:data" }, labelKey: "dataPortability", icon: FolderSync },
   { view: { kind: "settings:billing" }, labelKey: "billing", icon: CreditCard },
   { view: { kind: "settings:security" }, labelKey: "security", icon: ShieldCheck },
   { view: { kind: "profile" }, labelKey: "profile", icon: UserRound },

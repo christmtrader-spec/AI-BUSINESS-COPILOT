@@ -122,3 +122,17 @@ Two different kinds of "retained" exist and must not be conflated:
 | Device session registry | `UserSession` (`sessionTokenHash` = SHA-256(sid); raw sid/JWT never stored) | **30 days** — UserSession `expiresAt` is derived from the SAME `SESSION_MAX_AGE_SECONDS` as the NextAuth JWT maxAge (one authority); per-device revocation sets `revokedAt`; `lastSeenAt` updated at most once per 300s (throttled) | Revocation, expiry, `scripts/prune-auth-security.mjs` (dry-run default, `--apply`), user-deletion cascade | Explicit (expiry = JWT maxAge by construction); legal hold, if ever needed, is NOT implemented and must not be assumed |
 | Security activity events | `SecurityEvent` — fixed `auth.*` vocabulary, no secrets, hashed IP, bounded UA | No independent TTL exists; written only from rate-limited auth paths so attackers cannot inflate the table | User-deletion cascade (privacy-first: per-user security history does NOT survive the account) | **CURRENTLY NOT EXPLICITLY CONFIGURED** (no TTL) — the cascade is a deletion path, not a retention policy |
 | Email-verification rate-limit buckets | in-process memory only | Sliding windows (3/15 min per user+IP, 6/h per user) | Process memory; lost on restart | Explicit and non-durable |
+
+## Customer data portability (Prompt 31 addition)
+
+> **Operational expiry is NOT legal retention.** The TTLs below keep the export/import surface
+> small and fresh; they make no claim about how long any record is lawfully kept, and the
+> product does not present them as a retention policy (§132/§133/§184).
+
+| Data | Storage | Operational expiry / lifecycle | Deletion method | Status |
+| --- | --- | --- | --- | --- |
+| Export artifacts | filesystem `DATA_PORTABILITY_ROOT/exports/` (non-public root; `public/`/`.next/`/`static/` rejected) | **72 h** default (`EXPORT_FILE_TTL_HOURS`, 1..720); expired downloads are rejected immediately | `scripts/prune-expired-exports.mjs` (dry-run default, `--apply`); business-deletion cascade removes the job row (files reaped as orphans) | Explicit operational TTL — not a legal retention policy |
+| Export job rows | `DataExportJob` (metadata only: counts/checksum/status; no file content) | Row retained with the business; `expiresAt` drives artifact cleanup only | Business-deletion cascade; audit rows in `AuditLog` survive independently and are never deleted by file cleanup | Explicit: tied to business lifetime |
+| Staged import uploads | filesystem `DATA_PORTABILITY_ROOT/imports/` | **72 h** default (`IMPORT_FILE_TTL_HOURS`); deleted on cancel; re-verified by SHA-256 at commit | `scripts/prune-expired-imports.mjs` (dry-run default, `--apply`) | Explicit operational TTL |
+| Import job rows | `DataImportJob` (counts, bounded error codes — no raw row values) | Row retained with the business | Business-deletion cascade | Explicit: tied to business lifetime |
+| Import row-level error report | `DataImportJob.errorReport` — bounded (`IMPORT_MAX_ERRORS`, default 500) JSON of rowNumber+field+stable code | No independent TTL; lives and dies with the job row | Job/business cascade | Explicit (size-bounded); no time-based policy (CURRENTLY NOT EXPLICITLY CONFIGURED for time) |

@@ -8,6 +8,7 @@ import {
   Coins,
   DatabaseBackup,
   FileJson,
+  FolderSync,
   Globe2,
   Loader2,
   Save,
@@ -570,6 +571,19 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
                   <DatabaseBackup className="size-4" aria-hidden="true" />
                 )}
                 {exporting ? t("exporting") : t("exportAction")}
+              </Button>
+            </div>
+            {/* Prompt 31 §186 — Business Settings links to the Data Portability
+                center. The operator backup above stays a separate story (§130:
+                backup = system recovery artifact; export = portable dataset). */}
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t("dataPortabilityTitle")}</p>
+                <p className="text-muted-foreground text-xs">{t("dataPortabilityDesc")}</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={() => useAppStore.getState().navigate({ kind: "settings:data" })}>
+                <FolderSync className="size-4" aria-hidden="true" />
+                {t("dataPortabilityAction")}
               </Button>
             </div>
           </CardContent>

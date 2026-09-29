@@ -85,6 +85,22 @@ What a full personal-portability export would still need (**all NOT IMPLEMENTED 
    export is per-business, per-tenant.
 5. A defined machine-readable packaging/format decision and an audit trail for who received what.
 
+### 5.1 Customer data-portability export (Prompt 31 — implemented)
+
+Since Prompt 31, business **owners and admins** can generate a self-service, tenant-scoped
+business-data export at `#/data` (Data Portability center): JSON (exact integer minor units) or
+CSV/ZIP with a manifest and checksums, covering the datasets documented in
+`docs/data/data-export.md` (business profile, members, customers, suppliers, products, inventory
+adjustments, sales + line items, expenses, payments, subscription and usage summaries). It
+excludes all security secrets, platform data and AI transcripts (verified by
+`scripts/data-portability-audit.mjs`).
+
+**This is a business-data portability export, not a complete personal-data portability export.**
+The gaps below still apply: personal-profile data, AI conversations and legal acceptances are
+not part of the artifact; a person who belongs to several businesses needs one export per
+business; and the packaged artifact is scoped to business records, exactly as the next section
+describes.
+
 ## 6. Future DSR compatibility map (documented foundation — not implemented handling)
 
 | Request type | Foundation that exists today | Gap to an automated right | Status of the right |

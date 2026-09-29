@@ -145,6 +145,24 @@ Platform operators and support roles have NO read path to any secret-bearing fie
 | Device session registry | `UserSession` — `sessionTokenHash` (SHA-256 of the random `sid`; the raw sid/JWT is NEVER stored), `deviceLabel?` (coarse family string), `userAgent?` (≤255), `ipHash?` (SHA-256), `createdAt`/`lastSeenAt`/`expiresAt`/`revokedAt` | Per-device visibility + individual revocation in the Security Center · the account owner | S: registry rows written at login | No | No | 30-day expiry (JWT maxAge); revocation; pruned by `scripts/prune-auth-security.mjs`; DELETED with the user (cascade) | CONFIDENTIAL |
 | Security activity events | `SecurityEvent` — fixed `eventType` vocabulary (`auth.*`), `success`, `reasonCode?` (fixed set), `ipHash?`, `userAgent?`, `sessionId?` (registry row id — never a token) | Account Security Center activity feed + server-authoritative step-up recency | S: emitted only from rate-limited auth paths; client input can NEVER introduce an event name or reason | No | No | No independent TTL (CURRENTLY NOT EXPLICITLY CONFIGURED); DELETED with the user (cascade) — privacy-first | CONFIDENTIAL |
 
+### 4.8 Customer data portability (Prompt 31)
+
+Two tenant-owned job models record customer-facing export/import activity (`DataExportJob`,
+`DataImportJob`, both `businessId` → `Business`, `onDelete: Cascade`). The rows contain safe
+metadata ONLY — no file content, no secrets, no tokens. Artifacts live on the local filesystem
+under the non-public storage root `DATA_PORTABILITY_ROOT` (default `var/data-portability/`,
+git-ignored; `public/`, `.next/`, `static/` roots are rejected). Export artifacts carry business
+data that the requesting business already owns; staged import uploads are temporary copies of
+the customer's own file, deleted on cancel and by the operational TTL cleanup scripts.
+
+| Category | Examples (where stored) | Purpose · actor/context | Origin | Third-party processed | Exported? | Deleted? · Retention status | Class |
+|---|---|---|---|---|---|---|---|
+| Export job metadata | `DataExportJob` — status/format/schemaVersion/datasets, recordCount, fileSize, SHA-256 `checksum`, `expiresAt`, safe `failureCode` | Customer business-data portability (owner/admin only) · the requesting member | S: server-generated job state; customer selects datasets | No | The artifact IS the export (customer's own data) | Operational TTL (`EXPORT_FILE_TTL_HOURS`, default 72h) + `scripts/prune-expired-exports.mjs` + business-deletion cascade | CONFIDENTIAL |
+| Export artifacts | filesystem: `DATA_PORTABILITY_ROOT/exports/<jobId>.json|.zip` | The delivered portable dataset (manifest + tenant datasets) | S: server-serialized tenant rows (per-row businessId excluded) | No (download is a direct attachment stream) | n/a — this is the export | Deleted by the TTL cleanup script after expiry; never web-served | CONFIDENTIAL |
+| Import job metadata | `DataImportJob` — datasetType/status, sanitized `fileName`, fileSize, SHA-256 `fileChecksum`, validated `mappingJson`, counts, bounded `errorReport` (rowNumber+field+code only, NO raw values) | Validated bulk import (owner/admin; step-up at commit) · the requesting member | U: uploaded file (parsed server-side), S: counts/codes | No | No | Operational TTL (`IMPORT_FILE_TTL_HOURS`) + `scripts/prune-expired-imports.mjs` + business-deletion cascade | CONFIDENTIAL |
+| Staged import uploads | filesystem: `DATA_PORTABILITY_ROOT/imports/<jobId>.upload` | Temporary parse/validate source for the customer's own import file | U: the uploaded file | No | No | Deleted on cancel, by the TTL cleanup, and re-verified by checksum at commit | CONFIDENTIAL |
+| Portability audit trail | tenant `AuditLog` actions `data_export.*` / `data_import.*` — jobId/datasets/format/counts/requestId only | Auditability of who exported/imported what and when | S: server-written safe payloads | No | No (audit rows are never export datasets) | Follows AuditLog retention (no independent policy — CURRENTLY NOT EXPLICITLY CONFIGURED); file cleanup NEVER deletes audit rows | CONFIDENTIAL |
+
 ## 5. Business data vs personal data
 
 The tenant/business split is the backbone of this inventory, and it is deliberately conservative:

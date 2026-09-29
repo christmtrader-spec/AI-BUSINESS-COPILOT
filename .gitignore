@@ -71,3 +71,4 @@ db/*.db-*
 
 # NOTE: prisma/migrations/ is deliberately NOT ignored — migration files
 # are immutable release artifacts and MUST be version-controlled.
+var/data-portability/

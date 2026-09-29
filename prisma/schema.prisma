@@ -16,35 +16,35 @@ datasource db {
 // src/lib/rbac.ts and is validated with zod at every boundary.
 
 model User {
-  id           String           @id @default(cuid())
-  email        String           @unique
-  name         String?
-  passwordHash String
-  locale       String           @default("en") // user display preference (A05)
+  id              String    @id @default(cuid())
+  email           String    @unique
+  name            String?
+  passwordHash    String
+  locale          String    @default("en") // user display preference (A05)
   // Prompt 18 session security: bumped on password change / password reset /
   // account security events. JWTs carry the version they were issued with;
   // a mismatch means the session was invalidated and must re-authenticate.
-  sessionVersion Int            @default(0)
+  sessionVersion  Int       @default(0)
   // Prompt 30 §3 — email ownership verification. NULL = not verified;
   // non-null = verified. NEVER inferred from email formatting, and existing
   // accounts are NOT bulk-marked verified (§225 — no evidence exists).
   emailVerifiedAt DateTime?
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  memberships BusinessMember[]
-  ownedBusinesses Business[]   @relation("BusinessOwner")
-  auditLogs   AuditLog[]
+  memberships          BusinessMember[]
+  ownedBusinesses      Business[]            @relation("BusinessOwner")
+  auditLogs            AuditLog[]
   inventoryAdjustments InventoryAdjustment[]
-  payments    Payment[]
-  invitesCreated BusinessInvite[] @relation("InviteCreator")
-  invitesAccepted BusinessInvite[] @relation("InviteAcceptor")
-  chatSessions ChatSession[]
-  chatMessages ChatMessage[]
-  passwordResetTokens PasswordResetToken[]
-  subscriptionEvents SubscriptionEvent[]
-  legalAcceptances LegalAcceptance[]
-  platformOperator PlatformOperator?
+  payments             Payment[]
+  invitesCreated       BusinessInvite[]      @relation("InviteCreator")
+  invitesAccepted      BusinessInvite[]      @relation("InviteAcceptor")
+  chatSessions         ChatSession[]
+  chatMessages         ChatMessage[]
+  passwordResetTokens  PasswordResetToken[]
+  subscriptionEvents   SubscriptionEvent[]
+  legalAcceptances     LegalAcceptance[]
+  platformOperator     PlatformOperator?
 
   // Prompt 30 — identity security v2 (§294). All cascade with the user so
   // account deletion removes every user-owned security record (§295).
@@ -87,19 +87,19 @@ model EmailVerificationToken {
 // most one credential per user (§213).
 // ---------------------------------------------------------------------------
 model MfaCredential {
-  id             String    @id @default(cuid())
-  userId         String    @unique
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  encryptedSecret String
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  encryptedSecret  String
   // secret-box format version (§35/§191 — future key rotation, documented).
-  secretVersion  Int       @default(1)
-  enabledAt      DateTime?
+  secretVersion    Int       @default(1)
+  enabledAt        DateTime?
   // Replay protection state (§45): the last TOTP time-step accepted at login.
   // A code from the same (or older) step can never be accepted twice. NULL
   // until the first successful login after enrollment.
   lastUsedTotpStep Int?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   @@index([userId, enabledAt])
 }
@@ -110,12 +110,12 @@ model MfaCredential {
 // secret worth a slow hash). Single use is claimed atomically (§62).
 // ---------------------------------------------------------------------------
 model MfaRecoveryCode {
-  id       String    @id @default(cuid())
-  userId   String
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  codeHash String    @unique
-  usedAt   DateTime?
-  createdAt DateTime @default(now())
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String    @unique
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
 
   @@index([userId, usedAt])
 }
@@ -153,21 +153,21 @@ model MfaLoginChallenge {
 // choice and its limits are documented; this is not strong anonymization).
 // ---------------------------------------------------------------------------
 model UserSession {
-  id              String    @id @default(cuid())
-  userId          String
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sessionTokenHash String   @unique
-  createdAt       DateTime  @default(now())
-  lastSeenAt      DateTime  @default(now())
-  expiresAt       DateTime
-  revokedAt       DateTime?
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionTokenHash String    @unique
+  createdAt        DateTime  @default(now())
+  lastSeenAt       DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
   // Bounded user-agent snapshot (max 255 chars, §233) and derived safe
   // device label (e.g. "Chrome on Windows" — never a fingerprint, §74/§232).
-  userAgent       String?
-  deviceLabel     String?
-  ipHash          String?
-  createdFrom     String    @default("login")
-  updatedAt       DateTime  @updatedAt
+  userAgent        String?
+  deviceLabel      String?
+  ipHash           String?
+  createdFrom      String    @default("login")
+  updatedAt        DateTime  @updatedAt
 
   @@index([userId, createdAt])
   @@index([userId, revokedAt])
@@ -181,16 +181,16 @@ model UserSession {
 // account deletion (privacy-first choice, documented §295/§296).
 // ---------------------------------------------------------------------------
 model SecurityEvent {
-  id         String    @id @default(cuid())
+  id         String   @id @default(cuid())
   userId     String?
-  user       User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   eventType  String
   sessionId  String?
   ipHash     String?
   userAgent  String?
   success    Boolean
   reasonCode String?
-  createdAt  DateTime  @default(now())
+  createdAt  DateTime @default(now())
 
   @@index([userId, createdAt])
   @@index([eventType, createdAt])
@@ -204,51 +204,54 @@ model SecurityEvent {
 // review of recovery abuse; they never contain secrets.
 // ---------------------------------------------------------------------------
 model PasswordResetToken {
-  id        String    @id @default(cuid())
-  userId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash String    @unique
-  expiresAt DateTime
-  usedAt    DateTime?
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
   requestedIp String?
   userAgent   String?
-  createdAt DateTime  @default(now())
+  createdAt   DateTime  @default(now())
 
   @@index([userId, createdAt])
   @@index([expiresAt])
 }
 
 model Business {
-  id               String   @id @default(cuid())
+  id               String @id @default(cuid())
   name             String
-  slug             String   @unique
+  slug             String @unique
   // A04 — currency is configuration, never hard-coded
-  currencyCode     String   @default("USD")
-  currencySymbol   String   @default("$")
-  decimalPrecision Int      @default(2) // 0..4
+  currencyCode     String @default("USD")
+  currencySymbol   String @default("$")
+  decimalPrecision Int    @default(2) // 0..4
   // A05/A07 — locale & timezone are business configuration
-  locale           String   @default("en")
-  timezone         String   @default("UTC")
+  locale           String @default("en")
+  timezone         String @default("UTC")
 
   ownerId String
   owner   User   @relation("BusinessOwner", fields: [ownerId], references: [id])
 
-  members   BusinessMember[]
-  auditLogs AuditLog[]
-  invites   BusinessInvite[]
-  customers Customer[]
-  suppliers Supplier[]
-  products  Product[]
+  members              BusinessMember[]
+  auditLogs            AuditLog[]
+  invites              BusinessInvite[]
+  customers            Customer[]
+  suppliers            Supplier[]
+  products             Product[]
   inventoryAdjustments InventoryAdjustment[]
-  sales     Sale[]
-  expenses  Expense[]
-  payments  Payment[]
-  chatSessions ChatSession[]
-  subscription Subscription?
-  subscriptionEvents SubscriptionEvent[]
-  usagePeriods UsagePeriod[]
-  usageEvents  UsageEvent[]
-  checkoutSessions CheckoutSession[]
+  sales                Sale[]
+  expenses             Expense[]
+  payments             Payment[]
+  chatSessions         ChatSession[]
+  subscription         Subscription?
+  subscriptionEvents   SubscriptionEvent[]
+  usagePeriods         UsagePeriod[]
+  usageEvents          UsageEvent[]
+  checkoutSessions     CheckoutSession[]
+  // Prompt 31 — customer data portability jobs (tenant-scoped, cascade).
+  dataExportJobs       DataExportJob[]
+  dataImportJobs       DataImportJob[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -294,13 +297,13 @@ model BusinessInvite {
 }
 
 model AuditLog {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   // Nullable since Prompt 18: account-level security events (password
   // change/reset, account deletion) are not bound to a business.
   businessId String?
   business   Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
   actorId    String?
-  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actor      User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
   action     String // e.g. "business.update", "member.role_change"
   entityType String // e.g. "Business", "BusinessMember"
   entityId   String?
@@ -408,25 +411,25 @@ model InventoryAdjustment {
 // ---------------------------------------------------------------------------
 
 model Sale {
-  id         String    @id @default(cuid())
-  businessId String
-  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  id            String    @id @default(cuid())
+  businessId    String
+  business      Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
   // Per-business sequential invoice number (displayed as INV-0001)
-  number     Int
-  customerId String?
-  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  number        Int
+  customerId    String?
+  customer      Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   // Totals computed server-side with integer math at creation (A08)
   subtotalMinor Int
-  discountMinor Int     @default(0)
+  discountMinor Int       @default(0)
   totalMinor    Int
   // Payment summary — updated in the same tx as every Payment create/delete
-  paidMinor  Int       @default(0)
-  status     String    @default("UNPAID")
-  issueDate  DateTime  @default(now())
-  note       String?
-  deletedAt  DateTime?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  paidMinor     Int       @default(0)
+  status        String    @default("UNPAID")
+  issueDate     DateTime  @default(now())
+  note          String?
+  deletedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   items    SaleItem[]
   payments Payment[]
@@ -509,19 +512,19 @@ model Payment {
 // ---------------------------------------------------------------------------
 
 model ChatSession {
-  id         String        @id // client-generated (s-<random>), format-validated
-  businessId String
-  business   Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  userId     String
-  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title      String        @default("") // auto-title from first question (≤80 chars)
+  id          String        @id // client-generated (s-<random>), format-validated
+  businessId  String
+  business    Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String        @default("") // auto-title from first question (≤80 chars)
   // User renamed via PATCH — after this the auto-title never overwrites it.
-  titleEdited Boolean      @default(false)
+  titleEdited Boolean       @default(false)
   // Pinned conversations sort first in the history list (UI-only affordance).
-  pinned     Boolean       @default(false)
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @updatedAt
-  messages   ChatMessage[]
+  pinned      Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  messages    ChatMessage[]
 
   @@unique([businessId, userId, id]) // defense in depth: id alone is never enough
   @@index([businessId, userId, updatedAt])
@@ -533,7 +536,7 @@ model ChatMessage {
   session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   // USER | ASSISTANT (validated in the API schema)
   role      String
-  content   String      // capped at 8000 chars server-side
+  content   String // capped at 8000 chars server-side
   failed    Boolean     @default(false) // failed attempts stay LOCAL-only (never synced)
   // Citation provenance (server-computed CopilotMeta) as JSON — answers
   // restored on another device still show WHERE their numbers came from.
@@ -591,15 +594,15 @@ model Plan {
 }
 
 model EntitlementDefinition {
-  id   String @id @default(cuid())
+  id          String  @id @default(cuid())
   // Stable machine code: CUSTOMERS_MAX | AI_COPILOT | ... (§72 — constants
   // live in src/lib/billing/catalog.ts; raw literals never scatter).
-  code String @unique
+  code        String  @unique
   // LIMIT | BOOLEAN (validated against catalog at seed time).
-  type String
+  type        String
   // COUNT | REQUESTS | MESSAGES | MEGABYTES | BUSINESSES | USERS (LIMIT only).
-  unit String?
-  description String @default("")
+  unit        String?
+  description String  @default("")
 
   planEntitlements PlanEntitlement[]
 
@@ -607,45 +610,45 @@ model EntitlementDefinition {
 }
 
 model PlanEntitlement {
-  id            String @id @default(cuid())
+  id            String                @id @default(cuid())
   planId        String
-  plan          Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  plan          Plan                  @relation(fields: [planId], references: [id], onDelete: Cascade)
   entitlementId String
   entitlement   EntitlementDefinition @relation(fields: [entitlementId], references: [id], onDelete: Cascade)
   // LIMIT rows: the numeric limit; null = UNLIMITED (e.g. ENTERPRISE).
   // BOOLEAN rows: value stays null.
   value         Int?
   // BOOLEAN rows carry the flag; LIMIT rows are always false here.
-  boolValue     Boolean @default(false)
-  createdAt     DateTime @default(now())
+  boolValue     Boolean               @default(false)
+  createdAt     DateTime              @default(now())
 
   @@unique([planId, entitlementId])
   @@index([entitlementId])
 }
 
 model Subscription {
-  id         String @id @default(cuid())
+  id         String   @id @default(cuid())
   // One CURRENT subscription per business (§79). History → SubscriptionEvent.
-  businessId String @unique
+  businessId String   @unique
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   // Deleting a plan that still has subscriptions is blocked (Restrict) —
   // retire via active=false instead (§80).
   planId     String
-  plan       Plan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  plan       Plan     @relation(fields: [planId], references: [id], onDelete: Restrict)
 
   // TRIALING | ACTIVE | PAST_DUE | CANCELED | EXPIRED | PAUSED (§16/§17).
-  status     String @default("ACTIVE")
+  status        String @default("ACTIVE")
   // MONTHLY | YEARLY — period duration concept only; no prices (§18).
   billingPeriod String @default("MONTHLY")
 
-  currentPeriodStart DateTime @default(now())
+  currentPeriodStart DateTime  @default(now())
   currentPeriodEnd   DateTime?
-  trialStart DateTime?
-  trialEnd   DateTime?
+  trialStart         DateTime?
+  trialEnd           DateTime?
   // Cancellation semantics (§44): keep access until period end.
-  cancelAtPeriodEnd Boolean @default(false)
-  canceledAt DateTime?
-  endedAt    DateTime?
+  cancelAtPeriodEnd  Boolean   @default(false)
+  canceledAt         DateTime?
+  endedAt            DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -658,25 +661,25 @@ model Subscription {
 }
 
 model SubscriptionEvent {
-  id             String @id @default(cuid())
+  id             String       @id @default(cuid())
   businessId     String
-  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business       Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
   subscriptionId String
   subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
   // CREATED | PLAN_CHANGED | TRIAL_STARTED | TRIAL_ENDED | CANCELED |
   // REACTIVATED | EXPIRED | PAUSED | RESUMED (§20) — no payment events.
-  type       String
-  fromStatus String?
-  toStatus   String?
+  type         String
+  fromStatus   String?
+  toStatus     String?
   fromPlanCode String?
   toPlanCode   String?
   // Small structured payload (e.g. { source: "seed-backfill" }) — never
   // payment data; the core relationships above are relational, not JSON (§17).
-  dataJson   String?
-  actorId    String?
-  actor      User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
-  createdAt  DateTime @default(now())
+  dataJson     String?
+  actorId      String?
+  actor        User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
 
   @@index([businessId, createdAt])
   @@index([subscriptionId, createdAt])
@@ -803,27 +806,27 @@ model UsageEvent {
 // ---------------------------------------------------------------------------
 
 model CheckoutSession {
-  id           String   @id @default(cuid())
-  businessId   String
-  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   // Target plan + period SNAPSHOT at creation (plan rows may later change).
-  planCode     String
-  billingPeriod String  @default("MONTHLY")
+  planCode      String
+  billingPeriod String @default("MONTHLY")
 
   // Provider slug: "mock" (sandbox) today; registry-gated (fail closed).
-  provider     String
+  provider    String
   // Provider-side reference (mock_… / Zarinpal Authority / cs_live_…) —
   // unique per provider.
-  providerRef  String
+  providerRef String
 
   // Settlement currency is the PLAN CATALOG currency (EUR), independent of
   // the business display currency; amounts are integer minor units.
-  amountMinor  Int
-  currency     String   @default("EUR")
+  amountMinor Int
+  currency    String @default("EUR")
 
   // PENDING | SUCCEEDED | FAILED | EXPIRED | CANCELED | RECONCILIATION_REQUIRED
-  status       String   @default("PENDING")
+  status               String  @default("PENDING")
   // Prompt 23 §45 — why this session needs manual reconciliation:
   // AMOUNT_MISMATCH | CURRENCY_MISMATCH | UNKNOWN_PROVIDER_STATE | PROVIDER_TIMEOUT
   reconciliationReason String?
@@ -834,26 +837,26 @@ model CheckoutSession {
   // Prompt 24: new sessions store the resolving PriceBook's version here and
   // the book references below; pre-Prompt-24 sessions keep the legacy value
   // ("v1-2026-09-eur") with null book refs — never reinterpreted (§67/§68).
-  pricingVersion String?
+  pricingVersion    String?
   // Prompt 24 §29/§30 — immutable price-book snapshot reference.
-  priceBookId   String?
-  priceBook     PriceBook? @relation(fields: [priceBookId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  priceBookId       String?
+  priceBook         PriceBook? @relation(fields: [priceBookId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   // Denormalized readable code (EUR_STANDARD) — the session stays
   // interpretable even though ids are opaque.
-  priceBookCode String?
+  priceBookCode     String?
   // Prompt 23 §149 — which user (owner/admin) initiated this payment.
   initiatedByUserId String?
 
-  expiresAt    DateTime
-  completedAt  DateTime?
+  expiresAt   DateTime
+  completedAt DateTime?
   // Set when fulfillment (plan change via changePlan) has been applied.
-  fulfilledAt  DateTime?
+  fulfilledAt DateTime?
 
   // Small safe metadata only (never card data — the abstraction never
   // touches payment instruments; providers handle those).
-  metaJson     String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  metaJson  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   transactions PaymentTransaction[]
 
@@ -914,7 +917,7 @@ model ProcessedWebhookEvent {
 // ---------------------------------------------------------------------------
 
 model PriceBook {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   // Stable commercial code — never encodes prices inside the code (§70).
   // EUR_STANDARD | IRR_IRAN | (harness-only: *_TEST books).
   code          String
@@ -924,11 +927,11 @@ model PriceBook {
   // layer (src/lib/payments/currency.ts) at seed and resolution time.
   currency      String
   // Only active books participate in resolution (§10 step 4).
-  active        Boolean  @default(false)
-  effectiveFrom DateTime @default(now())
+  active        Boolean   @default(false)
+  effectiveFrom DateTime  @default(now())
   // Books expire automatically after effectiveTo (§9/§33).
   effectiveTo   DateTime?
-  description   String   @default("")
+  description   String    @default("")
 
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
@@ -1030,34 +1033,34 @@ model CommercialEvent {
 // ---------------------------------------------------------------------------
 
 model AiCostRate {
-  id            String    @id @default(cuid())
+  id                       String    @id @default(cuid())
   // Provider slug (e.g. "z-ai") — the provider abstraction identifier.
-  provider      String
+  provider                 String
   // EXACT model identifier as reported by the provider, or the explicit
   // reserved mapping "DEFAULT" (only where provider semantics make it
   // legitimate — never a fuzzy fallback, §33/§106).
-  model         String
+  model                    String
   // ISO 4217 pricing currency of the RATE (provider pricing currency —
   // never assumed equal to business or settlement currency, §24).
-  currency      String
+  currency                 String
   // Immutable human version id (e.g. "2026-09-v1"). New price → new version.
-  version       String
+  version                  String
   // nano-minor units per 1K tokens (1 minor unit = 1,000,000 nano-minor).
   inputRateNanoMinorPer1K  BigInt
   outputRateNanoMinorPer1K BigInt
   // Effective window (UTC). usageTimestamp decides which version applies —
   // no retroactive application of later rates (§104).
-  effectiveFrom DateTime
-  effectiveTo   DateTime?
+  effectiveFrom            DateTime
+  effectiveTo              DateTime?
   // Deactivation only — used rates are never deleted (§12).
-  active        Boolean   @default(true)
+  active                   Boolean   @default(true)
   // TEST | PRODUCTION — completely separate domains (§6).
-  environment   String
+  environment              String
   // Production verification evidence (§8): a PRODUCTION rate is unusable
   // for attribution without ALL three fields set.
-  verifiedAt      DateTime?
-  verifiedBy      String?
-  sourceReference String?
+  verifiedAt               DateTime?
+  verifiedBy               String?
+  sourceReference          String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1068,38 +1071,38 @@ model AiCostRate {
 }
 
 model AiCostRecord {
-  id            String   @id @default(cuid())
+  id                       String  @id @default(cuid())
   // The authoritative usage event this cost belongs to (Prompt 21 ledger).
-  usageEventId  String   @unique
+  usageEventId             String  @unique
   // Logical AI operation correlation (Prompt 21 requestId semantics).
-  requestId     String
-  businessId    String
-  usagePeriodId String?
+  requestId                String
+  businessId               String
+  usagePeriodId            String?
   // Plan snapshot AT USAGE TIME (§25) — later plan changes never rewrite it.
-  planCodeAtUsage String
-  provider      String
-  model         String
+  planCodeAtUsage          String
+  provider                 String
+  model                    String
   // Snapshot of the resolved rate (§13) — reconstructs the calculation even
   // if the rate row is later deactivated. Null for UNKNOWN-without-rate.
-  currency      String?
-  rateId        String?
-  rateVersion   String?
-  environment   String?
+  currency                 String?
+  rateId                   String?
+  rateVersion              String?
+  environment              String?
   inputRateNanoMinorPer1K  BigInt?
   outputRateNanoMinorPer1K BigInt?
   // Normalized token snapshot (§37) — provider-independent accounting shape.
-  inputTokens   Int?
-  outputTokens  Int?
-  totalTokens   Int?
+  inputTokens              Int?
+  outputTokens             Int?
+  totalTokens              Int?
   // COMPLETE | PARTIAL | TOTAL_ONLY | NONE (§16).
-  tokenStatus   String
+  tokenStatus              String
   // KNOWN | UNKNOWN (§17). KNOWN ⇒ costNanoMinor non-null; UNKNOWN ⇒ null.
-  costStatus    String
-  costNanoMinor BigInt?
+  costStatus               String
+  costNanoMinor            BigInt?
   // RATE_NOT_FOUND | MODEL_UNKNOWN | TOKENS_MISSING | PARTIAL_TOKEN_DATA |
   // CURRENCY_NOT_CONFIGURED | PROVIDER_NOT_CONFIGURED | ENVIRONMENT_MISMATCH
   // | RATE_NOT_VERIFIED | AMBIGUOUS_RATE (§18).
-  unknownReason String?
+  unknownReason            String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1188,7 +1191,7 @@ model PlatformOperator {
 }
 
 model PlatformAuditLog {
-  id               String   @id @default(cuid())
+  id               String            @id @default(cuid())
   operatorId       String?
   operator         PlatformOperator? @relation(fields: [operatorId], references: [id], onDelete: SetNull)
   // Role snapshot — survives operator removal (SetNull above).
@@ -1205,7 +1208,7 @@ model PlatformAuditLog {
   requestId        String?
   ip               String?
   userAgent        String?
-  createdAt        DateTime @default(now())
+  createdAt        DateTime          @default(now())
 
   @@index([createdAt])
   @@index([action, createdAt])
@@ -1251,4 +1254,109 @@ model LegalAcceptance {
   @@unique([userId, documentType, documentVersion])
   @@index([userId, acceptedAt])
   @@index([documentType, documentVersion])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 31 — CUSTOMER DATA PORTABILITY (tenant-scoped export/import jobs).
+//
+// Security laws (Prompt 31 §12-§16, §61, §301-§303):
+//  - Tenant-owned: every row belongs to exactly one Business and cascades
+//    with it (§273 — deleting the business removes its portability jobs).
+//  - `id` is a Prisma cuid (unguessable, non-sequential) — it is a job
+//    identifier, NEVER an access credential (§14/§15). Download/commit
+//    ALWAYS re-check session + membership + role + status + expiry.
+//  - NO file content, NO secrets, NO tokens in this table — only safe
+//    metadata (counts, checksums, bounded safe failure codes).
+//  - Statuses are server-owned state machines (§103/§165); the client can
+//    never assign them.
+//  - Files live on the filesystem under the non-public portability root
+//    (§11/§18/§303) — this table stores only the server-generated key.
+// ---------------------------------------------------------------------------
+model DataExportJob {
+  id                 String    @id @default(cuid())
+  businessId         String
+  business           Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  requestedByUserId  String
+  // QUEUED | PROCESSING | COMPLETED | FAILED | EXPIRED | CANCELED
+  status             String    @default("QUEUED")
+  // JSON | CSV (CSV artifacts are ZIP packages with an embedded manifest).
+  format             String
+  schemaVersion      Int       @default(1)
+  // JSON array of dataset keys from the export catalog (allowlisted).
+  requestedDatasets  String
+  // Bounded client-supplied idempotency marker (§38) — optional.
+  idempotencyKey     String?
+  recordCount        Int?
+  fileSize           Int?
+  // SHA-256 hex of the final artifact file (§21) — verified at download.
+  checksum           String?
+  // Server-generated relative storage key (never user-controlled, §147).
+  storageKey         String?
+  createdAt          DateTime  @default(now())
+  startedAt          DateTime?
+  completedAt        DateTime?
+  expiresAt          DateTime?
+  // Stable safe failure vocabulary (§259) — never raw errors.
+  failureCode        String?
+  failureMessageSafe String?
+
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, createdAt])
+  @@index([businessId, status])
+  @@index([status, createdAt])
+  @@index([expiresAt])
+}
+
+model DataImportJob {
+  id                 String    @id @default(cuid())
+  businessId         String
+  business           Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  requestedByUserId  String
+  // customers | suppliers | products (controlled import catalog §59).
+  datasetType        String
+  // UPLOADED | PARSING | MAPPING_REQUIRED | VALIDATING | READY |
+  // COMMITTING | COMPLETED | FAILED | EXPIRED | CANCELED (§103)
+  status             String    @default("UPLOADED")
+  // Display-only original file name (sanitized; never used as a path, §147).
+  fileName           String
+  fileSize           Int
+  // Server-generated relative storage key for the staged upload (§62).
+  storageKey         String?
+  // SHA-256 of the staged upload — re-verified at commit (§311).
+  fileChecksum       String?
+  schemaVersion      Int       @default(1)
+  // Validated mapping (source column -> target field) — server-validated
+  // against the per-dataset allowlist (§69/§70); never raw Prisma fields.
+  mappingJson        String?
+  // SKIP | REJECT (deterministic duplicate policy §82; default SKIP §336).
+  duplicateMode      String    @default("SKIP")
+  // Commit idempotency marker (§163) — set once at commit time.
+  commitToken        String?
+  rowCount           Int?
+  validRows          Int?
+  invalidRows        Int?
+  duplicateRows      Int?
+  wouldCreate        Int?
+  // UPDATE mode is NOT implemented in Prompt 31 (honest §388 report);
+  // columns kept for schema stability — always 0/null today.
+  wouldUpdate        Int?
+  wouldSkip          Int?
+  createdCount       Int?
+  updatedCount       Int?
+  skippedCount       Int?
+  failedCount        Int?
+  // Bounded row-level error report (MAX_IMPORT_ERRORS, §172) — codes +
+  // row numbers + field names only; NO raw row values (§321/§322).
+  errorReport        String?
+  createdAt          DateTime  @default(now())
+  startedAt          DateTime?
+  completedAt        DateTime?
+  expiresAt          DateTime?
+  failureCode        String?
+  failureMessageSafe String?
+
+  @@index([businessId, createdAt])
+  @@index([businessId, status])
+  @@index([status, createdAt])
+  @@index([expiresAt])
 }

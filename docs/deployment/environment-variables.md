@@ -160,6 +160,26 @@
 
 Details: `docs/security/identity-security-v2.md` (configuration table and capability semantics: `DISABLED` / `AVAILABLE` / `BLOCKED`), `docs/security/mfa.md` (key handling), `docs/security/email-verification.md` (mode semantics).
 
+## Prompt 31 variables — customer data portability
+
+| Variable | Required | Secret? | Purpose |
+|---|---|---|---|
+| `DATA_PORTABILITY_ROOT` | Optional (default `var/data-portability`) | No | Storage root for export artifacts and staged import uploads. MUST resolve OUTSIDE every web-served directory — `public/`, `.next/`, `static/`, `node_modules/` segments are rejected at every use (`PORTABILITY_STORAGE_INVALID`). |
+| `EXPORT_FILE_TTL_HOURS` | Optional (default 72) | No | Operational artifact TTL, bounded 1–720 h. Expired downloads → 410; `scripts/prune-expired-exports.mjs` removes the files. NOT a legal retention policy. |
+| `EXPORT_MAX_RECORDS` | Optional (default 100 000) | No | Hard generation cap (100..5,000,000). Exceeding it fails the job with `EXPORT_LIMIT_EXCEEDED` — never a partial file. |
+| `EXPORT_MAX_BYTES` | Optional (default 52428800 = 50 MiB) | No | Artifact size cap. |
+| `EXPORT_MAX_DATASETS` | Optional (default 12) | No | Max datasets per export request. |
+| `IMPORT_FILE_TTL_HOURS` | Optional (default 72) | No | Staged-upload TTL, bounded 1–720 h; expired imports cannot commit; cleaned by `scripts/prune-expired-imports.mjs`. |
+| `IMPORT_MAX_BYTES` | Optional (default 10485760 = 10 MiB) | No | Upload size cap (content-length pre-check + full cap + derived row cap). |
+| `IMPORT_MAX_ERRORS` | Optional (default 500) | No | Stored row-level error cap (10..50000); beyond it the report is truncated and flagged. |
+| `MAX_ACTIVE_EXPORTS_PER_BUSINESS` | Optional (default 2) | No | Active-export concurrency cap (1..10; expired jobs excluded). |
+| `MAX_ACTIVE_IMPORTS_PER_BUSINESS` | Optional (default 2) | No | Active-import concurrency cap (1..10; expired jobs excluded). |
+
+All values are parsed as strict integers — negative/zero-where-invalid/NaN/Infinity/non-integer
+fall back to the documented default (§182). Defaults are deliberately conservative; no variable
+has an "unlimited" mode (§183). Details: `docs/security/data-portability.md`,
+`docs/data/data-export.md`, `docs/data/data-import.md`.
+
 ## `NODE_ENV` — the database guard flag (not in `.env.example` on purpose)
 
 `NODE_ENV` is a runtime flag, not a configured secret, but it is load-bearing for database safety:

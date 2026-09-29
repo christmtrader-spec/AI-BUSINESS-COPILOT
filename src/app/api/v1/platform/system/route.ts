@@ -143,6 +143,17 @@ export const GET = route(async (req: NextRequest) => {
         detail: `AUTH_EMAIL_VERIFICATION_MODE=${report.identitySecurity.emailVerificationState}`,
       },
       {
+        // Prompt 31 §297/§305 — portability storage posture (NO paths).
+        key: "portabilityStorage",
+        status: map(r.components.portabilityStorage),
+        detail:
+          r.components.portabilityStorage === "READY"
+            ? "export/import storage writable, non-public"
+            : r.components.portabilityStorage === "BLOCKED"
+              ? "PORTABILITY_STORAGE_INVALID (root inside a web-served directory)"
+              : "PORTABILITY_STORAGE_NOT_WRITABLE",
+      },
+      {
         key: "retentionPolicy",
         // §67/§118 — honest: no automatic deletion policy is configured.
         status: "NOT_CONFIGURED" as Status,
