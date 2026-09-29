@@ -187,12 +187,16 @@ const fa: Messages = {
     // ---- تأیید دو مرحله‌ای ----
     mfaSection: "تأیید دو مرحله‌ای",
     mfaSectionDesc: "یک مرحله تأیید اضافه هنگام ورود با برنامه کد یک‌بارمصرف (Authenticator) اضافه می‌کند.",
+    mfaEnableHint: "فعال‌سازی حدود یک دقیقه طول می‌کشد: کد QR را با برنامه Authenticator اسکن کنید و یک کد ۶ رقمی را تأیید کنید.",
     mfaEnabled: "فعال",
     mfaDisabled: "غیرفعال",
     mfaEnableAction: "فعال‌سازی تأیید دو مرحله‌ای",
     mfaDisableAction: "غیرفعال کردن تأیید دو مرحله‌ای",
     mfaRegenerateCodesAction: "بازتولید کدهای بازیابی",
     mfaUnavailable: "تأیید دو مرحله‌ای در این استقرار در دسترس نیست.",
+    // Prompt 30-F §8 — حالت‌های قابلیت از سمت سرور (متن واقعی، بدون اغراق).
+    mfaCapabilityDisabled: "تأیید دو مرحله‌ای در این استقرار خاموش است.",
+    mfaCapabilityBlocked: "تأیید دو مرحله‌ای موقتاً در دسترس نیست — پیکربندی استقرار ناقص است.",
     mfaSetupTitle: "راه‌اندازی برنامه کد یک‌بارمصرف",
     mfaSetupStep1: "کد QR را با برنامه Authenticator اسکن کنید (یا کلید را دستی وارد کنید).",
     mfaSetupManualKey: "کلید راه‌اندازی دستی",

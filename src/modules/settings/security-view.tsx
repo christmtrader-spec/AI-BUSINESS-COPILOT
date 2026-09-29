@@ -87,6 +87,9 @@ type SecuritySummary = {
   emailVerified: boolean;
   emailVerificationMode: "OFF" | "OPTIONAL" | "REQUIRED";
   mfaEnabled: boolean;
+  /** Prompt 30-F §3/§6 — server-authoritative capability state
+   * (AVAILABLE | DISABLED | BLOCKED). Never inferred client-side. */
+  mfaCapabilityState: "AVAILABLE" | "DISABLED" | "BLOCKED";
   recoveryCodeCount: number;
   currentSession: {
     id: string;
@@ -224,12 +227,11 @@ export function SecurityCenterView() {
   };
 
   const summaryData = summary.data;
-  const mfaAvailable =
-    // Honest availability signal: the deployment must expose the capability.
-    // When disabled server-side, setup returns MFA_NOT_CONFIGURED and the
-    // UI surfaces the honest message; the button stays visible (§455 gentle
-    // onboarding, not a fake error).
-    true;
+  // Prompt 30-F §3/§4/§5 — capability comes from the SERVER response, never
+  // hard-coded. DISABLED → honest "unavailable in this deployment" copy with
+  // the action disabled; BLOCKED → same treatment (setup would fail closed,
+  // so the UI must not encourage it, §5); AVAILABLE → normal flow.
+  const mfaAvailable = summaryData?.mfaCapabilityState === "AVAILABLE";
 
   if (summary.isLoading) {
     return (
@@ -333,7 +335,18 @@ export function SecurityCenterView() {
             </>
           ) : (
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-muted-foreground">{mfaAvailable ? t("mfaSectionDesc") : t("mfaUnavailable")}</p>
+              {/* Prompt 30-F §4/§5/§16 — capability-specific factual copy:
+                  AVAILABLE = enrollment hint (distinct from the header
+                  description — no duplicated line), DISABLED = feature off ·
+                  BLOCKED = configuration incomplete (setup would fail
+                  closed). No fake urgency, no fear copy. */}
+              <p className="text-sm text-muted-foreground">
+                {summaryData.mfaCapabilityState === "AVAILABLE"
+                  ? t("mfaEnableHint")
+                  : summaryData.mfaCapabilityState === "DISABLED"
+                    ? t("mfaCapabilityDisabled")
+                    : t("mfaCapabilityBlocked")}
+              </p>
               <Button
                 size="sm"
                 disabled={!mfaAvailable}
@@ -384,13 +397,6 @@ export function SecurityCenterView() {
           locale={locale}
         />
       </Card>
-
-      {/* ------------------------------ activity --------------------------- */}
-      <ActivitySection
-        events={activity.data?.events ?? []}
-        isLoading={activity.isLoading}
-        locale={locale}
-      />
 
       <AllDialogs {...dialogProps} />
     </div>

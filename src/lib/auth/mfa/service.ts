@@ -7,6 +7,7 @@ import {
   TOTP_DIGITS,
   TOTP_PERIOD_SECONDS,
   TOTP_WINDOW_STEPS,
+  mfaFeatureEnabled,
 } from "@/lib/auth/config";
 import {
   decryptSecret,
@@ -56,16 +57,37 @@ export class MfaServiceError extends Error {
   }
 }
 
-/** Feature gate (§184): the deployment must explicitly enable MFA. */
+/** Feature gate (§184): the deployment must explicitly enable MFA. One
+ * env-parsing authority (config.mfaFeatureEnabled) — never re-parsed here. */
 export function assertMfaFeatureAvailable(): void {
-  const enabled =
-    (process.env.MFA_ENABLED ?? "").trim().toLowerCase() === "true";
-  if (!enabled) {
+  if (!mfaFeatureEnabled()) {
     throw new MfaServiceError(
       "MFA_NOT_CONFIGURED",
       "Two-factor authentication is not available in this deployment.",
     );
   }
+}
+
+/**
+ * Server-authoritative MFA capability (Prompt 30-F §3/§6/§7):
+ * ONE safe, value-free status combining MFA_ENABLED and the VALIDITY of
+ * MFA_ENCRYPTION_KEY. The Security Center UI derives its button state from
+ * this — it never hard-codes availability and never learns WHY a blocked
+ * key is blocked (no reason strings, no key material, §188/§198).
+ *
+ *   DISABLED  MFA_ENABLED is not "true" — capability off for everyone.
+ *   BLOCKED   MFA_ENABLED=true but the key is missing/invalid/placeholder —
+ *             any setup attempt would fail closed, so the UI must not
+ *             encourage it (§5).
+ *   AVAILABLE feature on + key valid — enrollment may proceed.
+ */
+export type MfaCapabilityState = "AVAILABLE" | "DISABLED" | "BLOCKED";
+
+export function getMfaCapabilityState(): MfaCapabilityState {
+  if (!mfaFeatureEnabled()) return "DISABLED";
+  return validateSecretBoxKey(process.env.MFA_ENCRYPTION_KEY).ok
+    ? "AVAILABLE"
+    : "BLOCKED";
 }
 
 /** Key check (§34/§190): fail closed with a safe, value-free error. */

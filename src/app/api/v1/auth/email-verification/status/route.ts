@@ -7,7 +7,7 @@
  */
 import { NextRequest } from "next/server";
 import { getServerSession } from "next-auth";
-import { ok, route } from "@/lib/api-helpers";
+import { ApiError, ok, route } from "@/lib/api-helpers";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { emailVerificationMode } from "@/lib/auth/email-verification/service";
@@ -21,8 +21,14 @@ export const GET = route(async (req: NextRequest) => {
   const { assertFreshSession } = await import("@/lib/auth-security");
   const userId = await assertFreshSession(session);
 
-  // Light abuse bound even for a read (§141-analog).
-  rateLimit(`email-verify-status:${userId}:${getClientIp(req)}`, 60, 5 * 60_000);
+  // Light abuse bound even for a read (§141-analog) — ENFORCED (Prompt 30-F
+  // §11): an exhausted caller gets an honest 429, never a silent pass.
+  const rl = rateLimit(`email-verify-status:${userId}:${getClientIp(req)}`, 60, 5 * 60_000);
+  if (!rl.allowed) {
+    throw new ApiError(429, "RATE_LIMITED", "Too many requests. Please wait a moment.", {
+      retryAfterMs: rl.retryAfterMs,
+    });
+  }
 
   const user = await db.user.findUnique({
     where: { id: userId },

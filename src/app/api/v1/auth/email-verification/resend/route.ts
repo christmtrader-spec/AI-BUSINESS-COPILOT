@@ -88,7 +88,19 @@ export const POST = route(async (req: NextRequest) => {
 
   const { generateResetToken } = await import("@/lib/auth-security");
   const rawVerificationToken = generateResetToken();
-  const verificationUrl = buildEmailVerificationLink(rawVerificationToken);
+  // Prompt 30-F §52 — the link builder needs a CONFIGURED base URL. When it
+  // is missing this is a deployment misconfiguration: honest 503 under the
+  // EMAIL-VERIFICATION vocabulary (never the password-reset code that
+  // appBaseUrl throws — error contracts never cross flows, §314).
+  let verificationUrl: string;
+  try {
+    verificationUrl = buildEmailVerificationLink(rawVerificationToken);
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "RESET_DELIVERY_UNAVAILABLE") {
+      throw new ApiError(503, "EMAIL_VERIFICATION_UNAVAILABLE", "Email delivery is temporarily unavailable. Please try again later.");
+    }
+    throw error;
+  }
   const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MINUTES * 60_000);
 
   const message = buildEmailVerificationEmail({

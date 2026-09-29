@@ -19,6 +19,7 @@ import { ZodError, type ZodType } from "zod";
 import { getOrCreateRequestId, requestIdHeaderName } from "@/lib/observability/request-id";
 import { logDebug, logError, logWarn } from "@/lib/observability/logger";
 import { OPERATIONAL_EVENTS, classifyStatus } from "@/lib/observability/events";
+import { MfaServiceError } from "@/lib/auth/mfa/service";
 
 export class ApiError extends Error {
   constructor(
@@ -129,6 +130,29 @@ export function toErrorResponse(error: unknown, ctx?: RouteContext): NextRespons
       issueCount: error.issues.length,
     });
     return fail(422, "VALIDATION_ERROR", "The submitted data is invalid.", error.issues);
+  }
+  if (error instanceof MfaServiceError) {
+    // Prompt 30-F — MFA capability failures are EXPECTED operational
+    // outcomes, never 500s: not-configured → 503 (honest capability state,
+    // §184), already-enabled → 409, not-enabled → 400, decryption → 503
+    // fail-closed (§36). Messages are fixed, value-free service strings.
+    const status =
+      error.code === "MFA_ALREADY_ENABLED"
+        ? 409
+        : error.code === "MFA_NOT_ENABLED"
+          ? 400
+          : 503;
+    const cls = classifyStatus(status);
+    logDebug(OPERATIONAL_EVENTS.apiRequestFailed, {
+      requestId,
+      route,
+      method,
+      status,
+      code: error.code,
+      errorClass: cls,
+      durationMs,
+    });
+    return fail(status, error.code, error.message);
   }
   // Unhandled → 500. Structured, bodyless, stackless-in-production (§26/§28).
   logError(OPERATIONAL_EVENTS.apiRequestFailed, {

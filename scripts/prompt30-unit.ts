@@ -29,6 +29,7 @@ import {
   normalizeRecoveryCode,
   hashRecoveryCode,
   buildProvisioningUri,
+  getMfaCapabilityState,
 } from "../src/lib/auth/mfa/service";
 import {
   emailVerificationMode,
@@ -42,6 +43,14 @@ const results: { name: string; ok: boolean; info?: string }[] = [];
 function check(name: string, cond: boolean, info = "") {
   results.push({ name, ok: cond, info });
   console.log(`${cond ? "✓" : "✗"} ${name}${info ? ` — ${info}` : ""}`);
+}
+
+/* Self-contained key supply (§34 — the harness never depends on ambient env):
+ * secret-box reads MFA_ENCRYPTION_KEY lazily per operation, so providing a
+ * RANDOM EPHEMERAL test key here (when none is configured) keeps the unit
+ * harness runnable anywhere. Never a real deployment key; never logged. */
+if (!process.env.MFA_ENCRYPTION_KEY) {
+  process.env.MFA_ENCRYPTION_KEY = Buffer.from(randomBytes(32)).toString("base64");
 }
 
 /* ------------------------------ §34 key matrix ----------------------------- */
@@ -152,6 +161,22 @@ withEnv({ MFA_STEP_UP_MAX_AGE_SECONDS: "5" }, () => {
 });
 withEnv({ SESSION_LAST_SEEN_UPDATE_SECONDS: "120" }, () => {
   check("CONFIG: last-seen throttle accepts 120", sessionLastSeenUpdateSeconds() === 120);
+});
+
+/* ------------------ Prompt 30-F §14: capability matrix --------------------- */
+// getMfaCapabilityState combines MFA_ENABLED × MFA_ENCRYPTION_KEY validity
+// into ONE safe status. Four mandated cases:
+withEnv({ MFA_ENABLED: "false", MFA_ENCRYPTION_KEY: "" }, () => {
+  check("CAPABILITY: MFA_ENABLED=false → DISABLED", getMfaCapabilityState() === "DISABLED");
+});
+withEnv({ MFA_ENABLED: "true", MFA_ENCRYPTION_KEY: VALID_KEY }, () => {
+  check("CAPABILITY: enabled + valid key → AVAILABLE", getMfaCapabilityState() === "AVAILABLE");
+});
+withEnv({ MFA_ENABLED: "true", MFA_ENCRYPTION_KEY: "" }, () => {
+  check("CAPABILITY: enabled + missing key → BLOCKED", getMfaCapabilityState() === "BLOCKED");
+});
+withEnv({ MFA_ENABLED: "true", MFA_ENCRYPTION_KEY: "changeme-changeme-changeme-changeme" }, () => {
+  check("CAPABILITY: enabled + invalid key → BLOCKED", getMfaCapabilityState() === "BLOCKED");
 });
 
 /* ------------------------------- §207 redaction ----------------------------- */

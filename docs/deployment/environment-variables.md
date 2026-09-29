@@ -147,6 +147,19 @@
 | `$BACKUP_DIR/backup-<UTC-timestamp>.json` | sidecar metadata: sha256, integrity results, migration count, app version, environment, masked source path, `verified` flag (§48) |
 | `$BACKUP_DIR/last-restore-drill.json` | latest restore-drill PASS/FAIL record (§54) — read by the readiness `restoreDrill` component |
 
+## Prompt 30 variables — identity security v2
+
+| Variable | Required | Secret? | Purpose |
+|---|---|---|---|
+| `AUTH_EMAIL_VERIFICATION_MODE` | Optional (default `OFF`) | No | Email-ownership verification mode: `OFF` (unavailable, honest 503s) · `OPTIONAL` (user-initiated, accounts usable) · `REQUIRED` (business creation / trial start / paid checkout need a verified email — login is never gated). REQUIRED with production SMTP unconfigured → readiness **BLOCKED** (no silent downgrade). |
+| `MFA_ENABLED` | Optional (default off) | No | Capability switch for TOTP MFA self-enrollment and the second factor at login for enrolled users. NEVER silently activated for existing users; no forced migration. |
+| `MFA_ENCRYPTION_KEY` | **REQUIRED in production when `MFA_ENABLED=true`** (fail closed) | **Yes — HIGHLY_SENSITIVE** | AES-256 key material for the secret-box envelope that encrypts TOTP secrets at rest. EXACTLY 32 bytes (`openssl rand -base64 32`; base64/base64url/hex accepted). Server-only: never logged, never returned by an API, never committed, never sent to a secrets-adjacent doc with a value. Missing/invalid key with MFA enabled ⇒ capability BLOCKED. |
+| `MFA_CHALLENGE_TTL_SECONDS` | Optional (default 300) | No | MFA login-challenge TTL, bounded 60–900 s. Challenges are single-use, hash-only, and invalidated by sessionVersion changes. |
+| `MFA_STEP_UP_MAX_AGE_SECONDS` | Optional (default 600) | No | Recent-auth window for destructive operations (step-up), bounded 300–1800 s. Server-authoritative — never client timestamps. |
+| `SESSION_LAST_SEEN_UPDATE_SECONDS` | Optional (default 300) | No | Per-session `lastSeenAt` write throttle, bounded 60–3600 s — prevents a per-request SQLite write storm. |
+
+Details: `docs/security/identity-security-v2.md` (configuration table and capability semantics: `DISABLED` / `AVAILABLE` / `BLOCKED`), `docs/security/mfa.md` (key handling), `docs/security/email-verification.md` (mode semantics).
+
 ## `NODE_ENV` — the database guard flag (not in `.env.example` on purpose)
 
 `NODE_ENV` is a runtime flag, not a configured secret, but it is load-bearing for database safety:

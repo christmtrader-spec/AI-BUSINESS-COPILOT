@@ -2364,3 +2364,210 @@ Work Log:
 - FINAL HONEST STATE (§187): Email transport=IMPLEMENTED (real SMTP adapter; NOT_CONFIGURED until operator supplies valid EMAIL_* — no fake readiness §161) · SMTP readiness=NOT_CONFIGURED (honest) · Backup latest=VERIFIED (db/backups, ~0.2h old at QA time) · Restore drill=PASS (last-restore-drill.json; readiness READY) · Health=ok · Readiness=degraded (honest: email+payments+ai-rates+legal gaps) · Observability=IMPLEMENTED (request IDs, redaction, 16-event catalog, production Prisma warn/error) · Build=NOT EXECUTED (environment constraint) · Migrations=11 applied 0 pending · Payment=BLOCKED/DISABLED (unchanged) · AI cost rate=NOT_CONFIGURED (0 production rates) · Legal=REQUIRES_REVIEW · Public HTTPS=NOT_CONFIGURED · Backup encryption=NOT IMPLEMENTED (documented) · Offsite backup=manual operator procedure (documented).
 - Test accounts unchanged: operator@copilot.dev / Operator-P28-Admin! · sara@copilot.dev / testpass123. P29 harness fixtures self-contained (resetflow user's password changed by the test itself; synthetic scratch DBs cleaned up).
 - Notes for next round: STOP per §188/§31 — Prompt 30 NOT implemented. Runner for TS-alias suites: `bun --conditions react-server scripts/<x>.mjs` (or bun --preload scripts/p29-preload.ts for scripts/prompt29-unit.ts). After prisma generate ALWAYS restart dev server (stale Turbopack lesson). EMAIL_* env vars are wired end-to-end: setting them + restart flips /api/ready email→READY and password reset to real SMTP. Worklog r29 is the authoritative record for production-operations implementation.
+
+---
+Task ID: r30-prompt30-finalization
+Agent: Z.ai Code (main orchestrator — Prompt 30-F finalization round)
+Task: PROMPT 30-F — finalize Prompt 30 identity security v2: verify every
+requirement against real code, fix remaining defects (MFA capability
+hard-coding, duplicate ActivitySection, unenforced rate limits, missing docs),
+synchronize worklog, run the complete Prompt 30 + P17–P29 test suites, and
+record the honest final state. NOT a new-feature phase; Prompt 31 NOT started.
+
+State: IMPLEMENTED / TESTED (all acceptance criteria of Prompt 30-F met; no
+known red tests; two environment-constraint gaps documented honestly below).
+
+Work Log:
+- PHASE 0 AUDIT: read worklog (stale — ended at r29; Prompt 30 unrecorded) and
+  inspected every Prompt 30 source file: prisma/schema.prisma (6 new models +
+  User.emailVerifiedAt + cascade relations), src/lib/auth/{config.ts,
+  email-verification/*, mfa/service.ts, sessions/service.ts,
+  security-events/service.ts, step-up.ts}, src/lib/security/secret-box.ts,
+  src/lib/auth.ts (MFA challenge/assertion in authorize()), all
+  /api/v1/me/security/* + /api/v1/auth/{mfa,email-verification}/* routes,
+  security-view.tsx + verify-email-view.tsx, prompt30 harnesses + static scan.
+  Baseline run: prompt30-check 58/88 (failures traced to deployment config,
+  not code), static scan 15/15, unit harness CRASHED (ambient env dependency).
+- FIX 1 (§3/§6/§7 MFA availability bug): added getMfaCapabilityState() to
+  src/lib/auth/mfa/service.ts — ONE server authority combining MFA_ENABLED ×
+  MFA_ENCRYPTION_KEY validity → AVAILABLE | DISABLED | BLOCKED (value-free, no
+  key detail). assertMfaFeatureAvailable() now reuses config.mfaFeatureEnabled()
+  (no duplicated env parsing). GET /api/v1/me/security returns
+  mfaCapabilityState in the DTO. security-view.tsx no longer hard-codes
+  mfaAvailable=true: the UI derives button state + copy from the server value
+  (DISABLED/BLOCKED → disabled button + honest localized copy; never waits for
+  the setup endpoint to fail).
+- FIX 2 (§9 duplicate ActivitySection): removed the second bare
+  <ActivitySection> render in security-view.tsx — exactly ONE activity section
+  remains (verified in browser: 1 occurrence).
+- FIX 3 (§11/§12 rate-limit enforcement): GET /api/v1/me/security now INSPECTS
+  the limiter result → structured 429 RATE_LIMITED with retryAfterMs. Same fix
+  applied to GET /api/v1/auth/email-verification/status (was also ignoring the
+  result). Added ENFORCED limiters to the three unprotected security routes:
+  GET sessions (60/5min), GET activity (60/5min), POST sessions/revoke-current
+  (30/15min). Keys stay user+ip scoped (me-security:<userId>:<ip> pattern).
+- FIX 4 (MfaServiceError → 500 leak): routes calling assertMfaFeatureAvailable()
+  with MFA disabled surfaced 500 INTERNAL_ERROR. toErrorResponse() now maps
+  MfaServiceError: NOT_CONFIGURED/DECRYPTION_FAILED → 503, ALREADY_ENABLED →
+  409, NOT_ENABLED → 400 (fixed value-free messages; observed 500 → 503
+  MFA_NOT_CONFIGURED in harness).
+- FIX 5 (error-contract leak §52): resend route translated appBaseUrl's
+  RESET_DELIVERY_UNAVAILABLE (password-reset vocabulary) into
+  EMAIL_VERIFICATION_UNAVAILABLE — error codes never cross flows.
+- FIX 6 (UI duplication §66): MFA body copy when AVAILABLE repeated the header
+  description verbatim; added security.mfaEnableHint (EN+FA) with distinct
+  factual enrollment copy. mfaCapabilityDisabled/Blocked keys added (EN+FA).
+- FIX 7 (harness robustness): prompt30-unit.ts now supplies its own ephemeral
+  MFA_ENCRYPTION_KEY when none is set (was crashing on SECRET_BOX_KEY_INVALID).
+- HARNESS ADDITIONS (§13/§14/§106/§62): prompt30-check gained a RATE LIMIT
+  section (flood GET /me/security with a fixed XFF under an authenticated jar
+  → 429 RATE_LIMITED structured body; fresh IP unaffected — per-key scoping,
+  deterministic, no sleeping) + capability-enum checks (mfaCapabilityState is
+  a safe enum; no key/config detail in the response). prompt30-unit gained the
+  §14 capability matrix (DISABLED/AVAILABLE/BLOCKED×4). static scan gained §27
+  (no plaintext encryptedSecret/recovery-code/verification-token/challenge
+  writes; no raw JWT persistence), §28 (security-view: no
+  localStorage/sessionStorage/console.log/window.location; no hard-coded
+  mfaAvailable=true) and §61/§62 (EVERY Prompt 30 security route inspects its
+  limiter result) — scan now 20 checks.
+- REGRESSION ARCHAEOLOGY + FIXES (stale shared-DB state, not code drift):
+  · Baselined the migration ledger with `prisma migrate resolve --applied` ×12
+    (ledger writes ONLY — the schema was db-push-era complete; integrity
+    verified ok/ok/0 before+after via db-inventory). `migrate status`: 12
+    migrations found, "Database schema is up to date!" → readiness
+    database/migrations now READY.
+  · Ran the sanctioned idempotent seeds: seed-billing.ts (5 plans × 9
+    entitlements) and seed-pricing.ts (EUR-v1 book) — the rebuilt dev DB
+    lacked the catalogs (deny-by-default broke P17 business creation with
+    ENTITLEMENT_LIMIT_REACHED limit=0).
+  · privacy-deletion-check.mjs: fixed pre-existing Plan fixture bug
+    (isActive → active — this crash had silently broken the script), extended
+    the D1 graph + D2 fixture + D3 verification with all six Prompt 30 models
+    (all cascade with the user — SecurityEvent NOT retained, §295). 32/32.
+  · privacy-inventory.mjs: added 6 Prompt 30 categories. CONSISTENT.
+  · prompt20-billing-check B3b redesigned deterministically (r22-style):
+    since Prompt 25 auto-attaches subscriptions at business creation, the
+    historical "a seed-backfill event survives" assertion was unsatisfiable;
+    now creates a subscription-less probe business, runs the seed, asserts
+    ITS CREATED event, cleans up. 56/56.
+  · prompt24-pricing-check Q6 redesigned the same way: legacy-shaped checkout
+    session fixture proves §67 preservation deterministically. 67/67.
+  · prompt26-ai-cost-check: self-heal upserts the missing Phase-02 demo owner
+    (sara@copilot.dev) it hard-depended on. 108/108.
+  · prompt27-trust-check cost-route scan matched "regenerate" via substring
+    /rate/i — switched to path-SEGMENT matching (precision fix, not a
+    weakening; real cost/rate segments still flagged). 65/65.
+  · prompt29-check backup gate: created + verified a fresh backup
+    (backup-db.mjs + verify-backup.mjs — node:sqlite tools run under node,
+    not bun) and added the missing NEXTAUTH_SECRET to .env (gate was honest).
+    105/105.
+- QA ENV (.env, dev sandbox only, operator decision, values never committed):
+  AUTH_EMAIL_VERIFICATION_MODE=OPTIONAL · MFA_ENABLED=true ·
+  MFA_ENCRYPTION_KEY=<generated 32B> · APP_BASE_URL/NEXTAUTH_URL=localhost ·
+  BILLING_TRIALS_ENABLED=true + BILLING_TRIAL_DAYS=14 + BILLING_TRIAL_PLAN=
+  STARTER · NEXTAUTH_SECRET=<generated>. Defaults shipped in
+  .env.example/docs remain OFF/false (no force-migration §50/§51).
+- DOCS CREATED (§17–§21, each with Current State / Implementation Source /
+  Known Limitations, every number matched to code — 16 recovery chars not 20,
+  30-min TTL, 300s challenge, ±1 step): docs/security/identity-security-v2.md
+  (scope, architecture, factor-separation table, email verification, MFA,
+  recovery, session registry, sessionVersion, step-up, events, config table +
+  capability semantics, compatibility, limitations, readiness) ·
+  email-verification.md (OFF/OPTIONAL/REQUIRED, generation, SHA-256, TTL,
+  single-active-token, resend limits, confirmation, SMTP, send-before-persist,
+  enumeration) · mfa.md (TOTP RFC, SHA-1/6/30s, skew, replay, secret-box,
+  key rules, setup/QR/manual, atomics, recovery codes 10×16-char 4×4
+  Crockford, challenge/assertion login, disable, regenerate, no-admin-bypass)
+  · session-management.md (JWT, sid, UserSession, hashes, sessionVersion,
+  legacy compat, revocation, revoke-all, expiry, throttling, single-node)
+  · account-security-center.md (6 sections, API table, step-up, supported vs
+  unsupported controls, a11y).
+- DOCS UPDATED: docs/legal/data-deletion-matrix.md (6 Prompt 30 rows + user
+  deletion walk-through + honesty note: security history does NOT survive the
+  account) · data-processing-inventory.md (§3 IP/UA rows + new §4.7 Identity
+  security data table) · data-retention-inventory.md (new Prompt 30 section:
+  operational expiry ≠ legal retention) · docs/deployment/
+  environment-variables.md (new Prompt 30 variables table — was missing ALL
+  of them, violating its own rule 2) · src/content/legal/privacy.ts (fixed
+  now-false "security events retained" claim → cascade-deleted account
+  records; Credentials + Security data rows extended). .env.example already
+  had all 6 Prompt 30 vars (verified).
+
+Verification (exact results):
+- prompt30-check.mjs (E2E, real HTTP+NextAuth): 93/93 PASS (was 58/88) —
+  AUTH · EMAIL VERIFY (send-before-persist, single-use, rate-limit,
+  enumeration) · MFA (reauth→setup→QR+key→confirm→10 codes→MFA_REQUIRED→
+  challenge→TOTP/recovery→assertion→session; wrong code; replay; disable;
+  regenerate) · SESSIONS (list, revoke one/all, cross-user 404, §363) ·
+  STEP-UP · RATE LIMIT (new) · ISOLATION · ACTIVITY · PRIVACY (0 leaks).
+- prompt30-unit.ts: 54/54 PASS (key matrix, secret-box round-trip+tamper,
+  TOTP skew/replay, recovery shape/normalization, config clamping, capability
+  matrix, redaction probe).
+- identity-security-static-scan.mjs: 20/20 PASS (incl. new §27/§28/§61-62).
+- privacy-inventory: CONSISTENT · privacy-deletion-check: 32/32 ·
+  legal-public-readiness: PARTIALLY_READY (honest) · legal-content-review:
+  CLEAN · ai-context-secret-scan: 11/11 CLEAN · prompt26-rate-literal-scan:
+  CLEAN · p30-redaction-probe: all redacted.
+- FULL REGRESSION (no known red tests): p17 30/30 · p18 28/28 (×2) · p19
+  24/24 · p20-billing 56/56 · p20-state-machine 38/38 · p21 76/76 · p22
+  72/72 · p23-api 34/34 · p24 67/67 · p25 68/68 · p26 108/108 · p27 65/65 ·
+  p28 86/86 · p29 105/105 · p29-unit 91/91.
+- BROWSER QA (agent-browser, real user flows): registered p30-qa-final via UI
+  (legal checkbox) → onboarding → Security Center renders ALL 6 sections with
+  EXACTLY ONE activity section → MFA capability AVAILABLE (server value,
+  button enabled) → reauth dialog → setup dialog (QR image + manual key +
+  InputOTP, autocomplete-safe, codes never in URLs) → enable with real TOTP
+  → one-time 10-code recovery dialog (copy/print buttons, memory-only) →
+  AUTO-SIGN-OUT after enable (§363) → MFA login via UI (password → 6-digit
+  stage → TOTP → dashboard) → enabled state (badge + "10 recovery codes
+  remaining" + Regenerate/Disable + activity events "Two-factor authentication
+  enabled"/"Recovery codes generated") → MFA disable via UI (password + TOTP +
+  typed DISABLE MFA → sign-out). Matrix: EN LTR + FA RTL (dir=rtl verified,
+  sidebar/text/buttons mirrored) × light + dark × desktop 1280×800 + mobile
+  390×844 (NO horizontal overflow; 412×915 equivalent layout) — screenshots:
+  qa-sec-en-desktop/en-mobile/en-mobile2/enabled/dark/fa-dark/fa-light.png.
+  Console: 0 errors, 0 hydration warnings. Browser storage: only
+  theme/locale/business-id keys + nextauth.message; session cookie httpOnly;
+  NO MFA secret/recovery codes/tokens/challenges (§75/§76/§77 PASS).
+- lint: 0 errors · tsc --noEmit: 0 errors · i18n-audit: CLEAN (0 missing,
+  0 parity gaps) · migrate status: 12 found, up to date, 0 pending ·
+  PRAGMA integrity_check=ok · quick_check=ok · foreign_key_check=0 violations.
+- BUILD (§114): EXECUTED ISOLATED — dev server stopped, `bun run build`
+  exit 0 ("✓ Compiled successfully in 24.0s", all 6 static pages), server
+  restarted + prompt30-check re-run green after build (93/93). (Previous
+  rounds recorded NOT EXECUTED; this round performed the build safely.)
+- Health: GET /api/health 200. Readiness: degraded with HONEST components —
+  database READY · migrations READY · configuration READY · email
+  NOT_CONFIGURED (production SMTP absent; dev console transport) · payments
+  BLOCKED (deliberately not activated) · aiCostRates NOT_CONFIGURED · legal
+  REQUIRES_REVIEW · backups READY · restoreDrill READY. Per §99 matrix:
+  MFA enabled+valid key → capability AVAILABLE (readiness internal:
+  ENABLED_CONFIGURED); email OPTIONAL + no SMTP → NOT_CONFIGURED. Public
+  /api/ready deliberately omits MFA/encryption state (§187).
+
+Stage Summary:
+- Prompt 30 is COMPLETE, TESTED and now DOCUMENTED + LOGGED. Known defects
+  from the Prompt 30-F list are all fixed: MFA availability is
+  server-authoritative (AVAILABLE/DISABLED/BLOCKED, i18n EN+FA), the duplicate
+  ActivitySection is gone, every security endpoint ENFORCES its limiter
+  (429s real), MFA capability failures no longer 500, docs exist and match
+  code, the worklog is synchronized.
+- FINAL HONEST STATE: Email verification=IMPLEMENTED (mode OPTIONAL in QA
+  sandbox; shipped default OFF; production SMTP NOT_CONFIGURED — dev console
+  transport prints links, documented) · MFA=IMPLEMENTED (capability AVAILABLE
+  in QA sandbox via operator-set MFA_ENABLED=true + valid key; shipped default
+  DISABLED; enrolled QA users: browser-QA account enrolled then disabled;
+  harness users disabled at suite end) · MFA encryption=CONFIGURED in QA
+  (generated 32B key in uncommitted .env; production must supply its own) ·
+  Session registry=IMPLEMENTED (per-device revoke + revoke-all + legacy
+  compat verified) · Security events=IMPLEMENTED (fixed vocabulary, cascade
+  with user) · Build=PASS (isolated) · Migrations=12 applied, 0 pending ·
+  Payment=NOT ACTIVATED (no merchant credentials, readiness BLOCKED —
+  unchanged) · AI cost=0 production rates (NOT_CONFIGURED, honest) · Legal=
+  REQUIRES_REVIEW; public contacts NOT_CONFIGURED (honest) · HTTPS/public
+  base URL=NOT_CONFIGURED (sandbox constraint).
+- REMAINING BLOCKERS (unchanged product-level gaps, none Prompt 30): payment
+  production activation, real SMTP credentials, legal identity/contact
+  configuration, public HTTPS. Multi-instance deployments need a shared
+  limiter/session store ADR (documented limitation).
+- NEXT: STOP. Prompt 31 is NOT started (§505/§140.19).

@@ -178,6 +178,19 @@ check("AUTH: current session registered (isCurrent)", secSummary.body?.data?.cur
 check("AUTH: sessionCount >= 1", (secSummary.body?.data?.sessionCount ?? 0) >= 1);
 secretScan("AUTH /me/security", secSummary.body);
 
+// Prompt 30-F §3/§7 — the summary carries the server-authoritative MFA
+// capability state; the UI derives its actions from THIS value only.
+const CAP_STATES = ["AVAILABLE", "DISABLED", "BLOCKED"];
+check(
+  "AUTH: mfaCapabilityState is a safe server-authoritative enum",
+  CAP_STATES.includes(secSummary.body?.data?.mfaCapabilityState),
+  `state=${secSummary.body?.data?.mfaCapabilityState}`,
+);
+check(
+  "AUTH: capability carries no key/config detail",
+  !JSON.stringify(secSummary.body).match(/"(mfaAvailable|keyStatus|keyReason|MFA_ENCRYPTION_KEY)":/),
+);
+
 /* ============================ 2. EMAIL VERIFY ============================== */
 section("EMAIL VERIFY");
 const status1 = await apiJson(fA, "/api/v1/auth/email-verification/status");
@@ -521,6 +534,39 @@ check("ISOLATION: anonymous /me/security → 401", anonSecurity.res.status === 4
 // Anonymous /me/security/sessions → 401 (§203).
 const anonSessions = await apiJson(jarFetch(new Map()), "/api/v1/me/security/sessions");
 check("ISOLATION: anonymous sessions → 401", anonSessions.res.status === 401);
+
+/* ====================== 7b. RATE LIMIT ENFORCEMENT ======================== */
+// Prompt 30-F §11/§13/§106 — GET /api/v1/me/security must actually return
+// 429 once its window is exhausted (the limiter result is ENFORCED, not
+// ignored). Deterministic: the whole flood uses ONE fixed XFF so every hit
+// lands in the SAME bucket (me-security:<userId>:<ip>). No sleeping: window
+// expiry is covered by the limiter's own sliding-window semantics, and key
+// scoping is proven by the fresh-IP request succeeding while the flooded
+// bucket is still exhausted.
+section("RATE LIMIT");
+{
+  // The flood runs under USER A's authenticated session (anonymous hits die
+  // at 401 before reaching the limiter) with ONE fixed XFF so every hit
+  // lands in the SAME bucket (me-security:<userId>:<ip>).
+  const floodXff = `10.250.66.${Math.floor(Math.random() * 200) + 10}`;
+  const fFlood = (extraXff) => jarFetch(jarA, extraXff);
+  let saw429 = false;
+  let lastOk = false;
+  const LIMIT = 120; // keep in sync with the route's configured limit
+  for (let i = 0; i < LIMIT + 5; i++) {
+    const r = await apiJson(fFlood(floodXff), "/api/v1/me/security");
+    if (r.res.status === 429) {
+      saw429 = true;
+      check("RATE LIMIT: 429 body is the structured error", r.body?.ok === false && r.body?.error?.code === "RATE_LIMITED", `code=${r.body?.error?.code}`);
+      break;
+    }
+    lastOk = r.body?.ok === true;
+  }
+  check("RATE LIMIT: flood exhausts GET /me/security → 429", saw429, `reached429=${saw429} lastOk=${lastOk}`);
+  // A different IP (fresh bucket) still succeeds — the limit is per-key.
+  const freshIp = await apiJson(fFlood(null), "/api/v1/me/security");
+  check("RATE LIMIT: fresh IP is unaffected (per-key scoping)", freshIp.res.status === 200 && freshIp.body?.ok === true, `status=${freshIp.res.status}`);
+}
 
 /* ========================= 8. SECURITY ACTIVITY ============================ */
 section("ACTIVITY");

@@ -267,8 +267,12 @@ function* walk(dir) {
 // Prompt 28 evolution: the /api/v1/platform/* namespace is the INTERNAL
 // operator control plane (platform:ai-cost:* gated, reauth + audited) — it
 // is NOT tenant-facing. The invariant stays: no TENANT route may touch cost.
-const costRoutes = [...walk(`${ROOT}/src/app/api`)].filter(
-  (f) => /cost|rate/i.test(f) && !f.includes(`${sep}platform${sep}`),
+// r30-F: match PATH SEGMENTS, not substrings — the Prompt 30 security route
+// `.../recovery-codes/regenerate/` contains "rate" inside "regenerate" and
+// is not a cost/rate route.
+const costRoutes = [...walk(`${ROOT}/src/app/api`)].filter((f) =>
+  f.split(/[\\/]/).some((seg) => /^(cost|rate|rates|ai-cost|ai-rates)$/i.test(seg))
+  && !f.includes(`${sep}platform${sep}`),
 );
 check("no tenant-facing AI cost routes exist", costRoutes.length === 0, costRoutes.join(", ") || "ok");
 

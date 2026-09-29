@@ -8,11 +8,13 @@
  */
 import { NextRequest } from "next/server";
 import { getServerSession } from "next-auth";
-import { ok, route } from "@/lib/api-helpers";
+import { ApiError, ok, route } from "@/lib/api-helpers";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { assertFreshSession, assertSessionRegistry } from "@/lib/auth-security";
 import { toSessionDTO } from "@/lib/auth/sessions/service";
+import { rateLimit } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/api-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +24,13 @@ const MAX_PAGE_SIZE = 50;
 export const GET = route(async (req: NextRequest) => {
   const session = await getServerSession(authOptions);
   const userId = await assertFreshSession(session);
+  // Prompt 30-F §61 — every security endpoint enforces its limiter.
+  const rl = rateLimit(`me-security-sessions:${userId}:${getClientIp(req)}`, 60, 5 * 60_000);
+  if (!rl.allowed) {
+    throw new ApiError(429, "RATE_LIMITED", "Too many requests. Please wait a moment.", {
+      retryAfterMs: rl.retryAfterMs,
+    });
+  }
   const currentRegistryId = await assertSessionRegistry(session, userId);
 
   const url = new URL(req.url);

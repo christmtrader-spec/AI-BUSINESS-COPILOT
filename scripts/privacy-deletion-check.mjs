@@ -89,6 +89,12 @@ async function main() {
     ["user", "AI sessions/messages authored", "DELETED with user (cascade)"],
     ["user", "password reset tokens", "DELETED with user (cascade)"],
     ["user", "legal acceptances", "DELETED with user (cascade)"],
+    ["user", "email verification tokens (Prompt 30)", "DELETED with user (cascade)"],
+    ["user", "MFA credential — encrypted secret (Prompt 30)", "DELETED with user (cascade)"],
+    ["user", "MFA recovery code hashes (Prompt 30)", "DELETED with user (cascade)"],
+    ["user", "MFA login challenges (Prompt 30)", "DELETED with user (cascade)"],
+    ["user", "device session registry rows (Prompt 30)", "DELETED with user (cascade)"],
+    ["user", "security activity events (Prompt 30)", "DELETED with user (cascade) — privacy-first: security history does NOT survive the account"],
     ["user", "audit rows as actor", "ANONYMIZED (actorId SetNull)"],
     ["user", "platform-level security events", "RETAINED (actor link removed)"],
   ];
@@ -116,7 +122,7 @@ async function main() {
   await prisma.chatMessage.create({ data: { sessionId: chat.id, role: "USER", content: "probe question", userId: owner.id } });
   const period = await prisma.usagePeriod.create({ data: { businessId: biz.id, start: new Date("2026-09-01") } });
   const usageEvent = await prisma.usageEvent.create({ data: { businessId: biz.id, usagePeriodId: period.id, metric: "AI_REQUESTS", quantity: 1, idempotencyKey: `p27del-${STAMP}`, requestId: `p27del-${STAMP}`, metaJson: JSON.stringify({ provider: "z-ai" }) } });
-  const freePlan = (await prisma.plan.findFirst({ where: { code: "FREE" } })) ?? (await prisma.plan.create({ data: { code: "FREE", name: "Free", isActive: true } }));
+  const freePlan = (await prisma.plan.findFirst({ where: { code: "FREE" } })) ?? (await prisma.plan.create({ data: { code: "FREE", name: "Free", active: true } }));
   await prisma.subscription.create({ data: { businessId: biz.id, planId: freePlan.id, status: "ACTIVE" } });
   await prisma.checkoutSession.create({ data: { businessId: biz.id, planCode: "STARTER", billingPeriod: "MONTHLY", amountMinor: 900, currency: "EUR", status: "PENDING", provider: "mock", providerRef: `p27del-${STAMP}`, expiresAt: new Date(Date.now() + 86400_000), initiatedByUserId: owner.id } });
   await prisma.auditLog.create({ data: { businessId: biz.id, actorId: owner.id, action: "probe.action", entityType: "Business", entityId: biz.id } });
@@ -128,6 +134,14 @@ async function main() {
     { userId: member.id, documentType: "privacy", documentVersion: "2026-09-v1", locale: "fa" },
   ]});
   await prisma.auditLog.create({ data: { businessId: null, actorId: owner.id, action: "probe.platform_event", entityType: "User", entityId: owner.id } });
+  // Prompt 30 security records for the OWNER (all user-owned; all must
+  // cascade with the account — §295). Fixture values only; nothing secret.
+  await prisma.emailVerificationToken.create({ data: { userId: owner.id, tokenHash: `probe-hash-${STAMP}`, expiresAt: new Date(Date.now() + 3600_000) } });
+  await prisma.mfaCredential.create({ data: { userId: owner.id, encryptedSecret: "v1.probe.iv.probe.tag.probe", enabledAt: new Date() } });
+  await prisma.mfaRecoveryCode.create({ data: { userId: owner.id, codeHash: `probe-recovery-${STAMP}` } });
+  await prisma.mfaLoginChallenge.create({ data: { userId: owner.id, challengeHash: `probe-challenge-${STAMP}`, expiresAt: new Date(Date.now() + 300_000), sessionVersionAtChallenge: 0 } });
+  await prisma.userSession.create({ data: { userId: owner.id, sessionTokenHash: `probe-session-${STAMP}`, expiresAt: new Date(Date.now() + 86400_000) } });
+  await prisma.securityEvent.create({ data: { userId: owner.id, eventType: "auth.login.success", success: true } });
   console.log(`  fixture business ${biz.id} + owner ${owner.id} + member ${member.id} created`);
 
   const beforeBizCounts = {
@@ -166,6 +180,13 @@ async function main() {
   await prisma.user.delete({ where: { id: owner.id } });
   check("owner user gone", (await prisma.user.count({ where: { id: owner.id } })) === 0);
   check("owner LegalAcceptance rows cascaded", (await prisma.legalAcceptance.count({ where: { userId: owner.id } })) === 0);
+  // Prompt 30 — every user-owned security record MUST cascade with the user.
+  check("email verification tokens cascaded (Prompt 30)", (await prisma.emailVerificationToken.count({ where: { tokenHash: `probe-hash-${STAMP}` } })) === 0);
+  check("MFA credential cascaded (Prompt 30)", (await prisma.mfaCredential.count({ where: { userId: owner.id } })) === 0);
+  check("MFA recovery code hashes cascaded (Prompt 30)", (await prisma.mfaRecoveryCode.count({ where: { userId: owner.id } })) === 0);
+  check("MFA login challenges cascaded (Prompt 30)", (await prisma.mfaLoginChallenge.count({ where: { userId: owner.id } })) === 0);
+  check("device session registry rows cascaded (Prompt 30)", (await prisma.userSession.count({ where: { userId: owner.id } })) === 0);
+  check("security activity events cascaded — NOT retained (Prompt 30 §295)", (await prisma.securityEvent.count({ where: { userId: owner.id } })) === 0);
   const platformAuditAfter = await prisma.auditLog.findUnique({ where: { id: platformAuditBefore.id } });
   check("platform audit row RETAINED with actor ANONYMIZED", !!platformAuditAfter && platformAuditAfter.actorId === null);
 

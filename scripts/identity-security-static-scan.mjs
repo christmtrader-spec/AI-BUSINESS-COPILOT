@@ -153,6 +153,80 @@ for (const f of files.filter((f) => f.endsWith(".tsx") || f.includes("modules/")
 }
 check("§419: no client module imports secret-box or the MFA service", clientHits.length === 0, clientHits.join(" | "));
 
+/* ------------- Prompt 30-F §27: encryptedSecret plaintext bypass ----------- */
+// A write of `encryptedSecret: "<literal>"` (string/template literal) means
+// the TOTP secret would be persisted WITHOUT the secret-box envelope.
+{
+  let bypass = [];
+  for (const f of files) {
+    const src = srcOf(f);
+    if (/encryptedSecret:\s*["'`]/.test(src)) bypass.push(f.replace(SRC, "src"));
+  }
+  check("§27: encryptedSecret is never written from a plaintext literal", bypass.length === 0, bypass.join(" | "));
+}
+{
+  // Recovery-code / verification-token / challenge models must never be
+  // written with a RAW plaintext code/token/challenge field (the hash-only
+  // rule). Covers `code: "..."`, `token: "..."`, `challenge: "..."`.
+  let rawWrites = [];
+  const rawPatterns = [
+    [/mfaRecoveryCode\.[a-zA-Z]+\s*\([^)]{0,300}\bcode:\s*["'`]/, "MfaRecoveryCode raw code write"],
+    [/emailVerificationToken\.[a-zA-Z]+\s*\([^)]{0,300}\btoken:\s*["'`]/, "EmailVerificationToken raw token write"],
+    [/mfaLoginChallenge\.[a-zA-Z]+\s*\([^)]{0,300}\bchallenge:\s*["'`]/, "MfaLoginChallenge raw challenge write"],
+  ];
+  for (const f of files) {
+    const src = srcOf(f);
+    for (const [re, label] of rawPatterns) {
+      if (re.test(src)) rawWrites.push(`${f.replace(SRC, "src")}: ${label}`);
+    }
+  }
+  check("§27: recovery/verification/challenge models are hash-only (no raw writes)", rawWrites.length === 0, rawWrites.join(" | "));
+}
+
+/* -------- Prompt 30-F §28: security-view client-state prohibition ---------- */
+{
+  const view = srcOf(join(SRC, "modules/settings/security-view.tsx"));
+  const violations = [];
+  if (/localStorage/.test(view)) violations.push("localStorage");
+  if (/sessionStorage/.test(view)) violations.push("sessionStorage");
+  if (/console\.(log|error)/.test(view)) violations.push("console.log/error");
+  if (/window\.location/.test(view)) violations.push("window.location");
+  check("§28: Security Center uses no browser storage/console/location authority", violations.length === 0, violations.join(", "));
+  check("§28: Security Center derives MFA availability from the server (no hard-coded true)", !/mfaAvailable\s*=\s*true/.test(view));
+}
+
+/* -------- Prompt 30-F §61/§62: every security route ENFORCES its limiter --- */
+{
+  const routeDirs = [
+    join(SRC, "app/api/v1/me/security"),
+    join(SRC, "app/api/v1/auth/mfa"),
+    join(SRC, "app/api/v1/auth/email-verification"),
+  ];
+  const limiterMisses = [];
+  const collectRoutes = (dir) => {
+    try {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) collectRoutes(full);
+        else if (entry === "route.ts") limiterScanFiles.push(full);
+      }
+    } catch { /* dir absent */ }
+  };
+  var limiterScanFiles = [];
+  for (const d of routeDirs) collectRoutes(d);
+  for (const f of limiterScanFiles) {
+    const src = srcOf(f);
+    const hasLimiter = /rateLimit\(/.test(src);
+    // The result must be INSPECTED (`!x.allowed` / `.allowed`) — a bare
+    // rateLimit(...) call without inspection is a silent pass (§11).
+    const enforces = /if\s*\(![A-Za-z_$][\w$.]*\.allowed\)/.test(src) || /![\w$.]+\.allowed\s*(\|\||\))/.test(src);
+    if (!hasLimiter || !enforces) {
+      limiterMisses.push(`${f.replace(SRC, "src")}: ${hasLimiter ? "call NOT inspected" : "no rateLimit call"}`);
+    }
+  }
+  check("§61/§62: every Prompt 30 security route inspects its limiter result", limiterMisses.length === 0, limiterMisses.join(" | "));
+}
+
 /* ------------------------------- summary ----------------------------------- */
 console.log(`\n== identity-security-static-scan: ${passed} passed, ${failures.length} failed ==`);
 if (failures.length > 0) {

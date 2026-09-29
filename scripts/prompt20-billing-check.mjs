@@ -401,10 +401,42 @@ try {
     totalSubs >= 1 && totalSubs === subsWithCreated,
     `${subsWithCreated}/${totalSubs} auditable`,
   );
-  const backfillEvents = await prisma.subscriptionEvent.count({
-    where: { type: "CREATED", dataJson: { contains: "seed-backfill" } },
+  // B3b (r30-F redesign, same class of fix as the r22 B3 redesign): since
+  // Prompt 25, business creation auto-attaches a subscription
+  // ("business-create" source), so a business WITHOUT one no longer exists
+  // at seed time and the historical assertion "a seed-backfill event from
+  // some past run survives" can never be satisfied again. The invariant the
+  // check actually guards is a CODE property: the seed's backfill path
+  // writes an auditable CREATED event for every subscription it mints.
+  // We therefore exercise it deterministically: create a subscription-less
+  // business directly in the DB, run the seed, verify ITS event, clean up.
+  const probeName = `P20 Backfill Probe ${STAMP}`;
+  const probe = await prisma.business.create({
+    data: {
+      name: probeName,
+      slug: `p20-backfill-probe-${STAMP}`,
+      ownerId: fixtureUserIds[0],
+      currencyCode: "USD",
+      currencySymbol: "$",
+      decimalPrecision: 2,
+      locale: "en",
+      timezone: "UTC",
+    },
+    select: { id: true },
   });
-  check("B3b. seed backfill wrote auditable CREATED events (>=1 survives)", backfillEvents >= 1, `events=${backfillEvents}`);
+  execSync("bun scripts/seed-billing.ts", { cwd: ROOT, stdio: "pipe" });
+  const probeSub = await prisma.subscription.findUnique({
+    where: { businessId: probe.id },
+    include: { events: { where: { type: "CREATED" } } },
+  });
+  const probeEvent = probeSub?.events.find((e) => (e.dataJson ?? "").includes("seed-backfill"));
+  check(
+    "B3b. seed backfill mints an auditable CREATED event (deterministic exercise)",
+    !!probeSub && !!probeEvent && probeSub.planId === freePlan.id,
+    `sub=${!!probeSub} event=${probeEvent ? "seed-backfill" : "none"}`,
+  );
+  // Cleanup: cascade removes the probe subscription + its events.
+  await prisma.business.delete({ where: { id: probe.id } });
   const subA = await prisma.subscription.findUnique({
     where: { businessId: bizA.id },
     include: { plan: true },

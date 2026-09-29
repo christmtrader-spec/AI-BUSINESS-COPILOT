@@ -9,12 +9,15 @@
  */
 import { NextRequest } from "next/server";
 import { getServerSession } from "next-auth";
-import { ok, route } from "@/lib/api-helpers";
+import { ApiError, ok, route } from "@/lib/api-helpers";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { assertFreshSession, assertSessionRegistry } from "@/lib/auth-security";
 import { emailVerificationMode } from "@/lib/auth/email-verification/service";
-import { remainingRecoveryCodeCount } from "@/lib/auth/mfa/service";
+import {
+  getMfaCapabilityState,
+  remainingRecoveryCodeCount,
+} from "@/lib/auth/mfa/service";
 import { toSessionDTO } from "@/lib/auth/sessions/service";
 import { rateLimit } from "@/lib/rate-limit";
 import { getClientIp } from "@/lib/api-helpers";
@@ -24,7 +27,14 @@ export const dynamic = "force-dynamic";
 export const GET = route(async (req: NextRequest) => {
   const session = await getServerSession(authOptions);
   const userId = await assertFreshSession(session);
-  rateLimit(`me-security:${userId}:${getClientIp(req)}`, 120, 5 * 60_000);
+  // Prompt 30-F §11 — the limiter result is ENFORCED: an exhausted caller
+  // gets an honest 429 through the structured error envelope.
+  const rl = rateLimit(`me-security:${userId}:${getClientIp(req)}`, 120, 5 * 60_000);
+  if (!rl.allowed) {
+    throw new ApiError(429, "RATE_LIMITED", "Too many requests. Please wait a moment.", {
+      retryAfterMs: rl.retryAfterMs,
+    });
+  }
 
   // §81 — resolve the CURRENT session's registry id (server-side, §77).
   const currentRegistryId = await assertSessionRegistry(session, userId);
@@ -39,12 +49,11 @@ export const GET = route(async (req: NextRequest) => {
     },
   });
   if (!user) {
-    const err = new (await import("@/lib/api-helpers")).ApiError(
+    throw new ApiError(
       401,
       "SESSION_INVALIDATED",
       "This session is no longer valid. Please sign in again.",
     );
-    throw err;
   }
 
   const [recoveryCodeCount, sessionCount, activity30d] = await Promise.all([
@@ -77,6 +86,11 @@ export const GET = route(async (req: NextRequest) => {
     emailVerified: user.emailVerifiedAt !== null,
     emailVerificationMode: emailVerificationMode(),
     mfaEnabled: user.mfaCredential?.enabledAt != null,
+    // Prompt 30-F §3/§7 — server-authoritative capability state. The UI
+    // derives its actions from this; it NEVER hard-codes availability and
+    // receives NO key-validation detail (a blocked key stays unexplained,
+    // §5/§188).
+    mfaCapabilityState: getMfaCapabilityState(),
     recoveryCodeCount,
     currentSession: currentSessionRow
       ? toSessionDTO(currentSessionRow, currentRegistryId)

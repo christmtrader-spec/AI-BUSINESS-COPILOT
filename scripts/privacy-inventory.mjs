@@ -57,6 +57,14 @@ const INVENTORY = [
   { category: "Audit logs", models: ["AuditLog"], publicTerms: ["audit log"], docTerms: ["Audit logs"] },
   { category: "AI cost records (internal)", models: ["AiCostRecord", "AiCostRate", "AiCostAnomaly"], publicTerms: ["Internal AI cost records"], docTerms: ["AI cost records"] },
   { category: "Legal acceptance records", models: ["LegalAcceptance"], publicTerms: ["acceptance"], docTerms: ["LegalAcceptance"] },
+  // Prompt 30 identity-security v2 (§294/§295) — all user-owned, all
+  // cascade-deleted with the account.
+  { category: "Email verification tokens", models: ["EmailVerificationToken"], publicTerms: [], docTerms: ["EmailVerificationToken"] },
+  { category: "MFA credentials (encrypted)", models: ["MfaCredential"], publicTerms: ["two-factor"], docTerms: ["MfaCredential"] },
+  { category: "MFA recovery codes (hashed)", models: ["MfaRecoveryCode"], publicTerms: [], docTerms: ["MfaRecoveryCode"] },
+  { category: "MFA login challenges", models: ["MfaLoginChallenge"], publicTerms: [], docTerms: ["MfaLoginChallenge"] },
+  { category: "Device session registry", models: ["UserSession"], publicTerms: ["device", "sessions"], docTerms: ["UserSession"] },
+  { category: "Security activity events", models: ["SecurityEvent"], publicTerms: [], docTerms: ["SecurityEvent"] },
   { category: "Contact leads", models: [], publicTerms: [], docTerms: ["ContactLead"] },
 ];
 

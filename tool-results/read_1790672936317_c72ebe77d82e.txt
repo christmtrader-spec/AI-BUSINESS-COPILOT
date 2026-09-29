@@ -1,0 +1,1422 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * Account Security Center — Prompt 30 §92-§107, §230-§257, §455-§465.
+     5→ *
+     6→ * Sections: Password · Email verification · MFA · Recovery codes ·
+     7→ * Sessions · Security activity. All state comes from the SERVER (§406 —
+     8→ * no localStorage authority); identity is the session (§127); destructive
+     9→ * flows use real step-up (password / MFA / typed confirmations, §118).
+    10→ *
+    11→ * Factual copy only (§456/§457): no fear patterns, no fake security
+    12→ * scores, no "fully protected" claims. Raw IPs are never shown (§98).
+    13→ */
+    14→import { useRef, useState } from "react";
+    15→import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+    16→import { signOut } from "next-auth/react";
+    17→import { useTranslations } from "next-intl";
+    18→import { create } from "zustand";
+    19→import {
+    20→  BadgeCheck,
+    21→  CircleAlert,
+    22→  Copy,
+    23→  KeyRound,
+    24→  Laptop,
+    25→  Loader2,
+    26→  MailCheck,
+    27→  MonitorSmartphone,
+    28→  Printer,
+    29→  RefreshCw,
+    30→  ShieldCheck,
+    31→  ShieldAlert,
+    32→  ShieldX,
+    33→  History,
+    34→} from "lucide-react";
+    35→import { toast } from "@/hooks/use-toast";
+    36→import { api, ApiClientError } from "@/lib/api-client";
+    37→import { Button } from "@/components/ui/button";
+    38→import { Input } from "@/components/ui/input";
+    39→import { Label } from "@/components/ui/label";
+    40→import { Badge } from "@/components/ui/badge";
+    41→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+    42→import {
+    43→  AlertDialog,
+    44→  AlertDialogAction,
+    45→  AlertDialogCancel,
+    46→  AlertDialogContent,
+    47→  AlertDialogDescription,
+    48→  AlertDialogFooter,
+    49→  AlertDialogHeader,
+    50→  AlertDialogTitle,
+    51→} from "@/components/ui/alert-dialog";
+    52→import {
+    53→  Dialog,
+    54→  DialogContent,
+    55→  DialogDescription,
+    56→  DialogFooter,
+    57→  DialogHeader,
+    58→  DialogTitle,
+    59→} from "@/components/ui/dialog";
+    60→import {
+    61→  InputOTP,
+    62→  InputOTPGroup,
+    63→  InputOTPSlot,
+    64→  InputOTPSeparator,
+    65→} from "@/components/ui/input-otp";
+    66→import { PageHeader } from "@/components/shared/primitives";
+    67→import { useAppStore } from "@/store/app-store";
+    68→
+    69→/* -------------------------- recovery-codes handoff -------------------------- */
+    70→
+    71→/**
+    72→ * Tiny in-memory handoff so raw codes flow mutation → dialog without any
+    73→ * persistence (§354 — codes NEVER touch localStorage/sessionStorage).
+    74→ */
+    75→const useRecoveryCodesStore = create<{ codes: string[]; set: (c: string[]) => void }>()((set) => ({
+    76→  codes: [],
+    77→  set: (codes) => set({ codes }),
+    78→}));
+    79→export function handOffRecoveryCodes(codes: string[]) {
+    80→  useRecoveryCodesStore.getState().set(codes);
+    81→}
+    82→
+    83→/* ------------------------------- DTO types -------------------------------- */
+    84→
+    85→type SecuritySummary = {
+    86→  email: string;
+    87→  emailVerified: boolean;
+    88→  emailVerificationMode: "OFF" | "OPTIONAL" | "REQUIRED";
+    89→  mfaEnabled: boolean;
+    90→  recoveryCodeCount: number;
+    91→  currentSession: {
+    92→    id: string;
+    93→    deviceLabel: string | null;
+    94→    createdAt: string;
+    95→    lastSeenAt: string;
+    96→    expiresAt: string;
+    97→    isCurrent: boolean;
+    98→    revoked: boolean;
+    99→  } | null;
+   100→  sessionCount: number;
+   101→  securityEventsSummary: { last30Days: number };
+   102→};
+   103→
+   104→type SessionRow = {
+   105→  id: string;
+   106→  deviceLabel: string | null;
+   107→  createdAt: string;
+   108→  lastSeenAt: string;
+   109→  expiresAt: string;
+   110→  isCurrent: boolean;
+   111→  revoked: boolean;
+   112→};
+   113→
+   114→type ActivityRow = {
+   115→  eventType: string;
+   116→  success: boolean;
+   117→  reasonCode: string | null;
+   118→  createdAt: string;
+   119→  deviceLabel: string | null;
+   120→};
+   121→
+   122→function errText(err: unknown, fallback: string): string {
+   123→  if (err instanceof ApiClientError) {
+   124→    const code = err.code;
+   125→    if (code === "INVALID_CURRENT_PASSWORD") return "errors.invalidPassword";
+   126→    if (code === "MFA_INVALID_CODE") return "errors.invalidCode";
+   127→    if (code === "MFA_CODE_REQUIRED") return "errors.mfaCodeRequired";
+   128→    if (code === "MFA_REAUTH_REQUIRED" || code === "MFA_DISABLE_REAUTH_REQUIRED") return "errors.reauthRequired";
+   129→    if (code === "RATE_LIMITED" || code === "MFA_RATE_LIMITED" || code === "EMAIL_VERIFICATION_RATE_LIMITED")
+   130→      return "errors.rateLimited";
+   131→    if (code === "SESSION_NOT_FOUND") return "errors.sessionNotFound";
+   132→    if (code === "SESSION_CURRENT") return "errors.sessionCurrent";
+   133→    if (code === "EMAIL_VERIFICATION_REQUIRED") return "errors.emailVerificationRequired";
+   134→  }
+   135→  return fallback;
+   136→}
+   137→
+   138→function formatDateTime(iso: string, locale: string): string {
+   139→  try {
+   140→    return new Intl.DateTimeFormat(locale === "fa" ? "fa-IR" : "en-US", {
+   141→      dateStyle: "medium",
+   142→      timeStyle: "short",
+   143→    }).format(new Date(iso));
+   144→  } catch {
+   145→    return iso;
+   146→  }
+   147→}
+   148→
+   149→/* ------------------------------- main view --------------------------------- */
+   150→
+   151→export function SecurityCenterView() {
+   152→  const t = useTranslations("security");
+   153→  const tCommon = useTranslations("common");
+   154→  const locale = useAppStore((s) => s.locale);
+   155→  const navigate = useAppStore((s) => s.navigate);
+   156→  const queryClient = useQueryClient();
+   157→
+   158→  const summary = useQuery<SecuritySummary>({
+   159→    queryKey: ["security-summary"],
+   160→    queryFn: () => api("/api/v1/me/security", { businessId: null }),
+   161→  });
+   162→  const sessions = useQuery<{ sessions: SessionRow[]; currentSessionRegistered: boolean; total: number }>({
+   163→    queryKey: ["security-sessions"],
+   164→    queryFn: () => api("/api/v1/me/security/sessions?pageSize=50", { businessId: null }),
+   165→  });
+   166→  const activity = useQuery<{ events: ActivityRow[]; total: number }>({
+   167→    queryKey: ["security-activity"],
+   168→    queryFn: () => api("/api/v1/me/security/activity?pageSize=20", { businessId: null }),
+   169→  });
+   170→
+   171→  const [reauthOpen, setReauthOpen] = useState(false);
+   172→  const [reauthMode, setReauthMode] = useState<"mfa-setup" | "mfa-disable" | "mfa-regen">("mfa-setup");
+   173→  const [setupOpen, setSetupOpen] = useState(false);
+   174→  const [recoveryCodesOpen, setRecoveryCodesOpen] = useState(false);
+   175→  /** §363 — only the SETUP flow invalidates all sessions (regen does not). */
+   176→  const signOutAfterCodesRef = useRef(false);
+   177→  const [disableOpen, setDisableOpen] = useState(false);
+   178→  const [regenOpen, setRegenOpen] = useState(false);
+   179→  const [revokeAllOpen, setRevokeAllOpen] = useState(false);
+   180→  const [revokedSession, setRevokedSession] = useState<SessionRow | null>(null);
+   181→
+   182→  const invalidateAll = () => {
+   183→    void queryClient.invalidateQueries({ queryKey: ["security-summary"] });
+   184→    void queryClient.invalidateQueries({ queryKey: ["security-sessions"] });
+   185→    void queryClient.invalidateQueries({ queryKey: ["security-activity"] });
+   186→    void queryClient.invalidateQueries({ queryKey: ["me"] });
+   187→  };
+   188→
+   189→  const dialogProps = {
+   190→    reauthOpen,
+   191→    reauthMode,
+   192→    setupOpen,
+   193→    recoveryCodesOpen,
+   194→    disableOpen,
+   195→    regenOpen,
+   196→    revokeAllOpen,
+   197→    revokedSession,
+   198→    setReauthOpen,
+   199→    setSetupOpen,
+   200→    setRecoveryCodesOpen,
+   201→    setDisableOpen,
+   202→    setRegenOpen,
+   203→    setRevokeAllOpen,
+   204→    setRevokedSession,
+   205→    invalidateAll,
+   206→    onSetupEnabled: (codes: string[]) => {
+   207→      setSetupOpen(false);
+   208→      signOutAfterCodesRef.current = true;
+   209→      handOffRecoveryCodes(codes);
+   210→      setRecoveryCodesOpen(true);
+   211→      invalidateAll();
+   212→    },
+   213→    onRecoveryCodesDismissed: (o: boolean) => {
+   214→      setRecoveryCodesOpen(o);
+   215→      if (!o) {
+   216→        // §363 — after MFA enable every session is dead: dismiss the codes
+   217→        // and sign in again WITH the second factor.
+   218→        if (signOutAfterCodesRef.current) {
+   219→          signOutAfterCodesRef.current = false;
+   220→          void signOut({ callbackUrl: "/" });
+   221→        }
+   222→      }
+   223→    },
+   224→  };
+   225→
+   226→  const summaryData = summary.data;
+   227→  const mfaAvailable =
+   228→    // Honest availability signal: the deployment must expose the capability.
+   229→    // When disabled server-side, setup returns MFA_NOT_CONFIGURED and the
+   230→    // UI surfaces the honest message; the button stays visible (§455 gentle
+   231→    // onboarding, not a fake error).
+   232→    true;
+   233→
+   234→  if (summary.isLoading) {
+   235→    return (
+   236→      <div className="mx-auto w-full max-w-3xl space-y-6">
+   237→        <PageHeader title={t("title")} subtitle={t("subtitle")} />
+   238→        <div className="flex items-center justify-center py-16" role="status">
+   239→          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
+   240→        </div>
+   241→        {/* Dialogs stay mounted even during refetch storms (§60 — the
+   242→            one-time recovery-code display must never be torn down by a
+   243→            background 401). */}
+   244→        <AllDialogs
+   245→          {...dialogProps}
+   246→        />
+   247→      </div>
+   248→    );
+   249→  }
+   250→  if (summary.isError || !summaryData) {
+   251→    return (
+   252→      <div className="mx-auto w-full max-w-3xl space-y-6">
+   253→        <PageHeader title={t("title")} subtitle={t("subtitle")} />
+   254→        <Card>
+   255→          <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
+   256→            <CircleAlert className="h-8 w-8 text-muted-foreground" aria-hidden />
+   257→            <p className="text-sm text-muted-foreground">{t("errors.generic")}</p>
+   258→            <Button variant="outline" size="sm" onClick={() => void summary.refetch()}>
+   259→              {tCommon("retry")}
+   260→            </Button>
+   261→          </CardContent>
+   262→        </Card>
+   263→        <AllDialogs {...dialogProps} />
+   264→      </div>
+   265→    );
+   266→  }
+   267→
+   268→  return (
+   269→    <div className="mx-auto w-full max-w-3xl space-y-6">
+   270→      <PageHeader title={t("title")} subtitle={t("subtitle")} />
+   271→
+   272→      {/* ------------------------- Password (§93) ------------------------- */}
+   273→      <Card>
+   274→        <CardHeader className="pb-3">
+   275→          <CardTitle className="flex items-center gap-2 text-base">
+   276→            <KeyRound className="h-4 w-4 text-primary" aria-hidden />
+   277→            {t("passwordSection")}
+   278→          </CardTitle>
+   279→          <CardDescription>{t("passwordSectionDesc")}</CardDescription>
+   280→        </CardHeader>
+   281→        <CardContent className="flex flex-wrap items-center justify-between gap-3">
+   282→          <p className="text-sm text-muted-foreground">{t("lastPasswordChangeUnavailable")}</p>
+   283→          <Button variant="outline" size="sm" onClick={() => navigate({ kind: "profile" })}>
+   284→            {t("passwordChangeAction")}
+   285→          </Button>
+   286→        </CardContent>
+   287→      </Card>
+   288→
+   289→      {/* ------------------- Email verification (§94) --------------------- */}
+   290→      <Card>
+   291→        <CardHeader className="pb-3">
+   292→          <CardTitle className="flex items-center gap-2 text-base">
+   293→            <MailCheck className="h-4 w-4 text-primary" aria-hidden />
+   294→            {t("emailSection")}
+   295→          </CardTitle>
+   296→          <CardDescription className="break-all">{summaryData.email}</CardDescription>
+   297→        </CardHeader>
+   298→        <EmailSection summary={summaryData} onChanged={invalidateAll} />
+   299→      </Card>
+   300→
+   301→      {/* --------------------------- MFA (§95) ---------------------------- */}
+   302→      <Card>
+   303→        <CardHeader className="pb-3">
+   304→          <CardTitle className="flex items-center gap-2 text-base">
+   305→            {summaryData.mfaEnabled ? (
+   306→              <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
+   307→            ) : (
+   308→              <ShieldAlert className="h-4 w-4 text-muted-foreground" aria-hidden />
+   309→            )}
+   310→            {t("mfaSection")}
+   311→            <Badge variant={summaryData.mfaEnabled ? "default" : "secondary"} className="ms-1">
+   312→              {summaryData.mfaEnabled ? t("mfaEnabled") : t("mfaDisabled")}
+   313→            </Badge>
+   314→          </CardTitle>
+   315→          <CardDescription>{t("mfaSectionDesc")}</CardDescription>
+   316→        </CardHeader>
+   317→        <CardContent className="space-y-3">
+   318→          {summaryData.mfaEnabled ? (
+   319→            <>
+   320→              <p className="text-sm text-muted-foreground">
+   321→                {t("mfaRecoveryRemaining", { count: summaryData.recoveryCodeCount })}
+   322→              </p>
+   323→              <div className="flex flex-wrap gap-2">
+   324→                <Button variant="outline" size="sm" onClick={() => setRegenOpen(true)}>
+   325→                  <RefreshCw className="h-4 w-4" aria-hidden />
+   326→                  {t("mfaRegenerateCodesAction")}
+   327→                </Button>
+   328→                <Button variant="destructive" size="sm" onClick={() => setDisableOpen(true)}>
+   329→                  <ShieldX className="h-4 w-4" aria-hidden />
+   330→                  {t("mfaDisableAction")}
+   331→                </Button>
+   332→              </div>
+   333→            </>
+   334→          ) : (
+   335→            <div className="flex flex-wrap items-center justify-between gap-3">
+   336→              <p className="text-sm text-muted-foreground">{mfaAvailable ? t("mfaSectionDesc") : t("mfaUnavailable")}</p>
+   337→              <Button
+   338→                size="sm"
+   339→                disabled={!mfaAvailable}
+   340→                onClick={() => {
+   341→                  setReauthMode("mfa-setup");
+   342→                  setReauthOpen(true);
+   343→                }}
+   344→              >
+   345→                {t("mfaEnableAction")}
+   346→              </Button>
+   347→            </div>
+   348→          )}
+   349→        </CardContent>
+   350→      </Card>
+   351→
+   352→      {/* ----------------------- Sessions (§96) --------------------------- */}
+   353→      <Card>
+   354→        <CardHeader className="pb-3">
+   355→          <CardTitle className="flex items-center gap-2 text-base">
+   356→            <MonitorSmartphone className="h-4 w-4 text-primary" aria-hidden />
+   357→            {t("sessionsSection")}
+   358→          </CardTitle>
+   359→          <CardDescription>{t("sessionsSectionDesc")}</CardDescription>
+   360→        </CardHeader>
+   361→        <SessionsSection
+   362→          sessions={sessions.data?.sessions ?? []}
+   363→          currentRegistered={sessions.data?.currentSessionRegistered ?? true}
+   364→          isLoading={sessions.isLoading}
+   365→          locale={locale}
+   366→          onRevokeAll={() => setRevokeAllOpen(true)}
+   367→          onRevoke={(s) => setRevokedSession(s)}
+   368→          onChanged={invalidateAll}
+   369→        />
+   370→      </Card>
+   371→
+   372→      {/* ----------------------- Activity (§97) --------------------------- */}
+   373→      <Card>
+   374→        <CardHeader className="pb-3">
+   375→          <CardTitle className="flex items-center gap-2 text-base">
+   376→            <History className="h-4 w-4 text-primary" aria-hidden />
+   377→            {t("activitySection")}
+   378→          </CardTitle>
+   379→          <CardDescription>{t("activitySectionDesc")}</CardDescription>
+   380→        </CardHeader>
+   381→        <ActivitySection
+   382→          events={activity.data?.events ?? []}
+   383→          isLoading={activity.isLoading}
+   384→          locale={locale}
+   385→        />
+   386→      </Card>
+   387→
+   388→      {/* ------------------------------ activity --------------------------- */}
+   389→      <ActivitySection
+   390→        events={activity.data?.events ?? []}
+   391→        isLoading={activity.isLoading}
+   392→        locale={locale}
+   393→      />
+   394→
+   395→      <AllDialogs {...dialogProps} />
+   396→    </div>
+   397→  );
+   398→}
+   399→
+   400→
+   401→/** All security-center dialogs, hoisted so they stay mounted regardless of
+   402→ * the summary query state — the one-time recovery-code display (§60) must
+   403→ * never be torn down by a background refetch. */
+   404→type DialogProps = {
+   405→  reauthOpen: boolean;
+   406→  reauthMode: "mfa-setup" | "mfa-disable" | "mfa-regen";
+   407→  setupOpen: boolean;
+   408→  recoveryCodesOpen: boolean;
+   409→  disableOpen: boolean;
+   410→  regenOpen: boolean;
+   411→  revokeAllOpen: boolean;
+   412→  revokedSession: SessionRow | null;
+   413→  setReauthOpen: (o: boolean) => void;
+   414→  setSetupOpen: (o: boolean) => void;
+   415→  setRecoveryCodesOpen: (o: boolean) => void;
+   416→  setDisableOpen: (o: boolean) => void;
+   417→  setRegenOpen: (o: boolean) => void;
+   418→  setRevokeAllOpen: (o: boolean) => void;
+   419→  setRevokedSession: (s: SessionRow | null) => void;
+   420→  invalidateAll: () => void;
+   421→  onSetupEnabled: (recoveryCodes: string[]) => void;
+   422→  onRecoveryCodesDismissed: (open: boolean) => void;
+   423→};
+   424→
+   425→function AllDialogs(props: DialogProps) {
+   426→  return (
+   427→    <>
+   428→      <ReauthDialog
+   429→        open={props.reauthOpen}
+   430→        onOpenChange={props.setReauthOpen}
+   431→        mfaEnabled={false}
+   432→        onSuccess={() => {
+   433→          props.setReauthOpen(false);
+   434→          if (props.reauthMode === "mfa-setup") props.setSetupOpen(true);
+   435→        }}
+   436→      />
+   437→      <MfaSetupDialog
+   438→        open={props.setupOpen}
+   439→        onOpenChange={props.setSetupOpen}
+   440→        onEnabled={props.onSetupEnabled}
+   441→      />
+   442→      <RecoveryCodesDialog
+   443→        open={props.recoveryCodesOpen}
+   444→        onOpenChange={(o) => props.onRecoveryCodesDismissed(o)}
+   445→      />
+   446→      <MfaDisableDialog
+   447→        open={props.disableOpen}
+   448→        onOpenChange={props.setDisableOpen}
+   449→        onDisabled={() => {
+   450→          props.setDisableOpen(false);
+   451→          // §66 — all devices signed out; this one included.
+   452→          void signOut({ callbackUrl: "/" });
+   453→        }}
+   454→      />
+   455→      <MfaRegenDialog
+   456→        open={props.regenOpen}
+   457→        onOpenChange={props.setRegenOpen}
+   458→        onRegenerated={(codes) => {
+   459→          props.setRegenOpen(false);
+   460→          handOffRecoveryCodes(codes);
+   461→          props.setRecoveryCodesOpen(true);
+   462→          props.invalidateAll();
+   463→        }}
+   464→      />
+   465→      <RevokeAllDialog
+   466→        open={props.revokeAllOpen}
+   467→        onOpenChange={props.setRevokeAllOpen}
+   468→        onChanged={props.invalidateAll}
+   469→      />
+   470→      <RevokeOneDialog
+   471→        session={props.revokedSession}
+   472→        onClose={() => props.setRevokedSession(null)}
+   473→        onChanged={props.invalidateAll}
+   474→      />
+   475→    </>
+   476→  );
+   477→}
+   478→
+   479→/* ----------------------------- email section ------------------------------- */
+   480→
+   481→function EmailSection({
+   482→  summary,
+   483→  onChanged,
+   484→}: {
+   485→  summary: SecuritySummary;
+   486→  onChanged: () => void;
+   487→}) {
+   488→  const t = useTranslations("security");
+   489→  const [pending, setPending] = useState(false);
+   490→
+   491→  const resend = useMutation({
+   492→    mutationFn: async () =>
+   493→      api<{ sent: boolean; alreadyVerified: boolean }>("/api/v1/auth/email-verification/resend", {
+   494→        method: "POST",
+   495→        businessId: null,
+   496→      }),
+   497→    onMutate: () => setPending(true),
+   498→    onSettled: () => setPending(false),
+   499→    onSuccess: (res) => {
+   500→      if (res.alreadyVerified) {
+   501→        toast({ title: t("emailAlreadyVerified") });
+   502→      } else if (res.sent) {
+   503→        toast({ title: t("emailResendSent") });
+   504→        onChanged();
+   505→      } else {
+   506→        toast({ title: t("emailResendFailed"), variant: "destructive" });
+   507→      }
+   508→    },
+   509→    onError: (err) => {
+   510→      toast({
+   511→        title: t(errText(err, "emailResendFailed")),
+   512→        variant: "destructive",
+   513→      });
+   514→    },
+   515→  });
+   516→
+   517→  const modeOff = summary.emailVerificationMode === "OFF";
+   518→
+   519→  return (
+   520→    <CardContent className="space-y-3">
+   521→      <div className="flex flex-wrap items-center gap-2">
+   522→        {summary.emailVerified ? (
+   523→          <Badge className="gap-1" variant="default">
+   524→            <BadgeCheck className="h-3.5 w-3.5" aria-hidden />
+   525→            {t("emailVerified")}
+   526→          </Badge>
+   527→        ) : (
+   528→          <Badge className="gap-1" variant="outline">
+   529→            <CircleAlert className="h-3.5 w-3.5" aria-hidden />
+   530→            {t("emailNotVerified")}
+   531→          </Badge>
+   532→        )}
+   533→        {!summary.emailVerified && !modeOff ? (
+   534→          <Button
+   535→            variant="outline"
+   536→            size="sm"
+   537→            disabled={pending}
+   538→            onClick={() => resend.mutate()}
+   539→          >
+   540→            {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+   541→            {t("emailResendAction")}
+   542→          </Button>
+   543→        ) : null}
+   544→      </div>
+   545→      {modeOff && !summary.emailVerified ? (
+   546→        <p className="text-xs text-muted-foreground">{t("emailModeOff")}</p>
+   547→      ) : null}
+   548→    </CardContent>
+   549→  );
+   550→}
+   551→
+   552→/* ---------------------------- reauth dialog ------------------------------- */
+   553→
+   554→function ReauthDialog({
+   555→  open,
+   556→  onOpenChange,
+   557→  mfaEnabled,
+   558→  onSuccess,
+   559→}: {
+   560→  open: boolean;
+   561→  onOpenChange: (open: boolean) => void;
+   562→  mfaEnabled: boolean;
+   563→  onSuccess: () => void;
+   564→}) {
+   565→  const t = useTranslations("security");
+   566→  const [password, setPassword] = useState("");
+   567→  const [mfaCode, setMfaCode] = useState("");
+   568→  const [error, setError] = useState<string | null>(null);
+   569→
+   570→  const reauth = useMutation({
+   571→    mutationFn: async () =>
+   572→      api<{ passwordVerified: boolean; mfaVerified: boolean; windowSeconds: number }>(
+   573→        "/api/v1/me/security/reauth",
+   574→        { method: "POST", body: JSON.stringify({ password, ...(mfaCode ? { mfaCode } : {}) }), businessId: null },
+   575→      ),
+   576→    onSuccess: () => {
+   577→      setPassword("");
+   578→      setMfaCode("");
+   579→      setError(null);
+   580→      onSuccess();
+   581→    },
+   582→    onError: (err) => {
+   583→      setError(t(errText(err, "errors.generic")));
+   584→    },
+   585→  });
+   586→
+   587→  return (
+   588→    <Dialog open={open} onOpenChange={onOpenChange}>
+   589→      <DialogContent className="sm:max-w-md">
+   590→        <DialogHeader>
+   591→          <DialogTitle>{t("mfaReauthTitle")}</DialogTitle>
+   592→          <DialogDescription>{t("mfaReauthSuccess")}</DialogDescription>
+   593→        </DialogHeader>
+   594→        <div className="space-y-4">
+   595→          <div className="space-y-2">
+   596→            <Label htmlFor="reauth-password">{t("mfaReauthPassword")}</Label>
+   597→            <Input
+   598→              id="reauth-password"
+   599→              type="password"
+   600→              autoComplete="current-password"
+   601→              value={password}
+   602→              onChange={(e) => setPassword(e.target.value)}
+   603→            />
+   604→          </div>
+   605→          {mfaEnabled ? (
+   606→            <div className="space-y-2">
+   607→              <Label htmlFor="reauth-code">{t("mfaReauthCode")}</Label>
+   608→              <InputOTP maxLength={6} value={mfaCode} onChange={setMfaCode}>
+   609→                <InputOTPGroup>
+   610→                  <InputOTPSlot index={0} />
+   611→                  <InputOTPSlot index={1} />
+   612→                  <InputOTPSlot index={2} />
+   613→                </InputOTPGroup>
+   614→                <InputOTPSeparator />
+   615→                <InputOTPGroup>
+   616→                  <InputOTPSlot index={3} />
+   617→                  <InputOTPSlot index={4} />
+   618→                  <InputOTPSlot index={5} />
+   619→                </InputOTPGroup>
+   620→              </InputOTP>
+   621→            </div>
+   622→          ) : null}
+   623→          {error ? (
+   624→            <p className="text-sm text-destructive" role="alert">
+   625→              {error}
+   626→            </p>
+   627→          ) : null}
+   628→        </div>
+   629→        <DialogFooter>
+   630→          <Button variant="outline" onClick={() => onOpenChange(false)}>
+   631→            {t("mfaRecoveryDone")}
+   632→          </Button>
+   633→          <Button
+   634→            disabled={reauth.isPending || password.length === 0}
+   635→            onClick={() => reauth.mutate()}
+   636→          >
+   637→            {reauth.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+   638→            {t("mfaReauthSubmit")}
+   639→          </Button>
+   640→        </DialogFooter>
+   641→      </DialogContent>
+   642→    </Dialog>
+   643→  );
+   644→}
+   645→
+   646→/* ---------------------------- MFA setup dialog ---------------------------- */
+   647→
+   648→function MfaSetupDialog({
+   649→  open,
+   650→  onOpenChange,
+   651→  onEnabled,
+   652→}: {
+   653→  open: boolean;
+   654→  onOpenChange: (open: boolean) => void;
+   655→  /** Called with the ONE-TIME recovery codes after successful enable. */
+   656→  onEnabled: (recoveryCodes: string[]) => void;
+   657→}) {
+   658→  const t = useTranslations("security");
+   659→  const [stage, setStage] = useState<"start" | "confirm">("start");
+   660→  const [uri, setUri] = useState<string | null>(null);
+   661→  const [qr, setQr] = useState<string | null>(null);
+   662→  const [manualKey, setManualKey] = useState("");
+   663→  const [code, setCode] = useState("");
+   664→  const [error, setError] = useState<string | null>(null);
+   665→  const [confirmedSaved, setConfirmedSaved] = useState(false);
+   666→
+   667→  const start = useMutation({
+   668→    mutationFn: async () =>
+   669→      api<{ otpauthUri: string; manualKey: string; qrDataUri: string }>(
+   670→        "/api/v1/me/security/mfa/setup/start",
+   671→        { method: "POST", businessId: null },
+   672→      ),
+   673→    onSuccess: (res) => {
+   674→      setUri(res.otpauthUri);
+   675→      setQr(res.qrDataUri);
+   676→      setManualKey(res.manualKey);
+   677→      setStage("confirm");
+   678→    },
+   679→    onError: (err) => {
+   680→      setError(t(errText(err, "errors.generic")));
+   681→    },
+   682→  });
+   683→
+   684→  const confirm = useMutation({
+   685→    mutationFn: async () =>
+   686→      api<{ enabled: boolean; recoveryCodes: string[]; sessionsInvalidated: boolean }>(
+   687→        "/api/v1/me/security/mfa/setup/confirm",
+   688→        { method: "POST", body: JSON.stringify({ code, confirmedSaved: true }), businessId: null },
+   689→      ),
+   690→    onSuccess: (res) => {
+   691→      setCode("");
+   692→      setError(null);
+   693→      onEnabled(res.recoveryCodes);
+   694→      setStage("start");
+   695→    },
+   696→    onError: (err) => {
+   697→      setError(t(errText(err, "errors.generic")));
+   698→    },
+   699→  });
+   700→
+   701→  const close = (o: boolean) => {
+   702→    if (!o) {
+   703→      // §106 — abandoning setup leaves no usable server state (the pending
+   704→      // row is replaced/overwritten on a future setup and dies by TTL).
+   705→      setStage("start");
+   706→      setUri(null);
+   707→      setQr(null);
+   708→      setManualKey("");
+   709→      setCode("");
+   710→      setConfirmedSaved(false);
+   711→      setError(null);
+   712→    }
+   713→    onOpenChange(o);
+   714→  };
+   715→
+   716→  return (
+   717→    <Dialog open={open} onOpenChange={close}>
+   718→      <DialogContent className="sm:max-w-md">
+   719→        <DialogHeader>
+   720→          <DialogTitle>{t("mfaSetupTitle")}</DialogTitle>
+   721→          <DialogDescription>{t("mfaSetupStep1")}</DialogDescription>
+   722→        </DialogHeader>
+   723→        {stage === "start" ? (
+   724→          <div className="flex flex-col items-center gap-3 py-2">
+   725→            {error ? (
+   726→              <p className="text-sm text-destructive" role="alert">
+   727→                {error}
+   728→              </p>
+   729→            ) : null}
+   730→            <Button disabled={start.isPending} onClick={() => start.mutate()}>
+   731→              {start.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+   732→              {t("mfaEnableAction")}
+   733→            </Button>
+   734→          </div>
+   735→        ) : (
+   736→          <div className="space-y-4">
+   737→            <div className="flex flex-col items-center gap-2">
+   738→              {qr ? (
+   739→                // §41/§287 — server-generated PNG data URI; no third-party
+   740→                // service, no secret in any URL, nothing logged.
+   741→                <img src={qr} alt={t("mfaSetupTitle")} className="rounded-lg border bg-white p-1" width={200} height={200} />
+   742→              ) : null}
+   743→            </div>
+   744→            <div className="space-y-2">
+   745→              <Label>{t("mfaSetupManualKey")}</Label>
+   746→              <p className="break-all rounded-md bg-muted px-3 py-2 font-mono text-xs" dir="ltr">
+   747→                {manualKey}
+   748→              </p>
+   749→            </div>
+   750→            <div className="space-y-2">
+   751→              <Label>{t("mfaSetupStep2")}</Label>
+   752→              <InputOTP maxLength={6} value={code} onChange={setCode}>
+   753→                <InputOTPGroup>
+   754→                  <InputOTPSlot index={0} />
+   755→                  <InputOTPSlot index={1} />
+   756→                  <InputOTPSlot index={2} />
+   757→                </InputOTPGroup>
+   758→                <InputOTPSeparator />
+   759→                <InputOTPGroup>
+   760→                  <InputOTPSlot index={3} />
+   761→                  <InputOTPSlot index={4} />
+   762→                  <InputOTPSlot index={5} />
+   763→                </InputOTPGroup>
+   764→              </InputOTP>
+   765→            </div>
+   766→            {error ? (
+   767→              <p className="text-sm text-destructive" role="alert">
+   768→                {error}
+   769→              </p>
+   770→            ) : null}
+   771→          </div>
+   772→        )}
+   773→        <DialogFooter>
+   774→          <Button variant="outline" onClick={() => close(false)}>
+   775→            {t("mfaRecoveryDone")}
+   776→          </Button>
+   777→          {stage === "start" ? (
+   778→            <Button disabled={start.isPending} onClick={() => start.mutate()}>
+   779→              {start.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+   780→              {t("mfaEnableAction")}
+   781→            </Button>
+   782→          ) : (
+   783→            <Button
+   784→              disabled={confirm.isPending || code.length !== 6 || !confirmedSaved}
+   785→              onClick={() => confirm.mutate()}
+   786→            >
+   787→              {confirm.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+   788→              {t("mfaSetupConfirm")}
+   789→            </Button>
+   790→          )}
+   791→        </DialogFooter>
+   792→        {stage === "confirm" ? (
+   793→          <div className="flex items-center gap-2">
+   794→            <input
+   795→              id="confirmed-saved"
+   796→              type="checkbox"
+   797→              checked={confirmedSaved}
+   798→              onChange={(e) => setConfirmedSaved(e.target.checked)}
+   799→              className="h-4 w-4"
+   800→            />
+   801→            <Label htmlFor="confirmed-saved" className="text-xs font-normal text-muted-foreground">
+   802→              {t("mfaRecoverySavedConfirm")}
+   803→            </Label>
+   804→          </div>
+   805→        ) : null}
+   806→      </DialogContent>
+   807→    </Dialog>
+   808→  );
+   809→}
+   810→
+   811→/* -------------------------- recovery codes dialog -------------------------- */
+   812→
+   813→function RecoveryCodesDialog({
+   814→  open,
+   815→  onOpenChange,
+   816→}: {
+   817→  open: boolean;
+   818→  onOpenChange: (open: boolean) => void;
+   819→}) {
+   820→  const t = useTranslations("security");
+   821→  const tCommon = useTranslations("common");
+   822→  const codes = useRecoveryCodesStore((s) => s.codes);
+   823→
+   824→  const copyAll = () => {
+   825→    void navigator.clipboard.writeText(codes.join("\n"));
+   826→    toast({ title: tCommon("copied") });
+   827→  };
+   828→  const printCodes = () => {
+   829→    // §463 — explicit user action only; never auto-triggered.
+   830→    const w = window.open("", "_blank", "width=600,height=700");
+   831→    if (w) {
+   832→      w.document.write(
+   833→        `<html><head><title>${t("mfaRecoveryCodesTitle")}</title></head><body style="font-family:system-ui;padding:24px"><h1>${t("mfaRecoveryCodesTitle")}</h1><pre style="font-size:14px;line-height:2">${codes.join("\n")}</pre><p>${t("mfaRecoveryWarning")}</p></body></html>`,
+   834→      );
+   835→      w.document.close();
+   836→      w.focus();
+   837→      w.print();
+   838→    }
+   839→  };
+   840→
+   841→  return (
+   842→    <Dialog open={open} onOpenChange={onOpenChange}>
+   843→      <DialogContent className="sm:max-w-md">
+   844→        <DialogHeader>
+   845→          <DialogTitle className="flex items-center gap-2">
+   846→            <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
+   847→            {t("mfaRecoveryCodesTitle")}
+   848→          </DialogTitle>
+   849→          <DialogDescription>{t("mfaRecoveryCodesDesc")}</DialogDescription>
+   850→        </DialogHeader>
+   851→        <div className="rounded-md border bg-muted/40 p-3">
+   852→          <ul className="grid grid-cols-2 gap-2" dir="ltr">
+   853→            {codes.map((code) => (
+   854→              <li key={code} className="font-mono text-sm tracking-wider">
+   855→                {code}
+   856→              </li>
+   857→            ))}
+   858→          </ul>
+   859→          <p className="mt-3 text-xs text-muted-foreground">{t("mfaRecoveryWarning")}</p>
+   860→        </div>
+   861→        <DialogFooter className="flex-row gap-2 sm:justify-between">
+   862→          <div className="flex gap-2">
+   863→            <Button variant="outline" size="sm" onClick={copyAll} disabled={codes.length === 0}>
+   864→              <Copy className="h-4 w-4" aria-hidden />
+   865→              {t("mfaCopyAllAction")}
+   866→            </Button>
+   867→            <Button variant="outline" size="sm" onClick={printCodes} disabled={codes.length === 0}>
+   868→              <Printer className="h-4 w-4" aria-hidden />
+   869→              {t("mfaPrintAction")}
+   870→            </Button>
+   871→          </div>
+   872→          <Button onClick={() => onOpenChange(false)}>{t("mfaRecoveryDone")}</Button>
+   873→        </DialogFooter>
+   874→      </DialogContent>
+   875→    </Dialog>
+   876→  );
+   877→}
+   878→
+   879→/* ---------------------------- MFA disable dialog --------------------------- */
+   880→
+   881→function MfaDisableDialog({
+   882→  open,
+   883→  onOpenChange,
+   884→  onDisabled,
+   885→}: {
+   886→  open: boolean;
+   887→  onOpenChange: (open: boolean) => void;
+   888→  onDisabled: () => void;
+   889→}) {
+   890→  const t = useTranslations("security");
+   891→  const [password, setPassword] = useState("");
+   892→  const [code, setCode] = useState("");
+   893→  const [confirmation, setConfirmation] = useState("");
+   894→  const [error, setError] = useState<string | null>(null);
+   895→
+   896→  const disable = useMutation({
+   897→    mutationFn: async () =>
+   898→      api<{ disabled: boolean; sessionsInvalidated: boolean }>("/api/v1/me/security/mfa/disable", {
+   899→        method: "POST",
+   900→        body: JSON.stringify({ password, mfaCode: code, confirmation }),
+   901→        businessId: null,
+   902→      }),
+   903→    onSuccess: () => {
+   904→      setPassword("");
+   905→      setCode("");
+   906→      setConfirmation("");
+   907→      setError(null);
+   908→      onDisabled();
+   909→    },
+   910→    onError: (err) => setError(t(errText(err, "errors.generic"))),
+   911→  });
+   912→
+   913→  const close = (o: boolean) => {
+   914→    if (!o) {
+   915→      setPassword("");
+   916→      setCode("");
+   917→      setConfirmation("");
+   918→      setError(null);
+   919→    }
+   920→    onOpenChange(o);
+   921→  };
+   922→
+   923→  return (
+   924→    <AlertDialog open={open} onOpenChange={close}>
+   925→      <AlertDialogContent className="sm:max-w-md">
+   926→        <AlertDialogHeader>
+   927→          <AlertDialogTitle className="flex items-center gap-2">
+   928→            <ShieldX className="h-4 w-4 text-destructive" aria-hidden />
+   929→            {t("mfaDisableTitle")}
+   930→          </AlertDialogTitle>
+   931→          <AlertDialogDescription>{t("mfaDisableDesc")}</AlertDialogDescription>
+   932→        </AlertDialogHeader>
+   933→        <div className="space-y-3">
+   934→          <div className="space-y-1.5">
+   935→            <Label htmlFor="mfa-disable-password">{t("mfaReauthPassword")}</Label>
+   936→            <Input
+   937→              id="mfa-disable-password"
+   938→              type="password"
+   939→              autoComplete="current-password"
+   940→              value={password}
+   941→              onChange={(e) => setPassword(e.target.value)}
+   942→            />
+   943→          </div>
+   944→          <div className="space-y-1.5">
+   945→            <Label>{t("mfaReauthCode")}</Label>
+   946→            <InputOTP maxLength={6} value={code} onChange={setCode}>
+   947→              <InputOTPGroup>
+   948→                <InputOTPSlot index={0} />
+   949→                <InputOTPSlot index={1} />
+   950→                <InputOTPSlot index={2} />
+   951→              </InputOTPGroup>
+   952→              <InputOTPSeparator />
+   953→              <InputOTPGroup>
+   954→                <InputOTPSlot index={3} />
+   955→                <InputOTPSlot index={4} />
+   956→                <InputOTPSlot index={5} />
+   957→              </InputOTPGroup>
+   958→            </InputOTP>
+   959→          </div>
+   960→          <div className="space-y-1.5">
+   961→            <Label htmlFor="mfa-disable-confirm">{t("mfaDisableConfirmLabel")}</Label>
+   962→            <Input
+   963→              id="mfa-disable-confirm"
+   964→              value={confirmation}
+   965→              onChange={(e) => setConfirmation(e.target.value)}
+   966→              autoComplete="off"
+   967→            />
+   968→          </div>
+   969→          {error ? (
+   970→            <p className="text-sm text-destructive" role="alert">
+   971→              {error}
+   972→            </p>
+   973→          ) : null}
+   974→        </div>
+   975→        <AlertDialogFooter>
+   976→          <AlertDialogCancel>{t("mfaRecoveryDone")}</AlertDialogCancel>
+   977→          <AlertDialogAction
+   978→            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+   979→            disabled={disable.isPending || !password || code.length !== 6 || confirmation !== "DISABLE MFA"}
+   980→            onClick={(e) => {
+   981→              e.preventDefault();
+   982→              disable.mutate();
+   983→            }}
+   984→          >
+   985→            {disable.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+   986→            {t("mfaDisableAction")}
+   987→          </AlertDialogAction>
+   988→        </AlertDialogFooter>
+   989→      </AlertDialogContent>
+   990→    </AlertDialog>
+   991→  );
+   992→}
+   993→
+   994→/* --------------------------- regenerate codes ------------------------------ */
+   995→
+   996→function MfaRegenDialog({
+   997→  open,
+   998→  onOpenChange,
+   999→  onRegenerated,
+  1000→}: {
+  1001→  open: boolean;
+  1002→  onOpenChange: (open: boolean) => void;
+  1003→  onRegenerated: (recoveryCodes: string[]) => void;
+  1004→}) {
+  1005→  const t = useTranslations("security");
+  1006→  const [password, setPassword] = useState("");
+  1007→  const [code, setCode] = useState("");
+  1008→  const [error, setError] = useState<string | null>(null);
+  1009→
+  1010→  const regen = useMutation({
+  1011→    mutationFn: async () =>
+  1012→      api<{ recoveryCodes: string[] }>("/api/v1/me/security/mfa/recovery-codes/regenerate", {
+  1013→        method: "POST",
+  1014→        body: JSON.stringify({ password, mfaCode: code }),
+  1015→        businessId: null,
+  1016→      }),
+  1017→    onSuccess: (res) => {
+  1018→      setPassword("");
+  1019→      setCode("");
+  1020→      setError(null);
+  1021→      onRegenerated(res.recoveryCodes);
+  1022→    },
+  1023→    onError: (err) => setError(t(errText(err, "errors.generic"))),
+  1024→  });
+  1025→
+  1026→  const close = (o: boolean) => {
+  1027→    if (!o) {
+  1028→      setPassword("");
+  1029→      setCode("");
+  1030→      setError(null);
+  1031→    }
+  1032→    onOpenChange(o);
+  1033→  };
+  1034→
+  1035→  return (
+  1036→    <AlertDialog open={open} onOpenChange={close}>
+  1037→      <AlertDialogContent className="sm:max-w-md">
+  1038→        <AlertDialogHeader>
+  1039→          <AlertDialogTitle>{t("mfaRecoveryRegenTitle")}</AlertDialogTitle>
+  1040→          <AlertDialogDescription>{t("mfaRecoveryRegenDesc")}</AlertDialogDescription>
+  1041→        </AlertDialogHeader>
+  1042→        <div className="space-y-3">
+  1043→          <div className="space-y-1.5">
+  1044→            <Label htmlFor="regen-password">{t("mfaReauthPassword")}</Label>
+  1045→            <Input
+  1046→              id="regen-password"
+  1047→              type="password"
+  1048→              autoComplete="current-password"
+  1049→              value={password}
+  1050→              onChange={(e) => setPassword(e.target.value)}
+  1051→            />
+  1052→          </div>
+  1053→          <div className="space-y-1.5">
+  1054→            <Label>{t("mfaReauthCode")}</Label>
+  1055→            <InputOTP maxLength={6} value={code} onChange={setCode}>
+  1056→              <InputOTPGroup>
+  1057→                <InputOTPSlot index={0} />
+  1058→                <InputOTPSlot index={1} />
+  1059→                <InputOTPSlot index={2} />
+  1060→              </InputOTPGroup>
+  1061→              <InputOTPSeparator />
+  1062→              <InputOTPGroup>
+  1063→                <InputOTPSlot index={3} />
+  1064→                <InputOTPSlot index={4} />
+  1065→                <InputOTPSlot index={5} />
+  1066→              </InputOTPGroup>
+  1067→            </InputOTP>
+  1068→          </div>
+  1069→          {error ? (
+  1070→            <p className="text-sm text-destructive" role="alert">
+  1071→              {error}
+  1072→            </p>
+  1073→          ) : null}
+  1074→        </div>
+  1075→        <AlertDialogFooter>
+  1076→          <AlertDialogCancel>{t("mfaRecoveryDone")}</AlertDialogCancel>
+  1077→          <AlertDialogAction
+  1078→            disabled={regen.isPending || !password || code.length !== 6}
+  1079→            onClick={(e) => {
+  1080→              e.preventDefault();
+  1081→              regen.mutate();
+  1082→            }}
+  1083→          >
+  1084→            {regen.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+  1085→            {t("mfaRegenerateCodesAction")}
+  1086→          </AlertDialogAction>
+  1087→        </AlertDialogFooter>
+  1088→      </AlertDialogContent>
+  1089→    </AlertDialog>
+  1090→  );
+  1091→}
+  1092→
+  1093→/* ------------------------------ sessions ----------------------------------- */
+  1094→
+  1095→function SessionsSection({
+  1096→  sessions,
+  1097→  currentRegistered,
+  1098→  isLoading,
+  1099→  locale,
+  1100→  onRevokeAll,
+  1101→  onRevoke,
+  1102→  onChanged,
+  1103→}: {
+  1104→  sessions: SessionRow[];
+  1105→  currentRegistered: boolean;
+  1106→  isLoading: boolean;
+  1107→  locale: string;
+  1108→  onRevokeAll: () => void;
+  1109→  onRevoke: (s: SessionRow) => void;
+  1110→  onChanged: () => void;
+  1111→}) {
+  1112→  const t = useTranslations("security");
+  1113→  void onChanged;
+  1114→  const active = sessions.filter((s) => !s.revoked);
+  1115→
+  1116→  if (isLoading) {
+  1117→    return (
+  1118→      <CardContent className="flex justify-center py-8">
+  1119→        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden />
+  1120→      </CardContent>
+  1121→    );
+  1122→  }
+  1123→
+  1124→  return (
+  1125→    <CardContent className="space-y-3">
+  1126→      {active.length === 0 ? (
+  1127→        <p className="text-sm text-muted-foreground">{t("sessionsEmpty")}</p>
+  1128→      ) : (
+  1129→        <ul className="divide-y rounded-md border">
+  1130→          {active.map((s) => (
+  1131→            <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 p-3">
+  1132→              <div className="min-w-0">
+  1133→                <p className="flex items-center gap-2 text-sm font-medium">
+  1134→                  <Laptop className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+  1135→                  <span className="truncate">{s.deviceLabel ?? t("sessionsUnknownDevice")}</span>
+  1136→                  {s.isCurrent ? (
+  1137→                    <Badge variant="secondary" className="shrink-0">
+  1138→                      {t("sessionsCurrentBadge")}
+  1139→                    </Badge>
+  1140→                  ) : null}
+  1141→                </p>
+  1142→                <p className="mt-0.5 text-xs text-muted-foreground">
+  1143→                  {t("sessionsLastActive")}: {formatDateTime(s.lastSeenAt, locale)} · {t("sessionsCreated")}:{" "}
+  1144→                  {formatDateTime(s.createdAt, locale)}
+  1145→                </p>
+  1146→              </div>
+  1147→              {!s.isCurrent ? (
+  1148→                <Button variant="outline" size="sm" onClick={() => onRevoke(s)}>
+  1149→                  {t("sessionsRevokeAction")}
+  1150→                </Button>
+  1151→              ) : null}
+  1152→            </li>
+  1153→          ))}
+  1154→        </ul>
+  1155→      )}
+  1156→      {!currentRegistered ? (
+  1157→        <p className="rounded-md bg-muted/60 p-2 text-xs text-muted-foreground">
+  1158→          {t("sessionsCurrentUnknown")}
+  1159→        </p>
+  1160→      ) : null}
+  1161→      {active.length > 1 ? (
+  1162→        <Button variant="outline" size="sm" onClick={onRevokeAll}>
+  1163→          {t("sessionsRevokeAllAction")}
+  1164→        </Button>
+  1165→      ) : null}
+  1166→    </CardContent>
+  1167→  );
+  1168→}
+  1169→
+  1170→function RevokeOneDialog({
+  1171→  session,
+  1172→  onClose,
+  1173→  onChanged,
+  1174→}: {
+  1175→  session: SessionRow | null;
+  1176→  onClose: () => void;
+  1177→  onChanged: () => void;
+  1178→}) {
+  1179→  const t = useTranslations("security");
+  1180→  const [error, setError] = useState<string | null>(null);
+  1181→
+  1182→  const revoke = useMutation({
+  1183→    mutationFn: async (id: string) =>
+  1184→      api<{ revoked: boolean; alreadyRevoked: boolean }>(`/api/v1/me/security/sessions/${id}/revoke`, {
+  1185→        method: "POST",
+  1186→        businessId: null,
+  1187→      }),
+  1188→    onSuccess: () => {
+  1189→      toast({ title: t("sessionsRevokedToast") });
+  1190→      onChanged();
+  1191→      onClose();
+  1192→    },
+  1193→    onError: (err) => setError(t(errText(err, "errors.generic"))),
+  1194→  });
+  1195→
+  1196→  return (
+  1197→    <AlertDialog
+  1198→      open={session !== null}
+  1199→      onOpenChange={(o) => {
+  1200→        if (!o) {
+  1201→          setError(null);
+  1202→          onClose();
+  1203→        }
+  1204→      }}
+  1205→    >
+  1206→      <AlertDialogContent className="sm:max-w-md">
+  1207→        <AlertDialogHeader>
+  1208→          <AlertDialogTitle>{t("sessionsRevokeConfirmTitle")}</AlertDialogTitle>
+  1209→          <AlertDialogDescription>
+  1210→            {t("sessionsRevokeConfirmBody", {
+  1211→              device: session?.deviceLabel ?? t("sessionsUnknownDevice"),
+  1212→            })}
+  1213→          </AlertDialogDescription>
+  1214→        </AlertDialogHeader>
+  1215→        {error ? (
+  1216→          <p className="text-sm text-destructive" role="alert">
+  1217→            {error}
+  1218→          </p>
+  1219→        ) : null}
+  1220→        <AlertDialogFooter>
+  1221→          <AlertDialogCancel>{t("mfaRecoveryDone")}</AlertDialogCancel>
+  1222→          <AlertDialogAction
+  1223→            disabled={revoke.isPending}
+  1224→            onClick={(e) => {
+  1225→              e.preventDefault();
+  1226→              if (session) revoke.mutate(session.id);
+  1227→            }}
+  1228→          >
+  1229→            {revoke.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+  1230→            {t("sessionsRevokeAction")}
+  1231→          </AlertDialogAction>
+  1232→        </AlertDialogFooter>
+  1233→      </AlertDialogContent>
+  1234→    </AlertDialog>
+  1235→  );
+  1236→}
+  1237→
+  1238→function RevokeAllDialog({
+  1239→  open,
+  1240→  onOpenChange,
+  1241→  onChanged,
+  1242→}: {
+  1243→  open: boolean;
+  1244→  onOpenChange: (open: boolean) => void;
+  1245→  onChanged: () => void;
+  1246→}) {
+  1247→  const t = useTranslations("security");
+  1248→  const [password, setPassword] = useState("");
+  1249→  const [confirmation, setConfirmation] = useState("");
+  1250→  const [error, setError] = useState<string | null>(null);
+  1251→
+  1252→  const revokeAll = useMutation({
+  1253→    mutationFn: async () =>
+  1254→      api<{ revokedCount: number }>("/api/v1/me/security/sessions/revoke-all", {
+  1255→        method: "POST",
+  1256→        body: JSON.stringify({ password, confirmation }),
+  1257→        businessId: null,
+  1258→      }),
+  1259→    onSuccess: (res) => {
+  1260→      toast({ title: t("sessionsRevokeAllToast", { count: res.revokedCount }) });
+  1261→      setPassword("");
+  1262→      setConfirmation("");
+  1263→      setError(null);
+  1264→      onChanged();
+  1265→      onOpenChange(false);
+  1266→    },
+  1267→    onError: (err) => setError(t(errText(err, "errors.generic"))),
+  1268→  });
+  1269→
+  1270→  const close = (o: boolean) => {
+  1271→    if (!o) {
+  1272→      setPassword("");
+  1273→      setConfirmation("");
+  1274→      setError(null);
+  1275→    }
+  1276→    onOpenChange(o);
+  1277→  };
+  1278→
+  1279→  return (
+  1280→    <AlertDialog open={open} onOpenChange={close}>
+  1281→      <AlertDialogContent className="sm:max-w-md">
+  1282→        <AlertDialogHeader>
+  1283→          <AlertDialogTitle>{t("sessionsRevokeAllTitle")}</AlertDialogTitle>
+  1284→          <AlertDialogDescription>{t("sessionsRevokeAllBody")}</AlertDialogDescription>
+  1285→        </AlertDialogHeader>
+  1286→        <div className="space-y-3">
+  1287→          <div className="space-y-1.5">
+  1288→            <Label htmlFor="revoke-all-password">{t("mfaReauthPassword")}</Label>
+  1289→            <Input
+  1290→              id="revoke-all-password"
+  1291→              type="password"
+  1292→              autoComplete="current-password"
+  1293→              value={password}
+  1294→              onChange={(e) => setPassword(e.target.value)}
+  1295→            />
+  1296→          </div>
+  1297→          <div className="space-y-1.5">
+  1298→            <Label htmlFor="revoke-all-confirm">{t("sessionsRevokeAllConfirmLabel")}</Label>
+  1299→            <Input
+  1300→              id="revoke-all-confirm"
+  1301→              value={confirmation}
+  1302→              onChange={(e) => setConfirmation(e.target.value)}
+  1303→              autoComplete="off"
+  1304→            />
+  1305→          </div>
+  1306→          {error ? (
+  1307→            <p className="text-sm text-destructive" role="alert">
+  1308→              {error}
+  1309→            </p>
+  1310→          ) : null}
+  1311→        </div>
+  1312→        <AlertDialogFooter>
+  1313→          <AlertDialogCancel>{t("mfaRecoveryDone")}</AlertDialogCancel>
+  1314→          <AlertDialogAction
+  1315→            disabled={revokeAll.isPending || !password || confirmation !== "SIGN OUT ALL"}
+  1316→            onClick={(e) => {
+  1317→              e.preventDefault();
+  1318→              revokeAll.mutate();
+  1319→            }}
+  1320→          >
+  1321→            {revokeAll.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+  1322→            {t("sessionsRevokeAllAction")}
+  1323→          </AlertDialogAction>
+  1324→        </AlertDialogFooter>
+  1325→      </AlertDialogContent>
+  1326→    </AlertDialog>
+  1327→  );
+  1328→}
+  1329→
+  1330→/* ------------------------------- activity ---------------------------------- */
+  1331→
+  1332→/** Fixed map from the SecurityEvent vocabulary (§423) onto next-intl keys —
+  1333→ * dots are not allowed inside i18n keys, so the static map avoids any
+  1334→ * dynamic-key validation at runtime. Unknown event types render raw. */
+  1335→const ACTIVITY_LABEL_KEYS: Record<string, Parameters<typeof useTranslations<"security">>[0] extends never ? never : string> = {
+  1336→  "auth.login.success": "activityEvent.auth_login_success",
+  1337→  "auth.login.failed": "activityEvent.auth_login_failed",
+  1338→  "auth.logout": "activityEvent.auth_logout",
+  1339→  "auth.session.revoked": "activityEvent.auth_session_revoked",
+  1340→  "auth.session.revoked_all": "activityEvent.auth_session_revoked_all",
+  1341→  "auth.mfa.enrollment_started": "activityEvent.auth_mfa_enrollment_started",
+  1342→  "auth.mfa.enabled": "activityEvent.auth_mfa_enabled",
+  1343→  "auth.mfa.disabled": "activityEvent.auth_mfa_disabled",
+  1344→  "auth.mfa.recovery_codes_generated": "activityEvent.auth_mfa_recovery_codes_generated",
+  1345→  "auth.mfa.recovery_code_used": "activityEvent.auth_mfa_recovery_code_used",
+  1346→  "auth.mfa.login_challenge_created": "activityEvent.auth_mfa_login_challenge_created",
+  1347→  "auth.mfa.login_succeeded": "activityEvent.auth_mfa_login_succeeded",
+  1348→  "auth.mfa.login_failed": "activityEvent.auth_mfa_login_failed",
+  1349→  "auth.email_verification.requested": "activityEvent.auth_email_verification_requested",
+  1350→  "auth.email_verification.sent": "activityEvent.auth_email_verification_sent",
+  1351→  "auth.email_verification.completed": "activityEvent.auth_email_verification_completed",
+  1352→  "auth.email_verification.failed": "activityEvent.auth_email_verification_failed",
+  1353→  "auth.password.changed": "activityEvent.auth_password_changed",
+  1354→  "auth.password.reset_completed": "activityEvent.auth_password_reset_completed",
+  1355→  "auth.stepup.password_verified": "activityEvent.auth_stepup_password_verified",
+  1356→  "auth.stepup.mfa_verified": "activityEvent.auth_stepup_mfa_verified",
+  1357→};
+  1358→
+  1359→function labelForEvent(
+  1360→  t: ReturnType<typeof useTranslations<"security">>,
+  1361→  eventType: string,
+  1362→): string {
+  1363→  const key = ACTIVITY_LABEL_KEYS[eventType];
+  1364→  if (!key) return eventType;
+  1365→  // The map is statically aligned with the message files; the cast keeps the
+  1366→  // dynamic lookup type-safe at the boundary.
+  1367→  return (t as unknown as (k: string) => string)(key);
+  1368→}
+  1369→
+  1370→function ActivitySection({
+  1371→  events,
+  1372→  isLoading,
+  1373→  locale,
+  1374→}: {
+  1375→  events: ActivityRow[];
+  1376→  isLoading: boolean;
+  1377→  locale: string;
+  1378→}) {
+  1379→  const t = useTranslations("security");
+  1380→
+  1381→  if (isLoading) {
+  1382→    return (
+  1383→      <CardContent className="flex justify-center py-8">
+  1384→        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden />
+  1385→      </CardContent>
+  1386→    );
+  1387→  }
+  1388→
+  1389→  if (events.length === 0) {
+  1390→    return (
+  1391→      <CardContent>
+  1392→        <p className="text-sm text-muted-foreground">{t("activityEmpty")}</p>
+  1393→      </CardContent>
+  1394→    );
+  1395→  }
+  1396→
+  1397→  return (
+  1398→    <CardContent>
+  1399→      <ul className="max-h-96 divide-y overflow-y-auto rounded-md border">
+  1400→        {events.map((event, i) => (
+  1401→          <li key={`${event.eventType}-${event.createdAt}-${i}`} className="flex items-center justify-between gap-2 p-3">
+  1402→            <div className="min-w-0">
+  1403→              <p className="truncate text-sm">
+  1404→                {labelForEvent(t, event.eventType)}
+  1405→              </p>
+  1406→              <p className="text-xs text-muted-foreground">
+  1407→                {formatDateTime(event.createdAt, locale)}
+  1408→                {event.deviceLabel ? ` · ${event.deviceLabel}` : ""}
+  1409→              </p>
+  1410→            </div>
+  1411→            {!event.success ? (
+  1412→              <Badge variant="destructive" className="shrink-0">
+  1413→                {t("activityFailure")}
+  1414→              </Badge>
+  1415→            ) : null}
+  1416→          </li>
+  1417→        ))}
+  1418→      </ul>
+  1419→    </CardContent>
+  1420→  );
+  1421→}
+  1422→

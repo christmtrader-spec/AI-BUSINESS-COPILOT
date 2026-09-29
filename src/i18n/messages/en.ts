@@ -184,12 +184,16 @@ const en = {
     // ---- MFA (§95) ----
     mfaSection: "Two-factor authentication",
     mfaSectionDesc: "Adds an additional verification step at sign-in using an authenticator app.",
+    mfaEnableHint: "Enrollment takes about a minute: scan the QR code with your authenticator app and confirm a 6-digit code.",
     mfaEnabled: "Enabled",
     mfaDisabled: "Not enabled",
     mfaEnableAction: "Enable two-factor authentication",
     mfaDisableAction: "Disable two-factor authentication",
     mfaRegenerateCodesAction: "Regenerate recovery codes",
     mfaUnavailable: "Two-factor authentication is not available in this deployment.",
+    // Prompt 30-F §8 — server-authoritative capability states (factual copy).
+    mfaCapabilityDisabled: "Two-factor authentication is turned off for this deployment.",
+    mfaCapabilityBlocked: "Two-factor authentication is temporarily unavailable — deployment configuration is incomplete.",
     mfaSetupTitle: "Set up your authenticator",
     mfaSetupStep1: "Scan the QR code with your authenticator app (or enter the key manually).",
     mfaSetupManualKey: "Manual setup key",

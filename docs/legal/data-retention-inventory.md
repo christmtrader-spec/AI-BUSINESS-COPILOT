@@ -106,3 +106,19 @@ Two different kinds of "retained" exist and must not be conflated:
 | `PlatformOperator` rows | Exist while the backing user exists (ON DELETE CASCADE). Deactivation is reversible state, not deletion. | Explicit: tied to account lifetime |
 | `PlatformAuditLog` rows | No automatic deletion, archival or purge path exists anywhere in the code. | **CURRENTLY NOT EXPLICITLY CONFIGURED** — no retention period is defined or invented; a written retention decision is a legal/operational task that has not happened yet |
 | Sanitized audit payloads | Size-bounded at write time (≤8,000 chars per payload, values truncated); no time-based cleanup | Unbounded in time (see row above) |
+
+## Identity security data (Prompt 30 addition)
+
+> **Operational expiry is NOT legal retention.** The time-based values below exist to keep the
+> authentication system safe and small; they say nothing about how long any record is lawfully
+> kept. Where a category has no policy, it says **CURRENTLY NOT EXPLICITLY CONFIGURED**.
+
+| Data | Storage | Operational expiry / lifecycle | Deletion method | Status |
+| --- | --- | --- | --- | --- |
+| Email verification tokens | `EmailVerificationToken` (SHA-256 `tokenHash` only) | **30 minutes** (`EMAIL_VERIFICATION_TTL_MINUTES`); single active token per user — issuing a new token invalidates outstanding ones | Consumed (`usedAt`), opportunistic cleanup on the same rate-limited flows, `scripts/prune-auth-security.mjs`, user-deletion cascade | Explicit (30-min TTL); consumed-row cleanup is operational, not a retention policy |
+| MFA credential | `MfaCredential` — AES-256-GCM `encryptedSecret`; key lives ONLY in `MFA_ENCRYPTION_KEY` (never in the DB) | Lives while the user stays enrolled; removed by explicit disable (password + MFA + typed confirmation) | Disable flow (transactional: credential + sessionVersion + revocations + audit) or user-deletion cascade | Explicit: tied to enrollment state |
+| MFA recovery codes | `MfaRecoveryCode` (SHA-256 `codeHash` only) | Remaining unused codes live until the set is regenerated or MFA disabled; consumed codes keep `usedAt` until then (audit evidence of the event time, no secret value) | Regeneration replaces the whole unused set in one transaction; user-deletion cascade | Explicit: tied to enrollment state |
+| MFA login challenges | `MfaLoginChallenge` (hash-only) | **5 minutes** (`MFA_CHALLENGE_TTL_SECONDS`, bounded 60–900); single-use; invalidated immediately when `sessionVersion` changes (password change/reset/delete) | Consume-on-use, expiry, `scripts/prune-auth-security.mjs`, user-deletion cascade | Explicit (bounded TTL) |
+| Device session registry | `UserSession` (`sessionTokenHash` = SHA-256(sid); raw sid/JWT never stored) | **30 days** — UserSession `expiresAt` is derived from the SAME `SESSION_MAX_AGE_SECONDS` as the NextAuth JWT maxAge (one authority); per-device revocation sets `revokedAt`; `lastSeenAt` updated at most once per 300s (throttled) | Revocation, expiry, `scripts/prune-auth-security.mjs` (dry-run default, `--apply`), user-deletion cascade | Explicit (expiry = JWT maxAge by construction); legal hold, if ever needed, is NOT implemented and must not be assumed |
+| Security activity events | `SecurityEvent` — fixed `auth.*` vocabulary, no secrets, hashed IP, bounded UA | No independent TTL exists; written only from rate-limited auth paths so attackers cannot inflate the table | User-deletion cascade (privacy-first: per-user security history does NOT survive the account) | **CURRENTLY NOT EXPLICITLY CONFIGURED** (no TTL) — the cascade is a deletion path, not a retention policy |
+| Email-verification rate-limit buckets | in-process memory only | Sliding windows (3/15 min per user+IP, 6/h per user) | Process memory; lost on restart | Explicit and non-durable |

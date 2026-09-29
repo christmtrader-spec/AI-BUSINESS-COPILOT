@@ -121,6 +121,16 @@ await prisma.aiCostAnomaly.deleteMany({});
 for (const b of await prisma.business.findMany({ where: { name: { startsWith: "P26 " } }, select: { id: true } })) {
   try { await prisma.business.delete({ where: { id: b.id } }); } catch {}
 }
+// r30-F: the harness previously hard-depended on the Phase-02 demo account
+// `sara@copilot.dev` existing in the DB. A rebuilt environment has no demo
+// users, so ensure the owner exists (idempotent upsert, self-heal spirit).
+// The harness never signs in as this user — the hash is a placeholder like
+// the other harness fixtures (privacy-deletion-check uses the same shape).
+await prisma.user.upsert({
+  where: { email: "sara@copilot.dev" },
+  update: {},
+  create: { email: "sara@copilot.dev", name: "Sara (P26 fixture)", passwordHash: "x" },
+});
 
 /* --------------------- fixture businesses (real path) -------------------- */
 async function makeBusiness(name) {

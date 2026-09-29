@@ -58,6 +58,12 @@ operations. Status vocabulary as in the banner.
 | PasswordResetToken | **DELETED** (cascade) | NOT AFFECTED (user-level) | 30-min single-use expiry + opportunistic cleanup | DEPENDENT + time-based |
 | PlatformOperator (Prompt 28) | **DELETED** (cascade via `userId` — a deleted account can never leave a privileged row behind; no orphan, no silent preserved access) | NOT AFFECTED (platform-level; unrelated to business deletion) | Exists while the backing user exists; `active=false` is reversible deactivation, not deletion | DEPENDENT |
 | PlatformAuditLog (Prompt 28) | Rows **RETAINED**; `operatorId` **SetNull** (operator link removed, row stays — role is snapshotted so the record stays interpretable) | NOT AFFECTED — deliberately NO business foreign key; target ids are plain strings, so platform audit survives business deletion by design | Append-orientation: no update/delete code paths; **retention period CURRENTLY NOT EXPLICITLY CONFIGURED** (no purge job, no invented number) | RETAINED (retention policy undefined) |
+| EmailVerificationToken (Prompt 30) | **DELETED** (cascade) | NOT AFFECTED (user-level) | 30-min single-use expiry (`usedAt`/`expiresAt`) + opportunistic cleanup on the same rate-limited flows + `scripts/prune-auth-security.mjs` | DEPENDENT + time-based |
+| MfaCredential (Prompt 30) | **DELETED** (cascade) — the encrypted TOTP secret never outlives the account | NOT AFFECTED (user-level) | Deleted earlier by an explicit MFA disable (password + MFA + typed confirmation); exists while enrolled otherwise | DEPENDENT |
+| MfaRecoveryCode (Prompt 30) | **DELETED** (cascade) — hash-only rows | NOT AFFECTED (user-level) | Replaced wholesale by regeneration (old unused set deleted in the same transaction); consumed codes keep `usedAt` until then | DEPENDENT |
+| MfaLoginChallenge (Prompt 30) | **DELETED** (cascade) | NOT AFFECTED (user-level) | 5-minute TTL (`MFA_CHALLENGE_TTL_SECONDS`, bounded 60–900) + invalidated by sessionVersion changes; pruned by `scripts/prune-auth-security.mjs` | DEPENDENT + time-based |
+| UserSession (Prompt 30) | **DELETED** (cascade) | NOT AFFECTED (user-level) | 30-day expiry aligned with the JWT maxAge; per-device revocation sets `revokedAt`; expired/revoked rows pruned by `scripts/prune-auth-security.mjs`; last-seen updates throttled (300s default) | DEPENDENT + time-based |
+| SecurityEvent (Prompt 30) | **DELETED** (cascade) — privacy-first choice: per-user security history does NOT survive the account | NOT AFFECTED (user-level; business events are not recorded here — the tenant trail is `AuditLog`) | No independent TTL configured (CURRENTLY NOT EXPLICITLY CONFIGURED); high-risk events are only written from rate-limited paths | DEPENDENT (retention policy undefined) |
 
 ## 3. Dependency walk-through (documentation-only "dry run")
 
@@ -67,9 +73,11 @@ is `GET /api/v1/businesses/[id]/danger` (pre-deletion counts). Any automated pre
 **NOT IMPLEMENTED** today.
 
 ```
-USER ──DELETE /api/v1/me──▶  [gate: fresh session + password + "DELETE" + 5/15min]
+USER ──DELETE /api/v1/me──▶  [gate: fresh session + password + MFA if enrolled + "DELETE" + 5/15min]
   ├─ deletes: User · Memberships · ChatSessions+ChatMessages · PasswordResetTokens
   │           · LegalAcceptances
+  ├─ deletes (Prompt 30, all cascade): EmailVerificationTokens · MfaCredential ·
+  │           MfaRecoveryCodes · MfaLoginChallenges · UserSessions · SecurityEvents
   ├─ nulls (SetNull): Payment.actor · InventoryAdjustment.actor · SubscriptionEvent.actor
   │           · BusinessInvite.createdBy/acceptedBy · AuditLog.actor
   ├─ BLOCKS (409 OWNED_BUSINESS_BLOCKED + owned list) while user owns ANY business
@@ -133,6 +141,11 @@ dangling id strings. Nothing rewrites or anonymizes them — NOT CURRENTLY AUTOM
   operation requires preserving parts of it is an unmade policy decision (CURRENTLY NOT EXPLICITLY
   CONFIGURED).
 - Contact leads: NOT IMPLEMENTED — there is nothing to delete.
+- Prompt 30 security records are all user-owned with `onDelete: Cascade`: account deletion
+  removes email-verification tokens, the MFA credential (encrypted secret), recovery-code
+  hashes, login challenges, session-registry rows AND per-user SecurityEvents. This is a
+  privacy-first design choice — **security history does not survive the account**, and this
+  matrix describes that behavior exactly (verified by `scripts/privacy-deletion-check.mjs`).
 - Cross-checks: category definitions in `docs/legal/data-processing-inventory.md`; retention
   statuses in `docs/legal/data-retention-inventory.md`; how a person reaches the two operations
   from the product in `docs/legal/user-data-rights.md`; public descriptions on `/privacy`,
