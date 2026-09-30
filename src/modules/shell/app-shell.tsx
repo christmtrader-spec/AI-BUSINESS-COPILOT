@@ -30,6 +30,7 @@ import { SecurityCenterView } from "../settings/security-view";
 import { DataPortabilityView } from "../settings/data-portability/data-portability-view";
 import { NotificationsPreferencesView } from "../settings/notifications-preferences-view";
 import { NotificationsView } from "../notifications/notifications-view";
+import { SearchCenterView } from "../search/search-view";
 import { SubscriptionView } from "../billing/subscription-view";
 import { PaymentReturnView } from "../billing/payment-return-view";
 import { AuditView } from "../audit/audit-view";
@@ -56,6 +57,9 @@ function labelKeyOf(view: AppView): string {
       return "notifications";
     case "settings:notifications":
       return "notifications";
+    // Prompt 33 — Search Results Center document title.
+    case "search":
+      return "search";
     case "profile":
       return "profile";
     case "module": {
@@ -179,6 +183,7 @@ export function AppShell({
               {view.kind === "settings:data" ? <DataPortabilityView role={role} /> : null}
               {view.kind === "notifications" ? <NotificationsView /> : null}
               {view.kind === "settings:notifications" ? <NotificationsPreferencesView /> : null}
+              {view.kind === "search" ? <SearchCenterView /> : null}
               {view.kind === "profile" ? <ProfileView /> : null}
               {view.kind === "audit" ? <AuditView membership={membership!} /> : null}
               {view.kind === "module" ? (

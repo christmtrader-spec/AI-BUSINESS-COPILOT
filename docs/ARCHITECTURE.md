@@ -151,6 +151,7 @@ deletions are soft (`deletedAt`) for financial records.
 | Notifications     | 05+   | In-app alerts (overdue, low stock)                     |
 | Audit             | 01+   | AuditLog + viewer for admins                           |
 | Settings          | 01    | Business settings, user preferences                    |
+| Global Search     | 33    | Tenant-safe universal search: /api/v1/search + command palette results + #/search center (read-only discovery layer — see docs/product/global-search.md) |
 | Billing           | —     | Boundary placeholder only (A16)                        |
 
 ### 5.2 Future Modules (NOT in MVP — direction only)

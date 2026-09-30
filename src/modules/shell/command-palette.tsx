@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { signOutWithRevoke } from "@/lib/sign-out-with-revoke";
 import { useTheme } from "next-themes";
 import {
+  AlertTriangle,
   ArrowUpRight,
   BarChart3,
   Bot,
@@ -13,14 +14,17 @@ import {
   HandCoins,
   Languages,
   LayoutDashboard,
+  Loader2,
   LogOut,
   Moon,
   Package,
   ScrollText,
+  Search,
   Settings,
   ShieldCheck,
   ShoppingCart,
   Sun,
+  Table2,
   Truck,
   UserRound,
   Users,
@@ -31,6 +35,14 @@ import {
 import { LOCALES, localeLabel } from "@/i18n/config";
 import { useAppStore, type AppView } from "@/store/app-store";
 import { asRole, can, type Role } from "@/lib/rbac";
+import { ApiClientError } from "@/lib/api-client";
+import {
+  SEARCH_DEBOUNCE_MS,
+  SEARCH_Q_MIN,
+  useSearchQuery,
+} from "@/modules/search/search-api";
+import { SEARCH_TYPE_ICONS } from "@/modules/search/search-icons";
+import type { SearchResultItem } from "@/lib/search/types";
 import {
   CommandDialog,
   CommandEmpty,
@@ -89,19 +101,48 @@ const NAV_ITEMS: PaletteItem[] = [
 ];
 
 /**
- * ⌘K / Ctrl+K command palette — quick navigation + preferences.
- * Navigation respects RBAC the same way the sidebar does (UI-level only;
- * the server remains the authority — A02).
+ * Prompt 33 §12 — the palette keeps ALL existing behavior (navigation,
+ * preferences, session) and gains a UNIVERSAL SEARCH RESULTS group when the
+ * query reaches 2+ characters. The CommandInput stays the single input;
+ * requests are debounced and keyed per query so an older response can never
+ * overwrite a newer one. Clicking a result only NAVIGATES — the palette is
+ * a discovery layer and never executes mutations (§1).
  */
 export function CommandPalette({ membership }: { membership: BusinessListItem | null }) {
   const tNav = useTranslations("nav");
   const tCommon = useTranslations("common");
+  const tSearch = useTranslations("search");
   const open = useAppStore((s) => s.commandOpen);
   const setOpen = useAppStore((s) => s.setCommandOpen);
   const navigate = useAppStore((s) => s.navigate);
   const setLocale = useAppStore((s) => s.setLocale);
   const locale = useAppStore((s) => s.locale);
   const { theme, setTheme } = useTheme();
+
+  // Controlled palette input + debounced mirror (§12.6, 200–300 ms).
+  const [inputValue, setInputValue] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(inputValue.trim());
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [inputValue]);
+
+  // Reset the transient query when the palette OPENS so reopening starts
+  // from a clean slate (render-phase state adjustment — the React-sanctioned
+  // alternative to a setState-in-effect reset).
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open) {
+      setInputValue("");
+      setDebouncedQuery("");
+    }
+  }
+
+  const search = useSearchQuery({ q: debouncedQuery, enabled: open });
 
   const role: Role = asRole(membership?.role);
 
@@ -122,12 +163,23 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
     navigate(view);
   }
 
+  function openResult(item: SearchResultItem) {
+    // §14 — destination → AppView via the closed map; the palette never
+    // builds URLs from server strings (items carry a closed destination).
+    go({ kind: "module", module: item.destination });
+  }
+
   const isMac =
     typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
 
   const navItems = NAV_ITEMS.filter(
     (n) => !n.permission || can(role, n.permission),
   );
+
+  const q = debouncedQuery;
+  const searchActive = open && q.length >= SEARCH_Q_MIN;
+  const groups = search.data?.groups ?? [];
+  const hasResults = groups.length > 0;
 
   return (
     <CommandDialog
@@ -136,9 +188,104 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
       title={tCommon("palette.title")}
       description={tCommon("palette.description")}
     >
-      <CommandInput placeholder={tCommon("palette.placeholder")} />
+      <CommandInput
+        value={inputValue}
+        onValueChange={setInputValue}
+        placeholder={tCommon("palette.placeholder")}
+      />
       <CommandList className="max-h-[min(26rem,60svh)]">
-        <CommandEmpty>{tCommon("palette.empty")}</CommandEmpty>
+        {!searchActive ? (
+          <CommandEmpty>{tCommon("palette.empty")}</CommandEmpty>
+        ) : null}
+
+        {searchActive ? (
+          <>
+            {/* Loading state — rendered as a non-selectable status row so
+                cmdk's empty state never flashes while fetching (§12.9). */}
+            {search.isFetching && !hasResults ? (
+              <CommandGroup heading={tSearch("title")}>
+                <CommandItem disabled value={q}>
+                  <Loader2 className="text-muted-foreground animate-spin" aria-hidden="true" />
+                  <span>{tSearch("loading")}</span>
+                </CommandItem>
+              </CommandGroup>
+            ) : null}
+
+            {/* Error state — localized, retryable, never leaks internals. */}
+            {!search.isFetching && search.isError ? (
+              <CommandGroup heading={tSearch("title")}>
+                <CommandItem disabled value={q}>
+                  <AlertTriangle className="text-destructive" aria-hidden="true" />
+                  <span>
+                    {search.error instanceof ApiClientError &&
+                    search.error.code === "RATE_LIMITED"
+                      ? tSearch("rateLimited")
+                      : tSearch("error")}
+                  </span>
+                </CommandItem>
+              </CommandGroup>
+            ) : null}
+
+            {/* Grouped results (§31 order: results first). */}
+            {groups.map((group) => {
+              const Icon = SEARCH_TYPE_ICONS[group.type];
+              return (
+                <CommandGroup
+                  key={group.type}
+                  heading={`${tSearch(`groups.${group.type}`)} · ${group.count}`}
+                >
+                  {group.items.map((item) => (
+                    <CommandItem
+                      key={`${item.type}-${item.id}`}
+                      // The raw query rides along in the match value so
+                      // cmdk's client-side filter can never hide a server
+                      // result whose title happens not to contain it.
+                      value={`${q} ${item.title} ${item.subtitle ?? ""}`}
+                      onSelect={() => openResult(item)}
+                    >
+                      <Icon className="text-muted-foreground" aria-hidden="true" />
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate" dir="auto">
+                          {item.title}
+                        </span>
+                        {item.subtitle ? (
+                          <span className="text-muted-foreground truncate text-xs" dir="auto">
+                            {item.subtitle}
+                          </span>
+                        ) : null}
+                      </span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              );
+            })}
+
+            {/* No-results state (only when settled and empty). */}
+            {!search.isFetching && !search.isError && !hasResults ? (
+              <CommandGroup heading={tSearch("title")}>
+                <CommandItem disabled value={q}>
+                  <Search className="text-muted-foreground" aria-hidden="true" />
+                  <span>{tSearch("empty")}</span>
+                </CommandItem>
+              </CommandGroup>
+            ) : null}
+
+            {/* §12.14 — View all search results → #/search?q=… */}
+            {hasResults ? (
+              <>
+                <CommandItem
+                  value={`${q} ${tSearch("viewAll")}`}
+                  onSelect={() => go({ kind: "search", query: q })}
+                >
+                  <Table2 className="text-muted-foreground" aria-hidden="true" />
+                  <span>{tSearch("viewAll")}</span>
+                </CommandItem>
+                <CommandSeparator />
+              </>
+            ) : null}
+          </>
+        ) : null}
+
         <CommandGroup heading={tCommon("palette.groups.navigate")}>
           {navItems.map((item) => (
             <CommandItem

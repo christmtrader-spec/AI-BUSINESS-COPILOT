@@ -27,6 +27,8 @@ export type AppView =
   /** Prompt 32 — notification center (#/notifications, §109) + preferences (#/settings/notifications, §63). */
   | { kind: "notifications" }
   | { kind: "settings:notifications" }
+  /** Prompt 33 — Search Results Center (#/search, #/search?q=…, §13). */
+  | { kind: "search"; query?: string }
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
@@ -95,6 +97,9 @@ export function viewKeyOf(view: AppView): string {
           ? `verify:${view.token}`
           : view.kind === "platform"
             ? `platform:${view.section}`
+            // Prompt 33 — the Search Center keeps a STABLE view key so the
+            // mounted view (and its focused input) survives query updates;
+            // the query itself only matters for sameView/back-forward (§13).
             : view.kind;
 }
 
@@ -109,6 +114,11 @@ export function sameView(a: AppView, b: AppView): boolean {
   if (viewKeyOf(a) !== viewKeyOf(b)) return false;
   if (a.kind === "module" && b.kind === "module") {
     return (a.param ?? null) === (b.param ?? null);
+  }
+  // Prompt 33 — hash query changes re-enter the store (back/forward must
+  // update the Search Center) without remounting the view (§13/§33).
+  if (a.kind === "search" && b.kind === "search") {
+    return (a.query ?? null) === (b.query ?? null);
   }
   return true;
 }
@@ -136,6 +146,12 @@ export function viewToHash(view: AppView): string | null {
       return "#/notifications";
     case "settings:notifications":
       return "#/settings/notifications";
+    case "search": {
+      // §33 — the query persists in the hash (encodeURIComponent, §29) so
+      // refresh and back/forward keep it; never any other param.
+      const q = (view.query ?? "").trim();
+      return q ? `#/search?q=${encodeURIComponent(q)}` : "#/search";
+    }
     case "platform":
       // #/platform itself resolves to the overview section (§15).
       return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
@@ -177,6 +193,12 @@ export function hashToView(hash: string): AppView {
   if (path === "data") return { kind: "settings:data" };
   if (path === "notifications") return { kind: "notifications" };
   if (path === "settings/notifications") return { kind: "settings:notifications" };
+  // Prompt 33 — Search Results Center deep links (#/search, #/search?q=…).
+  if (path === "search") {
+    const q = query.get("q") ?? "";
+    const clean = sanitizeSearchHashQuery(q);
+    return clean ? { kind: "search", query: clean } : { kind: "search" };
+  }
   if (path === "profile") return { kind: "profile" };
   // Prompt 28 — platform console deep links (#/platform, #/platform/<section>).
   if (path === "platform") return { kind: "platform", section: "overview" };
@@ -232,6 +254,24 @@ function syncUrl(view: AppView, replace: boolean) {
   } catch {
     // history might be unavailable in exotic embeds — URL sync is best-effort
   }
+}
+
+/**
+ * Prompt 33 — hash `?q=` hygiene (§16/§29): the query is rendered strictly
+ * as text, so only control characters/null bytes are stripped and the
+ * length is capped to the search schema bound. URLSearchParams already
+ * performs percent-decoding; no other transformation is applied.
+ */
+function sanitizeSearchHashQuery(raw: string): string {
+  const capped = Array.from(raw)
+    .filter((ch) => {
+      const code = ch.codePointAt(0) ?? 0;
+      return code > 0x1f && code !== 0x7f;
+    })
+    .slice(0, 64)
+    .join("");
+  const trimmed = capped.trim();
+  return trimmed.length > 0 ? trimmed : "";
 }
 
 type AppState = {

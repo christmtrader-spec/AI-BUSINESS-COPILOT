@@ -38,6 +38,10 @@ export const OPERATIONAL_EVENTS = {
   notificationDeliveryExhausted: "notification.delivery.exhausted",
   notificationDeliveryStaleReaped: "notification.delivery.stale_reaped",
   notificationDeliveryDispatchError: "notification.delivery.dispatch_error",
+  // Prompt 33 — global search (§22: safe metrics only — counts/duration;
+  // the raw query, its variants and result contents are NEVER logged
+  // because search strings may carry emails/phones/invoice numbers).
+  searchExecuted: "search.executed",
 } as const;
 
 export type OperationalEvent = (typeof OPERATIONAL_EVENTS)[keyof typeof OPERATIONAL_EVENTS];

@@ -58,6 +58,19 @@ Aggregates reveal the same figures as the underlying Sensitive rows but only wit
 | Invite tokens | `BusinessInvite.token` — `randomBytes(36).toString("base64url")` (48 chars, `businesses/[id]/invites/route.ts:106`) | Returned to `members:manage` callers when minting/listing invites (by design: links are shared manually); consumable once via `POST /api/v1/invites/[token]` | One-time use; `expiresAt` bounded | Opaque + unique-indexed; grants only the pre-set role; OWNER ungrantable; accept rate-limited |
 | `NEXTAUTH_SECRET` | `.env` (server-only) | Never in any response, repo file, or client bundle; consumed by NextAuth only | Until rotation | Rotation invalidates all sessions (TDR §5); prod fails fast if missing (`src/lib/auth.ts:24-28`); stable dev fallback is dev-gated by `NODE_ENV` |
 
+## 5b. Global Search (Prompt 33) — read-only discovery layer
+
+`GET /api/v1/search` (Prompt 33) is a READ-ONLY discovery surface over the
+six tenant-scoped entity types (Customer/Supplier/Product/Sale/Expense/
+Payment) within the active business. It classifies as a renderer of
+SENSITIVE data already visible through the module list pages, with stricter
+bounds: server-verified membership + `data:read`, `businessId` scoping and
+`deletedAt: null` on every query, an explicit minimal DTO (no amounts, no
+notes/addresses as text, no identifiers beyond the entity id + closed
+tokens), 30 req/60 s per user+business, `private, no-store`, and no query
+logging (search strings may contain personal data). See
+`docs/security/global-search-security.md`.
+
 ## 6. Cross-cutting protection controls
 
 1. Tenant pipeline: session → userId → `X-Business-Id` → DB membership → role on every business route (`src/lib/tenant.ts`).
