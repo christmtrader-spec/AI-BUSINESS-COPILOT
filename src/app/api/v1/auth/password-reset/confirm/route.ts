@@ -132,13 +132,19 @@ export const POST = route(async (req: NextRequest) => {
       select: { userId: true },
     });
     if (resetUser) {
-      await recordSecurityEvent({
+      const securityEventId = await recordSecurityEvent({
         eventType: SECURITY_EVENTS.passwordResetCompleted,
         userId: resetUser.userId,
         success: true,
         ip,
         userAgent: req.headers.get("user-agent"),
       });
+      // Prompt 32 §92 — mandatory security notification, fire-safe, after
+      // commit. The reset token is NEVER part of the notification (§404).
+      if (securityEventId) {
+        const { notifyPasswordResetCompleted } = await import("@/lib/notifications");
+        notifyPasswordResetCompleted(resetUser.userId, securityEventId);
+      }
     }
 
     return ok({

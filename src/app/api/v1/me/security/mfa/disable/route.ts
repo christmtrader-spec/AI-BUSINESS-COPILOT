@@ -109,13 +109,18 @@ export const POST = route(async (req: NextRequest) => {
   });
 
   // §68/§320 — durable events AFTER the state transition.
-  await recordSecurityEvent({
+  const mfaDisabledEventId = await recordSecurityEvent({
     eventType: SECURITY_EVENTS.mfaDisabled,
     userId,
     success: true,
     ip,
     userAgent: req.headers.get("user-agent"),
   });
+  // Prompt 32 §94 — CRITICAL mandatory security notification.
+  if (mfaDisabledEventId) {
+    const { notifyMfaDisabled } = await import("@/lib/notifications");
+    notifyMfaDisabled(userId, mfaDisabledEventId);
+  }
 
   return ok({ disabled: true, alreadyDisabled: false, sessionsInvalidated: true });
 });

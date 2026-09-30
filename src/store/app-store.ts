@@ -24,6 +24,9 @@ export type AppView =
   | { kind: "settings:security" }
   /** Prompt 31 — customer data portability center (#/data, §123/§186). */
   | { kind: "settings:data" }
+  /** Prompt 32 — notification center (#/notifications, §109) + preferences (#/settings/notifications, §63). */
+  | { kind: "notifications" }
+  | { kind: "settings:notifications" }
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
@@ -129,6 +132,10 @@ export function viewToHash(view: AppView): string | null {
       return "#/settings/security";
     case "settings:data":
       return "#/data";
+    case "notifications":
+      return "#/notifications";
+    case "settings:notifications":
+      return "#/settings/notifications";
     case "platform":
       // #/platform itself resolves to the overview section (§15).
       return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
@@ -168,6 +175,8 @@ export function hashToView(hash: string): AppView {
   if (path === "settings/billing") return { kind: "settings:billing" };
   if (path === "settings/security") return { kind: "settings:security" };
   if (path === "data") return { kind: "settings:data" };
+  if (path === "notifications") return { kind: "notifications" };
+  if (path === "settings/notifications") return { kind: "settings:notifications" };
   if (path === "profile") return { kind: "profile" };
   // Prompt 28 — platform console deep links (#/platform, #/platform/<section>).
   if (path === "platform") return { kind: "platform", section: "overview" };

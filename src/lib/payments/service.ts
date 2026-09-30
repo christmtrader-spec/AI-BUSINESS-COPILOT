@@ -443,6 +443,16 @@ export async function fulfillWebhook(
         entityId: s.id,
         after: { reason: event.reason, planCode: s.planCode },
       });
+      // Prompt 32 §88 — provider-reported genuine failure → tenant owner
+      // notification (fire-safe, post-commit; the reason is NEVER fabricated
+      // or included — §88/§25).
+      const { notifyPaymentFailed } = await import("@/lib/notifications");
+      notifyPaymentFailed({
+        businessId: s.businessId,
+        checkoutSessionId: s.id,
+        amountMinor: s.amountMinor,
+        currency: s.currency,
+      });
       return { received: true, duplicate: false, sessionStatus: "FAILED" };
     }
     return { received: true, duplicate: false, sessionStatus: s.status as CheckoutSessionDto["status"] };
@@ -545,6 +555,15 @@ export async function fulfillWebhook(
       entityType: "CheckoutSession",
       entityId: current.id,
       after: { planCode: current.planCode, amountMinor: current.amountMinor, currency: current.currency },
+    });
+    // Prompt 32 §87 — notification ONLY after provider-authoritative
+    // success + fulfillment (never on PENDING/RECONCILIATION_REQUIRED).
+    const { notifyPaymentSucceeded } = await import("@/lib/notifications");
+    notifyPaymentSucceeded({
+      businessId: current.businessId,
+      checkoutSessionId: current.id,
+      amountMinor: current.amountMinor,
+      currency: current.currency,
     });
   }
   return { received: true, duplicate: alreadySucceeded, sessionStatus: "SUCCEEDED" };

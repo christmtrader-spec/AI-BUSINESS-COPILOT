@@ -65,13 +65,18 @@ export const POST = route(async (req: NextRequest) => {
   if (outcome === "VERIFIED" && row) {
     // §69/§136 — safe metadata only; §209 — exactly one completed event per
     // successful claim (the claim itself is the idempotency gate).
-    await recordSecurityEvent({
+    const securityEventId = await recordSecurityEvent({
       eventType: SECURITY_EVENTS.emailVerificationCompleted,
       userId: row.userId,
       success: true,
       ip,
       userAgent: req.headers.get("user-agent"),
     });
+    // Prompt 32 §95 — in-app-only notification (no redundant email).
+    if (securityEventId) {
+      const { notifyEmailVerified } = await import("@/lib/notifications");
+      notifyEmailVerified(row.userId, securityEventId);
+    }
     await audit({
       businessId: null,
       actorId: row.userId,

@@ -136,3 +136,38 @@ Two different kinds of "retained" exist and must not be conflated:
 | Staged import uploads | filesystem `DATA_PORTABILITY_ROOT/imports/` | **72 h** default (`IMPORT_FILE_TTL_HOURS`); deleted on cancel; re-verified by SHA-256 at commit | `scripts/prune-expired-imports.mjs` (dry-run default, `--apply`) | Explicit operational TTL |
 | Import job rows | `DataImportJob` (counts, bounded error codes — no raw row values) | Row retained with the business | Business-deletion cascade | Explicit: tied to business lifetime |
 | Import row-level error report | `DataImportJob.errorReport` — bounded (`IMPORT_MAX_ERRORS`, default 500) JSON of rowNumber+field+stable code | No independent TTL; lives and dies with the job row | Job/business cascade | Explicit (size-bounded); no time-based policy (CURRENTLY NOT EXPLICITLY CONFIGURED for time) |
+
+## Notification platform (Prompt 32 addition)
+
+> **Operational data management, NOT a legal retention schedule.** The windows
+> below exist to keep the notification tables small and the center relevant;
+> they make no claim about how long any record is lawfully kept (§59/§125) and
+> must never be presented as a retention policy. Deliveries share the
+> notification's lifetime (cascade) — there is no separate delivery cleanup.
+
+Cleanup is implemented once, in `scripts/prune-expired-notifications.mjs`
+(dry-run default, `--apply` to delete; bounded batches of
+`NOTIFICATION_CLEANUP_BATCH_SIZE`, UTC comparisons; mirrors the in-process
+`pruneExpiredNotifications` in `src/lib/notifications/cleanup.ts`):
+
+- **Non-security notifications** (BILLING/AI/BUSINESS/SYSTEM): deleted when
+  older than **`NOTIFICATION_RETENTION_DAYS` (default 90, bounded 7–3650)**
+  AND already inactive — read, archived, or past their own `expiresAt`.
+  Unread recent items are never silently destroyed.
+- **Security-category notifications**: kept for the longer
+  **`NOTIFICATION_SECURITY_RETENTION_DAYS` (default 365, bounded 30–3650)**;
+  they are part of the user's security-history experience and are never
+  aggressively pruned. The script also requires them to be read/archived
+  before deletion.
+- **NotificationDelivery rows** cascade with their notification — their
+  retention equals the notification's operational lifetime; the script has no
+  independent delivery-deletion path.
+- **NotificationPreference rows** are never touched by the cleanup script;
+  they live and die with the account (cascade).
+
+| Data | Operational window | Deletion method | Status |
+| --- | --- | --- | --- |
+| Non-security `Notification` rows | 90 days (default) after creation, only when read/archived/expired | `scripts/prune-expired-notifications.mjs` (dry-run default, `--apply`); account/business cascade | Explicit operational window — NOT a legal retention policy |
+| Security-category `Notification` rows | 365 days (default), only when read/archived | Same script + account cascade | Explicit operational window; security history is never aggressively pruned |
+| `NotificationDelivery` rows | None of their own | Cascade with the parent `Notification` | Explicit: tied to the notification's lifetime |
+| `NotificationPreference` rows | None (account lifetime) | Account-deletion cascade only | Explicit: tied to account lifetime |

@@ -180,6 +180,27 @@ fall back to the documented default (§182). Defaults are deliberately conservat
 has an "unlimited" mode (§183). Details: `docs/security/data-portability.md`,
 `docs/data/data-export.md`, `docs/data/data-import.md`.
 
+## Prompt 32 variables — unified notification platform
+
+| Variable | Required | Secret? | Purpose |
+|---|---|---|---|
+| `NOTIFICATION_EMAIL_MAX_ATTEMPTS` | Optional (default 3) | No | Bounded retry cap for email deliveries (1–10). Beyond the cap the delivery is terminal FAILED `ATTEMPTS_EXHAUSTED`. |
+| `NOTIFICATION_RETENTION_DAYS` | Optional (default 90) | No | Operational retention for NON-security notifications (7–3650); applies only to read/archived/expired rows. NOT a legal retention policy. |
+| `NOTIFICATION_SECURITY_RETENTION_DAYS` | Optional (default 365) | No | Longer operational retention for SECURITY-category notifications (30–3650); security history is never aggressively pruned. NOT a legal retention policy. |
+| `NOTIFICATION_MAX_PAGE_SIZE` | Optional (default 100) | No | Hard maximum `pageSize` for the notification list endpoints (10–200). |
+| `NOTIFICATION_MAX_DATA_BYTES` | Optional (default 32768) | No | Serialized per-notification `dataJson` payload cap (1024–262144); oversized payloads are rejected. |
+| `NOTIFICATION_CLEANUP_BATCH_SIZE` | Optional (default 500) | No | Batch size for `scripts/prune-expired-notifications.mjs` and the cleanup service (50–5000) — never one unbounded delete. |
+| `NOTIFICATION_STALE_DELIVERY_MINUTES` | Optional (default 30) | No | A PROCESSING email delivery stuck longer than this is marked FAILED `STALE_PROCESSING` (5–1440) — never auto-resent. |
+| `NOTIFICATION_ACTIVE_DELIVERY_LIMIT` | Optional (default 100) | No | Upper bound of PENDING email deliveries per user (10–1000); above it OPTIONAL emails are skipped (in-app never suppressed; mandatory security email bypasses). |
+| `NOTIFICATION_POLL_INTERVAL_MS` | Optional (default 45000) | No | Documented unread-count poll interval bound for the notification bell (10000–600000). |
+
+All nine are optional with validated bounds. Every value is parsed as a strict
+integer; missing/out-of-range/non-integer/NaN/Infinity values fall back to the
+documented default (never NaN/negative/unbounded, §345). The notification
+platform uses the existing `EMAIL_*` transport — it introduces no SMTP
+variables of its own. Details: `docs/security/notification-security.md`,
+`docs/product/notifications.md`, `docs/product/notification-matrix.md`.
+
 ## `NODE_ENV` — the database guard flag (not in `.env.example` on purpose)
 
 `NODE_ENV` is a runtime flag, not a configured secret, but it is load-bearing for database safety:

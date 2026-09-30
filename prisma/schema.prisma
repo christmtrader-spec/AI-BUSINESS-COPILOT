@@ -54,6 +54,10 @@ model User {
   mfaLoginChallenges      MfaLoginChallenge[]
   sessions                UserSession[]
   securityEvents          SecurityEvent[]
+
+  // Prompt 32 — unified notification platform (§16/§20).
+  notifications           Notification[]
+  notificationPreferences NotificationPreference[]
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +256,8 @@ model Business {
   // Prompt 31 — customer data portability jobs (tenant-scoped, cascade).
   dataExportJobs       DataExportJob[]
   dataImportJobs       DataImportJob[]
+  // Prompt 32 — business-scoped notifications (cascade, §200).
+  notifications        Notification[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1359,4 +1365,102 @@ model DataImportJob {
   @@index([businessId, status])
   @@index([status, createdAt])
   @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 32 — Unified Notification Platform
+// ---------------------------------------------------------------------------
+// Notifications are a user-communication layer DERIVED from domain events —
+// never an authority layer (§32 final principle). Everything below is
+// metadata only: no secrets (passwords/OTPs/MFA secrets/reset tokens/session
+// tokens/payment credentials/provider costs) may ever be stored here (§25).
+
+model Notification {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Business context is OPTIONAL (user-level security notifications have
+  // none). Deleting the business removes its business-scoped notifications
+  // (documented deletion policy, §200).
+  businessId String?
+  business   Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  // Allowlisted catalog values only — validated by the notification service
+  // before persistence (§5/§36). Client input can never introduce a type.
+  type     String
+  category String // SECURITY | BILLING | AI | BUSINESS | SYSTEM
+  priority String // LOW | NORMAL | HIGH | CRITICAL
+  severity String // INFO | SUCCESS | WARNING | ERROR
+
+  // i18n KEYS — localized text is rendered at read time, never persisted
+  // (§21/§22/§192). dataJson is a strict per-type server-constructed object.
+  titleKey    String
+  bodyKey     String
+  dataJson    String?
+  // Server-generated, allowlisted internal route (§102/§103) — never
+  // client-supplied, never a remote URL.
+  actionRoute String?
+
+  // Server-generated idempotency/dedupe key (§28/§29): recipient + type +
+  // sourceEventId is UNIQUE, so an API/domain retry cannot flood the user.
+  // NULL sourceEventId (SQLite treats NULLs as distinct) = non-deduplicable
+  // notification; the service always sets one for event-derived types (§30).
+  sourceEventId String?
+  readAt        DateTime?
+  archivedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  // Ephemeral notifications (e.g. usage warnings) may expire (§57).
+  expiresAt DateTime?
+
+  deliveries NotificationDelivery[]
+
+  @@unique([userId, type, sourceEventId])
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+  @@index([userId, archivedAt, createdAt])
+  @@index([businessId, createdAt])
+  @@index([type, createdAt])
+}
+
+model NotificationDelivery {
+  id             String       @id @default(cuid())
+  notificationId String
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  // IN_APP | EMAIL (PUSH/SMS are future adapters, not implemented §9/§140).
+  channel String
+  // PENDING | PROCESSING | SENT | FAILED | SKIPPED | CANCELED (§142).
+  status String @default("PENDING")
+  // Bounded retry counter (NOTIFICATION_EMAIL_MAX_ATTEMPTS, §45).
+  attemptCount  Int       @default(0)
+  lastAttemptAt DateTime?
+  sentAt        DateTime?
+  failedAt      DateTime?
+  // Safe provider reference (§47) — never SMTP credentials.
+  providerMessageId String?
+  // Normalized failure class (§130/§263) — never raw SMTP output.
+  failureCode String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([notificationId])
+  @@index([status, createdAt])
+}
+
+model NotificationPreference {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Allowlisted catalog type + channel only (§61). MANDATORY catalog
+  // policies reject persistence attempts via the API (§62) — the service
+  // layer, not the schema, is the enforcement point.
+  notificationType String
+  channel          String // IN_APP | EMAIL
+  enabled          Boolean
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([userId, notificationType, channel])
+  @@index([userId, notificationType])
 }

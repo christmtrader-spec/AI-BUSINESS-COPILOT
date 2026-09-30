@@ -93,10 +93,14 @@ export type SecurityEventInput = {
  * Persist one security activity record. Fire-safe: never throws into the
  * security flow that triggered it (§322 — logging failure must not prevent
  * the security operation when durable audit is independently available).
+ *
+ * Returns the created row id (or null on failure). Prompt 32 uses it as the
+ * DURABLE sourceEventId for derived notifications (§29/§333) — a stable
+ * server identity, never a timestamp.
  */
-export async function recordSecurityEvent(input: SecurityEventInput): Promise<void> {
+export async function recordSecurityEvent(input: SecurityEventInput): Promise<string | null> {
   try {
-    await db.securityEvent.create({
+    const created = await db.securityEvent.create({
       data: {
         eventType: input.eventType,
         userId: input.userId ?? null,
@@ -106,11 +110,14 @@ export async function recordSecurityEvent(input: SecurityEventInput): Promise<vo
         success: input.success,
         reasonCode: input.reasonCode ?? null,
       },
+      select: { id: true },
     });
+    return created.id;
   } catch (error) {
     logWarn("security.event_write_failed", {
       eventType: input.eventType,
       reason: error instanceof Error ? error.name : "unknown",
     });
+    return null;
   }
 }

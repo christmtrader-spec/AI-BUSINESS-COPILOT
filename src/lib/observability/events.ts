@@ -29,6 +29,15 @@ export const OPERATIONAL_EVENTS = {
   restoreDrillFailed: "restore.drill.failed",
   portabilityExportFailed: "portability.export.failed",
   portabilityImportFailed: "portability.import.failed",
+  // Prompt 32 — unified notification platform (§131/§310: safe fields only,
+  // never dataJson/email bodies/SMTP transcripts).
+  notificationCreated: "notification.created",
+  notificationCreateFailed: "notification.create_failed",
+  notificationDeliverySent: "notification.delivery.sent",
+  notificationDeliveryFailed: "notification.delivery.failed",
+  notificationDeliveryExhausted: "notification.delivery.exhausted",
+  notificationDeliveryStaleReaped: "notification.delivery.stale_reaped",
+  notificationDeliveryDispatchError: "notification.delivery.dispatch_error",
 } as const;
 
 export type OperationalEvent = (typeof OPERATIONAL_EVENTS)[keyof typeof OPERATIONAL_EVENTS];

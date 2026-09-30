@@ -105,13 +105,21 @@ export const POST = route(async (req: NextRequest) => {
   const { SECURITY_EVENTS, recordSecurityEvent } = await import(
     "@/lib/auth/security-events/service"
   );
-  await recordSecurityEvent({
+  const securityEventId = await recordSecurityEvent({
     eventType: SECURITY_EVENTS.passwordChanged,
     userId,
     success: true,
     ip: req.headers.get("x-forwarded-for"),
     userAgent: req.headers.get("user-agent"),
   });
+
+  // Prompt 32 §91 — mandatory security notification (in-app + email),
+  // fire-safe and strictly after the committed mutation (§332). No password
+  // value ever enters the notification (§407).
+  const { notifyPasswordChanged } = await import("@/lib/notifications");
+  if (securityEventId) {
+    notifyPasswordChanged(userId, securityEventId);
+  }
 
   // Safe response: no secrets, no tokens. The client signs the user out.
   return ok({ changed: true, sessionsInvalidated: true });

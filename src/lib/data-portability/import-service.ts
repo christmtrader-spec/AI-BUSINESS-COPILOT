@@ -948,6 +948,20 @@ export async function commitImportJob(
       },
     });
 
+    // Prompt 32 §98/§329 — import-completed notification AFTER the DB
+    // commit (§331). Summary counts only — never raw rows (§168).
+    const { notifyImportCompleted } = await import("@/lib/notifications");
+    notifyImportCompleted({
+      userId: ctx.userId,
+      businessId: ctx.businessId,
+      jobId: job.id,
+      dataset: fresh.datasetType,
+      created: result.created,
+      updated: 0, // UPDATE mode is not implemented (Prompt 31 §388)
+      skipped: result.skipped,
+      failed: result.failed,
+    });
+
     if (completed.count === 0) {
       // Lost a race with cancel/expiry between tx commit and status flip —
       // report honestly; the business rows are already durable.
@@ -957,14 +971,15 @@ export async function commitImportJob(
     return { job: jobToDTO(await loadJob(ctx.businessId, jobId)), created: result.created, skipped: result.skipped, failed: result.failed, total: result.total };
   } catch (error) {
     // The transaction rolled back — no partial data (§373). Mark FAILED.
+    const failureCode =
+      error instanceof ImportCommitBlocked && error.code === "IMPORT_VALIDATION_FAILED"
+        ? "IMPORT_VALIDATION_FAILED"
+        : "IMPORT_COMMIT_FAILED";
     await db.dataImportJob.updateMany({
       where: { id: job.id, businessId: ctx.businessId, status: "COMMITTING" },
       data: {
         status: "FAILED",
-        failureCode:
-          error instanceof ImportCommitBlocked && error.code === "IMPORT_VALIDATION_FAILED"
-            ? "IMPORT_VALIDATION_FAILED"
-            : "IMPORT_COMMIT_FAILED",
+        failureCode,
         failureMessageSafe:
           error instanceof ImportCommitBlocked
             ? error.message
@@ -983,6 +998,17 @@ export async function commitImportJob(
         requestId: meta.requestId,
       },
     });
+    // Prompt 32 §99 — import-failed notification (safe summary, §330).
+    {
+      const { notifyImportFailed } = await import("@/lib/notifications");
+      notifyImportFailed({
+        userId: ctx.userId,
+        businessId: ctx.businessId,
+        jobId: job.id,
+        dataset: job.datasetType,
+        reasonCode: failureCode as "IMPORT_COMMIT_FAILED" | "IMPORT_VALIDATION_FAILED",
+      });
+    }
     throw error instanceof ApiError ? error : new ApiError(500, "IMPORT_COMMIT_FAILED", "The import could not be committed.");
   }
 }

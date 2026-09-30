@@ -28,6 +28,8 @@ import { MembersView } from "../settings/members-view";
 import { ProfileView } from "../settings/profile-view";
 import { SecurityCenterView } from "../settings/security-view";
 import { DataPortabilityView } from "../settings/data-portability/data-portability-view";
+import { NotificationsPreferencesView } from "../settings/notifications-preferences-view";
+import { NotificationsView } from "../notifications/notifications-view";
 import { SubscriptionView } from "../billing/subscription-view";
 import { PaymentReturnView } from "../billing/payment-return-view";
 import { AuditView } from "../audit/audit-view";
@@ -50,6 +52,10 @@ function labelKeyOf(view: AppView): string {
       return "security";
     case "settings:data":
       return "dataPortability";
+    case "notifications":
+      return "notifications";
+    case "settings:notifications":
+      return "notifications";
     case "profile":
       return "profile";
     case "module": {
@@ -171,6 +177,8 @@ export function AppShell({
               ) : null}
               {view.kind === "settings:security" ? <SecurityCenterView /> : null}
               {view.kind === "settings:data" ? <DataPortabilityView role={role} /> : null}
+              {view.kind === "notifications" ? <NotificationsView /> : null}
+              {view.kind === "settings:notifications" ? <NotificationsPreferencesView /> : null}
               {view.kind === "profile" ? <ProfileView /> : null}
               {view.kind === "audit" ? <AuditView membership={membership!} /> : null}
               {view.kind === "module" ? (

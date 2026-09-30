@@ -142,13 +142,19 @@ export const POST = route(async (req: NextRequest) => {
   }
 
   // §68/§320 — events AFTER the successful state transition.
-  await recordSecurityEvent({
+  const mfaEnabledEventId = await recordSecurityEvent({
     eventType: SECURITY_EVENTS.mfaEnabled,
     userId,
     success: true,
     ip,
     userAgent: req.headers.get("user-agent"),
   });
+  // Prompt 32 §93 — mandatory security notification. Never contains the
+  // MFA secret, TOTP code or recovery codes (§406/§407).
+  if (mfaEnabledEventId) {
+    const { notifyMfaEnabled } = await import("@/lib/notifications");
+    notifyMfaEnabled(userId, mfaEnabledEventId);
+  }
   await recordSecurityEvent({
     eventType: SECURITY_EVENTS.mfaRecoveryCodesGenerated,
     userId,

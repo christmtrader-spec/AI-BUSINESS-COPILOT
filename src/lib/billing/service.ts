@@ -55,6 +55,38 @@ import {
 
 type Tx = Prisma.TransactionClient;
 
+/**
+ * Prompt 32 §72/§76/§84 — post-commit billing notification queue.
+ * Domain transaction → commit → notification (NEVER inside the tx): each
+ * mutation collects the durable SubscriptionEvent ids it created and the
+ * mapper runs only after `db.$transaction` has resolved successfully. A
+ * rolled-back transaction therefore emits NO notification (the event rows
+ * it queued are discarded with it).
+ */
+type PendingBillingNotification = {
+  eventId: string;
+  type: SubscriptionEventType;
+  toPlanCode: string | null;
+};
+
+function flushBillingNotifications(
+  businessId: string,
+  queue: readonly PendingBillingNotification[],
+): void {
+  if (queue.length === 0) return;
+  void (async () => {
+    const { notifySubscriptionEvent } = await import("@/lib/notifications");
+    for (const item of queue) {
+      notifySubscriptionEvent({
+        businessId,
+        eventId: item.eventId,
+        type: item.type,
+        toPlanCode: item.toPlanCode,
+      });
+    }
+  })();
+}
+
 // ---------------------------------------------------------------------------
 // Public DTOs (serialized for API responses — dates as ISO strings)
 // ---------------------------------------------------------------------------
@@ -264,7 +296,7 @@ async function expireSubscriptionIfDue(sub: SubRow): Promise<SubRow> {
         data: { status: "EXPIRED", endedAt: new Date() },
         include: { plan: true },
       });
-      await tx.subscriptionEvent.create({
+      const expiredEventId = await tx.subscriptionEvent.create({
         data: {
           businessId: current.businessId,
           subscriptionId: current.id,
@@ -273,6 +305,7 @@ async function expireSubscriptionIfDue(sub: SubRow): Promise<SubRow> {
           toStatus: "EXPIRED",
           fromPlanCode: current.plan.code,
         },
+        select: { id: true },
       });
       await audit(
         {
@@ -285,12 +318,18 @@ async function expireSubscriptionIfDue(sub: SubRow): Promise<SubRow> {
         },
         tx,
       );
-      return row;
+      return { row, expiredEventId: expiredEventId.id, planCode: current.plan.code };
     },
     { isolationLevel: "Serializable" },
   );
   invalidateBillingCache(sub.businessId);
-  return updated;
+  if (updated && typeof updated === "object" && "expiredEventId" in updated) {
+    // Prompt 32 §86 — EXPIRED is a customer-visible state (post-commit).
+    flushBillingNotifications(sub.businessId, [
+      { eventId: updated.expiredEventId, type: "EXPIRED", toPlanCode: updated.planCode },
+    ]);
+  }
+  return updated && typeof updated === "object" && "row" in updated ? updated.row : updated;
 }
 
 /**
@@ -583,8 +622,8 @@ async function eventAndAudit(
     auditBefore?: unknown;
     auditAfter?: unknown;
   },
-): Promise<void> {
-  await tx.subscriptionEvent.create({
+): Promise<string> {
+  const created = await tx.subscriptionEvent.create({
     data: {
       businessId: input.businessId,
       subscriptionId: input.subscriptionId,
@@ -596,6 +635,7 @@ async function eventAndAudit(
       dataJson: input.data ? JSON.stringify(input.data) : null,
       actorId: input.actorId ?? null,
     },
+    select: { id: true },
   });
   await audit(
     {
@@ -609,6 +649,10 @@ async function eventAndAudit(
     },
     tx,
   );
+  // Prompt 32 — the durable event row id feeds the post-commit notification
+  // mapper (§72: domain transaction → commit → notification; the caller
+  // flushes AFTER this transaction resolves, §332).
+  return created.id;
 }
 
 /**
@@ -623,6 +667,7 @@ export async function changePlan(
   targetPlanCode: string,
   opts: { actorId?: string | null; source?: string } = {},
 ): Promise<SubscriptionMutationResult> {
+  const billingNotifyQueue: PendingBillingNotification[] = [];
   const result = await db.$transaction(
     async (tx) => {
       let sub = await loadSubscription(tx, businessId);
@@ -648,18 +693,22 @@ export async function changePlan(
       assertTransition(fromStatus, "ACTIVE");
 
       if (reactivating) {
-        await eventAndAudit(tx, {
-          businessId,
-          subscriptionId: sub.id,
+        billingNotifyQueue.push({
+          eventId: await eventAndAudit(tx, {
+            businessId,
+            subscriptionId: sub.id,
+            type: "REACTIVATED",
+            fromStatus,
+            toStatus: "ACTIVE",
+            fromPlanCode: sub.plan.code,
+            toPlanCode: target.code,
+            actorId: opts.actorId ?? null,
+            auditAction: "billing.subscription_reactivated",
+            auditBefore: { status: fromStatus, planCode: sub.plan.code },
+            auditAfter: { status: "ACTIVE", planCode: target.code },
+          }),
           type: "REACTIVATED",
-          fromStatus,
-          toStatus: "ACTIVE",
-          fromPlanCode: sub.plan.code,
           toPlanCode: target.code,
-          actorId: opts.actorId ?? null,
-          auditAction: "billing.subscription_reactivated",
-          auditBefore: { status: fromStatus, planCode: sub.plan.code },
-          auditAfter: { status: "ACTIVE", planCode: target.code },
         });
       }
 
@@ -683,19 +732,23 @@ export async function changePlan(
         include: { plan: true },
       });
 
-      await eventAndAudit(tx, {
-        businessId,
-        subscriptionId: sub.id,
+      billingNotifyQueue.push({
+        eventId: await eventAndAudit(tx, {
+          businessId,
+          subscriptionId: sub.id,
+          type: "PLAN_CHANGED",
+          fromStatus,
+          toStatus: "ACTIVE",
+          fromPlanCode: sub.plan.code,
+          toPlanCode: target.code,
+          data: { source: opts.source ?? "settings" },
+          actorId: opts.actorId ?? null,
+          auditAction: "billing.plan_changed",
+          auditBefore: { planCode: sub.plan.code, status: fromStatus },
+          auditAfter: { planCode: target.code, status: "ACTIVE" },
+        }),
         type: "PLAN_CHANGED",
-        fromStatus,
-        toStatus: "ACTIVE",
-        fromPlanCode: sub.plan.code,
         toPlanCode: target.code,
-        data: { source: opts.source ?? "settings" },
-        actorId: opts.actorId ?? null,
-        auditAction: "billing.plan_changed",
-        auditBefore: { planCode: sub.plan.code, status: fromStatus },
-        auditAfter: { planCode: target.code, status: "ACTIVE" },
       });
 
       return { sub: updated as SubRow, changed: true as const };
@@ -704,6 +757,7 @@ export async function changePlan(
   );
 
   invalidateBillingCache(businessId);
+  flushBillingNotifications(businessId, billingNotifyQueue);
   return {
     subscription: subscriptionDto(result.sub, result.sub.plan.code, true),
     changed: result.changed,
@@ -719,6 +773,7 @@ export async function cancelSubscription(
   businessId: string,
   opts: { actorId?: string | null } = {},
 ): Promise<SubscriptionMutationResult> {
+  const billingNotifyQueue: PendingBillingNotification[] = [];
   const result = await db.$transaction(
     async (tx) => {
       const sub = await loadSubscription(tx, businessId);
@@ -735,23 +790,28 @@ export async function cancelSubscription(
         data: { status: "CANCELED", cancelAtPeriodEnd: true, canceledAt: new Date() },
         include: { plan: true },
       });
-      await eventAndAudit(tx, {
-        businessId,
-        subscriptionId: sub.id,
+      billingNotifyQueue.push({
+        eventId: await eventAndAudit(tx, {
+          businessId,
+          subscriptionId: sub.id,
+          type: "CANCELED",
+          fromStatus,
+          toStatus: "CANCELED",
+          fromPlanCode: sub.plan.code,
+          actorId: opts.actorId ?? null,
+          auditAction: "billing.subscription_canceled",
+          auditBefore: { status: fromStatus, planCode: sub.plan.code },
+          auditAfter: { status: "CANCELED", cancelAtPeriodEnd: true },
+        }),
         type: "CANCELED",
-        fromStatus,
-        toStatus: "CANCELED",
-        fromPlanCode: sub.plan.code,
-        actorId: opts.actorId ?? null,
-        auditAction: "billing.subscription_canceled",
-        auditBefore: { status: fromStatus, planCode: sub.plan.code },
-        auditAfter: { status: "CANCELED", cancelAtPeriodEnd: true },
+        toPlanCode: sub.plan.code,
       });
       return { sub: updated as SubRow, changed: true as const };
     },
     { isolationLevel: "Serializable" },
   );
   invalidateBillingCache(businessId);
+  flushBillingNotifications(businessId, billingNotifyQueue);
   const decision = decidePlan(result.sub);
   return {
     subscription: subscriptionDto(
@@ -772,6 +832,7 @@ export async function reactivateSubscription(
   businessId: string,
   opts: { actorId?: string | null } = {},
 ): Promise<SubscriptionMutationResult> {
+  const billingNotifyQueue: PendingBillingNotification[] = [];
   const result = await db.$transaction(
     async (tx) => {
       const sub = await loadSubscription(tx, businessId);
@@ -798,23 +859,28 @@ export async function reactivateSubscription(
         data: { status: "ACTIVE", cancelAtPeriodEnd: false, canceledAt: null, endedAt: null },
         include: { plan: true },
       });
-      await eventAndAudit(tx, {
-        businessId,
-        subscriptionId: sub.id,
+      billingNotifyQueue.push({
+        eventId: await eventAndAudit(tx, {
+          businessId,
+          subscriptionId: sub.id,
+          type: "REACTIVATED",
+          fromStatus,
+          toStatus: "ACTIVE",
+          fromPlanCode: sub.plan.code,
+          actorId: opts.actorId ?? null,
+          auditAction: "billing.subscription_reactivated",
+          auditBefore: { status: fromStatus },
+          auditAfter: { status: "ACTIVE" },
+        }),
         type: "REACTIVATED",
-        fromStatus,
-        toStatus: "ACTIVE",
-        fromPlanCode: sub.plan.code,
-        actorId: opts.actorId ?? null,
-        auditAction: "billing.subscription_reactivated",
-        auditBefore: { status: fromStatus },
-        auditAfter: { status: "ACTIVE" },
+        toPlanCode: sub.plan.code,
       });
       return { sub: updated as SubRow, changed: true as const };
     },
     { isolationLevel: "Serializable" },
   );
   invalidateBillingCache(businessId);
+  flushBillingNotifications(businessId, billingNotifyQueue);
   return {
     subscription: subscriptionDto(result.sub, result.sub.plan.code, true),
     changed: result.changed,
@@ -839,6 +905,7 @@ export async function pauseSubscription(
   businessId: string,
   opts: { actorId?: string | null; source?: string; reason?: string } = {},
 ): Promise<SubscriptionMutationResult> {
+  const billingNotifyQueue: PendingBillingNotification[] = [];
   const result = await db.$transaction(
     async (tx) => {
       const sub = await loadSubscription(tx, businessId);
@@ -852,24 +919,29 @@ export async function pauseSubscription(
         data: { status: "PAUSED" },
         include: { plan: true },
       });
-      await eventAndAudit(tx, {
-        businessId,
-        subscriptionId: sub.id,
+      billingNotifyQueue.push({
+        eventId: await eventAndAudit(tx, {
+          businessId,
+          subscriptionId: sub.id,
+          type: "PAUSED",
+          fromStatus,
+          toStatus: "PAUSED",
+          fromPlanCode: sub.plan.code,
+          data: { source: opts.source ?? "platform-admin", ...(opts.reason ? { reason: opts.reason.slice(0, 300) } : {}) },
+          actorId: opts.actorId ?? null,
+          auditAction: "billing.subscription_paused",
+          auditBefore: { status: fromStatus, planCode: sub.plan.code },
+          auditAfter: { status: "PAUSED" },
+        }),
         type: "PAUSED",
-        fromStatus,
-        toStatus: "PAUSED",
-        fromPlanCode: sub.plan.code,
-        data: { source: opts.source ?? "platform-admin", ...(opts.reason ? { reason: opts.reason.slice(0, 300) } : {}) },
-        actorId: opts.actorId ?? null,
-        auditAction: "billing.subscription_paused",
-        auditBefore: { status: fromStatus, planCode: sub.plan.code },
-        auditAfter: { status: "PAUSED" },
+        toPlanCode: sub.plan.code,
       });
       return { sub: updated as SubRow, changed: true as const };
     },
     { isolationLevel: "Serializable" },
   );
   invalidateBillingCache(businessId);
+  flushBillingNotifications(businessId, billingNotifyQueue);
   const decision = decidePlan(result.sub);
   return {
     subscription: subscriptionDto(
@@ -890,6 +962,7 @@ export async function resumePausedSubscription(
   businessId: string,
   opts: { actorId?: string | null; source?: string; reason?: string } = {},
 ): Promise<SubscriptionMutationResult> {
+  const billingNotifyQueue: PendingBillingNotification[] = [];
   const result = await db.$transaction(
     async (tx) => {
       const sub = await loadSubscription(tx, businessId);
@@ -903,24 +976,29 @@ export async function resumePausedSubscription(
         data: { status: "ACTIVE" },
         include: { plan: true },
       });
-      await eventAndAudit(tx, {
-        businessId,
-        subscriptionId: sub.id,
+      billingNotifyQueue.push({
+        eventId: await eventAndAudit(tx, {
+          businessId,
+          subscriptionId: sub.id,
+          type: "RESUMED",
+          fromStatus,
+          toStatus: "ACTIVE",
+          fromPlanCode: sub.plan.code,
+          data: { source: opts.source ?? "platform-admin", ...(opts.reason ? { reason: opts.reason.slice(0, 300) } : {}) },
+          actorId: opts.actorId ?? null,
+          auditAction: "billing.subscription_resumed",
+          auditBefore: { status: fromStatus },
+          auditAfter: { status: "ACTIVE" },
+        }),
         type: "RESUMED",
-        fromStatus,
-        toStatus: "ACTIVE",
-        fromPlanCode: sub.plan.code,
-        data: { source: opts.source ?? "platform-admin", ...(opts.reason ? { reason: opts.reason.slice(0, 300) } : {}) },
-        actorId: opts.actorId ?? null,
-        auditAction: "billing.subscription_resumed",
-        auditBefore: { status: fromStatus },
-        auditAfter: { status: "ACTIVE" },
+        toPlanCode: sub.plan.code,
       });
       return { sub: updated as SubRow, changed: true as const };
     },
     { isolationLevel: "Serializable" },
   );
   invalidateBillingCache(businessId);
+  flushBillingNotifications(businessId, billingNotifyQueue);
   return {
     subscription: subscriptionDto(result.sub, result.sub.plan.code, true),
     changed: result.changed,
@@ -939,6 +1017,7 @@ export async function startTrial(
   days: number,
   opts: { actorId?: string | null; source?: string } = {},
 ): Promise<SubscriptionMutationResult> {
+  const billingNotifyQueue: PendingBillingNotification[] = [];
   const result = await db.$transaction(
     async (tx) => {
       let sub = await loadSubscription(tx, businessId);
@@ -964,23 +1043,28 @@ export async function startTrial(
         },
         include: { plan: true },
       });
-      await eventAndAudit(tx, {
-        businessId,
-        subscriptionId: sub.id,
+      billingNotifyQueue.push({
+        eventId: await eventAndAudit(tx, {
+          businessId,
+          subscriptionId: sub.id,
+          type: "TRIAL_STARTED",
+          fromStatus,
+          toStatus: "TRIALING",
+          fromPlanCode: sub.plan.code,
+          data: { days, source: opts.source ?? "manual" },
+          actorId: opts.actorId ?? null,
+          auditAction: "billing.trial_started",
+          auditAfter: { status: "TRIALING", trialEnd: trialEnd.toISOString() },
+        }),
         type: "TRIAL_STARTED",
-        fromStatus,
-        toStatus: "TRIALING",
-        fromPlanCode: sub.plan.code,
-        data: { days, source: opts.source ?? "manual" },
-        actorId: opts.actorId ?? null,
-        auditAction: "billing.trial_started",
-        auditAfter: { status: "TRIALING", trialEnd: trialEnd.toISOString() },
+        toPlanCode: sub.plan.code,
       });
       return { sub: updated as SubRow, changed: true as const };
     },
     { isolationLevel: "Serializable" },
   );
   invalidateBillingCache(businessId);
+  flushBillingNotifications(businessId, billingNotifyQueue);
   return {
     subscription: subscriptionDto(result.sub, result.sub.plan.code, true),
     changed: result.changed,
@@ -992,6 +1076,7 @@ export async function endTrial(
   businessId: string,
   opts: { actorId?: string | null } = {},
 ): Promise<SubscriptionMutationResult> {
+  const billingNotifyQueue: PendingBillingNotification[] = [];
   const result = await db.$transaction(
     async (tx) => {
       const sub = await loadSubscription(tx, businessId);
@@ -1007,23 +1092,28 @@ export async function endTrial(
         data: { status: "ACTIVE" },
         include: { plan: true },
       });
-      await eventAndAudit(tx, {
-        businessId,
-        subscriptionId: sub.id,
+      billingNotifyQueue.push({
+        eventId: await eventAndAudit(tx, {
+          businessId,
+          subscriptionId: sub.id,
+          type: "TRIAL_ENDED",
+          fromStatus,
+          toStatus: "ACTIVE",
+          fromPlanCode: sub.plan.code,
+          actorId: opts.actorId ?? null,
+          auditAction: "billing.trial_ended",
+          auditBefore: { status: fromStatus },
+          auditAfter: { status: "ACTIVE" },
+        }),
         type: "TRIAL_ENDED",
-        fromStatus,
-        toStatus: "ACTIVE",
-        fromPlanCode: sub.plan.code,
-        actorId: opts.actorId ?? null,
-        auditAction: "billing.trial_ended",
-        auditBefore: { status: fromStatus },
-        auditAfter: { status: "ACTIVE" },
+        toPlanCode: sub.plan.code,
       });
       return { sub: updated as SubRow, changed: true as const };
     },
     { isolationLevel: "Serializable" },
   );
   invalidateBillingCache(businessId);
+  flushBillingNotifications(businessId, billingNotifyQueue);
   return {
     subscription: subscriptionDto(result.sub, result.sub.plan.code, true),
     changed: result.changed,

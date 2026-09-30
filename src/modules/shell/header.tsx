@@ -21,6 +21,7 @@ import {
 import { SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
+import { NotificationBell } from "../notifications/notification-bell";
 import type { BusinessListItem } from "./types";
 
 export function LocaleSwitcher() {
@@ -223,6 +224,7 @@ export function AppHeader() {
         </kbd>
       </Button>
       <div className="ms-auto flex shrink-0 items-center gap-1">
+        <NotificationBell />
         <LocaleSwitcher />
         <ThemeToggle />
         <Separator orientation="vertical" className="mx-1 h-5" />

@@ -286,6 +286,56 @@ Full policy: `docs/security/platform-admin-security.md`.
   multi-instance deployment must first provide a shared filesystem or object
   storage ADR (documented limitation, `docs/security/data-portability.md` §9).
 
+## 11c. Notification platform operations (Prompt 32)
+
+- **Cleanup schedule** (operational retention only — NOT legal retention;
+  mirrors the Prompt 31 pattern: dry-run first, review, then apply):
+
+  ```bash
+  bun scripts/prune-expired-notifications.mjs          # report (dry run)
+  bun scripts/prune-expired-notifications.mjs --apply  # delete eligible rows
+  ```
+
+  Recommended cadence: run the dry-run **monthly**; after reviewing the
+  counts, run with `--apply` **quarterly**. The script deletes only
+  non-security notifications older than `NOTIFICATION_RETENTION_DAYS`
+  (default 90) that are already read/archived/expired, and security-category
+  notifications past `NOTIFICATION_SECURITY_RETENTION_DAYS` (default 365)
+  that are read/archived. Deliveries cascade with their notification;
+  preference rows and audit records are never touched.
+
+- **Failed email diagnostics**: `GET /api/v1/platform/notifications`
+  (read-only, `platform:system:read`) reports delivery counts by status
+  (total/pending/processing/sent/failed/skipped), the top failed notification
+  TYPES, catalog/template health, and email-transport readiness. Failures are
+  normalized into the fixed codes `SMTP_CONFIG` · `SMTP_TIMEOUT` ·
+  `SMTP_AUTH` · `SMTP_CONNECTION` · `TEMPLATE` · `INVALID_RECIPIENT` ·
+  `ATTEMPTS_EXHAUSTED` · `STALE_PROCESSING` · `RECIPIENT_UNVERIFIED` ·
+  `UNKNOWN` — never raw SMTP output. Viewing the diagnostics opportunistically
+  reaps stale PROCESSING deliveries (marks them FAILED `STALE_PROCESSING`;
+  never resends). Operator retry
+  (`POST /api/v1/platform/notifications/deliveries/[deliveryId]/retry`,
+  `PLATFORM_SUPER_ADMIN`/`PLATFORM_SUPPORT` only) is permitted ONLY for failed
+  OPTIONAL email deliveries — mandatory security emails can never be resent
+  through retry — and the attempt cap (`NOTIFICATION_EMAIL_MAX_ATTEMPTS`)
+  still applies. Note (honest): these endpoints are API-only today; the
+  Platform System console does not yet render a notification section.
+
+- **Delivery monitoring guidance**: alert on a sustained high FAILED ratio in
+  the diagnostics counts (e.g. failures dominating new deliveries over an
+  hour — typically a transport problem: `SMTP_CONFIG`/`SMTP_AUTH`/
+  `SMTP_CONNECTION`). Do NOT auto-disable notifications in response: in-app
+  delivery is part of the security-history experience and mandatory security
+  email is preference-independent. Treat a growing PENDING backlog as an
+  email-transport symptom (dispatch is synchronous, bounded by
+  `EMAIL_TIMEOUT_MS`).
+
+- **Readiness component `notifications`** (`/api/ready` + Platform System):
+  READY = catalog healthy AND the email transport configured; PARTIAL =
+  catalog healthy but email unconfigured (in-app still works — degraded, not
+  blocked); BLOCKED = catalog unhealthy. Public payloads carry the status
+  only.
+
 ## 12. Related procedures
 
 - Rollback: `docs/deployment/release-rollback.md` (§118/§119) — forward-only

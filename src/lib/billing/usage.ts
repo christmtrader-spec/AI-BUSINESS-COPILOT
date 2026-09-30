@@ -426,13 +426,32 @@ export async function meterAiOperation(
   // Serialize per business (see withBusinessLock) — burst-safe quota
   // enforcement on single-node SQLite (§19/§82/§112).
   try {
-    return await withBusinessLock(businessId, () =>
+    const result = await withBusinessLock(businessId, () =>
       db.$transaction(run, {
         isolationLevel: "Serializable",
         timeout: 30_000,
         maxWait: 5_000,
       }),
     );
+    // Prompt 32 §81/§82 — AI usage threshold notifications (NEAR/REACHED,
+    // one per usage period). Strictly AFTER the metering commit (§332);
+    // fire-safe — a notification failure never affects metering (§30).
+    // The NEAR threshold is the EXISTING §53 configuration (75% warning) —
+    // the notification layer never invents its own quota math (§431).
+    if (result.charged && !result.replay) {
+      const messages = result.metrics.AI_MESSAGES;
+      if (messages && typeof messages.used === "number" && typeof messages.limit === "number") {
+        const { notifyAiUsageThreshold } = await import("@/lib/notifications");
+        notifyAiUsageThreshold({
+          businessId,
+          periodEndIso: result.period.end ?? "",
+          used: messages.used,
+          limit: messages.limit,
+          nearPercent: USAGE_WARNING_PERCENT,
+        });
+      }
+    }
+    return result;
   } catch (error) {
     if (error instanceof BillingError) throw error;
     console.error("[usage] metering failed:", error);

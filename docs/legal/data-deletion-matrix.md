@@ -66,6 +66,9 @@ operations. Status vocabulary as in the banner.
 | MfaLoginChallenge (Prompt 30) | **DELETED** (cascade) | NOT AFFECTED (user-level) | 5-minute TTL (`MFA_CHALLENGE_TTL_SECONDS`, bounded 60–900) + invalidated by sessionVersion changes; pruned by `scripts/prune-auth-security.mjs` | DEPENDENT + time-based |
 | UserSession (Prompt 30) | **DELETED** (cascade) | NOT AFFECTED (user-level) | 30-day expiry aligned with the JWT maxAge; per-device revocation sets `revokedAt`; expired/revoked rows pruned by `scripts/prune-auth-security.mjs`; last-seen updates throttled (300s default) | DEPENDENT + time-based |
 | SecurityEvent (Prompt 30) | **DELETED** (cascade) — privacy-first choice: per-user security history does NOT survive the account | NOT AFFECTED (user-level; business events are not recorded here — the tenant trail is `AuditLog`) | No independent TTL configured (CURRENTLY NOT EXPLICITLY CONFIGURED); high-risk events are only written from rate-limited paths | DEPENDENT (retention policy undefined) |
+| Notification (Prompt 32) | **DELETED** (cascade via `userId`) | Business-scoped notifications **DELETED** (cascade via `businessId`); user-level security notifications survive the business | Inactive rows (read/archived/expired) removed by operational cleanup `scripts/prune-expired-notifications.mjs` (non-security 90d / security 365d defaults) — documented in Prompt 32 (§200/§201/§455/§456) | DEPENDENT + operational cleanup |
+| NotificationPreference (Prompt 32) | **DELETED** (cascade via `userId`) | NOT AFFECTED (user-level) | Exists while the account exists | DEPENDENT |
+| NotificationDelivery (Prompt 32) | **DELETED** (cascade via the parent Notification) | **DELETED** with the parent Notification | Shares the notification's lifetime (cascade) — no independent retention | DEPENDENT |
 
 ## 3. Dependency walk-through (documentation-only "dry run")
 
@@ -148,6 +151,13 @@ dangling id strings. Nothing rewrites or anonymizes them — NOT CURRENTLY AUTOM
   hashes, login challenges, session-registry rows AND per-user SecurityEvents. This is a
   privacy-first design choice — **security history does not survive the account**, and this
   matrix describes that behavior exactly (verified by `scripts/privacy-deletion-check.mjs`).
+- Prompt 32 notification records follow the same cascade law: `Notification`,
+  `NotificationPreference` (via `userId`) and `NotificationDelivery` (via the parent
+  notification) are deleted immediately with the account. Business deletion removes
+  business-scoped notifications while user-level security notifications survive — a member's
+  security history is not business data. The notification archive is a UX state, never a
+  deletion path; the only non-cascade removal is the operational cleanup script, which
+  deletes only inactive (read/archived/expired) rows past the retention windows.
 - Cross-checks: category definitions in `docs/legal/data-processing-inventory.md`; retention
   statuses in `docs/legal/data-retention-inventory.md`; how a person reaches the two operations
   from the product in `docs/legal/user-data-rights.md`; public descriptions on `/privacy`,

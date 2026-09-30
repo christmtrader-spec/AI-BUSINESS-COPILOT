@@ -154,6 +154,18 @@ export const GET = route(async (req: NextRequest) => {
               : "PORTABILITY_STORAGE_NOT_WRITABLE",
       },
       {
+        // Prompt 32 §380/§446 — notification platform posture (safe status
+        // only: catalog health + email transport; NO paths, NO internals).
+        key: "notifications",
+        status: map(r.components.notifications),
+        detail:
+          r.components.notifications === "READY"
+            ? "catalog healthy + email transport configured"
+            : r.components.notifications === "PARTIAL"
+              ? "catalog healthy — email transport unconfigured (in-app still works)"
+              : "catalog validation failed",
+      },
+      {
         key: "retentionPolicy",
         // §67/§118 — honest: no automatic deletion policy is configured.
         status: "NOT_CONFIGURED" as Status,

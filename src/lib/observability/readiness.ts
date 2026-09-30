@@ -60,6 +60,8 @@ export type ReadinessComponents = {
   emailVerification: ReadinessComponent;
   /** Prompt 31 §305 — portability storage posture (safe state only). */
   portabilityStorage: ReadinessComponent;
+  /** Prompt 32 §380/§446 — notification platform posture (safe state only). */
+  notifications: ReadinessComponent;
 };
 
 export type ReadinessResult = {
@@ -199,6 +201,8 @@ export async function computeReadiness(): Promise<ReadinessResult> {
     emailVerification: "DISABLED",
     // Prompt 31 §305 — honest portability storage state.
     portabilityStorage: "NOT_CONFIGURED",
+    // Prompt 32 §380 — honest notification platform state.
+    notifications: "NOT_CONFIGURED",
   };
   const internal: ReadinessResult["internal"] = {
     migrationsApplied: 0,
@@ -338,6 +342,23 @@ export async function computeReadiness(): Promise<ReadinessResult> {
     components.portabilityStorage = "NOT_CONFIGURED";
   }
 
+  // 7b) Prompt 32 §380/§446 — notification platform: catalog healthy +
+  // storage reachable + bounded config. Safe STATUSES only — no internals,
+  // no paths, no provider details (§381).
+  try {
+    const { notificationCatalogHealth } = await import("@/lib/notifications");
+    const health = notificationCatalogHealth();
+    const emailReady = components.email === "READY";
+    components.notifications =
+      health.healthy && emailReady
+        ? "READY"
+        : health.healthy
+          ? "PARTIAL" // catalog healthy, email transport not configured — in-app still works
+          : "BLOCKED";
+  } catch {
+    components.notifications = "BLOCKED";
+  }
+
   // 8) Overall (§40/§41): blocked only for CORE failures; optional gaps are
   // degraded, not blocked.
   const coreFailed =
@@ -345,7 +366,7 @@ export async function computeReadiness(): Promise<ReadinessResult> {
     components.migrations === "BLOCKED" ||
     components.configuration === "BLOCKED";
   const degraded = (
-    ["email", "aiCostRates", "backups", "restoreDrill", "legal", "portabilityStorage"] as const
+    ["email", "aiCostRates", "backups", "restoreDrill", "legal", "portabilityStorage", "notifications"] as const
   ).some((k) => components[k] !== "READY");
 
   const result: ReadinessResult = {
@@ -385,6 +406,8 @@ export function publicReadinessDTO(r: ReadinessResult): PublicReadinessDTO {
       restoreDrill: rest.components.restoreDrill,
       // §305/§358 — portability storage status WITHOUT paths/secrets.
       portabilityStorage: rest.components.portabilityStorage,
+      // Prompt 32 §380/§381 — notification platform status WITHOUT internals.
+      notifications: rest.components.notifications,
       // §187 — MFA/encryption state is deliberately NOT public; only the
       // Platform System view (internal) shows enabled/configured/blocked.
     },

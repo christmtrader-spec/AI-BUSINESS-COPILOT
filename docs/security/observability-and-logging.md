@@ -199,6 +199,40 @@ URL, the raw token, the SMTP password, or full SMTP transcript details.
 (Development console transport prints the reset link by design and is
 gated to non-production.)
 
+## 12b. Notification log events (Prompt 32 §131–§133)
+
+The notification platform emits its own structured operational events from
+`src/lib/notifications/*` (`service.ts`, `dispatcher.ts`, `event-mappers.ts`):
+
+| Event | Meaning | Safe fields |
+|---|---|---|
+| `notification.created` | a notification (and its delivery rows) committed | `notificationId`, `type`, `requestId` |
+| `notification.create_failed` | creation/validation failed inside `notifyFailSafe` — logged and swallowed, never propagated to the domain | `type`, `code` (stable error code), `error` (error NAME only) |
+| `notification.delivery.sent` | one EMAIL delivery reached SENT | `deliveryId`, `notificationId`, `type`, `status`, `durationMs`, `requestId` |
+| `notification.delivery.failed` | one EMAIL delivery reached FAILED | `deliveryId`, `notificationId`, `type`, `status`, `failureCode`, `durationMs`, `requestId` |
+| `notification.delivery.exhausted` | attempt cap (`NOTIFICATION_EMAIL_MAX_ATTEMPTS`) reached — terminal FAILED | same as failed, `failureCode: ATTEMPTS_EXHAUSTED` |
+| `notification.delivery.stale_reaped` | stale PROCESSING deliveries marked FAILED `STALE_PROCESSING` | `count` |
+| `notification.delivery.dispatch_error` | the dispatcher itself caught an unexpected error (delivery marked FAILED `UNKNOWN`) | `deliveryId`, `error` (error NAME only) |
+| `notification.mapper.*` (`subscription_failed`, `payment_failed_mapper_error`, `usage_failed`) | an event mapper failed before/at creation (fire-safe) | `eventId`/`businessId`/`sessionId`, `error` (error NAME only) |
+
+**The law (§132/§133):** NEVER log the notification `dataJson`, any rendered
+email text/HTML, or raw SMTP transcripts. The fields above are the complete
+safe set — ids, type, status, normalized `failureCode`, duration, `requestId`.
+The logger's recursive redaction/bounding applies on top, and
+`scripts/notification-static-scan.mjs` asserts no payload logging in the
+notification domain.
+
+**Security notifications** (`SECURITY_*` types, including the mandatory
+security emails) are created through the same `notification.created` /
+`notification.create_failed` structured events with the same safe fields —
+no secret content (MFA secrets, OTPs, recovery codes, reset tokens, session
+ids) ever enters a log line or a notification payload.
+
+Catalog note (honest): these event names are emitted as literal strings via
+`logInfo`/`logError` and are NOT yet registered in the `OPERATIONAL_EVENTS`
+fixed vocabulary (`src/lib/observability/events.ts`, Prompt 29) — the
+redaction, bounding, and level rules of the logger still apply to every line.
+
 ## 13. CSP and headers note (Prompt 29 §97/§98)
 
 The adopted CSP is deliberately minimal: **`frame-ancestors 'none'`** only

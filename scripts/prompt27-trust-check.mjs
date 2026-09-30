@@ -22,6 +22,16 @@
  * Exit:  0 = all green · 1 = failures
  */
 
+/* Bun script-runner shim: these checks import server modules directly;
+ * the "server-only" package guard targets BUNDLER contexts (Next), not
+ * bun's script runner. Registered before any dynamic import below. */
+Bun.plugin({
+  name: "server-only-shim",
+  setup(build) {
+    build.module("server-only", () => ({ exports: {}, loader: "object" }));
+  },
+});
+
 import { createRequire } from "node:module";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";

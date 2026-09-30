@@ -248,6 +248,13 @@ async function completeLogin(
     success: true,
   });
 
+  // Prompt 32 §96 — new sign-in notification (in-app always, optional
+  // email by preference). Safe device label only — never IP, geolocation
+  // or session secrets. Fire-safe; a notification failure never fails the
+  // login (§30).
+  const { notifyNewLogin } = await import("@/lib/notifications");
+  notifyNewLogin(user.id, registered.id, meta.userAgent, meta.createdFrom);
+
   return {
     id: user.id,
     email: user.email,

@@ -423,6 +423,18 @@ export async function processExportJob(jobId: string, requestId: string): Promis
       after: { datasets: datasetKeys, format: job.format, recordCount: recordTotal, requestId },
     });
 
+    // Prompt 32 §100/§328 — export-ready notification AFTER the file passed
+    // checksum + count verification (§331: never before the commit).
+    const { notifyExportCompleted } = await import("@/lib/notifications");
+    notifyExportCompleted({
+      userId: job.requestedByUserId,
+      businessId: business.id,
+      jobId: job.id,
+      datasets: datasetKeys,
+      recordCount: recordTotal,
+      expiresAt,
+    });
+
     const fresh = await db.dataExportJob.findUniqueOrThrow({ where: { id: job.id } });
     return jobToDTO(fresh);
   } catch (error) {
@@ -430,6 +442,10 @@ export async function processExportJob(jobId: string, requestId: string): Promis
       error instanceof ApiError && error.code === "EXPORT_LIMIT_EXCEEDED"
         ? "EXPORT_LIMIT_EXCEEDED"
         : "EXPORT_GENERATION_FAILED";
+    const failedJob = await db.dataExportJob.findUnique({
+      where: { id: jobId },
+      select: { businessId: true, requestedByUserId: true },
+    });
     await db.dataExportJob.updateMany({
       where: { id: jobId, status: "PROCESSING" },
       data: {
@@ -442,13 +458,23 @@ export async function processExportJob(jobId: string, requestId: string): Promis
       },
     });
     await audit({
-      businessId: (await db.dataExportJob.findUnique({ where: { id: jobId }, select: { businessId: true } }))?.businessId ?? null,
+      businessId: failedJob?.businessId ?? null,
       actorId: null,
       action: "data_export.failed",
       entityType: "DataExportJob",
       entityId: jobId,
       after: { failureCode: safeCode, requestId },
     });
+    // Prompt 32 §101 — export-failed notification (safe summary only).
+    if (failedJob) {
+      const { notifyExportFailed } = await import("@/lib/notifications");
+      notifyExportFailed({
+        userId: failedJob.requestedByUserId,
+        businessId: failedJob.businessId,
+        jobId,
+        reasonCode: safeCode,
+      });
+    }
     if (error instanceof ApiError && error.code === "EXPORT_LIMIT_EXCEEDED") {
       const failed = await db.dataExportJob.findUniqueOrThrow({ where: { id: jobId } });
       return jobToDTO(failed);

@@ -163,6 +163,28 @@ the customer's own file, deleted on cancel and by the operational TTL cleanup sc
 | Staged import uploads | filesystem: `DATA_PORTABILITY_ROOT/imports/<jobId>.upload` | Temporary parse/validate source for the customer's own import file | U: the uploaded file | No | No | Deleted on cancel, by the TTL cleanup, and re-verified by checksum at commit | CONFIDENTIAL |
 | Portability audit trail | tenant `AuditLog` actions `data_export.*` / `data_import.*` — jobId/datasets/format/counts/requestId only | Auditability of who exported/imported what and when | S: server-written safe payloads | No | No (audit rows are never export datasets) | Follows AuditLog retention (no independent policy — CURRENTLY NOT EXPLICITLY CONFIGURED); file cleanup NEVER deletes audit rows | CONFIDENTIAL |
 
+### 4.9 Notifications (Prompt 32)
+
+Three user-owned notification models record derived activity communication
+(`Notification`, `NotificationDelivery`, `NotificationPreference`; `userId` →
+`User`, `onDelete: Cascade`, plus an optional `businessId` → `Business` cascade
+on `Notification`). Notifications are a communication layer derived from domain
+events — never an authority layer. All stored values are allowlisted catalog
+keys (type/category/priority/severity) plus a per-type schema-validated data
+object of safe primitives; a defense-in-depth sanitizer rejects secret-shaped
+keys (password/token/secret/otp/mfa/recoveryCode/session/reset/credential/
+merchant …) at any depth, AI prompt/response and provider-cost keys, IP/UA
+keys, and oversized payloads. Localized text is never persisted (i18n keys +
+rendered at read time). Security reference:
+`docs/security/notification-security.md`; catalog and data sensitivity per
+type: `docs/product/notification-matrix.md`.
+
+| Category | Examples (where stored) | Purpose · actor/context | Origin | Third-party processed | Exported? | Deleted? · Retention status | Class |
+|---|---|---|---|---|---|---|---|
+| Notification | `Notification` — type/category/priority/severity keys, `titleKey`/`bodyKey` (i18n keys), per-type validated `dataJson` (safe values only), `actionRoute` (allowlisted internal route key), `sourceEventId` (dedupe key), `readAt`/`archivedAt`/`expiresAt`/`createdAt` | User-facing derived activity communication (identity/security, billing, AI usage, business ops, system announcements) · the user themselves (recipient = the account holder; legal basis: contract/service operation) | S: catalog-driven, server-generated from committed domain events | No | No | DELETED via account deletion (cascade); business-scoped rows also via business deletion (cascade); inactive rows removed by operational cleanup (`scripts/prune-expired-notifications.mjs` — non-security 90d, security 365d defaults) | CONFIDENTIAL |
+| NotificationDelivery | `NotificationDelivery` — channel (IN_APP/EMAIL), status (PENDING/PROCESSING/SENT/FAILED/SKIPPED/CANCELED), `attemptCount`, attempt/sent/failed timestamps, normalized `failureCode` (fixed vocabulary, never raw SMTP output), `providerMessageId?` | Operational delivery audit per channel · internal only (never tenant-visible) | S: server delivery bookkeeping | Email delivery via the configured SMTP transport (recipient address only) | No | Cascade with the parent `Notification` (same deletion fates — no independent lifetime) | CONFIDENTIAL (operational metadata; no message content) |
+| NotificationPreference | `NotificationPreference` — unique `[userId, notificationType, channel]` + `enabled` flag | Explicit user channel choices per notification type · the user themselves (legal basis: contract/service operation) | U: explicit preference switches | No | No | DELETED via account deletion (cascade) | CONFIDENTIAL |
+
 ## 5. Business data vs personal data
 
 The tenant/business split is the backbone of this inventory, and it is deliberately conservative:

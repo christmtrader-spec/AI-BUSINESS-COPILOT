@@ -62,7 +62,7 @@ export const POST = route(async (req: NextRequest) => {
     exceptSessionRowId: currentRegistryId ?? undefined,
   });
 
-  await recordSecurityEvent({
+  const securityEventId = await recordSecurityEvent({
     eventType: SECURITY_EVENTS.sessionRevokedAll,
     userId,
     sessionId: currentRegistryId,
@@ -71,6 +71,12 @@ export const POST = route(async (req: NextRequest) => {
     ip,
     userAgent: req.headers.get("user-agent"),
   });
+  // Prompt 32 §97 — in-app-only notification for global sign-out (email
+  // deliberately unmapped to avoid notification noise).
+  if (securityEventId && revokedCount > 0) {
+    const { notifySessionsSignedOut } = await import("@/lib/notifications");
+    notifySessionsSignedOut(userId, revokedCount, securityEventId);
+  }
 
   return ok({ revokedCount, currentSessionKept: true });
 });

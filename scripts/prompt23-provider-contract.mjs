@@ -19,6 +19,16 @@
  * Exit:  0 = all checks passed · 1 = failures printed
  */
 
+/* Bun script-runner shim: these checks import server modules directly;
+ * the "server-only" package guard targets BUNDLER contexts (Next), not
+ * bun's script runner. Registered before any dynamic import below. */
+Bun.plugin({
+  name: "server-only-shim",
+  setup(build) {
+    build.module("server-only", () => ({ exports: {}, loader: "object" }));
+  },
+});
+
 const ROOT = "/home/z/my-project";
 const failures = [];
 let passed = 0;
