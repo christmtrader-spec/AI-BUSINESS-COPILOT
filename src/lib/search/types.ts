@@ -10,7 +10,8 @@
  * new entity type or a new destination route (§4.1/§14).
  */
 
-/** Tenant-scoped entity types that participate in global search (§2). */
+/** Tenant-scoped entity types that participate in global search (§2).
+ *  Prompt 35 (§46): LEAD + OPPORTUNITY join the six Prompt 33 types. */
 export const SEARCH_ENTITY_TYPES = [
   "CUSTOMER",
   "SUPPLIER",
@@ -18,6 +19,8 @@ export const SEARCH_ENTITY_TYPES = [
   "SALE",
   "EXPENSE",
   "PAYMENT",
+  "LEAD",
+  "OPPORTUNITY",
 ] as const;
 
 export type SearchEntityType = (typeof SEARCH_ENTITY_TYPES)[number];
@@ -30,6 +33,8 @@ export const SEARCH_DESTINATIONS = [
   "sales",
   "expenses",
   "payments",
+  "leads",
+  "opportunities",
 ] as const;
 
 export type SearchDestination = (typeof SEARCH_DESTINATIONS)[number];
@@ -42,15 +47,28 @@ export const ENTITY_DESTINATION: Record<SearchEntityType, SearchDestination> = {
   SALE: "sales",
   EXPENSE: "expenses",
   PAYMENT: "payments",
+  LEAD: "leads",
+  OPPORTUNITY: "opportunities",
 };
 
-/** Closed status tokens (client localizes; server never renders HTML). */
+/** Closed status tokens (client localizes; server never renders HTML).
+ *  Prompt 35 (§46): CRM lead statuses + opportunity stages join. */
 export type SearchItemStatus =
   | "ACTIVE"
   | "INACTIVE"
   | "UNPAID"
   | "PARTIAL"
-  | "PAID";
+  | "PAID"
+  | "NEW"
+  | "CONTACTED"
+  | "QUALIFIED"
+  | "DISQUALIFIED"
+  | "CONVERTED"
+  | "DISCOVERY"
+  | "PROPOSAL"
+  | "NEGOTIATION"
+  | "WON"
+  | "LOST";
 
 /** Closed payment direction tokens (tenant Payment domain only — §42). */
 export type SearchItemDirection = "IN" | "OUT";

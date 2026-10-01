@@ -34,6 +34,8 @@ const EXPORT_DATASETS = [
   "sales",
   "expenses",
   "payments",
+  "crm_leads",
+  "crm_opportunities",
   "subscription_summary",
   "usage_summary",
 ] as const;
@@ -48,6 +50,8 @@ const SENSITIVITIES: Record<string, "PUBLIC_BUSINESS" | "CONFIDENTIAL"> = {
   sales: "CONFIDENTIAL",
   expenses: "CONFIDENTIAL",
   payments: "CONFIDENTIAL",
+  crm_leads: "CONFIDENTIAL",
+  crm_opportunities: "CONFIDENTIAL",
   subscription_summary: "CONFIDENTIAL",
   usage_summary: "CONFIDENTIAL",
 };
@@ -64,6 +68,8 @@ const DATASET_LABEL_KEYS: Record<string, string> = {
   sale_items: "saleItems",
   expenses: "expenses",
   payments: "payments",
+  crm_leads: "crmLeads",
+  crm_opportunities: "crmOpportunities",
   subscription_summary: "subscriptionSummary",
   usage_summary: "usageSummary",
 };

@@ -52,9 +52,9 @@ function eq(actual: unknown, expected: unknown, name: string) {
   ok(a === e, name, a === e ? "" : `expected ${e}, got ${a}`);
 }
 
-/* 1 — closed entity vocabulary (§51.1) */
-ok(ENTITY_TYPES.length === 6, "v1 vocabulary has exactly 6 entity types");
-eq([...ENTITY_TYPES], ["customer", "supplier", "product", "sale", "expense", "payment"], "v1 vocabulary exact members");
+/* 1 — closed entity vocabulary (§51.1) — Prompt 35 extends to 8 (§123) */
+ok(ENTITY_TYPES.length === 8, "v1 vocabulary has exactly 8 entity types (6 + lead + opportunity)");
+eq([...ENTITY_TYPES], ["customer", "supplier", "product", "sale", "expense", "payment", "lead", "opportunity"], "v1 vocabulary exact members");
 for (const banned of ["user", "business", "audit", "security", "platform_operator", "platform_audit_log", "aicostrecord", "notification", "dataexportjob", "checkoutsession", "chatsession", "mfacredential", "usersession", "securityevent"]) {
   ok(!isEntityType(banned), `v1 "${banned}" NOT routable`);
 }
@@ -100,7 +100,7 @@ ok(isValidEntityId("ab%20cd") === false, "v6 raw percent id rejected (charset)")
 /* 7 — entity destination map (§51.7) */
 eq(ENTITY_ROUTES.customer, { segment: "customers", api: "/api/v1/customers", labelKey: "customers" }, "v7 customer route def");
 eq(ENTITY_ROUTES.payment, { segment: "payments", api: "/api/v1/payments", labelKey: "payments" }, "v7 payment route def");
-eq(ENTITY_TYPES.map((e) => ENTITY_ROUTES[e].api), ["/api/v1/customers", "/api/v1/suppliers", "/api/v1/products", "/api/v1/sales", "/api/v1/expenses", "/api/v1/payments"], "v7 all api bases");
+eq(ENTITY_TYPES.map((e) => ENTITY_ROUTES[e].api), ["/api/v1/customers", "/api/v1/suppliers", "/api/v1/products", "/api/v1/sales", "/api/v1/expenses", "/api/v1/payments", "/api/v1/crm/leads", "/api/v1/crm/opportunities"], "v7 all api bases (P35 extends to 8 — §123)");
 
 /* 8 — customer 360 balance calculation (§51.8) */
 {
@@ -185,7 +185,7 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
     [{ id: "s1", number: 1, issueDate: base, totalMinor: 10, paidMinor: 10, status: "PAID" }],
     [{ id: "p1", amountMinor: 10, method: "CASH", paidAt: base, note: null }],
   );
-  eq(Object.keys(cust), ["customer", "summary", "recentSales", "recentPayments"], "v14 CustomerDetail top-level keys");
+  eq(Object.keys(cust), ["customer", "summary", "recentSales", "recentPayments", "crm"], "v14 CustomerDetail top-level keys (P35 adds crm section — §123)");
   eq(Object.keys(cust.customer), ["id", "name", "phone", "email", "address", "note", "createdAt"], "v14 customer sub-object keys");
   eq(cust.customer.createdAt, "2026-01-02T03:04:05.000Z", "v14 dates serialized as ISO");
 
@@ -247,7 +247,7 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
 }
 
 /* 16 — related-link mapping (§51.16) */
-eq(Object.keys(SEARCH_TYPE_TO_ENTITY).length, 6, "v16 search-type map covers 6 types");
+eq(Object.keys(SEARCH_TYPE_TO_ENTITY).length, 8, "v16 search-type map covers 8 types (P35 — §123)");
 eq([...ENTITY_TYPES], Object.values(SEARCH_TYPE_TO_ENTITY), "v16 search types map 1:1 onto entity vocabulary");
 eq(SEARCH_TYPE_TO_ENTITY.CUSTOMER, "customer", "v16 CUSTOMER → customer");
 eq(SEARCH_TYPE_TO_ENTITY.PAYMENT, "payment", "v16 PAYMENT → payment");

@@ -26,6 +26,8 @@ import { ProductDetailView } from "./product-detail-view";
 import { SaleDetailView } from "./sale-detail-view";
 import { ExpenseDetailView } from "./expense-detail-view";
 import { PaymentDetailView } from "./payment-detail-view";
+import { LeadDetailView } from "./lead-detail-view";
+import { OpportunityDetailView } from "./opportunity-detail-view";
 import type {
   CustomerDetail,
   ExpenseDetail,
@@ -34,6 +36,10 @@ import type {
   SaleDetail,
   SupplierDetail,
 } from "@/lib/entities";
+import type {
+  LeadDetail as CrmLeadDetail,
+  OpportunityDetail as CrmOpportunityDetail,
+} from "@/lib/crm";
 
 export function EntityDetailView({
   entity,
@@ -61,6 +67,8 @@ export function EntityDetailView({
     sale: t("sales"),
     expense: t("expenses"),
     payment: t("payments"),
+    lead: t("leads"),
+    opportunity: t("opportunities"),
   };
   const backLabel = t("backTo", { list: listLabel[entity] });
 
@@ -74,7 +82,14 @@ export function EntityDetailView({
   }, [activeBusinessId, queryClient]);
 
   const query = useEntityQuery<
-    CustomerDetail | SupplierDetail | ProductDetail | SaleDetail | ExpenseDetail | PaymentDetail
+    | CustomerDetail
+    | SupplierDetail
+    | ProductDetail
+    | SaleDetail
+    | ExpenseDetail
+    | PaymentDetail
+    | CrmLeadDetail
+    | CrmOpportunityDetail
   >(entity, id);
 
   const backToList = () => navigateToEntityList(entity);
@@ -167,6 +182,24 @@ export function EntityDetailView({
         <PaymentDetailView
           data={query.data as PaymentDetail}
           business={business}
+          role={role}
+        />
+      );
+    case "lead":
+      return (
+        <LeadDetailView
+          data={query.data as CrmLeadDetail}
+          business={business}
+          uiLocale={uiLocale}
+          role={role}
+        />
+      );
+    case "opportunity":
+      return (
+        <OpportunityDetailView
+          data={query.data as CrmOpportunityDetail}
+          business={business}
+          uiLocale={uiLocale}
           role={role}
         />
       );

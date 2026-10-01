@@ -171,3 +171,13 @@ Cleanup is implemented once, in `scripts/prune-expired-notifications.mjs`
 | Security-category `Notification` rows | 365 days (default), only when read/archived | Same script + account cascade | Explicit operational window; security history is never aggressively pruned |
 | `NotificationDelivery` rows | None of their own | Cascade with the parent `Notification` | Explicit: tied to the notification's lifetime |
 | `NotificationPreference` rows | None (account lifetime) | Account-deletion cascade only | Explicit: tied to account lifetime |
+
+## CRM leads & opportunities (Prompt 35)
+
+`CrmLead` / `CrmOpportunity` follow the tenant lifecycle: rows live as long as
+the business lives; normal operations use soft delete (`deletedAt`) and the
+rows are removed with business deletion (cascade). No separate retention period
+is configured — as with the rest of this inventory, any future fixed retention
+window must be added here with an explicit, honest status rather than invented
+after the fact (CURRENTLY NOT EXPLICITLY CONFIGURED beyond the tenant
+lifecycle).

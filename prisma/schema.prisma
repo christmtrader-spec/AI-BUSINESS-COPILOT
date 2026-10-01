@@ -58,6 +58,11 @@ model User {
   // Prompt 32 — unified notification platform (§16/§20).
   notifications           Notification[]
   notificationPreferences NotificationPreference[]
+
+  // Prompt 35 — Advanced CRM Foundation (§9/§11): explicit relation names
+  // avoid Prisma ambiguity (both CRM models reference User).
+  crmLeadAssignments      CrmLead[]            @relation("CrmLeadAssignee")
+  crmOpportunityAssignments CrmOpportunity[]   @relation("CrmOpportunityAssignee")
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +263,9 @@ model Business {
   dataImportJobs       DataImportJob[]
   // Prompt 32 — business-scoped notifications (cascade, §200).
   notifications        Notification[]
+  // Prompt 35 — Advanced CRM Foundation (§8/§11).
+  crmLeads             CrmLead[]
+  crmOpportunities     CrmOpportunity[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -343,6 +351,12 @@ model Customer {
   updatedAt  DateTime  @updatedAt
 
   sales Sale[]
+
+  // Prompt 35 — CRM links (§11): a lead points at the customer it converted
+  // into; an opportunity may reference an existing customer. Both are
+  // SetNull so deleting a customer never breaks CRM history rows.
+  crmLeads        CrmLead[]
+  crmOpportunities CrmOpportunity[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -1463,4 +1477,100 @@ model NotificationPreference {
 
   @@unique([userId, notificationType, channel])
   @@index([userId, notificationType])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 35 — Advanced CRM Foundation (§8/§9/§10).
+//
+// CRM is OPERATIONAL, NON-ACCOUNTING data:
+//   - expectedValueMinor is a FORECAST, never accounting revenue; it must
+//     never enter sales totals / receivables / reports / AI metrics (§1/§12).
+//   - The pipeline is a FIXED code-defined vocabulary (§6/§7) — deliberately
+//     NO PipelineStage table in this prompt.
+//   - Soft delete via deletedAt; financial records are never touched.
+// ---------------------------------------------------------------------------
+model CrmLead {
+  id               String    @id @default(cuid())
+  businessId       String
+  business         Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  name             String
+  companyName      String?
+  phone            String?
+  email            String?
+
+  source           String
+  sourceDetail     String?
+
+  // Server-controlled status (closed vocabulary, §6/§22) — never client-set
+  // through the generic PATCH path.
+  status           String    @default("NEW")
+
+  note             String?
+
+  assignedToUserId String?
+  assignedToUser   User?     @relation("CrmLeadAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+
+  // Set ONLY by the conversion transaction (§23-§26) — never by generic PATCH.
+  customerId       String?
+  customer         Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  convertedAt      DateTime?
+  deletedAt        DateTime?
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  opportunities    CrmOpportunity[]
+
+  @@index([businessId, deletedAt])
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+  @@index([businessId, assignedToUserId])
+  @@index([customerId])
+}
+
+model CrmOpportunity {
+  id                 String    @id @default(cuid())
+  businessId         String
+  business           Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  title              String
+  description        String?
+
+  leadId             String?
+  lead               CrmLead?  @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  customerId         String?
+  customer           Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  // Closed stage vocabulary (§6/§7); probability is an integer 0–100.
+  stage              String    @default("DISCOVERY")
+  probabilityPct     Int       @default(10)
+
+  // FORECAST value — integer minor units (§12). NEVER accounting revenue.
+  expectedValueMinor Int       @default(0)
+  currencyCode       String
+
+  expectedCloseDate  DateTime?
+
+  assignedToUserId   String?
+  assignedToUser     User?     @relation("CrmOpportunityAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+
+  lostReason         String?
+
+  wonAt              DateTime?
+  lostAt             DateTime?
+
+  deletedAt          DateTime?
+
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([businessId, deletedAt])
+  @@index([businessId, stage])
+  @@index([businessId, expectedCloseDate])
+  @@index([businessId, assignedToUserId])
+  @@index([customerId])
+  @@index([leadId])
 }

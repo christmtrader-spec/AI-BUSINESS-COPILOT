@@ -65,6 +65,10 @@ const INVENTORY = [
   { category: "MFA login challenges", models: ["MfaLoginChallenge"], publicTerms: [], docTerms: ["MfaLoginChallenge"] },
   { category: "Device session registry", models: ["UserSession"], publicTerms: ["device", "sessions"], docTerms: ["UserSession"] },
   { category: "Security activity events", models: ["SecurityEvent"], publicTerms: [], docTerms: ["SecurityEvent"] },
+  // Prompt 35 (§88) — Advanced CRM Foundation. Contact entered by tenant
+  // members; forecast values are business data. Soft delete + business
+  // cascade; account deletion SETS the assignment FKs NULL.
+  { category: "CRM leads & opportunities", models: ["CrmLead", "CrmOpportunity"], publicTerms: ["Leads", "opportunities"], docTerms: ["CrmLead"] },
   { category: "Contact leads", models: [], publicTerms: [], docTerms: ["ContactLead"] },
 ];
 

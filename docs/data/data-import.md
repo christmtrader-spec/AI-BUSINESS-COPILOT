@@ -131,3 +131,15 @@ tab. Each has the exact machine headers plus one synthetic example row
 ("Example Customer" — never real data). The template our app generates is
 always accepted by our importer. Machine headers stay stable across
 languages; only the surrounding documentation is localized.
+
+
+## CRM datasets (Prompt 35)
+
+- **CRM Lead import: NOT IMPLEMENTED.**
+- **CRM Opportunity import: NOT IMPLEMENTED.**
+
+Reason: opportunity relationships (lead/customer/assignee) require safe
+tenant-local reference resolution plus stage/forecast validation, and the
+conversion bookkeeping must never be fabricated by an importer. CRM export
+(`crm_leads`, `crm_opportunities` JSON/CSV datasets) is fully supported. A
+future prompt may implement CRM import with explicit reference mapping.

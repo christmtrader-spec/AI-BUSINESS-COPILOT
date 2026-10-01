@@ -142,3 +142,24 @@ Search results now resolve to exact entity details. Security properties:
 - Detail endpoints re-verify session, membership and tenant scope, so a
   forged or foreign id yields 404 — search remains a discovery layer and
   the detail API remains the authority layer.
+
+
+## Prompt 35 update — CRM entity search
+
+The search surface now covers `CrmLead` and `CrmOpportunity` in addition to
+the six tenant entities. Security invariants are unchanged and re-verified:
+
+- Server-derived `businessId` scoping + `deletedAt: null` on both CRM
+  prefilter queries (statically asserted in `scripts/search-static-scan.mjs`
+  and `scripts/crm-static-scan.mjs`).
+- Same bounded caps: `SEARCH_PER_ENTITY_TAKE` (8) per entity → ≤64 candidate
+  rows across 8 types; ≤30 results.
+- Closed vocabularies: `LEAD`/`OPPORTUNITY` are allowlisted search types;
+  unknown types are rejected (422), never ignored.
+- Data minimization: lead note is NOT selected by the prefilter (notes are
+  never titles); opportunity forecast amounts are never selected or returned.
+  New closed status tokens (NEW/CONTACTED/QUALIFIED/DISQUALIFIED/CONVERTED,
+  DISCOVERY/PROPOSAL/NEGOTIATION/WON/LOST) are guarded server-side.
+- CRM records are tenant-scoped operational data: cross-tenant search is
+  structurally impossible (membership-first authority chain unchanged).
+- No new logging: CRM search terms are never logged (crm-static-scan rule 19).

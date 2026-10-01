@@ -6,6 +6,7 @@ import {
   CreditCard,
   FolderSync,
   HandCoins,
+  KanbanSquare,
   LayoutDashboard,
   Package,
   PanelLeftClose,
@@ -14,6 +15,7 @@ import {
   Settings,
   ShieldCheck,
   ShoppingCart,
+  Target,
   Truck,
   UserRound,
   Users,
@@ -50,6 +52,7 @@ type NavItem = {
   view: AppView;
   labelKey:
     | "dashboard"
+    | "crm"
     | "customers"
     | "suppliers"
     | "products"
@@ -77,6 +80,7 @@ const OVERVIEW: NavItem[] = [
 ];
 
 const OPERATIONS: NavItem[] = [
+  { view: { kind: "crm", tab: "pipeline" }, labelKey: "crm", icon: KanbanSquare },
   { view: { kind: "module", module: "customers" }, labelKey: "customers", icon: Users },
   { view: { kind: "module", module: "suppliers" }, labelKey: "suppliers", icon: Truck },
   { view: { kind: "module", module: "products" }, labelKey: "products", icon: Package },
@@ -107,6 +111,11 @@ function isActive(current: AppView, item: NavItem): boolean {
   if (current.kind === "module" && item.view.kind === "module") {
     return current.module === item.view.module;
   }
+  // Prompt 35 — CRM deep links (entity details / any tab) keep CRM active.
+  if (item.view.kind === "crm" && current.kind === "entity") {
+    return current.entity === "lead" || current.entity === "opportunity";
+  }
+  if (item.view.kind === "crm" && current.kind === "crm") return true;
   return current.kind === item.view.kind;
 }
 

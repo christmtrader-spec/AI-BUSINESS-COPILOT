@@ -4,8 +4,14 @@
  */
 
 import { balanceOf, toMethodToken, toStatusToken } from "./summary";
+
+/** Closed stage tokens (Prompt 35 §6) — duplicated here ONLY as a literal
+ * tuple so the mapper never depends on client-importable modules. */
+const CRM_STAGE_TOKENS = ["DISCOVERY", "QUALIFIED", "PROPOSAL", "NEGOTIATION", "WON", "LOST"] as const;
 import type {
+  CustomerCrmSection,
   CustomerDetail,
+  CustomerOpportunityRef,
   CustomerRecentSale,
   CustomerSummary,
   RecentPaymentRow,
@@ -63,11 +69,55 @@ export function mapRecentPayments(
   }));
 }
 
+export type CustomerCrmRows = {
+  openOpportunityCount: number;
+  recentOpportunities: {
+    id: string;
+    title: string;
+    stage: string;
+    probabilityPct: number;
+    expectedValueMinor: number;
+    expectedCloseDate: Date | null;
+  }[];
+  leadOrigin: { id: string; name: string; convertedAt: Date | null } | null;
+};
+
+/** Prompt 35 (§44) — explicit CRM-section mapper (closed stage tokens). */
+export function mapCustomerCrm(rows: CustomerCrmRows): CustomerCrmSection {
+  return {
+    openOpportunityCount: rows.openOpportunityCount,
+    recentOpportunities: rows.recentOpportunities.map(
+      (o): CustomerOpportunityRef => ({
+        id: o.id,
+        title: o.title,
+        stage: (["DISCOVERY", "QUALIFIED", "PROPOSAL", "NEGOTIATION", "WON", "LOST"] as const).includes(
+          o.stage as (typeof CRM_STAGE_TOKENS)[number],
+        )
+          ? (o.stage as (typeof CRM_STAGE_TOKENS)[number])
+          : "DISCOVERY",
+        probabilityPct: o.probabilityPct,
+        expectedValueMinor: o.expectedValueMinor,
+        expectedCloseDate: o.expectedCloseDate ? o.expectedCloseDate.toISOString() : null,
+      }),
+    ),
+    leadOrigin: rows.leadOrigin
+      ? {
+          id: rows.leadOrigin.id,
+          name: rows.leadOrigin.name,
+          convertedAt: rows.leadOrigin.convertedAt
+            ? rows.leadOrigin.convertedAt.toISOString()
+            : null,
+        }
+      : null,
+  };
+}
+
 export function mapCustomerDetail(
   record: CustomerRecordRow,
   summary: CustomerSummary,
   recentSales: CustomerSaleRow[],
   recentPayments: CustomerPaymentRecordRow[],
+  crm?: CustomerCrmSection,
 ): CustomerDetail {
   return {
     customer: {
@@ -82,5 +132,12 @@ export function mapCustomerDetail(
     summary,
     recentSales: mapRecentSales(recentSales),
     recentPayments: mapRecentPayments(recentPayments),
+    // §44 — present but EMPTY for legacy callers; the detail route always
+    // supplies the real bounded section.
+    crm: crm ?? {
+      openOpportunityCount: 0,
+      recentOpportunities: [],
+      leadOrigin: null,
+    },
   };
 }

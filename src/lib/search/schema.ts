@@ -22,7 +22,7 @@ export const SEARCH_LIMIT_DEFAULT = 20;
 export const SEARCH_LIMIT_MIN = 6;
 export const SEARCH_LIMIT_MAX = 30;
 
-/** Bounded per-entity candidate cap (§6): 6 entities × 8 ≤ 48 candidate rows. */
+/** Bounded per-entity candidate cap (§6): 8 entities × 8 ≤ 64 candidate rows. */
 export const SEARCH_PER_ENTITY_TAKE = 8;
 
 export class SearchValidationError extends Error {

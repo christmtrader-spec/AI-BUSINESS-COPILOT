@@ -86,8 +86,9 @@ section = "queries";
 {
   // Each entity query block: db.<entity>.findMany({ ... }) — extract from
   // the call to the bounded take, then verify scope/select per block.
-  const ENTITIES = ["customer", "supplier", "product", "sale", "expense", "payment"];
-  record("six entity findMany calls present (§2)", ENTITIES.every((e) => querySrc.includes(`db.${e}.findMany(`)), ENTITIES.filter((e) => !querySrc.includes(`db.${e}.findMany(`)).join(","));
+  // Prompt 35 (§122): CRM entities joined the search surface (8 total).
+  const ENTITIES = ["customer", "supplier", "product", "sale", "expense", "payment", "crmLead", "crmOpportunity"];
+  record("eight entity findMany calls present (§2 + P35 §122)", ENTITIES.every((e) => querySrc.includes(`db.${e}.findMany(`)), ENTITIES.filter((e) => !querySrc.includes(`db.${e}.findMany(`)).join(","));
   const blocks = {};
   for (const e of ENTITIES) {
     const start = querySrc.indexOf(`db.${e}.findMany(`);

@@ -7,6 +7,7 @@
  */
 
 import {
+  CRM_ENTITY_TAB,
   ENTITY_ROUTES,
   SEARCH_TYPE_TO_ENTITY,
   type EntityType,
@@ -29,8 +30,16 @@ export function entityViewFromSearchItem(item: SearchResultItem): AppView {
   return { kind: "entity", entity, id: item.id };
 }
 
-/** List module view for an entity — the "Back to list" target (§38). */
+/**
+ * List surface for an entity — the "Back to list" target (§38).
+ * Prompt 35 (§39): CRM entities have no bare list route — their lists live
+ * in the CRM module tabs (#/crm?tab=leads | #/crm?tab=opportunities).
+ */
 export function entityListView(entity: EntityType): AppView {
+  const crmTab = CRM_ENTITY_TAB[entity as keyof typeof CRM_ENTITY_TAB];
+  if (crmTab) {
+    return { kind: "crm", tab: crmTab as "leads" | "opportunities" };
+  }
   return { kind: "module", module: ENTITY_ROUTES[entity].segment };
 }
 

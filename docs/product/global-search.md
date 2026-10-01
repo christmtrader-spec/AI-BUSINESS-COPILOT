@@ -155,3 +155,20 @@ DETAIL, not the module list:
 
 See `docs/product/entity-details.md` and
 `docs/security/entity-detail-security.md`.
+
+
+## Prompt 35 additions — CRM search
+
+Search now spans **eight** entity types: the original six plus
+**LEAD** and **OPPORTUNITY**.
+
+- LEAD fields: name, companyName, phone, email, sourceDetail (notes are
+  matched as secondary fields only, never shown as titles).
+- OPPORTUNITY fields: title, description, customer.name, lead.name.
+- Groups appear in the Search Center with localized labels (Leads / فرصت‌ها)
+  and the filter chips include Leads and Opportunities.
+- Results deep-link through the closed `SEARCH_TYPE_TO_ENTITY` map to
+  `#/leads/<id>` / `#/opportunities/<id>`; the API `destination` string is
+  never trusted for navigation (Prompt 34 law, unchanged).
+- Same privacy rules: 2–64 char q, bounded candidate caps, no query logging,
+  no search history.

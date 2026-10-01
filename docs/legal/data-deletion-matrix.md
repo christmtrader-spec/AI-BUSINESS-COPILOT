@@ -162,3 +162,13 @@ dangling id strings. Nothing rewrites or anonymizes them — NOT CURRENTLY AUTOM
   statuses in `docs/legal/data-retention-inventory.md`; how a person reaches the two operations
   from the product in `docs/legal/user-data-rights.md`; public descriptions on `/privacy`,
   `/terms`, `/ai-data-use`, `/cookies` (content version `2026-09-v1`).
+
+## CRM (Prompt 35)
+
+| Event | CRM effect |
+|---|---|
+| Business deletion | `CrmLead` / `CrmOpportunity` DELETED (cascade) — CRM rows never outlive the tenant. |
+| Lead delete (user action) | Soft delete (`deletedAt`): hidden from lists/search/summary; audit remains. Converted `Customer` is NEVER touched (§68). |
+| Opportunity delete (user action) | Soft delete (`deletedAt`): hidden from lists/search/summary; audit remains. No financial effect. |
+| Account deletion | `assignedToUserId` links SET NULL (the CRM rows are business data and stay with the business). |
+| Customer deletion (soft) | CRM links resolve as "not found" (queries filter `deletedAt: null` on the customer side); CRM rows are not destroyed. |

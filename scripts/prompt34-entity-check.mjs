@@ -281,7 +281,8 @@ section("DTO");
 {
   const { res, data } = await call(fA, `/api/v1/customers/${customerId}`);
   check("C customer detail 200", res.status === 200);
-  check("C customer exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["customer", "summary", "recentSales", "recentPayments"]), JSON.stringify(data && Object.keys(data)));
+  // Prompt 35 (§123): the customer 360 now carries a bounded `crm` section.
+  check("C customer exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["customer", "summary", "recentSales", "recentPayments", "crm"]), JSON.stringify(data && Object.keys(data)));
   check("C customer sub keys", data && JSON.stringify(Object.keys(data.customer)) === JSON.stringify(["id", "name", "phone", "email", "address", "note", "createdAt"]));
   check("C summary keys", data && JSON.stringify(Object.keys(data.summary)) === JSON.stringify(["totalSalesMinor", "paidSalesMinor", "receivableMinor", "invoiceCount", "paidInvoiceCount", "openInvoiceCount"]));
   const rs = data?.recentSales?.[0];

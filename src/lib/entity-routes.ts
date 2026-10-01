@@ -16,7 +16,9 @@
  *   Both `hashToView` and deep-link producers go through this file.
  */
 
-/** Closed tenant entity vocabulary (§3/§4) — lowercase client tokens. */
+/** Closed tenant entity vocabulary (§3/§4) — lowercase client tokens.
+ *  Prompt 35 (§38): lead + opportunity extend the six Prompt 34 types to
+ *  EIGHT. CRM records route through #/leads/<id> and #/opportunities/<id>. */
 export const ENTITY_TYPES = [
   "customer",
   "supplier",
@@ -24,6 +26,8 @@ export const ENTITY_TYPES = [
   "sale",
   "expense",
   "payment",
+  "lead",
+  "opportunity",
 ] as const;
 
 export type EntityType = (typeof ENTITY_TYPES)[number];
@@ -54,7 +58,25 @@ export const ENTITY_ROUTES: Record<EntityType, EntityRouteDef> = {
   sale: { segment: "sales", api: "/api/v1/sales", labelKey: "sales" },
   expense: { segment: "expenses", api: "/api/v1/expenses", labelKey: "expenses" },
   payment: { segment: "payments", api: "/api/v1/payments", labelKey: "payments" },
+  // Prompt 35 (§38/§39) — CRM entities live under /api/v1/crm/*; the list
+  // surface is the CRM module (#/crm?tab=…), handled by the shell.
+  lead: { segment: "leads", api: "/api/v1/crm/leads", labelKey: "crm" },
+  opportunity: { segment: "opportunities", api: "/api/v1/crm/opportunities", labelKey: "crm" },
 };
+
+/**
+ * Prompt 35 (§39) — CRM entities have NO bare list module route (#/leads is
+ * not a list — the list lives at #/crm?tab=leads). Entity "back to list"
+ * navigation for CRM types resolves through this map.
+ */
+export const CRM_ENTITY_TAB = {
+  lead: "leads",
+  opportunity: "opportunities",
+} as const satisfies Partial<Record<EntityType, string>>;
+
+export function isCrmEntity(entity: EntityType): boolean {
+  return entity === "lead" || entity === "opportunity";
+}
 
 /** Reverse map: hash segment → entity. Built ONCE from ENTITY_ROUTES. */
 const SEGMENT_TO_ENTITY: Record<string, EntityType> = Object.fromEntries(
@@ -62,9 +84,10 @@ const SEGMENT_TO_ENTITY: Record<string, EntityType> = Object.fromEntries(
 ) as Record<string, EntityType>;
 
 /**
- * Prompt 33 search types → Prompt 34 entities. One closed map — search
+ * Prompt 33 search types → Prompt 34/35 entities. One closed map — search
  * results never build URLs client-side from server strings (§33/§64);
- * they resolve type+id through this vocabulary.
+ * they resolve type+id through this vocabulary. Prompt 35 (§46/§47) adds
+ * LEAD + OPPORTUNITY.
  */
 export const SEARCH_TYPE_TO_ENTITY = {
   CUSTOMER: "customer",
@@ -73,6 +96,8 @@ export const SEARCH_TYPE_TO_ENTITY = {
   SALE: "sale",
   EXPENSE: "expense",
   PAYMENT: "payment",
+  LEAD: "lead",
+  OPPORTUNITY: "opportunity",
 } as const satisfies Record<string, EntityType>;
 
 /**

@@ -18,6 +18,7 @@ import {
   ShoppingCart,
   Trash2,
   TrendingUp,
+  UserRound,
   Wallet,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
@@ -35,6 +36,8 @@ import { EntityMetricCard } from "./entity-metric-card";
 import { EntityDeleteDialog } from "./entity-delete-dialog";
 import { RelatedRecordList } from "./related-record-list";
 import { navigateToEntity, navigateToEntityList } from "./entity-route";
+import { StageBadge } from "../crm/crm-badges";
+import { invalidateCrmAfterMutation } from "../crm/crm-api";
 import { PartyFormDialog } from "../parties/party-form-dialog";
 import { SaleFormDialog } from "../sales/sale-form-dialog";
 import type { CustomerDetail } from "@/lib/entities";
@@ -193,6 +196,57 @@ export function CustomerDetailView({
         }))}
       />
 
+      {/* Prompt 35 (§44/§45) — CRM PIPELINE section: visually SEPARATE from
+          the financial summary above (different heading, forecast labels).
+          Clicking an opportunity opens its exact detail (§44). */}
+      <section aria-label={t("crmSection")} className="flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold tracking-wide uppercase">{t("crmSection")}</h2>
+          <span className="text-muted-foreground text-xs">
+            {t("crmOpenCount", { count: data.crm.openOpportunityCount })}
+          </span>
+        </div>
+        {data.crm.recentOpportunities.length === 0 ? (
+          <p className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
+            {t("crmEmpty")}
+          </p>
+        ) : (
+          <RelatedRecordList
+            title={t("crmSection")}
+            entity="opportunity"
+            emptyText={t("crmEmpty")}
+            onOpen={navigateToEntity}
+            items={data.crm.recentOpportunities.map((o) => ({
+              id: o.id,
+              icon: TrendingUp,
+              primary: o.title,
+              secondary: o.expectedCloseDate ? fmtDate(business, o.expectedCloseDate) : undefined,
+              trailing: fmtMoney(business, o.expectedValueMinor),
+              trailingMuted: `${o.probabilityPct}%`,
+              badge: <StageBadge stage={o.stage} />,
+            }))}
+          />
+        )}
+        {data.crm.leadOrigin ? (
+          <RelatedRecordList
+            title={t("crmLeadOrigin")}
+            entity="lead"
+            emptyText=""
+            onOpen={navigateToEntity}
+            items={[
+              {
+                id: data.crm.leadOrigin.id,
+                icon: UserRound,
+                primary: data.crm.leadOrigin.name,
+                secondary: data.crm.leadOrigin.convertedAt
+                  ? fmtDate(business, data.crm.leadOrigin.convertedAt)
+                  : undefined,
+              },
+            ]}
+          />
+        ) : null}
+      </section>
+
       <PartyFormDialog
         open={editOpen}
         onOpenChange={setEditOpen}
@@ -207,9 +261,10 @@ export function CustomerDetailView({
         onOpenChange={setNewInvoiceOpen}
         business={business}
         presetCustomer={{ id: c.id, name: c.name }}
-        onCreated={() =>
-          invalidateEntityDetail(queryClient, businessId, "customer", c.id)
-        }
+        onCreated={() => {
+          invalidateEntityDetail(queryClient, businessId, "customer", c.id);
+          invalidateCrmAfterMutation(queryClient, businessId);
+        }}
       />
     </div>
   );

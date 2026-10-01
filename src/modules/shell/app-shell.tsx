@@ -33,6 +33,7 @@ import { NotificationsView } from "../notifications/notifications-view";
 import { SearchCenterView } from "../search/search-view";
 import { EntityDetailView } from "../entities/entity-detail-view";
 import { ENTITY_ROUTES } from "@/lib/entity-routes";
+import { CrmView } from "../crm/crm-view";
 import { SubscriptionView } from "../billing/subscription-view";
 import { PaymentReturnView } from "../billing/payment-return-view";
 import { AuditView } from "../audit/audit-view";
@@ -62,6 +63,9 @@ function labelKeyOf(view: AppView): string {
     // Prompt 33 — Search Results Center document title.
     case "search":
       return "search";
+    // Prompt 35 (§36) — CRM module document title.
+    case "crm":
+      return "crm";
     // Prompt 34 — entity detail titles reuse the owning module's nav label.
     case "entity":
       return ENTITY_ROUTES[view.entity].labelKey;
@@ -189,6 +193,18 @@ export function AppShell({
               {view.kind === "notifications" ? <NotificationsView /> : null}
               {view.kind === "settings:notifications" ? <NotificationsPreferencesView /> : null}
               {view.kind === "search" ? <SearchCenterView /> : null}
+              {view.kind === "crm" ? (
+                <ModuleBoundary
+                  moduleKey={viewKey}
+                  title={tBoundary("title")}
+                  description={tBoundary("description")}
+                  retry={tCommon("retry")}
+                  dashboardLabel={tNav("dashboard")}
+                  onDashboard={() => navigate({ kind: "dashboard" })}
+                >
+                  <CrmView business={membership!.business} role={role} tab={view.tab} />
+                </ModuleBoundary>
+              ) : null}
               {view.kind === "entity" ? (
                 <ModuleBoundary
                   moduleKey={viewKey}

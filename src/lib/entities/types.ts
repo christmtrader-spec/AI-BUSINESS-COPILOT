@@ -61,6 +61,23 @@ export type RecentPaymentRow = {
   note: string | null;
 };
 
+/** Prompt 35 (§44) — bounded CRM slice of the Customer 360. */
+export type CustomerCrmSection = {
+  openOpportunityCount: number;
+  recentOpportunities: CustomerOpportunityRef[];
+  /** The lead this customer converted from, when one exists (§44). */
+  leadOrigin: { id: string; name: string; convertedAt: string | null } | null;
+};
+
+export type CustomerOpportunityRef = {
+  id: string;
+  title: string;
+  stage: "DISCOVERY" | "QUALIFIED" | "PROPOSAL" | "NEGOTIATION" | "WON" | "LOST";
+  probabilityPct: number;
+  expectedValueMinor: number;
+  expectedCloseDate: string | null;
+};
+
 export type CustomerDetail = {
   customer: {
     id: string;
@@ -76,6 +93,12 @@ export type CustomerDetail = {
   recentSales: CustomerRecentSale[];
   /** Bounded: ≤ 10 (§12/§85). */
   recentPayments: RecentPaymentRow[];
+  /**
+   * Prompt 35 (§44/§45) — CRM PIPELINE section, kept STRICTLY separate
+   * from the financial summary above. Bounded ≤ 10. Forecast values only —
+   * never mixed into receivable/sales math.
+   */
+  crm: CustomerCrmSection;
 };
 
 /* ------------------------------------------------------------------ */

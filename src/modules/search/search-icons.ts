@@ -9,6 +9,8 @@ import {
   CreditCard,
   Package,
   ShoppingCart,
+  Target,
+  TrendingUp,
   Truck,
   Users,
   Wallet,
@@ -23,6 +25,8 @@ export const SEARCH_TYPE_ICONS: Record<SearchEntityType, LucideIcon> = {
   SALE: ShoppingCart,
   EXPENSE: Wallet,
   PAYMENT: CreditCard,
+  LEAD: Target,
+  OPPORTUNITY: TrendingUp,
 };
 
 /** Medium localized date for result rows (never raw ISO in the UI). */

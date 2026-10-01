@@ -233,3 +233,95 @@ export function paymentCandidate(
     method: paymentMethod(row.method),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Prompt 35 (§46) — CRM candidates. Notes/descriptions are SECONDARY match
+// fields only (§5.1 convention); forecast amounts are NEVER selected (§5.5).
+// ---------------------------------------------------------------------------
+
+export type LeadRow = {
+  id: string;
+  name: string;
+  companyName: string | null;
+  phone: string | null;
+  email: string | null;
+  status: string;
+  createdAt: Date;
+};
+
+export type OpportunityRow = {
+  id: string;
+  title: string;
+  description: string | null;
+  stage: string;
+  createdAt: Date;
+  customer: { name: string } | null;
+  lead: { name: string } | null;
+};
+
+/** Closed-token guard for lead statuses (§4.1 — nothing raw leaves). */
+function leadStatusToken(status: string): SearchItemStatus | null {
+  return status === "NEW" ||
+    status === "CONTACTED" ||
+    status === "QUALIFIED" ||
+    status === "DISQUALIFIED" ||
+    status === "CONVERTED"
+    ? status
+    : null;
+}
+
+/** Closed-token guard for opportunity stages (§4.1). */
+function stageToken(stage: string): SearchItemStatus | null {
+  return stage === "DISCOVERY" ||
+    stage === "QUALIFIED" ||
+    stage === "PROPOSAL" ||
+    stage === "NEGOTIATION" ||
+    stage === "WON" ||
+    stage === "LOST"
+    ? stage
+    : null;
+}
+
+export function leadCandidate(row: LeadRow): SearchCandidate {
+  const subtitle = row.companyName ?? row.phone ?? row.email;
+  return {
+    id: row.id,
+    type: "LEAD",
+    title: row.name,
+    titleNorm: normalizeSearchText(row.name),
+    subtitle,
+    identifierNorm: null,
+    identifierExtras: [],
+    numericIdentifier: null,
+    secondaryNorms: [row.companyName, row.phone, row.email]
+      .filter((v): v is string => Boolean(v))
+      .map(normalizeSearchText),
+    createdAt: row.createdAt,
+    status: leadStatusToken(row.status),
+    date: null,
+    direction: null,
+    method: null,
+  };
+}
+
+export function opportunityCandidate(row: OpportunityRow): SearchCandidate {
+  const subtitle = row.customer?.name ?? row.lead?.name ?? null;
+  return {
+    id: row.id,
+    type: "OPPORTUNITY",
+    title: row.title,
+    titleNorm: normalizeSearchText(row.title),
+    subtitle,
+    identifierNorm: null,
+    identifierExtras: [],
+    numericIdentifier: null,
+    secondaryNorms: [row.customer?.name, row.lead?.name, row.description]
+      .filter((v): v is string => Boolean(v))
+      .map(normalizeSearchText),
+    createdAt: row.createdAt,
+    status: stageToken(row.stage),
+    date: null,
+    direction: null,
+    method: null,
+  };
+}

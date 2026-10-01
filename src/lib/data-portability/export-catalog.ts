@@ -42,6 +42,8 @@ export type ExportDatasetKey =
   | "sale_items"
   | "expenses"
   | "payments"
+  | "crm_leads"
+  | "crm_opportunities"
   | "subscription_summary"
   | "usage_summary";
 
@@ -56,6 +58,8 @@ export const EXPORT_DATASET_KEYS = [
   "sale_items",
   "expenses",
   "payments",
+  "crm_leads",
+  "crm_opportunities",
   "subscription_summary",
   "usage_summary",
 ] as const satisfies readonly ExportDatasetKey[];
@@ -85,6 +89,11 @@ export const EXPORT_CATALOG: Record<ExportDatasetKey, DatasetMeta> = {
   sale_items: { key: "sale_items", sensitivity: "CONFIDENTIAL", csvFile: "sale_items.csv", labelKey: "saleItems" },
   expenses: { key: "expenses", sensitivity: "CONFIDENTIAL", csvFile: "expenses.csv", labelKey: "expenses" },
   payments: { key: "payments", sensitivity: "CONFIDENTIAL", csvFile: "payments.csv", labelKey: "payments" },
+  // Prompt 35 (§86) — CRM datasets: CONFIDENTIAL (personal contact data);
+  // relationships carried as stable ids; forecast values exported as minor
+  // integers; never any platform/AI-cost/security data.
+  crm_leads: { key: "crm_leads", sensitivity: "CONFIDENTIAL", csvFile: "crm_leads.csv", labelKey: "crmLeads" },
+  crm_opportunities: { key: "crm_opportunities", sensitivity: "CONFIDENTIAL", csvFile: "crm_opportunities.csv", labelKey: "crmOpportunities" },
   subscription_summary: { key: "subscription_summary", sensitivity: "CONFIDENTIAL", csvFile: "subscription.csv", labelKey: "subscriptionSummary" },
   usage_summary: { key: "usage_summary", sensitivity: "CONFIDENTIAL", csvFile: "usage.csv", labelKey: "usageSummary" },
 };
@@ -476,6 +485,112 @@ export const DATASET_FETCHERS: Record<ExportDatasetKey, DatasetFetcher> = {
     };
   },
 
+  // Prompt 35 (§86) — CRM leads export (soft-deleted included: portability
+  // mirrors the tenant lifecycle; §105/§106 policy analog).
+  crm_leads: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.crmLead.findMany({
+        where: { businessId: ctx.businessId },
+        orderBy: { createdAt: "asc" },
+        take,
+        select: {
+          id: true,
+          name: true,
+          companyName: true,
+          phone: true,
+          email: true,
+          source: true,
+          sourceDetail: true,
+          status: true,
+          note: true,
+          assignedToUserId: true,
+          customerId: true,
+          convertedAt: true,
+          deletedAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((l) => ({
+        json: {
+          id: l.id,
+          name: l.name,
+          companyName: l.companyName,
+          phone: l.phone,
+          email: l.email,
+          source: l.source,
+          sourceDetail: l.sourceDetail,
+          status: l.status,
+          note: l.note,
+          assignedToUserId: l.assignedToUserId,
+          customerId: l.customerId,
+          convertedAt: iso(l.convertedAt),
+          deletedAt: iso(l.deletedAt),
+          createdAt: l.createdAt.toISOString(),
+          updatedAt: l.updatedAt.toISOString(),
+        },
+        csv: [l.id, l.name, l.companyName, l.phone, l.email, l.source, l.sourceDetail, l.status, l.note, l.assignedToUserId, l.customerId, iso(l.convertedAt), iso(l.deletedAt), l.createdAt.toISOString(), l.updatedAt.toISOString()],
+      })),
+      truncated,
+    };
+  },
+
+  crm_opportunities: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.crmOpportunity.findMany({
+        where: { businessId: ctx.businessId },
+        orderBy: { createdAt: "asc" },
+        take,
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          leadId: true,
+          customerId: true,
+          stage: true,
+          probabilityPct: true,
+          expectedValueMinor: true,
+          currencyCode: true,
+          expectedCloseDate: true,
+          assignedToUserId: true,
+          lostReason: true,
+          wonAt: true,
+          lostAt: true,
+          deletedAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((o) => ({
+        json: {
+          id: o.id,
+          title: o.title,
+          description: o.description,
+          leadId: o.leadId,
+          customerId: o.customerId,
+          stage: o.stage,
+          probabilityPct: o.probabilityPct,
+          expectedValueMinor: o.expectedValueMinor,
+          currencyCode: o.currencyCode,
+          expectedCloseDate: iso(o.expectedCloseDate),
+          assignedToUserId: o.assignedToUserId,
+          lostReason: o.lostReason,
+          wonAt: iso(o.wonAt),
+          lostAt: iso(o.lostAt),
+          deletedAt: iso(o.deletedAt),
+          createdAt: o.createdAt.toISOString(),
+          updatedAt: o.updatedAt.toISOString(),
+        },
+        csv: [o.id, o.title, o.description, o.leadId, o.customerId, o.stage, o.probabilityPct, formatMinorToDecimal(o.expectedValueMinor, ctx.decimalPrecision), o.currencyCode, iso(o.expectedCloseDate), o.assignedToUserId, o.lostReason, iso(o.wonAt), iso(o.lostAt), iso(o.deletedAt), o.createdAt.toISOString(), o.updatedAt.toISOString()],
+      })),
+      truncated,
+    };
+  },
+
   payments: async (ctx) => {
     // §48 — tenant FINANCE payments (sale/expense settlements). This is NOT
     // platform subscription billing; no provider/payment-transaction fields.
@@ -616,6 +731,8 @@ export const DATASET_CSV_COLUMNS: Record<ExportDatasetKey, string[]> = {
   sale_items: ["id", "sale_id", "product_id", "name", "unit", "qty", "unit_price", "line_total"],
   expenses: ["id", "supplier_id", "category", "amount", "paid", "status", "spent_at", "note", "deleted_at", "created_at", "updated_at"],
   payments: ["id", "sale_id", "expense_id", "direction", "amount", "method", "note", "paid_at", "created_at"],
+  crm_leads: ["id", "name", "company_name", "phone", "email", "source", "source_detail", "status", "note", "assigned_to_user_id", "customer_id", "converted_at", "deleted_at", "created_at", "updated_at"],
+  crm_opportunities: ["id", "title", "description", "lead_id", "customer_id", "stage", "probability_pct", "expected_value", "currency_code", "expected_close_date", "assigned_to_user_id", "lost_reason", "won_at", "lost_at", "deleted_at", "created_at", "updated_at"],
   subscription_summary: ["plan_code", "plan_name", "status", "billing_period", "current_period_start", "current_period_end", "trial_start", "trial_end", "cancel_at_period_end", "canceled_at", "ended_at", "created_at"],
   usage_summary: ["metric", "used", "limit", "remaining", "percentage_used", "period_start", "period_end"],
 };

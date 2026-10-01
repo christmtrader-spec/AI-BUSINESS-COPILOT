@@ -117,3 +117,44 @@ No arbitrary cross-module links exist; every row navigates through
   views (explicitly out of scope for Prompt 34).
 - All roles currently hold `data:read`, so a role-gated 403 is reachable
   only at the membership layer (verified) — same as Prompt 33.
+
+
+## Prompt 35 additions — Lead & Opportunity details
+
+The closed entity vocabulary is now **eight** types: customer, supplier,
+product, sale, expense, payment, **lead**, **opportunity**.
+
+### Deep links
+
+- Lead: `#/leads/<id>` → `GET /api/v1/crm/leads/<id>`
+- Opportunity: `#/opportunities/<id>` → `GET /api/v1/crm/opportunities/<id>`
+- `#/crm/leads/<id>` is deliberately NOT a route (the CRM list lives at
+  `#/crm?tab=leads`). Parsing stays centralized in `src/lib/entity-routes.ts`
+  (`parseEntityRoute` / `entityToHash` / `CRM_ENTITY_TAB` for the back link).
+
+### Lead detail
+
+Header (status badge, avatar, actions: Convert / Change status / Edit /
+Delete) · summary metrics (Status, Open opportunities, Opportunities,
+Conversion state + date) · contact card (company, phone, email, source,
+source detail, assignee, note) · converted-customer link (when converted) ·
+recent opportunities (bounded ≤10, server-side). Deleting a converted lead
+never touches the customer.
+
+### Opportunity detail
+
+Header (stage badge, actions: New invoice (WON+customer only) / Move stage /
+Edit / Delete) · summary metrics (Stage, Probability, **Expected value**,
+**Weighted value** — forecast language, never revenue) · detail card
+(customer/lead links, expected close, assignee, description, lost reason,
+won/lost dates, currency) · "New invoice" reuses the EXISTING SaleFormDialog
+with the customer pre-selected — the invoice is created only on explicit
+submit, and success triggers targeted invalidations (opportunity, customer,
+sales, search).
+
+### Customer 360 CRM section
+
+Customer detail now carries a bounded `crm` section (open-opportunity count,
+≤10 recent opportunities, converting-lead origin) rendered BELOW the
+financial summary under a separate "CRM pipeline" heading — financial cards
+are untouched.

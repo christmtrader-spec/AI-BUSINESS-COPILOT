@@ -18,6 +18,7 @@ import { db } from "@/lib/db";
 import { partyUpdateSchema } from "@/lib/schemas";
 import {
   compute360Summary,
+  mapCustomerCrm,
   mapCustomerDetail,
   toStatusToken,
 } from "@/lib/entities";
@@ -49,7 +50,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   // §40 — independent bounded queries in parallel; aggregates via groupBy
   // (one round trip, no N+1); recent lists take ≤10 with deterministic
   // ordering; explicit select everywhere (§86).
-  const [statusBuckets, recentSales, recentPayments] = await Promise.all([
+  const [statusBuckets, recentSales, recentPayments, openOppCount, recentOpps, leadOrigin] = await Promise.all([
     db.sale.groupBy({
       by: ["status"],
       where: { businessId: ctx.businessId, customerId: id, deletedAt: null },
@@ -81,6 +82,36 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         note: true,
       },
     }),
+    // Prompt 35 (§44) — CRM section: open-opportunity count + bounded ≤10
+    // recent opportunities + the converting lead origin. Tenant-scoped and
+    // soft-delete aware; the customer's financial aggregates above are
+    // UNTOUCHED (§45).
+    db.crmOpportunity.count({
+      where: {
+        businessId: ctx.businessId,
+        customerId: id,
+        deletedAt: null,
+        stage: { in: ["DISCOVERY", "QUALIFIED", "PROPOSAL", "NEGOTIATION"] },
+      },
+    }),
+    db.crmOpportunity.findMany({
+      where: { businessId: ctx.businessId, customerId: id, deletedAt: null },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 10,
+      select: {
+        id: true,
+        title: true,
+        stage: true,
+        probabilityPct: true,
+        expectedValueMinor: true,
+        expectedCloseDate: true,
+      },
+    }),
+    db.crmLead.findFirst({
+      where: { businessId: ctx.businessId, customerId: id, deletedAt: null },
+      orderBy: [{ convertedAt: "desc" }, { id: "desc" }],
+      select: { id: true, name: true, convertedAt: true },
+    }),
   ]);
 
   const summary = compute360Summary(
@@ -92,7 +123,13 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
     })),
   );
 
-  return ok(mapCustomerDetail(customer, summary, recentSales, recentPayments));
+  return ok(
+    mapCustomerDetail(customer, summary, recentSales, recentPayments, mapCustomerCrm({
+      openOpportunityCount: openOppCount,
+      recentOpportunities: recentOpps,
+      leadOrigin,
+    })),
+  );
 });
 
 export const PATCH = route(async (req: NextRequest, { params }: RouteParams) => {

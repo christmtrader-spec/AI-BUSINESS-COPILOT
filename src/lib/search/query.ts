@@ -10,8 +10,8 @@
  * TENANT ISOLATION (§3 — absolute): every WHERE clause contains
  * `businessId` derived server-side from getAuthContext. Soft-deleted rows
  * are excluded with `deletedAt: null` for Customer/Supplier/Product/Sale/
- * Expense (Payment has no soft delete). The inactive product state is NOT
- * deleted and stays searchable (§20: inactive ≠ deleted).
+ * Expense/Lead/Opportunity (Payment has no soft delete). The inactive
+ * product state is NOT deleted and stays searchable (§20: inactive ≠ deleted).
  */
 import "server-only";
 import { db } from "@/lib/db";
@@ -19,11 +19,14 @@ import { SEARCH_PER_ENTITY_TAKE } from "./schema";
 import {
   customerCandidate,
   expenseCandidate,
+  leadCandidate,
+  opportunityCandidate,
   paymentCandidate,
   productCandidate,
   saleCandidate,
   supplierCandidate,
   type ExpenseRow,
+  type OpportunityRow,
   type PaymentRow,
   type SaleRow,
 } from "./dto";
@@ -212,6 +215,71 @@ async function searchPayments(
   return rows.map((r) => paymentCandidate(r as PaymentRow, localizedLabel));
 }
 
+/** Prompt 35 (§46) — lead prefilter (name/company/phone/email). */
+async function searchLeads(
+  businessId: string,
+  variants: string[],
+): Promise<SearchCandidate[]> {
+  const rows = await db.crmLead.findMany({
+    where: {
+      businessId,
+      deletedAt: null,
+      OR: [
+        ...variants.map((v) => ({ name: { contains: v } })),
+        ...variants.map((v) => ({ companyName: { contains: v } })),
+        ...variants.map((v) => ({ phone: { contains: v } })),
+        ...variants.map((v) => ({ email: { contains: v } })),
+        ...variants.map((v) => ({ sourceDetail: { contains: v } })),
+      ],
+    },
+    select: {
+      id: true,
+      name: true,
+      companyName: true,
+      phone: true,
+      email: true,
+      status: true,
+      createdAt: true,
+      // note is deliberately NOT selected (search privacy policy §5.1/§90).
+    },
+    orderBy: { createdAt: "desc" as const },
+    take: SEARCH_PER_ENTITY_TAKE,
+  });
+  return rows.map(leadCandidate);
+}
+
+/** Prompt 35 (§46) — opportunity prefilter (title/description/relations). */
+async function searchOpportunities(
+  businessId: string,
+  variants: string[],
+): Promise<SearchCandidate[]> {
+  const rows = await db.crmOpportunity.findMany({
+    where: {
+      businessId,
+      deletedAt: null,
+      OR: [
+        ...variants.map((v) => ({ title: { contains: v } })),
+        ...variants.map((v) => ({ description: { contains: v } })),
+        ...variants.map((v) => ({ customer: { is: { name: { contains: v } } } })),
+        ...variants.map((v) => ({ lead: { is: { name: { contains: v } } } })),
+      ],
+    },
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      stage: true,
+      createdAt: true,
+      customer: { select: { name: true } },
+      lead: { select: { name: true } },
+      // expectedValueMinor is a forecast — never searched/selected (§5.5).
+    },
+    orderBy: { createdAt: "desc" as const },
+    take: SEARCH_PER_ENTITY_TAKE,
+  });
+  return rows.map((r) => opportunityCandidate(r as OpportunityRow));
+}
+
 /**
  * Run all requested entity searches concurrently (§6) and return the
  * combined candidate pool (pre-dedup, pre-rank). Bounded to
@@ -245,6 +313,12 @@ export async function fetchSearchCandidates(options: {
         break;
       case "PAYMENT":
         tasks.push(searchPayments(businessId, variants, numericInvoice, paymentLabel));
+        break;
+      case "LEAD":
+        tasks.push(searchLeads(businessId, variants));
+        break;
+      case "OPPORTUNITY":
+        tasks.push(searchOpportunities(businessId, variants));
         break;
     }
   }

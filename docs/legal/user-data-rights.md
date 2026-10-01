@@ -138,3 +138,12 @@ describes.
 - Whether and how the RETAINED ledgers (see `docs/legal/data-retention-inventory.md`) must respond
   to future deletion/objection-style requests is UNKNOWN-REVIEW REQUIRED; the public pages keep
   their `legalReviewRequired` marker and null `effectiveDate` until that review closes.
+
+### CRM data (Prompt 35)
+
+CRM records (`CrmLead`, `CrmOpportunity`) created by a business are part of the
+business dataset: they are covered by the data-export right (JSON/CSV datasets
+`crm_leads` / `crm_opportunities`) and by business deletion. A member's account
+deletion does not delete business CRM rows; assignment links are anonymized to
+NULL. CRM contains no tracking/marketing data (no pixels, no advertising IDs,
+no behavioral profiles).

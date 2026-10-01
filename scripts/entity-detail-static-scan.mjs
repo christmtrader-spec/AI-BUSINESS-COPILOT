@@ -20,7 +20,13 @@ const DETAIL_ROUTES = [
   "src/app/api/v1/sales/[id]/route.ts",
   "src/app/api/v1/expenses/[id]/route.ts",
   "src/app/api/v1/payments/[id]/route.ts",
+  // Prompt 35 (§77) — CRM detail routes + their service files.
+  "src/app/api/v1/crm/leads/[id]/route.ts",
+  "src/app/api/v1/crm/opportunities/[id]/route.ts",
 ];
+
+/** CRM service files hold the actual db reads (§77 — checked per rule). */
+const CRM_SERVICES = ["src/lib/crm/lead-service.ts", "src/lib/crm/opportunity-service.ts"];
 
 const ENTITY_LIB = [
   "src/lib/entity-routes.ts",
@@ -315,6 +321,55 @@ rule("§50.18 deletedAt filter on soft-deletable detail reads", (bad) => {
   // someone "fixing" this by inventing a soft delete)
   const pay = read("src/app/api/v1/payments/[id]/route.ts");
   if (pay === null) bad("src/app/api/v1/payments/[id]/route.ts", 0, "missing");
+  // Prompt 35 (§77) — CRM services scope deletedAt on every detail read.
+  for (const rel of CRM_SERVICES) {
+    const src = read(rel);
+    if (src === null) { bad(rel, 0, "missing file"); continue; }
+    if (!src.includes("deletedAt: null")) bad(rel, 0, "CRM detail read missing deletedAt filter");
+  }
+});
+
+/* 19 — Prompt 35 (§77): CRM service surface invariants */
+rule("§50.19 CRM services: businessId scoping, bounded reads, no raw rows", (bad) => {
+  for (const rel of CRM_SERVICES) {
+    const src = read(rel);
+    if (src === null) { bad(rel, 0, "missing file"); continue; }
+    // Scope via a businessId literal OR the shared where-variable built from
+    // businessId (`const where = xWhere(businessId, …)`, checked once).
+    const whereVarScoped = /const where = \w+Where\(businessId/.test(src);
+    const re = /db\.[a-zA-Z]+\.(findFirst|findMany|groupBy|count|aggregate)\(\{[\s\S]*?\}\)/g;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      const block = m[0];
+      const scoped = /businessId/.test(block) || (whereVarScoped && /\bwhere\b/.test(block));
+      if (!scoped) bad(rel, lineOf(src, block), "CRM read without businessId scope");
+      if (m[1] === "findMany" && !/take:/.test(block)) {
+        bad(rel, lineOf(src, block), "CRM findMany without take");
+      }
+    }
+  }
+});
+
+/* 20 — Prompt 35 (§77): CRM detail views use the shared entity components */
+rule("§50.20 CRM detail views exist and reuse shared architecture", (bad) => {
+  for (const rel of [
+    "src/modules/entities/lead-detail-view.tsx",
+    "src/modules/entities/opportunity-detail-view.tsx",
+  ]) {
+    const src = read(rel);
+    if (src === null) { bad(rel, 0, "missing file"); continue; }
+    for (const dep of ["EntityHeader", "EntityMetricCard", "RelatedRecordList", "EntityDeleteDialog"]) {
+      if (!src.includes(dep)) bad(rel, 0, `missing shared component ${dep}`);
+    }
+    // no second invoice form (§70): reuse the existing sale dialog
+    if (rel.endsWith("opportunity-detail-view.tsx") && !src.includes("SaleFormDialog")) {
+      bad(rel, 0, "opportunity detail must reuse the existing SaleFormDialog");
+    }
+  }
+  const dispatcher = read("src/modules/entities/entity-detail-view.tsx");
+  if (!dispatcher || !dispatcher.includes("LeadDetailView") || !dispatcher.includes("OpportunityDetailView")) {
+    bad("src/modules/entities/entity-detail-view.tsx", 0, "dispatcher must route lead/opportunity");
+  }
 });
 
 /* summary */

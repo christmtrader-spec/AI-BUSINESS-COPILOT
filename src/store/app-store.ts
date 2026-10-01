@@ -35,6 +35,13 @@ export type AppView =
   /** Prompt 33 — Search Results Center (#/search, #/search?q=…, §13). */
   | { kind: "search"; query?: string }
   /**
+   * Prompt 35 (§36/§37) — CRM module (#/crm). ONE view kind with a CLOSED
+   * tab vocabulary (leads | pipeline | opportunities); the tab rides the
+   * hash query (#/crm?tab=leads). Bare #/crm and unknown tabs resolve to
+   * the documented deterministic default (pipeline).
+   */
+  | { kind: "crm"; tab: CrmTab }
+  /**
    * Prompt 34 — Entity detail deep link (#/customers/<id>, §4/§5). The
    * entity is a CLOSED vocabulary token (lib/entity-routes) — never an
    * arbitrary string — and the id is validated by `parseEntityRoute`.
@@ -50,6 +57,20 @@ export type AppView =
   | { kind: "platform"; section: PlatformSection }
   /** Prompt 30 §250 — email verification landing (token from the email link). */
   | { kind: "verify-email"; token: string };
+
+/** Prompt 35 (§37) — closed CRM tab vocabulary. */
+export const CRM_TABS = ["leads", "pipeline", "opportunities"] as const;
+export type CrmTab = (typeof CRM_TABS)[number];
+
+/**
+ * Prompt 35 (§37) — the deterministic default tab for bare #/crm and for
+ * unknown tab values: the pipeline board (documented in crm-foundation.md).
+ */
+export const CRM_DEFAULT_TAB: CrmTab = "pipeline";
+
+export function isCrmTab(value: string): value is CrmTab {
+  return (CRM_TABS as readonly string[]).includes(value);
+}
 
 export const KNOWN_MODULES = [
   "customers",
@@ -100,6 +121,10 @@ export function isKnownModule(value: string): value is KnownModule {
 export function viewKeyOf(view: AppView): string {
   return view.kind === "module"
     ? `module:${view.module}`
+    // Prompt 35 — the tab is part of the key so tab switches remount the
+    // inner CRM view deterministically.
+    : view.kind === "crm"
+      ? `crm:${view.tab}`
     // Prompt 34 — entity + id both matter: opening a different record
     // remounts the detail view so no stale record can ever be shown (§36).
     : view.kind === "entity"
@@ -134,6 +159,11 @@ export function sameView(a: AppView, b: AppView): boolean {
   // both, so reaching here means they are equal; kept explicit for clarity).
   if (a.kind === "entity" && b.kind === "entity") {
     return a.entity === b.entity && a.id === b.id;
+  }
+  // Prompt 35 — CRM tab changes re-enter the store (back/forward) without
+  // remounting the module boundary shell; the tab drives the inner view.
+  if (a.kind === "crm" && b.kind === "crm") {
+    return a.tab === b.tab;
   }
   // Prompt 33 — hash query changes re-enter the store (back/forward must
   // update the Search Center) without remounting the view (§13/§33).
@@ -172,6 +202,10 @@ export function viewToHash(view: AppView): string | null {
       const q = (view.query ?? "").trim();
       return q ? `#/search?q=${encodeURIComponent(q)}` : "#/search";
     }
+    case "crm":
+      // Prompt 35 (§37) — the tab persists in the hash; the default tab
+      // renders as bare "#/crm" so the address stays canonical.
+      return view.tab === CRM_DEFAULT_TAB ? "#/crm" : `#/crm?tab=${view.tab}`;
     case "entity":
       // Prompt 34 — centralized encoder (§7/§39): validated entity + id,
       // safe-charset id, encodeURIComponent. Returns null (never a hash)
@@ -223,6 +257,13 @@ export function hashToView(hash: string): AppView {
     const q = query.get("q") ?? "";
     const clean = sanitizeSearchHashQuery(q);
     return clean ? { kind: "search", query: clean } : { kind: "search" };
+  }
+  // Prompt 35 (§37) — CRM deep links: #/crm, #/crm?tab=<closed tab>.
+  // Unknown tab values fall back to CRM_DEFAULT_TAB (pipeline) — the hash
+  // query is never interpreted as arbitrary state.
+  if (path === "crm") {
+    const tab = query.get("tab") ?? "";
+    return { kind: "crm", tab: isCrmTab(tab) ? tab : CRM_DEFAULT_TAB };
   }
   if (path === "profile") return { kind: "profile" };
   // Prompt 28 — platform console deep links (#/platform, #/platform/<section>).

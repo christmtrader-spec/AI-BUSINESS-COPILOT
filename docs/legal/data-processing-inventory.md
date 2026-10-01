@@ -185,6 +185,30 @@ type: `docs/product/notification-matrix.md`.
 | NotificationDelivery | `NotificationDelivery` — channel (IN_APP/EMAIL), status (PENDING/PROCESSING/SENT/FAILED/SKIPPED/CANCELED), `attemptCount`, attempt/sent/failed timestamps, normalized `failureCode` (fixed vocabulary, never raw SMTP output), `providerMessageId?` | Operational delivery audit per channel · internal only (never tenant-visible) | S: server delivery bookkeeping | Email delivery via the configured SMTP transport (recipient address only) | No | Cascade with the parent `Notification` (same deletion fates — no independent lifetime) | CONFIDENTIAL (operational metadata; no message content) |
 | NotificationPreference | `NotificationPreference` — unique `[userId, notificationType, channel]` + `enabled` flag | Explicit user channel choices per notification type · the user themselves (legal basis: contract/service operation) | U: explicit preference switches | No | No | DELETED via account deletion (cascade) | CONFIDENTIAL |
 
+### 4.10 CRM leads & opportunities (Prompt 35)
+
+Two tenant-owned CRM models record operational (non-accounting) sales-pipeline
+data. `CrmLead` stores name/company/phone/email (user-entered), a closed
+`source` classification, `sourceDetail`, an optional free-text `note`, a
+server-controlled `status` (NEW → … → CONVERTED), an optional assignee
+(`assignedToUserId` → `User`, `onDelete: SetNull`), and the conversion link
+`customerId` → `Customer` (SetNull). `CrmOpportunity` stores title/description,
+closed `stage` + integer `probabilityPct`, an integer FORECAST
+`expectedValueMinor` (+ `currencyCode`), optional `expectedCloseDate`, optional
+assignee/customer/lead links, and terminal metadata (`lostReason`, `wonAt`,
+`lostAt`). CRM is never authority over finance: expectedValueMinor never enters
+sales/receivables/reports/AI metrics.
+
+| Category | Examples (where stored) | Purpose · actor/context | Origin | Third-party processed | Exported? | Deleted? · Retention status | Class |
+|---|---|---|---|---|---|---|---|
+| CRM lead | `CrmLead` — name, companyName?, phone?, email?, source, sourceDetail?, status, note?, assignee, customer link, convertedAt | Business CRM management (tracking potential customers) · tenant members (legal basis: contract/service operation) | U: entered by members · S: ids, timestamps, status transitions | No | Yes (`crm_leads` dataset — Prompt 35 §86) | Soft delete (`deletedAt`) in normal ops; DELETED with business (cascade); assignment/user links SET NULL on account deletion | CONFIDENTIAL — may be personal data when the lead is a natural person |
+| CRM opportunity | `CrmOpportunity` — title, description?, stage, probabilityPct, expectedValueMinor (forecast), currencyCode, expectedCloseDate?, assignee/customer/lead links, lostReason?, wonAt/lostAt | Business CRM management (pipeline tracking) · tenant members | U: entered by members · S: stage/probability bookkeeping | No | Yes (`crm_opportunities` dataset) | Soft delete (`deletedAt`) in normal ops; DELETED with business (cascade); assignment/user links SET NULL on account deletion | CONFIDENTIAL (forecast values are business data) |
+
+CRM is NOT a marketing/tracking system (§89): no tracking pixels, no external
+advertising IDs, no behavioral profiles, no location/device fingerprinting, no
+hidden scoring. Search over CRM records follows the Prompt 33 privacy rules:
+queries are never logged or persisted (§90).
+
 ## 5. Business data vs personal data
 
 The tenant/business split is the backbone of this inventory, and it is deliberately conservative:
