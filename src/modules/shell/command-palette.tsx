@@ -36,6 +36,7 @@ import { LOCALES, localeLabel } from "@/i18n/config";
 import { useAppStore, type AppView } from "@/store/app-store";
 import { asRole, can, type Role } from "@/lib/rbac";
 import { ApiClientError } from "@/lib/api-client";
+import { fmtCount } from "../finance-shared/finance-kit";
 import {
   SEARCH_DEBOUNCE_MS,
   SEARCH_Q_MIN,
@@ -233,7 +234,7 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
               return (
                 <CommandGroup
                   key={group.type}
-                  heading={`${tSearch(`groups.${group.type}`)} · ${group.count}`}
+                  heading={`${tSearch(`groups.${group.type}`)} · ${fmtCount(locale, group.count)}`}
                 >
                   {group.items.map((item) => (
                     <CommandItem

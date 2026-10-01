@@ -33,6 +33,7 @@ import { EntityDeleteDialog } from "./entity-delete-dialog";
 import { RelatedRecordList } from "./related-record-list";
 import { navigateToEntity, navigateToEntityList } from "./entity-route";
 import { ExpenseFormDialog } from "../expenses/expense-form-dialog";
+import { PaymentFormDialog } from "../payments/payment-form-dialog";
 import { InfoRow } from "./customer-detail-view";
 import type { ExpenseDetail } from "@/lib/entities";
 
@@ -53,8 +54,10 @@ export function ExpenseDetailView({
   const businessId = useAppStore((s) => s.activeBusinessId);
 
   const writable = can(role, "data:write");
+  const canManageFinance = can(role, "finance:manage");
   const e = data.expense;
   const [editOpen, setEditOpen] = useState(false);
+  const [payOpen, setPayOpen] = useState(false);
 
   const deleteMutation = useMutation({
     mutationFn: async () => api(`/api/v1/expenses/${e.id}`, { method: "DELETE" }),
@@ -86,24 +89,32 @@ export function ExpenseDetailView({
           backLabel={t("backTo", { list: t("expenses") })}
           onBack={() => navigateToEntityList("expense")}
           actions={
-            writable ? (
-              <>
-                <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
-                  <Pencil className="size-4" aria-hidden="true" />
-                  {tCommon("edit")}
+            <>
+              {canManageFinance && e.balanceMinor > 0 ? (
+                <Button variant="outline" size="sm" onClick={() => setPayOpen(true)}>
+                  <Wallet className="size-4" aria-hidden="true" />
+                  {t("recordPayment")}
                 </Button>
-                <EntityDeleteDialog
-                  triggerLabel={tCommon("delete")}
-                  triggerIcon={Trash2}
-                  title={t("deleteTitle", { type: t("expense") })}
-                  description={t("deleteDesc")}
-                  confirmLabel={tCommon("delete")}
-                  cancelLabel={tCommon("cancel")}
-                  pending={deleteMutation.isPending}
-                  onConfirm={() => deleteMutation.mutate()}
-                />
-              </>
-            ) : null
+              ) : null}
+              {writable ? (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+                    <Pencil className="size-4" aria-hidden="true" />
+                    {tCommon("edit")}
+                  </Button>
+                  <EntityDeleteDialog
+                    triggerLabel={tCommon("delete")}
+                    triggerIcon={Trash2}
+                    title={t("deleteTitle", { type: t("expense") })}
+                    description={t("deleteDesc")}
+                    confirmLabel={tCommon("delete")}
+                    cancelLabel={tCommon("cancel")}
+                    pending={deleteMutation.isPending}
+                    onConfirm={() => deleteMutation.mutate()}
+                  />
+                </>
+              ) : null}
+            </>
           }
         />
         <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
@@ -178,7 +189,35 @@ export function ExpenseDetailView({
           note: e.note,
         }}
         business={business}
+        onSaved={() => {
+          if (e.supplierId) {
+            invalidateEntityDetail(queryClient, businessId, "supplier", e.supplierId);
+          }
+        }}
       />
+
+      {/* Quick pay — REUSES the shared PaymentFormDialog (§75, one flow).
+          Success refreshes this bill and the supplier 360 (payable). */}
+      {canManageFinance ? (
+        <PaymentFormDialog
+          open={payOpen}
+          onOpenChange={setPayOpen}
+          business={business}
+          presetTarget={{
+            kind: "expense",
+            id: e.id,
+            category: e.category,
+            supplierName: e.supplierName,
+            balanceMinor: e.balanceMinor,
+          }}
+          onSaved={() => {
+            invalidateEntityDetail(queryClient, businessId, "expense", e.id);
+            if (e.supplierId) {
+              invalidateEntityDetail(queryClient, businessId, "supplier", e.supplierId);
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }

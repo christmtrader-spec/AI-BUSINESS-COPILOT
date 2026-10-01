@@ -4,13 +4,19 @@
  * Prompt 34 — Sale (invoice) detail page (§28).
  * Invoice header + totals + items table (product rows navigate to the
  * product detail) + payments list (rows navigate to payment detail).
- * Read-only surface: VIEW never mutates (§65); the existing list dialog
- * remains the print/quick-pay surface.
+ * VIEW itself never mutates (§65): the record-payment quick action REUSES
+ * the existing PaymentFormDialog (finance:manage only, balance > 0) —
+ * no second payment flow, and the existing list dialog remains the
+ * print surface.
  */
 
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { CalendarDays, CreditCard, ShoppingCart, UserRound } from "lucide-react";
+import { CalendarDays, CreditCard, ShoppingCart, UserRound, Wallet } from "lucide-react";
 import { formatInvoiceNumber } from "@/lib/finance";
+import { can, type Role } from "@/lib/rbac";
+import { useAppStore } from "@/store/app-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,24 +27,32 @@ import {
   fmtMoney,
 } from "../finance-shared/finance-kit";
 import type { BusinessSummary } from "../shell/types";
+import { invalidateEntityDetail } from "./entity-api";
 import { EntityHeader, EntityBreadcrumb, EntityTypeBadge } from "./entity-header";
 import { EntityMetricCard } from "./entity-metric-card";
 import { RelatedRecordList } from "./related-record-list";
 import { navigateToEntity, navigateToEntityList } from "./entity-route";
+import { PaymentFormDialog } from "../payments/payment-form-dialog";
 import type { SaleDetail, SaleItemLine } from "@/lib/entities";
 
 export function SaleDetailView({
   data,
   business,
   uiLocale,
+  role,
 }: {
   data: SaleDetail;
   business: BusinessSummary;
   uiLocale: string;
+  role: Role;
 }) {
   const t = useTranslations("entityDetail");
   const tSearch = useTranslations("search");
+  const queryClient = useQueryClient();
+  const businessId = useAppStore((s) => s.activeBusinessId);
   const s = data.sale;
+  const canManageFinance = can(role, "finance:manage");
+  const [payOpen, setPayOpen] = useState(false);
 
   const columns: ColumnDef<SaleItemLine>[] = [
     {
@@ -94,16 +108,24 @@ export function SaleDetailView({
           backLabel={t("backTo", { list: t("sales") })}
           onBack={() => navigateToEntityList("sale")}
           actions={
-            s.customerId ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigateToEntity("customer", s.customerId as string)}
-              >
-                <UserRound className="size-4" aria-hidden="true" />
-                {t("openCustomer")}
-              </Button>
-            ) : null
+            <>
+              {canManageFinance && s.balanceMinor > 0 ? (
+                <Button variant="outline" size="sm" onClick={() => setPayOpen(true)}>
+                  <Wallet className="size-4" aria-hidden="true" />
+                  {t("recordPayment")}
+                </Button>
+              ) : null}
+              {s.customerId ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigateToEntity("customer", s.customerId as string)}
+                >
+                  <UserRound className="size-4" aria-hidden="true" />
+                  {t("openCustomer")}
+                </Button>
+              ) : null}
+            </>
           }
         />
         <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
@@ -189,6 +211,29 @@ export function SaleDetailView({
           trailingMuted: fmtDate(business, p.paidAt),
         }))}
       />
+
+      {/* Quick pay — REUSES the shared PaymentFormDialog (§75, one flow).
+          Success refreshes this invoice and the customer 360 (paid/receivable). */}
+      {canManageFinance ? (
+        <PaymentFormDialog
+          open={payOpen}
+          onOpenChange={setPayOpen}
+          business={business}
+          presetTarget={{
+            kind: "sale",
+            id: s.id,
+            number: s.number,
+            customerName: s.customerName,
+            balanceMinor: s.balanceMinor,
+          }}
+          onSaved={() => {
+            invalidateEntityDetail(queryClient, businessId, "sale", s.id);
+            if (s.customerId) {
+              invalidateEntityDetail(queryClient, businessId, "customer", s.customerId);
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -34,6 +34,7 @@ import { EntityDeleteDialog } from "./entity-delete-dialog";
 import { RelatedRecordList } from "./related-record-list";
 import { navigateToEntity, navigateToEntityList } from "./entity-route";
 import { PartyFormDialog } from "../parties/party-form-dialog";
+import { ExpenseFormDialog } from "../expenses/expense-form-dialog";
 import { InfoRow } from "./customer-detail-view";
 import type { SupplierDetail } from "@/lib/entities";
 
@@ -58,6 +59,7 @@ export function SupplierDetailView({
   const writable = can(role, "data:write");
   const s = data.supplier;
   const [editOpen, setEditOpen] = useState(false);
+  const [newExpenseOpen, setNewExpenseOpen] = useState(false);
 
   const deleteMutation = useMutation({
     mutationFn: async () => api(`/api/v1/suppliers/${s.id}`, { method: "DELETE" }),
@@ -93,6 +95,10 @@ export function SupplierDetailView({
           actions={
             writable ? (
               <>
+                <Button variant="outline" size="sm" onClick={() => setNewExpenseOpen(true)}>
+                  <Wallet className="size-4" aria-hidden="true" />
+                  {t("newExpense")}
+                </Button>
                 <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
                   <Pencil className="size-4" aria-hidden="true" />
                   {tCommon("edit")}
@@ -135,7 +141,7 @@ export function SupplierDetailView({
         <EntityMetricCard
           label={t("expensesCount")}
           value={fmtCount(uiLocale, data.summary.expenseCount)}
-          hint={t("openExpenses", { count: fmtCount(uiLocale, data.summary.openExpenseCount) })}
+          hint={t("openExpenses", { count: data.summary.openExpenseCount })}
           icon={ReceiptText}
         />
       </div>
@@ -189,6 +195,17 @@ export function SupplierDetailView({
         onOpenChange={setEditOpen}
         kind="supplier"
         editing={s}
+      />
+
+      {/* New expense — REUSES the shared ExpenseFormDialog (§75, one flow)
+          with this supplier pre-selected; success refreshes the 360. */}
+      <ExpenseFormDialog
+        open={newExpenseOpen}
+        onOpenChange={setNewExpenseOpen}
+        editing={null}
+        business={business}
+        presetSupplier={{ id: s.id, name: s.name }}
+        onSaved={() => invalidateEntityDetail(queryClient, businessId, "supplier", s.id)}
       />
     </div>
   );

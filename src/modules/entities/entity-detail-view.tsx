@@ -151,6 +151,7 @@ export function EntityDetailView({
           data={query.data as SaleDetail}
           business={business}
           uiLocale={uiLocale}
+          role={role}
         />
       );
     case "expense":

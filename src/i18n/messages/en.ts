@@ -2071,6 +2071,12 @@ const en = {
     expenses: "Expenses",
     payments: "Payments",
     backTo: "Back to {list}",
+    // Quick actions (reuse existing dialogs/flows — §75)
+    recordPayment: "Record payment",
+    newInvoice: "New invoice",
+    newExpense: "New expense",
+    copyLink: "Copy link",
+    linkCopied: "Link copied to clipboard",
     // Customer 360
     totalSales: "Total sales",
     paid: "Paid",

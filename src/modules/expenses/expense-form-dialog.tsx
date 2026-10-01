@@ -7,7 +7,7 @@
  * expense detail (§37, targeted).
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { toast } from "@/hooks/use-toast";
@@ -52,10 +52,15 @@ export type ExpenseEditRow = {
   note: string | null;
 };
 
-function formFrom(e: ExpenseEditRow | null, precision: number): ExpenseForm {
-  return e
-    ? { supplierId: "", category: e.category, amount: String(fromMinor(e.amountMinor, precision)), note: e.note ?? "" }
-    : { supplierId: "", category: "", amount: "", note: "" };
+function formFrom(
+  e: ExpenseEditRow | null,
+  precision: number,
+  presetSupplierId?: string | null,
+): ExpenseForm {
+  if (e) {
+    return { supplierId: "", category: e.category, amount: String(fromMinor(e.amountMinor, precision)), note: e.note ?? "" };
+  }
+  return { supplierId: presetSupplierId ?? "", category: "", amount: "", note: "" };
 }
 
 export function ExpenseFormDialog({
@@ -63,11 +68,17 @@ export function ExpenseFormDialog({
   onOpenChange,
   editing,
   business,
+  presetSupplier,
+  onSaved,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editing: ExpenseEditRow | null;
   business: BusinessSummary;
+  /** Pre-selected supplier — e.g. "New expense" from the supplier 360 page. */
+  presetSupplier?: { id: string; name: string } | null;
+  /** Invoked after a successful save — lets 360 pages refresh their data. */
+  onSaved?: () => void;
 }) {
   const t = useTranslations("finance.expenses");
   const tCommon = useTranslations("common");
@@ -76,13 +87,16 @@ export function ExpenseFormDialog({
   const invalidateFinance = useInvalidateFinance();
   const businessId = useAppStore((s) => s.activeBusinessId);
 
-  const [form, setForm] = useState<ExpenseForm>(() => formFrom(editing, business.decimalPrecision));
+  const [form, setForm] = useState<ExpenseForm>(() =>
+    formFrom(editing, business.decimalPrecision, presetSupplier?.id),
+  );
 
   // Render-phase reset when the dialog opens (React-sanctioned adjustment).
   const [prevOpen, setPrevOpen] = useState(open);
   if (open !== prevOpen) {
     setPrevOpen(open);
-    if (open) setForm(formFrom(editing, business.decimalPrecision));
+    if (open)
+      setForm(formFrom(editing, business.decimalPrecision, presetSupplier?.id));
   }
 
   // Supplier options — only fetched while the dialog is open (same as the
@@ -98,6 +112,16 @@ export function ExpenseFormDialog({
     enabled: open,
     staleTime: 15_000,
   });
+
+  // The preset supplier may live beyond the first options page — merge it
+  // into the selectable list so the Select always renders its name.
+  const supplierOptions = useMemo(() => {
+    const list = suppliers ?? [];
+    if (presetSupplier && !list.some((s) => s.id === presetSupplier.id)) {
+      return [{ id: presetSupplier.id, name: presetSupplier.name }, ...list];
+    }
+    return list;
+  }, [suppliers, presetSupplier]);
 
   const amountMinor = moneyToMinorOrNull(form.amount, business.decimalPrecision);
   const canSubmit =
@@ -122,6 +146,7 @@ export function ExpenseFormDialog({
       invalidateFinance();
       // §37 — the open expense detail (if any) converges to server state.
       if (editing) invalidateEntityDetail(queryClient, businessId, "expense", editing.id);
+      onSaved?.();
     },
     onError: (err) => {
       toast({
@@ -178,7 +203,7 @@ export function ExpenseFormDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={NONE}>{t("noSupplier")}</SelectItem>
-                {(suppliers ?? []).map((s) => (
+                {(supplierOptions).map((s) => (
                   <SelectItem key={s.id} value={s.id} dir="auto">
                     {s.name}
                   </SelectItem>

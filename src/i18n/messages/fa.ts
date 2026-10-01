@@ -2074,6 +2074,12 @@ const fa: Messages = {
     expenses: "هزینه‌ها",
     payments: "پرداخت‌ها",
     backTo: "بازگشت به {list}",
+    // Quick actions (reuse existing dialogs/flows — §75)
+    recordPayment: "ثبت پرداخت",
+    newInvoice: "فاکتور جدید",
+    newExpense: "هزینه جدید",
+    copyLink: "کپی پیوند",
+    linkCopied: "پیوند در کلیپ‌بورد کپی شد",
     // Customer 360
     totalSales: "مجموع فروش",
     paid: "پرداخت‌شده",

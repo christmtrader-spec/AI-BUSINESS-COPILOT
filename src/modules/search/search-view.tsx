@@ -12,6 +12,7 @@ import {
 } from "./search-api";
 import { SEARCH_TYPE_ICONS, formatSearchDate } from "./search-icons";
 import { entityViewFromSearchItem } from "../entities/entity-route";
+import { fmtCount } from "../finance-shared/finance-kit";
 import type { SearchEntityType, SearchResultItem } from "@/lib/search/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -249,7 +250,7 @@ export function SearchCenterView() {
                     <Icon className="size-4" aria-hidden="true" />
                     <span>{groupLabel}</span>
                     <Badge variant="secondary" className="ms-auto">
-                      {group.count}
+                      {fmtCount(locale, group.count)}
                     </Badge>
                   </h2>
                   <ul className="divide-y">

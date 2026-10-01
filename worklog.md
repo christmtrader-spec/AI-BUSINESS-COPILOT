@@ -2777,3 +2777,44 @@ Stage Summary:
 - NO: FTS5/Elasticsearch/Redis/Algolia, no new tables, no search history/recently-viewed/activity tracking, no notification-on-view, no AI grounding changes, no platform data exposure, no second delete/stock/reversal flow, no new permissions (§65–§75/§82/§83/§103).
 - Known limitations (honest): recent lists are bounded windows (≤10/20) — full history stays in paginated lists; product recent-sales dedupes ≤10 unique sales; all roles hold data:read so permission-403 is only reachable at the membership layer (verified 403 there); read GETs carry no Cache-Control header (consistent with every other GET in the app; SPA fetches are same-origin with credentials and React Query keys make stale HTTP caching irrelevant in practice — same trade-off as P17–P33 surfaces).
 - NEXT: STOP. DO NOT IMPLEMENT PROMPT 35. No saved searches, no semantic/AI search, no CRM pipeline, no entity activity tracking, no cross-business search, no external engines. Wait for the next explicit task.
+
+---
+Task ID: p34-qa-hardening-quick-actions
+Agent: Z.ai Code
+Task: CONTINUE — Deep full-project testing, bug identification & fixes, plus entity-detail quick actions (record payment / new invoice / new expense via EXISTING dialogs + copy deep link). Persian directive: ادامه ساخت + تست عمیق و دقیق + شناسایی و رفع تمام باگ‌ها.
+
+Baseline:
+- Prompt 34 COMPLETE per worklog (all suites green). This session re-verified EVERYTHING from scratch, then extended.
+
+Work Log — DEEP RE-VERIFICATION (all EXECUTED this session):
+- P34: prompt34-unit 133/133 · entity-detail-static-scan 18/18 · prompt34-entity-check 109/109.
+- FULL REGRESSION: p17 30/30 · p18 28/28 · p19 24/24 · p20-billing 56/56 · p20-SM 38/38 · p21 76/76 · p22 72/72 · p23-api 34/34 · p23-contract 45/45 · p24 67/67 · p25 68/68 · p26 108/108 · p26-rate-literal-scan CLEAN · p27 65/65 · p28 86/86 · p29 105/105 (via node --experimental-strip-types; bun cannot resolve node:sqlite — invocation note, not a product bug) · p29-unit 91/91 · p30 93/93 · p30-unit 54/54 · p31 106/106 · p31-unit 71/71 (bun --preload ./scripts/lib/register-server-only-shim.ts REQUIRED for *-unit suites importing server-only code) · p32 102/102 + catalog 395/395 + scan 16/16 · p33 76/76 + p33-unit 64/64 + search-static-scan 67/67.
+- Privacy/security: privacy-inventory CONSISTENT · privacy-deletion 32/32 · ai-context 11/11 · identity 20/20 · portability-audit 53/53 · legal-content-review CLEAN.
+- lint 0 · tsc --noEmit 0 · i18n-audit CLEAN (1390 usages) · /api/health 200 · migrations 15/0 · /api/ready honest-degraded UNCHANGED (payments BLOCKED / email NOT_CONFIGURED deliberate).
+
+Work Log — BUGS FOUND & FIXED (all browser-verified live):
+1. FA ICU-plural bug ("ناعدد باز"): entityDetail.openInvoices/openExpenses received fmtCount()'s PRE-FORMATTED Persian-digit string as `count`; ICU plural `#` coerces "۲"→NaN; fa-IR formats NaN as "ناعدد". Fixed by passing RAW numbers (customer-detail-view.tsx, supplier-detail-view.tsx) — next-intl's `#` then renders Persian digits itself via the active locale. Verified: FA now "۲ باز"/"۳ باز"; EN "2 open".
+2. FA Latin digits in search group counts: Search Center group badges + palette group headings rendered raw group.count ("1"/"3"). Fixed with fmtCount(locale, group.count) in search-view.tsx + shell/command-palette.tsx. Verified: "مشتریان · ۱", badges ۱/۳/۲.
+3. PaymentFormDialog amount empty for preset targets: the open-reset cleared `amount`, and the target-change default could never re-fire for a CONSTANT presetTarget (key unchanged). Fixed by re-seeding amount from presetTarget.balanceMinor in the open-reset block. Verified: opening quick-pay pre-fills the full outstanding balance.
+4. Supplier 360 did not refresh after "New expense" (ExpenseFormDialog only invalidated the expense detail when EDITING, never on CREATE). Added optional `onSaved` callback to ExpenseFormDialog + wired invalidations (supplier detail after create; supplier 360 after expense-detail edit). Verified live: total $25→$37, payable $14→$26 without reload.
+(Also: harness-side only — p29/p29-unit/p30-unit/p31-unit need node or bun --preload shim; NOT product bugs, invocation documented above.)
+
+Work Log — NEW FEATURES (all reuse EXISTING dialogs/flows; zero new tables, zero new APIs, zero second flows):
+- Sale detail: "Record payment" quick action (finance:manage only, visible when balanceMinor > 0) → existing PaymentFormDialog with preset target; on success invalidates sale detail + customer 360.
+- Expense detail: same quick-pay (finance:manage, balance > 0) → preset expense target; invalidates expense detail + supplier 360.
+- Customer detail: "New invoice" (data:write) → existing SaleFormDialog extended with optional presetCustomer {id,name}; preset merged into options if beyond first page; onCreated invalidates customer 360.
+- Supplier detail: "New expense" (data:write) → existing ExpenseFormDialog extended with optional presetSupplier; onSaved invalidates supplier 360.
+- EntityHeader: built-in "Copy deep link" icon button (all six detail views; clipboard API with execCommand fallback; localized toast; destructive-variant toast shows URL if copy fails). New entityDetail keys EN+FA: recordPayment/newInvoice/newExpense/copyLink/linkCopied.
+- entity-detail-view passes role to SaleDetailView (was omitted).
+- PaymentFormDialog gained optional onSaved (backward compatible).
+
+Verification after changes (all EXECUTED):
+- tsc --noEmit 0 · lint 0 · i18n-audit CLEAN (1395 usages, 0/0) · entity-detail-static-scan 18/18 · prompt34-unit 133/133 · prompt33-search-check 76/76 · prompt34-entity-check 109/109.
+- Browser (agent-browser, EN/FA × light/dark × 5 viewports): search→exact entity ✓ · Customer 360 exact totals + live convergence after invoice+payment ($70/$35/$35/۴/۲ باز) ✓ · Supplier 360 convergence ($37/$26) ✓ · Product/sale/expense/payment details ✓ · keyboard row nav ✓ · back/forward ✓ · malformed routes → dashboard ✓ · unknown id → localized 404 ✓ · quick-pay pre-filled amount → PAID/$0.00 live ✓ · new-invoice dialog preselects customer ✓ · new-expense dialog preselects supplier ✓ · copy-link toast ✓ · pay button hidden at balance 0 ✓ · zero horizontal overflow 360/390/412/1366/1920 + footer behavior ✓ · RTL mirroring + Persian digits + LTR islands ✓ · dark mode ✓.
+- QA fixtures (QA P34 Business + p34qa-owner@test.local + all entities) deleted THROUGH THE REAL UI-FLOW APIs (business danger-zone DELETE with confirmName, account DELETE with password+confirmation); DB probe: zero leftovers.
+- dev.log after session: 0 MISSING_MESSAGE, 0 hydration errors, no unhandled errors. Health 200, readiness honest-unchanged.
+
+Stage Summary:
+- Project state: Prompts 17–34 all green with the four bugs above fixed and the detail-page quick-action layer added on top of Prompt 34 (deep links now actionable: act from the 360 page via the SAME dialogs the lists use).
+- Known limitations (honest): payment quick-action hidden for roles without finance:manage (all current roles hold it except viewer-class); preset customer/supplier merged into first options page client-side (server always re-validates); clipboard fallback path (execCommand) deprecated-but-safe; sale list dialog remains the print surface (unchanged).
+- NEXT: STOP here. No new prompts started. No saved searches / recently-viewed / semantic search / CRM / activity tracking / external engines added (spec §103 respected).

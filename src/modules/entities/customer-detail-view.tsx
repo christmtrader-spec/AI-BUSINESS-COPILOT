@@ -36,6 +36,7 @@ import { EntityDeleteDialog } from "./entity-delete-dialog";
 import { RelatedRecordList } from "./related-record-list";
 import { navigateToEntity, navigateToEntityList } from "./entity-route";
 import { PartyFormDialog } from "../parties/party-form-dialog";
+import { SaleFormDialog } from "../sales/sale-form-dialog";
 import type { CustomerDetail } from "@/lib/entities";
 
 export function CustomerDetailView({
@@ -60,6 +61,7 @@ export function CustomerDetailView({
   const writable = can(role, "data:write");
   const c = data.customer;
   const [editOpen, setEditOpen] = useState(false);
+  const [newInvoiceOpen, setNewInvoiceOpen] = useState(false);
 
   const deleteMutation = useMutation({
     mutationFn: async () => api(`/api/v1/customers/${c.id}`, { method: "DELETE" }),
@@ -96,6 +98,10 @@ export function CustomerDetailView({
           actions={
             writable ? (
               <>
+                <Button variant="outline" size="sm" onClick={() => setNewInvoiceOpen(true)}>
+                  <ShoppingCart className="size-4" aria-hidden="true" />
+                  {t("newInvoice")}
+                </Button>
                 <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
                   <Pencil className="size-4" aria-hidden="true" />
                   {tCommon("edit")}
@@ -138,7 +144,7 @@ export function CustomerDetailView({
         <EntityMetricCard
           label={t("invoices")}
           value={fmtCount(uiLocale, data.summary.invoiceCount)}
-          hint={t("openInvoices", { count: fmtCount(uiLocale, data.summary.openInvoiceCount) })}
+          hint={t("openInvoices", { count: data.summary.openInvoiceCount })}
           icon={ReceiptText}
         />
       </div>
@@ -192,6 +198,18 @@ export function CustomerDetailView({
         onOpenChange={setEditOpen}
         kind="customer"
         editing={c}
+      />
+
+      {/* New invoice — REUSES the shared SaleFormDialog (§75, one flow)
+          with this customer pre-selected; success refreshes the 360. */}
+      <SaleFormDialog
+        open={newInvoiceOpen}
+        onOpenChange={setNewInvoiceOpen}
+        business={business}
+        presetCustomer={{ id: c.id, name: c.name }}
+        onCreated={() =>
+          invalidateEntityDetail(queryClient, businessId, "customer", c.id)
+        }
       />
     </div>
   );

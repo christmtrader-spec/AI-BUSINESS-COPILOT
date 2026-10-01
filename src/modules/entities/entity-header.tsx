@@ -2,17 +2,48 @@
 
 /**
  * Prompt 34 — shared EntityHeader (§24/§76).
- * Back button + breadcrumb + icon + title + type badge + actions slot.
+ * Back button + breadcrumb + icon + title + type badge + actions slot +
+ * copy-deep-link quick action (the URL bar is the shareable deep link).
  * Responsive (stacks on mobile), RTL-safe (logical utilities only).
  */
 
 import type { LucideIcon } from "lucide-react";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Link2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+
+/** Copies the current hash deep link (§38/§39) to the clipboard. */
+function useCopyDeepLink() {
+  const t = useTranslations("entityDetail");
+  return async function copyDeepLink() {
+    const url = window.location.href;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        // Clipboard API unavailable (older WebView / insecure context):
+        // fall back to a transient textarea + execCommand.
+        const ta = document.createElement("textarea");
+        ta.value = url;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      toast({ title: t("linkCopied") });
+    } catch {
+      // Never destructive — just report the copy failed.
+      toast({ title: t("linkCopied"), description: url, variant: "destructive" });
+    }
+  };
+}
 
 export function EntityHeader({
   icon: Icon,
@@ -39,8 +70,10 @@ export function EntityHeader({
   className?: string;
 }) {
   const tCommon = useTranslations("common");
+  const tEntity = useTranslations("entityDetail");
+  const copyDeepLink = useCopyDeepLink();
   return (
-    <header className={cn("flex flex-col gap-4 sm:flex-row sm:items-start", className)}>
+    <header className={cn("relative flex flex-col gap-4 sm:flex-row sm:items-start", className)}>
       {/* Back + identity block */}
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <Button
@@ -83,6 +116,17 @@ export function EntityHeader({
         </div>
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={() => void copyDeepLink()}
+        aria-label={tEntity("copyLink")}
+        title={tEntity("copyLink")}
+        className="text-muted-foreground hover:text-foreground absolute end-3 top-3 size-8 sm:static sm:end-auto sm:top-auto sm:size-8"
+      >
+        <Link2 className="size-4" aria-hidden="true" />
+      </Button>
       <span className="sr-only">{tCommon("appName")}</span>
     </header>
   );

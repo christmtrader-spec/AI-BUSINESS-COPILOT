@@ -68,11 +68,14 @@ export function SaleFormDialog({
   onOpenChange,
   business,
   onCreated,
+  presetCustomer,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   business: BusinessSummary;
   onCreated?: () => void;
+  /** Pre-selected customer — e.g. "New invoice" from the customer 360 page. */
+  presetCustomer?: { id: string; name: string } | null;
 }) {
   const t = useTranslations("finance.saleForm");
   const tCommon = useTranslations("common");
@@ -105,6 +108,16 @@ export function SaleFormDialog({
     enabled: open,
     staleTime: 15_000,
   });
+
+  // The preset customer may live beyond the first options page — merge it
+  // into the selectable list so the Select always renders its name.
+  const customerOptions = useMemo(() => {
+    const list = customers ?? [];
+    if (presetCustomer && !list.some((c) => c.id === presetCustomer.id)) {
+      return [{ id: presetCustomer.id, name: presetCustomer.name }, ...list];
+    }
+    return list;
+  }, [customers, presetCustomer]);
 
   const precision = business.decimalPrecision;
 
@@ -185,7 +198,8 @@ export function SaleFormDialog({
     });
   }
 
-  // Reset the draft each time the dialog opens (render-adjust pattern).
+  // Reset the draft each time the dialog opens (render-adjust pattern),
+  // seeding the pre-selected customer when provided (customer 360 quick action).
   const [prevOpen, setPrevOpen] = useState(open);
   if (open !== prevOpen) {
     setPrevOpen(open);
@@ -193,7 +207,7 @@ export function SaleFormDialog({
       setLines([newLine()]);
       setDiscount("0");
       setNote("");
-      setCustomerId("");
+      setCustomerId(presetCustomer?.id ?? "");
     }
   }
 
@@ -222,7 +236,7 @@ export function SaleFormDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={NONE}>{t("walkIn")}</SelectItem>
-                {(customers ?? []).map((c) => (
+                {(customerOptions).map((c) => (
                   <SelectItem key={c.id} value={c.id} dir="auto">
                     {c.name}
                   </SelectItem>

@@ -57,11 +57,14 @@ export function PaymentFormDialog({
   onOpenChange,
   business,
   presetTarget,
+  onSaved,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   business: BusinessSummary;
   presetTarget?: PaymentTarget | null;
+  /** Invoked after a successful save — lets detail pages refresh 360 data. */
+  onSaved?: () => void;
 }) {
   const t = useTranslations("finance.paymentForm");
   const tCommon = useTranslations("common");
@@ -126,7 +129,9 @@ export function PaymentFormDialog({
   const selected = presetTarget ?? targets.find((t2) => targetValue === targetKey(t2));
 
   // Reset the form each time the dialog opens (render-adjust pattern —
-  // no setState inside effects).
+  // no setState inside effects). A preset target re-seeds the amount to
+  // its outstanding balance because the target-change block below cannot
+  // re-fire for a constant preset (its key never changes).
   const [prevOpen, setPrevOpen] = useState(open);
   if (open !== prevOpen) {
     setPrevOpen(open);
@@ -136,7 +141,11 @@ export function PaymentFormDialog({
       setDate(todayISO());
       setMethod("CASH");
       setTargetValue("");
-      setAmount("");
+      setAmount(
+        presetTarget
+          ? String(presetTarget.balanceMinor / 10 ** business.decimalPrecision)
+          : "",
+      );
     }
   }
 
@@ -171,6 +180,7 @@ export function PaymentFormDialog({
       toast({ title: t("savedToast") });
       onOpenChange(false);
       invalidate();
+      onSaved?.();
     },
     onError: (err) => {
       toast({
