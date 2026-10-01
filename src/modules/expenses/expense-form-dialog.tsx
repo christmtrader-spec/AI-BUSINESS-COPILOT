@@ -161,6 +161,7 @@ export function ExpenseFormDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={editing ? t("editTitle") : t("addExpense")}
+      description={t("formDescription")}
       submitLabel={editing ? tCommon("save") : tCommon("add")}
       cancelLabel={tCommon("cancel")}
       pending={saveMutation.isPending}

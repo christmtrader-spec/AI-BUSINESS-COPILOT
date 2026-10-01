@@ -97,6 +97,7 @@ export function PartyFormDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={editing ? t("edit", { type: typeLabel }) : t("add", { type: typeLabel })}
+      description={t("formDescription")}
       submitLabel={editing ? tCommon("save") : tCommon("add")}
       cancelLabel={tCommon("cancel")}
       pending={saveMutation.isPending}

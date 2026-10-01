@@ -579,6 +579,7 @@ const en = {
     customers: "Customers",
     suppliers: "Suppliers",
     subtitle: "Contact records for your {type}s.",
+    formDescription: "Contact details stay private to this business and appear on invoices and bills.",
     add: "Add {type}",
     edit: "Edit {type}",
     name: "Name",
@@ -606,6 +607,7 @@ const en = {
   products: {
     add: "Add product",
     edit: "Edit product",
+    formDescription: "Sale and cost prices are stored as exact integer minor units; stock is tracked from invoices and adjustments.",
     searchPlaceholder: "Search name or SKU…",
     name: "Product name",
     namePlaceholder: "e.g. Handmade candle",
@@ -762,6 +764,7 @@ const en = {
       updatedToast: "Expense updated",
       deletedToast: "Expense deleted",
       editTitle: "Edit expense",
+      formDescription: "Recorded expenses feed payables, supplier balances and monthly reports.",
       colCategory: "Category",
       colSupplier: "Supplier",
       colDate: "Date",

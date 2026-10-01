@@ -122,6 +122,7 @@ export function ProductFormDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={editing ? t("edit") : t("add")}
+      description={t("formDescription")}
       submitLabel={editing ? tCommon("save") : tCommon("add")}
       cancelLabel={tCommon("cancel")}
       pending={saveMutation.isPending}

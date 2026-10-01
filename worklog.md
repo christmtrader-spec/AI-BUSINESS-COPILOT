@@ -2818,3 +2818,40 @@ Stage Summary:
 - Project state: Prompts 17–34 all green with the four bugs above fixed and the detail-page quick-action layer added on top of Prompt 34 (deep links now actionable: act from the 360 page via the SAME dialogs the lists use).
 - Known limitations (honest): payment quick-action hidden for roles without finance:manage (all current roles hold it except viewer-class); preset customer/supplier merged into first options page client-side (server always re-validates); clipboard fallback path (execCommand) deprecated-but-safe; sale list dialog remains the print surface (unchanged).
 - NEXT: STOP here. No new prompts started. No saved searches / recently-viewed / semantic search / CRM / activity tracking / external engines added (spec §103 respected).
+---
+Task ID: p34-deep-qa-round2
+Agent: Z.ai Code
+Task: CONTINUE (Persian directive: ادامه ساخت + تست عمیق و دقیق کل پروژه + شناسایی و رفع تمام باگ‌ها) — full deep re-verification of Prompts 17–34 from scratch, bug identification & fixes, zero scope creep (§103 respected).
+
+Work Log — DEEP RE-VERIFICATION (all EXECUTED this session):
+- Environment: /api/health 200 · dev.log clean (no hydration errors, no MISSING_MESSAGE, no unhandled errors; only expected 422/404s from deliberate negative tests).
+- P34 suites: entity-detail-static-scan 18/18 · prompt34-unit 133/133 (bun --preload scripts/lib/register-server-only-shim.ts) · prompt34-entity-check 109/109 (bun; fixtures cleaned to ZERO leftovers).
+- FULL REGRESSION: p17 ALL ✓ · p18 ALL ✓ · p19 ALL ✓ · p20-billing 56/56 · p20-state-machine 38/38 (bun) · p21 76/76 (bun) · p22 72/72 (bun) · p23-api 34/34 (bun) · p23-contract 45/45 (bun) · p24 67/67 (bun) · p25 68/68 (bun) · p26 108/108 (bun) · p26-rate-literal-scan CLEAN · p27 65/65 TRUST GREEN · p28 86/86 (bun) · p29 105/105 (node --experimental-strip-types) · p29-unit 91/91 (bun+preload) · p30 93/93 · p30-unit 54/54 (bun+preload) · p31 106/106 · p31-unit 71/71 (bun+preload) · p32 102/102 + notification-catalog GREEN + notification-static-scan GREEN · p33 76/76 + p33-unit 64/64 + search-static-scan 67/67 — NO REGRESSIONS.
+- Privacy/security: privacy-inventory CONSISTENT · privacy-deletion MATCHES · ai-context-secret-scan CLEAN · identity-security-static-scan 20/20 · data-portability-audit 53/53.
+- lint 0 errors · tsc --noEmit 0 errors · i18n-audit CLEAN (1398 usages after 3 new keys × EN/FA).
+- Health after all work: 200; migrations unchanged (no schema change this session).
+
+Work Log — BUGS FOUND & FIXED (browser-verified):
+1. ACCESSIBILITY (Radix warning, error-level for screen readers): three shared FormDialog callers rendered <DialogContent> WITHOUT a DialogDescription → Radix "Missing Description or aria-describedby" console warning on every open. Fixed by adding a real localized description to each: parties.formDescription, products.formDescription, finance.expenses.formDescription (EN + FA full parity) and wiring description={t("formDescription")} into party-form-dialog.tsx / product-form-dialog.tsx / expense-form-dialog.tsx. Console now silent on open; description verified visually (EN screenshot) — informative, not filler.
+2. HARNESS-ONLY (not product): scripts/p34qa-fixtures.mjs teardown previously counted Sale by `number` (Int field — Prisma validation error); corrected to count via customer relation. Script is QA tooling, committed for reuse.
+- Precise dialog audit written + run over ALL DialogContent/AlertDialogContent blocks in src (title AND description/aria-describedby per block): zero remaining gaps anywhere.
+
+Browser QA (agent-browser, real UI flows, P34QA fixtures via real tenant APIs, torn down to zero afterwards):
+- Login → dashboard ✓ · customers list row click → #/customers/<id> ✓ · Customer 360 EXACT ($2,400 total / $600→$2,400 paid / $1,800→$0.00 receivable / 1 invoice 1→0 open) with LIVE convergence after quick-pay ✓.
+- Sale detail (INV-0001 Partial→Paid live; subtotal/discount/total/paid/balance; items; payments) ✓ · payment detail (amount/method/direction/related invoice INV-0001 + customer) ✓ · "Open invoice"/"Open customer" cross-links ✓.
+- Quick actions: Record payment dialog PRE-FILLS outstanding balance (sale $1,800, expense $900) → submit → status flips to Paid live, button hides at balance 0 ✓ · customer/supplier 360 converge without reload ✓.
+- Supplier 360 ($900/$0→$900 paid / payable $900→$0 / 1→0 open) ✓ · expense detail + payments ✓ · New invoice/New expense dialogs open correctly from detail ✓.
+- Product detail: LOW (6/10) → Healthy (18) via EXISTING StockDialog (+12) LIVE; adjustments history (initial +8, sale −2, QA restock +12); Charger renders OUT-OF-STOCK + empty states ✓ · Edit product threshold 5→3 saved and reflected LIVE ✓ · Delete from detail → back to list ✓ · deleted-entity deep link → localized "Record not found" (no cache resurrection) ✓.
+- Copy link toast (clipboard API path) ✓.
+- Search: Ctrl+K palette → "Alice" → grouped results (customer/invoice/payments) → Enter → EXACT #/customers/<id> ✓ · Search Center #/search?q=P34QA → 10 results, grouped, product result → EXACT product detail ✓.
+- Keyboard: list rows focusable (tabIndex=0) + Enter navigates ✓ · in-row buttons (Edit/Delete/View invoice) do NOT hijack row navigation (eye button opens dialog with URL unchanged; row click navigates) ✓.
+- Malformed/deep-link safety: #/customers/%zz → dashboard view · #/users/x → dashboard · well-formed unknown id → localized 404 with Back + Dashboard actions ✓.
+- Viewport matrix 360×640 / 390×844 / 412×915 / 1366×768 / 1920×1080: ZERO horizontal overflow on detail pages; footer sticky-when-short & pushed-when-long (footerBottom==vh at 1920; >vh with scroll at 360–1366) ✓.
+- FA/RTL: dir=rtl, Persian labels (مجموع فروش / پرداخت‌شده / طلب / فاکتورها / بازگشت به مشتریان), LTR islands for money/phone/SKU/invoice numbers, RTL breadcrumb mirroring ✓ · dark mode readable (screenshot-verified) · theme switch via localized menu (پوسته تاریک) ✓ · switched back to EN/LTR light ✓.
+- Console crawl across ALL six lists + receivables/payables/reports + customer/sale/payment/product/expense details + palette + every form/stock/delete/payment dialog + settings/subscription/account-security/reports: ZERO warnings, ZERO errors, ZERO page errors after fixes.
+
+Stage Summary:
+- Project state: Prompts 17–34 ALL GREEN after a from-scratch re-verification. One real a11y bug class found (missing dialog descriptions) and fixed with proper EN/FA localized descriptions; everything else confirmed healthy end-to-end (API harnesses, static scans, real browser flows, console hygiene).
+- Honest note: no other product bugs surfaced this round — the earlier DialogTitle error in the console buffer could not be reproduced after fixes and the static audit proves no dialog lacks a title; treated as stale pre-fix history.
+- Known limitations (unchanged, documented): bounded recent windows (≤10/20), in-memory rate limiter, LIKE-based search, read GETs without Cache-Control — all deliberate and documented in prior sessions.
+- NEXT: STOP. §103 respected — no Prompt 35, no saved searches / recently-viewed / semantic or AI search / CRM / activity tracking / external engines added.

@@ -582,6 +582,7 @@ const fa: Messages = {
     customers: "مشتریان",
     suppliers: "تأمین‌کنندگان",
     subtitle: "اطلاعات تماس {type}های شما.",
+    formDescription: "اطلاعات تماس فقط برای این کسب‌وکار قابل مشاهده است و روی فاکتورها و صورت‌حساب‌ها نمایش داده می‌شود.",
     add: "افزودن {type}",
     edit: "ویرایش {type}",
     name: "نام",
@@ -609,6 +610,7 @@ const fa: Messages = {
   products: {
     add: "افزودن کالا",
     edit: "ویرایش کالا",
+    formDescription: "قیمت فروش و تمام‌شده به‌صورت اعداد صحیح ریخته می‌شوند؛ موجودی از طریق فاکتورها و تعدیل‌ها ردیابی می‌شود.",
     searchPlaceholder: "جستجوی نام یا کد کالا…",
     name: "نام کالا",
     namePlaceholder: "مثلاً شمع دست‌ساز",
@@ -765,6 +767,7 @@ const fa: Messages = {
       updatedToast: "هزینه به‌روزرسانی شد",
       deletedToast: "هزینه حذف شد",
       editTitle: "ویرایش هزینه",
+      formDescription: "هزینه‌های ثبت‌شده به پرداختنی‌ها، مانده تأمین‌کنندگان و گزارش‌های ماهانه اضافه می‌شوند.",
       colCategory: "دسته",
       colSupplier: "تأمین‌کننده",
       colDate: "تاریخ",
