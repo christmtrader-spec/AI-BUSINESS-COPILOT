@@ -4,6 +4,11 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { registerBusinessIdProvider } from "@/lib/api-client";
 import { DEFAULT_LOCALE, isLocale, type Locale } from "@/i18n/config";
+import {
+  entityToHash,
+  parseEntityRoute,
+  type EntityType,
+} from "@/lib/entity-routes";
 
 /**
  * Global client state (Zustand). Server data lives in TanStack Query;
@@ -29,6 +34,12 @@ export type AppView =
   | { kind: "settings:notifications" }
   /** Prompt 33 — Search Results Center (#/search, #/search?q=…, §13). */
   | { kind: "search"; query?: string }
+  /**
+   * Prompt 34 — Entity detail deep link (#/customers/<id>, §4/§5). The
+   * entity is a CLOSED vocabulary token (lib/entity-routes) — never an
+   * arbitrary string — and the id is validated by `parseEntityRoute`.
+   */
+  | { kind: "entity"; entity: EntityType; id: string }
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
@@ -89,7 +100,11 @@ export function isKnownModule(value: string): value is KnownModule {
 export function viewKeyOf(view: AppView): string {
   return view.kind === "module"
     ? `module:${view.module}`
-    : view.kind === "join"
+    // Prompt 34 — entity + id both matter: opening a different record
+    // remounts the detail view so no stale record can ever be shown (§36).
+    : view.kind === "entity"
+      ? `entity:${view.entity}:${view.id}`
+      : view.kind === "join"
       ? `join:${view.token}`
       : view.kind === "reset-password"
         ? `reset:${view.token}`
@@ -114,6 +129,11 @@ export function sameView(a: AppView, b: AppView): boolean {
   if (viewKeyOf(a) !== viewKeyOf(b)) return false;
   if (a.kind === "module" && b.kind === "module") {
     return (a.param ?? null) === (b.param ?? null);
+  }
+  // Prompt 34 — entity views compare entity + id (viewKey already carries
+  // both, so reaching here means they are equal; kept explicit for clarity).
+  if (a.kind === "entity" && b.kind === "entity") {
+    return a.entity === b.entity && a.id === b.id;
   }
   // Prompt 33 — hash query changes re-enter the store (back/forward must
   // update the Search Center) without remounting the view (§13/§33).
@@ -152,6 +172,11 @@ export function viewToHash(view: AppView): string | null {
       const q = (view.query ?? "").trim();
       return q ? `#/search?q=${encodeURIComponent(q)}` : "#/search";
     }
+    case "entity":
+      // Prompt 34 — centralized encoder (§7/§39): validated entity + id,
+      // safe-charset id, encodeURIComponent. Returns null (never a hash)
+      // for anything that could not survive parseEntityRoute.
+      return entityToHash(view.entity, view.id);
     case "platform":
       // #/platform itself resolves to the overview section (§15).
       return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
@@ -226,6 +251,14 @@ export function hashToView(hash: string): AppView {
     // Malformed reset link → the forgot form so a fresh link can be requested.
     return { kind: "forgot-password" };
   }
+  // Prompt 34 — entity detail deep links (#/customers/<id>, §5/§6) are
+  // attempted BEFORE the bare-module match: "customers" alone stays the
+  // module list while "customers/<id>" resolves through the centralized
+  // parser (allowlisted first segment, bounded charset-safe id). Anything
+  // else falls through to the dashboard fallback (§6.6) — never an
+  // arbitrary "#/anything/<id>" interpretation.
+  const entityRoute = parseEntityRoute(path);
+  if (entityRoute) return { kind: "entity", ...entityRoute };
   if (isKnownModule(path)) {
     // Module sub-param deep links: ?month=YYYY-MM opens reports straight
     // into the drill-down, or pre-filters sales/expenses to that month

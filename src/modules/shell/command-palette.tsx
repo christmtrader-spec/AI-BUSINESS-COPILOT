@@ -42,6 +42,7 @@ import {
   useSearchQuery,
 } from "@/modules/search/search-api";
 import { SEARCH_TYPE_ICONS } from "@/modules/search/search-icons";
+import { entityViewFromSearchItem } from "@/modules/entities/entity-route";
 import type { SearchResultItem } from "@/lib/search/types";
 import {
   CommandDialog,
@@ -164,9 +165,9 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
   }
 
   function openResult(item: SearchResultItem) {
-    // §14 — destination → AppView via the closed map; the palette never
-    // builds URLs from server strings (items carry a closed destination).
-    go({ kind: "module", module: item.destination });
+    // §14/§33 — type+id resolve through the CLOSED entity vocabulary to the
+    // exact entity detail; the palette never builds URLs from server data.
+    go(entityViewFromSearchItem(item));
   }
 
   const isMac =

@@ -1,0 +1,253 @@
+"use client";
+
+/**
+ * Prompt 34 — Product detail page (§27).
+ * Pricing/stock metrics + existing stock-state semantics + recent
+ * adjustments + recent sales. Stock Adjustment reuses the EXISTING
+ * StockDialog (§27 — no second stock mutation system).
+ */
+
+import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslations } from "next-intl";
+import {
+  ArrowLeftRight,
+  Boxes,
+  Layers,
+  Package,
+  Pencil,
+  ShoppingCart,
+  Tag,
+  Trash2,
+} from "lucide-react";
+import { toast } from "@/hooks/use-toast";
+import { api, ApiClientError } from "@/lib/api-client";
+import { can, type Role } from "@/lib/rbac";
+import { useAppStore } from "@/store/app-store";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { fmtCount, fmtDate, fmtMoney } from "../finance-shared/finance-kit";
+import type { BusinessSummary } from "../shell/types";
+import { invalidateEntityDetail } from "./entity-api";
+import { EntityHeader, EntityBreadcrumb, EntityTypeBadge } from "./entity-header";
+import { EntityMetricCard } from "./entity-metric-card";
+import { EntityDeleteDialog } from "./entity-delete-dialog";
+import { RelatedRecordList } from "./related-record-list";
+import { navigateToEntity, navigateToEntityList } from "./entity-route";
+import { ProductFormDialog } from "../products/product-form-dialog";
+import { StockDialog } from "../products/stock-dialog";
+import { InfoRow } from "./customer-detail-view";
+import type { ProductDetail, StockState } from "@/lib/entities";
+import { cn } from "@/lib/utils";
+
+export function stockStateBadge(state: StockState, label: string) {
+  const tone =
+    state === "OUT_OF_STOCK"
+      ? "border-destructive/40 bg-destructive/10 text-destructive"
+      : state === "LOW_STOCK"
+        ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+        : "border-emerald-300/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
+  return (
+    <Badge variant="outline" className={cn("font-medium", tone)}>
+      {label}
+    </Badge>
+  );
+}
+
+export function ProductDetailView({
+  data,
+  business,
+  uiLocale,
+  role,
+}: {
+  data: ProductDetail;
+  business: BusinessSummary;
+  uiLocale: string;
+  role: Role;
+}) {
+  const t = useTranslations("entityDetail");
+  const tCommon = useTranslations("common");
+  const tErrors = useTranslations("errors");
+  const queryClient = useQueryClient();
+  const businessId = useAppStore((s) => s.activeBusinessId);
+
+  const writable = can(role, "data:write");
+  const p = data.product;
+  const [editOpen, setEditOpen] = useState(false);
+  const [stockOpen, setStockOpen] = useState(false);
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => api(`/api/v1/products/${p.id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast({ title: t("deletedToast", { type: t("product") }) });
+      void queryClient.invalidateQueries({ queryKey: ["products"] });
+      void queryClient.invalidateQueries({ queryKey: ["audit"] });
+      invalidateEntityDetail(queryClient, businessId, "product", p.id);
+      navigateToEntityList("product");
+    },
+    onError: (err) => {
+      toast({
+        title: err instanceof ApiClientError ? err.message : tErrors("generic"),
+        variant: "destructive",
+      });
+    },
+  });
+
+  const stockLabel =
+    data.inventory.state === "OUT_OF_STOCK"
+      ? t("outOfStock")
+      : data.inventory.state === "LOW_STOCK"
+        ? t("lowStock")
+        : t("healthy");
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-2">
+        <EntityBreadcrumb listLabel={t("products")} title={p.name} />
+        <EntityHeader
+          icon={Package}
+          title={p.name}
+          subtitle={p.sku ?? p.unit ?? t("noSku")}
+          badge={
+            p.isActive ? (
+              <EntityTypeBadge label={t("active")} />
+            ) : (
+              <Badge variant="outline" className="text-muted-foreground font-medium">
+                {t("inactive")}
+              </Badge>
+            )
+          }
+          backLabel={t("backTo", { list: t("products") })}
+          onBack={() => navigateToEntityList("product")}
+          actions={
+            writable ? (
+              <>
+                <Button variant="outline" size="sm" onClick={() => setStockOpen(true)}>
+                  <ArrowLeftRight className="size-4" aria-hidden="true" />
+                  {t("adjustStock")}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+                  <Pencil className="size-4" aria-hidden="true" />
+                  {tCommon("edit")}
+                </Button>
+                <EntityDeleteDialog
+                  triggerLabel={tCommon("delete")}
+                  triggerIcon={Trash2}
+                  title={t("deleteTitle", { type: t("product") })}
+                  description={t("deleteDesc")}
+                  confirmLabel={tCommon("delete")}
+                  cancelLabel={tCommon("cancel")}
+                  pending={deleteMutation.isPending}
+                  onConfirm={() => deleteMutation.mutate()}
+                />
+              </>
+            ) : null
+          }
+        />
+      </div>
+
+      {/* Pricing + inventory (§27) — integer minor units via money utils */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <EntityMetricCard
+          label={t("salePrice")}
+          value={fmtMoney(business, p.salePriceMinor)}
+          icon={Tag}
+        />
+        <EntityMetricCard
+          label={t("costPrice")}
+          value={fmtMoney(business, p.costPriceMinor)}
+          icon={Layers}
+        />
+        <EntityMetricCard
+          label={t("stock")}
+          value={fmtCount(uiLocale, data.inventory.stockQty)}
+          hint={p.unit ?? undefined}
+          icon={Boxes}
+        />
+        <EntityMetricCard
+          label={t("lowStockAt")}
+          value={fmtCount(uiLocale, data.inventory.lowStockAt)}
+          icon={Boxes}
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-muted-foreground text-sm">{t("stockState")}:</span>
+        {stockStateBadge(data.inventory.state, stockLabel)}
+      </div>
+
+      <Card>
+        <CardContent className="grid gap-4 pt-6 sm:grid-cols-2">
+          <InfoRow label={t("sku")} value={p.sku} ltr />
+          <InfoRow label={t("unit")} value={p.unit} />
+        </CardContent>
+      </Card>
+
+      {/* Related records (§34) */}
+      <RelatedRecordList
+        title={t("recentAdjustments")}
+        entity={null}
+        emptyText={t("noRecentAdjustments")}
+        onOpen={navigateToEntity}
+        items={data.recentAdjustments.map((a) => ({
+          id: a.id,
+          icon: ArrowLeftRight,
+          primary: a.reason,
+          secondary: fmtDate(business, a.createdAt),
+          trailing: `${a.delta > 0 ? "+" : ""}${fmtCount(uiLocale, a.delta)}`,
+        }))}
+      />
+      <RelatedRecordList
+        title={t("recentSales")}
+        entity="sale"
+        emptyText={t("noRecentSales")}
+        onOpen={navigateToEntity}
+        items={data.recentSales.map((s) => ({
+          id: s.saleId,
+          icon: ShoppingCart,
+          primary: `INV-${String(s.number).padStart(4, "0")}`,
+          secondary: fmtDate(business, s.issueDate),
+          trailing: fmtMoney(business, s.lineTotalMinor),
+        }))}
+      />
+
+      <ProductFormDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        editing={{
+          id: p.id,
+          name: p.name,
+          sku: p.sku,
+          unit: p.unit,
+          salePriceMinor: p.salePriceMinor,
+          costPriceMinor: p.costPriceMinor,
+          stockQty: data.inventory.stockQty,
+          lowStockAt: data.inventory.lowStockAt,
+          isActive: p.isActive,
+          createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
+        }}
+        business={business}
+      />
+
+      {stockOpen ? (
+        <StockDialog
+          product={{
+            id: p.id,
+            name: p.name,
+            sku: p.sku,
+            unit: p.unit,
+            salePriceMinor: p.salePriceMinor,
+            costPriceMinor: p.costPriceMinor,
+            stockQty: data.inventory.stockQty,
+            lowStockAt: data.inventory.lowStockAt,
+            isActive: p.isActive,
+            createdAt: p.createdAt,
+            updatedAt: p.updatedAt,
+          }}
+          onClose={() => setStockOpen(false)}
+        />
+      ) : null}
+    </div>
+  );
+}

@@ -81,7 +81,7 @@ function check(name: string, cond: boolean, info = "") {
   check("MONEY: rejects exponent", throws(() => parseDecimalToMinor("1e5", 2)));
   check("MONEY: rejects excess precision", throws(() => parseDecimalToMinor("12.505", 2)));
   check("MONEY: rejects empty (§228 → required path)", throws(() => parseDecimalToMinor("", 2)));
-  check("MONEY: rejects currency symbols", throws(() => parseDecimalToMinor("$12.50", 2)));
+  check("MONEY: rejects currency symbols TEST", throws(() => parseDecimalToMinor("$12.50", 2)));
   check("MONEY: accepts +12.5 → 1250", parseDecimalToMinor("+12.5", 2) === 1250);
   check("MONEY: .5 → 50", parseDecimalToMinor(".5", 2) === 50);
 }

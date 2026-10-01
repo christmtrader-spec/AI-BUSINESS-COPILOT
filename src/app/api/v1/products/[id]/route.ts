@@ -1,6 +1,13 @@
 /**
+ * GET    /api/v1/products/[id] — product detail + inventory + recents (data:read).
  * PATCH  /api/v1/products/[id] — update (data:write, audited; price changes audited explicitly).
  * DELETE /api/v1/products/[id] — soft delete (data:write, audited).
+ *
+ * Prompt 34 (§15/§16/§20/§21/§42): tenant-scoped GET with soft-delete
+ * filter; stock state reuses the established thresholds; recent
+ * adjustments (≤10) and recent sales (≤10 unique sale records via
+ * SaleItem → Sale, bounded pre-take + JS dedupe, §42) — no full sale-item
+ * history is ever loaded. Explicit DTO, integer minor units.
  */
 import { NextRequest } from "next/server";
 import { ApiError, ok, parseBody, route } from "@/lib/api-helpers";
@@ -8,10 +15,20 @@ import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { productUpdateSchema } from "@/lib/schemas";
+import { mapProductDetail } from "@/lib/entities";
 
 export const dynamic = "force-dynamic";
 
 type RouteParams = { params: Promise<{ id: string }> };
+
+/** Bounded recent-record caps (§15/§42/§85). */
+const RECENT_ADJUSTMENTS_TAKE = 10;
+const RECENT_SALES_TAKE = 10;
+/**
+ * §15/§42 — pre-dedupe fetch bound (≤ 3× RECENT_SALES_TAKE + 5, hard max
+ * 40): enough SaleItem rows to survive a few same-product lines per sale.
+ */
+const RECENT_SALE_ITEMS_FETCH = 35;
 
 async function loadProduct(businessId: string, id: string) {
   const product = await db.product.findFirst({
@@ -20,6 +37,53 @@ async function loadProduct(businessId: string, id: string) {
   if (!product) throw new ApiError(404, "NOT_FOUND", "Product not found.");
   return product;
 }
+
+export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
+  const { id } = await params;
+  const ctx = await getAuthContext(req);
+  requirePermission(ctx, "data:read");
+
+  // §20 — foreign/deleted record → 404 (same path as unknown id).
+  const product = await loadProduct(ctx.businessId, id);
+
+  // §42 — parallel bounded queries, deterministic ordering, explicit select.
+  const [recentAdjustments, recentSaleItems] = await Promise.all([
+    db.inventoryAdjustment.findMany({
+      where: { businessId: ctx.businessId, productId: id },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: RECENT_ADJUSTMENTS_TAKE,
+      select: { id: true, delta: true, reason: true, createdAt: true },
+    }),
+    db.saleItem.findMany({
+      where: {
+        productId: id,
+        sale: { businessId: ctx.businessId, deletedAt: null },
+      },
+      orderBy: [{ sale: { issueDate: "desc" } }, { id: "desc" }],
+      take: RECENT_SALE_ITEMS_FETCH,
+      select: {
+        saleId: true,
+        qty: true,
+        lineTotalMinor: true,
+        sale: { select: { number: true, issueDate: true } },
+      },
+    }),
+  ]);
+
+  // Flatten SaleItem → Sale into the mapper's input shape (no N+1: the
+  // sale fields arrive with the same bounded query).
+  const recentSalesInput = recentSaleItems.map((item) => ({
+    saleId: item.saleId,
+    qty: item.qty,
+    lineTotalMinor: item.lineTotalMinor,
+    number: item.sale.number,
+    issueDate: item.sale.issueDate,
+  }));
+
+  return ok(
+    mapProductDetail(product, recentAdjustments, recentSalesInput, RECENT_SALES_TAKE),
+  );
+});
 
 export const PATCH = route(async (req: NextRequest, { params }: RouteParams) => {
   const { id } = await params;

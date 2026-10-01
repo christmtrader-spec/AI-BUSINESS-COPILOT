@@ -150,7 +150,11 @@ section = "web-safety";
 record("no arbitrary redirect in search UI (§14/§16)", !paletteSrc.includes("window.location =") && !centerSrc.includes("window.location =") && !paletteSrc.includes("window.location.href =") && !centerSrc.includes("window.location.href ="));
 record("no dangerouslySetInnerHTML (§16)", !paletteSrc.includes("dangerouslySetInnerHTML") && !centerSrc.includes("dangerouslySetInnerHTML"));
 record("no raw SQL in the search subsystem (§6)", !searchSrc.includes("$queryRaw") && !searchSrc.includes("$executeRaw") && !querySrc.includes("SELECT "));
-record("client navigation uses the closed destination map (§14)", paletteSrc.includes("item.destination") && centerSrc.includes("item.destination") && clientSrc.includes("SEARCH_DESTINATIONS") === false && !/module:\s*item\.(?!destination)/.test(paletteSrc + centerSrc));
+/* Prompt 34 update — results now resolve type+id through the CLOSED entity
+ * vocabulary (lib/entity-routes.ts) to the exact entity detail; the module
+ * destination field remains in the DTO but navigation is entity-level. */
+const entityRoutesSrc = read("src/lib/entity-routes.ts");
+record("client navigation uses the closed entity map (§14 + Prompt 34)", paletteSrc.includes("entityViewFromSearchItem(item)") && centerSrc.includes("entityViewFromSearchItem(item)") && entityRoutesSrc.includes("SEARCH_TYPE_TO_ENTITY") && clientSrc.includes("SEARCH_DESTINATIONS") === false && !/module:\s*item\.(?!destination)/.test(paletteSrc + centerSrc));
 
 /* ------------------- 13/14/15 — validation bounds ------------------------- */
 section = "validation";

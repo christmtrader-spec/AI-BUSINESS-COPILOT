@@ -138,3 +138,20 @@ The active business is the ONLY search boundary. Every request goes through
 - Tests: `scripts/prompt33-unit.ts`, `scripts/prompt33-search-check.mjs`,
   `scripts/search-static-scan.mjs`
 - Security: see `docs/security/global-search-security.md`
+
+## Prompt 34 — Exact-entity navigation (update)
+
+Since Prompt 34, selecting a search result navigates to the EXACT ENTITY
+DETAIL, not the module list:
+
+- `CUSTOMER` → `#/customers/<id>` · `SUPPLIER` → `#/suppliers/<id>` ·
+  `PRODUCT` → `#/products/<id>` · `SALE` → `#/sales/<id>` ·
+  `EXPENSE` → `#/expenses/<id>` · `PAYMENT` → `#/payments/<id>`.
+- The server response is unchanged (closed type tokens + id only); the
+  client resolves `type + id` through the closed `SEARCH_TYPE_TO_ENTITY`
+  map (`src/lib/entity-routes.ts`) and the centralized hash encoder.
+  No URL is ever taken from server data or user input.
+- "View all search results" still opens `#/search?q=…`.
+
+See `docs/product/entity-details.md` and
+`docs/security/entity-detail-security.md`.

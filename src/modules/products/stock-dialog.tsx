@@ -19,6 +19,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { useAppStore } from "@/store/app-store";
+import { invalidateEntityDetail } from "@/modules/entities/entity-api";
 import type { Product } from "./products-view";
 
 /**
@@ -36,6 +38,7 @@ export function StockDialog({
   const tCommon = useTranslations("common");
   const tErrors = useTranslations("errors");
   const queryClient = useQueryClient();
+  const businessId = useAppStore((s) => s.activeBusinessId);
 
   const [direction, setDirection] = useState<1 | -1>(1);
   const [amount, setAmount] = useState("");
@@ -57,6 +60,8 @@ export function StockDialog({
       void queryClient.invalidateQueries({ queryKey: ["products"] });
       void queryClient.invalidateQueries({ queryKey: ["adjustments"] });
       void queryClient.invalidateQueries({ queryKey: ["audit"] });
+      // Prompt 34 §37 — the open product detail must converge immediately.
+      invalidateEntityDetail(queryClient, businessId, "product", product.id);
       onClose();
     },
     onError: (err) => {

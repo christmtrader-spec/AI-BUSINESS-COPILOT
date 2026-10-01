@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { Banknote, Printer, Trash2 } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
@@ -18,6 +18,8 @@ import { toast } from "@/hooks/use-toast";
 import { DataTable, Ltr } from "@/components/shared/data-table";
 import { FinanceStatusBadge, fmtDate, fmtMoney, useInvalidateFinance } from "../finance-shared/finance-kit";
 import { PaymentFormDialog, type PaymentTarget } from "../payments/payment-form-dialog";
+import { invalidateEntityDetail } from "@/modules/entities/entity-api";
+import { useAppStore } from "@/store/app-store";
 import type { BusinessSummary } from "../shell/types";
 
 /** One invoice line item — also the row type of the detail-dialog table. */
@@ -209,6 +211,7 @@ export function SaleDetailDialog({
   const tErrors = useTranslations("errors");
   const tPay = useTranslations("finance.paymentForm");
   const invalidate = useInvalidateFinance();
+  const queryClient = useQueryClient();
   const [payOpen, setPayOpen] = useState(false);
 
   const { data, isLoading, error, refetch } = useQuery<SaleDetail>({
@@ -220,10 +223,18 @@ export function SaleDetailDialog({
   const deletePaymentMutation = useMutation({
     mutationFn: async (paymentId: string) =>
       api(`/api/v1/payments/${paymentId}`, { method: "DELETE" }),
-    onSuccess: () => {
+    onSuccess: (_data, paymentId) => {
       toast({ title: t("paymentDeletedToast") });
       invalidate();
       void refetch();
+      // Prompt 34 §37 — the reversed payment's detail (if cached/open)
+      // must converge or vanish; the sale detail refetches above.
+      invalidateEntityDetail(
+        queryClient,
+        useAppStore.getState().activeBusinessId,
+        "payment",
+        paymentId,
+      );
     },
     onError: (err) => {
       toast({

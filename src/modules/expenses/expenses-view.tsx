@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { Banknote, CalendarDays, Download, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
@@ -9,12 +9,15 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { downloadCsv, exportStamp, fetchAllPages, toCsv } from "@/lib/csv";
 import { can, asRole, type Role } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
-import { MoneyInput, moneyToMinorOrNull } from "@/components/shared/table-kit";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,16 +29,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { DataTable, DataTableToolbar, Ltr } from "@/components/shared/data-table";
-import { FormDialog, Pagination, SearchInput } from "@/components/shared/table-kit";
+import { Pagination, SearchInput } from "@/components/shared/table-kit";
 import {
   FinanceStatusBadge,
   fmtDate,
@@ -44,7 +40,9 @@ import {
   useInvalidateFinance,
 } from "../finance-shared/finance-kit";
 import { PaymentFormDialog, type PaymentTarget } from "../payments/payment-form-dialog";
-import type { BusinessSummary } from "../shell/types";
+import { ExpenseFormDialog } from "./expense-form-dialog";
+import { navigateToEntity } from "@/modules/entities/entity-route";
+import { invalidateEntityDetail } from "@/modules/entities/entity-api";import type { BusinessSummary } from "../shell/types";
 
 type ExpenseRow = {
   id: string;
@@ -59,17 +57,6 @@ type ExpenseRow = {
 };
 
 type ExpensesPage = { items: ExpenseRow[]; total: number; page: number; pageSize: number };
-
-const CATEGORY_SUGGESTIONS = [
-  "Rent",
-  "Salaries",
-  "Utilities",
-  "Supplies",
-  "Marketing",
-  "Transport",
-  "Software",
-  "Other",
-];
 
 const STATUS_FILTERS = ["ALL", "UNPAID", "PARTIAL", "PAID"] as const;
 
@@ -88,9 +75,6 @@ function fmtMonthLabel(key: string, locale: string): string {
   }
 }
 
-// Radix Select forbids empty-string item values — sentinel maps to "".
-const NONE = "__none__";
-
 /** Expenses module — record costs, track paid/balance, pay suppliers. */
 export function ExpensesView({
   business,
@@ -106,6 +90,8 @@ export function ExpensesView({
   const invalidate = useInvalidateFinance();
   const view = useAppStore((s) => s.view);
   const navigate = useAppStore((s) => s.navigate);
+  const queryClient = useQueryClient();
+  const businessId = useAppStore((s) => s.activeBusinessId);
 
   const writable = can(asRole(role), "data:write");
   const canPay = can(asRole(role), "finance:manage");
@@ -116,12 +102,6 @@ export function ExpensesView({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ExpenseRow | null>(null);
   const [payTarget, setPayTarget] = useState<PaymentTarget | null>(null);
-  const [form, setForm] = useState({
-    supplierId: "",
-    category: "",
-    amount: "",
-    note: "",
-  });
 
   // Month drill-down deep link (#/expenses?month=YYYY-MM, "Open in Expenses"
   // from the reports month dialog) — same bucket as the MoM table.
@@ -151,69 +131,23 @@ export function ExpensesView({
     [month, uiLocale],
   );
 
-  const { data: suppliers } = useQuery<{ id: string; name: string }[]>({
-    queryKey: ["suppliers", "options"],
-    queryFn: async () => {
-      const res = await api<{ items: { id: string; name: string }[] }>(
-        "/api/v1/suppliers?pageSize=100",
-      );
-      return res.items;
-    },
-    enabled: dialogOpen,
-    staleTime: 15_000,
-  });
-
   function openCreate() {
     setEditing(null);
-    setForm({ supplierId: "", category: "", amount: "", note: "" });
     setDialogOpen(true);
   }
 
   function openEdit(e: ExpenseRow) {
     setEditing(e);
-    setForm({
-      supplierId: "",
-      category: e.category,
-      amount: String(e.amountMinor / 10 ** business.decimalPrecision),
-      note: e.note ?? "",
-    });
     setDialogOpen(true);
   }
 
-  const amountMinor = moneyToMinorOrNull(form.amount, business.decimalPrecision);
-  const canSubmit =
-    form.category.trim().length > 0 && amountMinor != null && amountMinor >= 1;
-
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      const body = JSON.stringify({
-        category: form.category,
-        amountMinor,
-        note: form.note || null,
-        ...(form.supplierId ? { supplierId: form.supplierId } : {}),
-      });
-      return editing
-        ? api(`/api/v1/expenses/${editing.id}`, { method: "PATCH", body })
-        : api("/api/v1/expenses", { method: "POST", body });
-    },
-    onSuccess: () => {
-      toast({ title: editing ? t("updatedToast") : t("createdToast") });
-      setDialogOpen(false);
-      invalidate();
-    },
-    onError: (err) => {
-      toast({
-        title: err instanceof ApiClientError ? err.message : tErrors("generic"),
-        variant: "destructive",
-      });
-    },
-  });
-
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => api(`/api/v1/expenses/${id}`, { method: "DELETE" }),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       toast({ title: t("deletedToast") });
       invalidate();
+      // Prompt 34 §37 — cached detail must not resurrect a deleted expense.
+      invalidateEntityDetail(queryClient, businessId, "expense", id);
     },
     onError: (err) => {
       toast({
@@ -499,6 +433,7 @@ export function ExpensesView({
             getRowId={(e) => e.id}
             loading={isLoading}
             skeletonRows={5}
+            onRowClick={(e) => navigateToEntity("expense", e.id)}
             empty={
               !q && status === "ALL" && !month ? (
                 <EmptyState
@@ -551,84 +486,12 @@ export function ExpensesView({
         </CardContent>
       </Card>
 
-      <FormDialog
+      <ExpenseFormDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        title={editing ? t("editTitle") : t("addExpense")}
-        submitLabel={editing ? tCommon("save") : tCommon("add")}
-        cancelLabel={tCommon("cancel")}
-        pending={saveMutation.isPending}
-        disabled={!canSubmit}
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (canSubmit) saveMutation.mutate();
-        }}
-      >
-        <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="exp-category">{t("category")}</Label>
-              <Input
-                id="exp-category"
-                value={form.category}
-                onChange={(e2) => setForm({ ...form, category: e2.target.value })}
-                placeholder={t("categoryPlaceholder")}
-                maxLength={60}
-                list="expense-categories"
-                required
-              />
-              <datalist id="expense-categories">
-                {CATEGORY_SUGGESTIONS.map((c) => (
-                  <option key={c} value={c} />
-                ))}
-              </datalist>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="exp-supplier">
-                {t("supplier")}{" "}
-                <span className="text-muted-foreground">({tCommon("optional")})</span>
-              </Label>
-              <Select
-                value={form.supplierId || NONE}
-                onValueChange={(v) => setForm({ ...form, supplierId: v === NONE ? "" : v })}
-              >
-                <SelectTrigger id="exp-supplier" className="w-full">
-                  <SelectValue placeholder={t("supplierPlaceholder")} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>{t("noSupplier")}</SelectItem>
-                  {(suppliers ?? []).map((s) => (
-                    <SelectItem key={s.id} value={s.id} dir="auto">
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <MoneyInput
-            id="exp-amount"
-            label={t("amount")}
-            symbol={business.currencySymbol}
-            value={form.amount}
-            precision={business.decimalPrecision}
-            onChange={(v) => setForm({ ...form, amount: v })}
-            invalidMsg={t("invalidAmount")}
-          />
-          <div className="space-y-2">
-            <Label htmlFor="exp-note">
-              {t("note")} <span className="text-muted-foreground">({tCommon("optional")})</span>
-            </Label>
-            <Textarea
-              id="exp-note"
-              value={form.note}
-              onChange={(e2) => setForm({ ...form, note: e2.target.value })}
-              rows={2}
-              maxLength={1000}
-            />
-          </div>
-        </div>
-      </FormDialog>
+        editing={editing}
+        business={business}
+      />
 
       <PaymentFormDialog
         open={payTarget != null}

@@ -81,6 +81,14 @@ const SKELETON_WIDTHS = [
   "w-20",
 ];
 
+/**
+ * Prompt 34 §31 — elements that OWN their click semantics inside a row.
+ * Clicking (or keyboard-activating) any of them never triggers the row's
+ * navigation handler.
+ */
+const INTERACTIVE_ROW_SELECTOR =
+  "button, a, input, select, textarea, label, [role='button'], [data-no-row-nav]";
+
 function columnClasses<T>(col: ColumnDef<T>, side: "th" | "td"): string {
   return cn(
     ALIGN[col.align ?? "start"],
@@ -298,8 +306,35 @@ export function DataTable<T>({
             : sortedRows.map((row, index) => (
                 <TableRow
                   key={getRowId(row)}
-                  onClick={onRowClick ? () => onRowClick(row) : undefined}
-                  className={cn(onRowClick && "cursor-pointer", rowClassName?.(row))}
+                  onClick={
+                    onRowClick
+                      ? (event) => {
+                          // Prompt 34 §31 — action buttons/links/inputs inside
+                          // a row keep their own semantics; a click on them
+                          // must NEVER trigger row navigation.
+                          const target = event.target as HTMLElement | null;
+                          if (target?.closest(INTERACTIVE_ROW_SELECTOR)) return;
+                          onRowClick(row);
+                        }
+                      : undefined
+                  }
+                  onKeyDown={
+                    onRowClick
+                      ? (event) => {
+                          // §31/§46 — keyboard activation parity for rows.
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          const target = event.target as HTMLElement | null;
+                          if (target?.closest(INTERACTIVE_ROW_SELECTOR)) return;
+                          event.preventDefault();
+                          onRowClick(row);
+                        }
+                      : undefined
+                  }
+                  tabIndex={onRowClick ? 0 : undefined}
+                  className={cn(
+                    onRowClick && "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                    rowClassName?.(row),
+                  )}
                 >
                   {columns.map((col) => (
                     <TableCell key={col.id} className={columnClasses(col, "td")}>

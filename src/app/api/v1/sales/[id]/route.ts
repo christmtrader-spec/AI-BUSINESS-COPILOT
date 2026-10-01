@@ -9,6 +9,7 @@ import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { formatInvoiceNumber } from "@/lib/finance";
+import { mapSaleDetail } from "@/lib/entities";
 
 export const dynamic = "force-dynamic";
 
@@ -19,53 +20,49 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   const ctx = await getAuthContext(req);
   requirePermission(ctx, "data:read");
 
+  // Prompt 34 §17 — audited: tenant-scoped, soft-delete filtered, DTO-shaped.
+  // Mapping now goes through the centralized mapper (§22) — the wire shape
+  // is byte-identical to the pre-Prompt-34 contract the dialog depends on.
   const sale = await db.sale.findFirst({
     where: { id, businessId: ctx.businessId, deletedAt: null },
     include: {
       customer: { select: { name: true } },
       items: { orderBy: { id: "asc" } },
       payments: {
-        orderBy: { paidAt: "desc" },
+        orderBy: [{ paidAt: "desc" }, { id: "desc" }],
         include: { actor: { select: { name: true, email: true } } },
       },
     },
   });
   if (!sale) throw new ApiError(404, "NOT_FOUND", "Invoice not found.");
 
-  return ok({
-    sale: {
-      id: sale.id,
-      number: sale.number,
-      customerId: sale.customerId,
-      customerName: sale.customer?.name ?? null,
-      issueDate: sale.issueDate.toISOString(),
-      subtotalMinor: sale.subtotalMinor,
-      discountMinor: sale.discountMinor,
-      totalMinor: sale.totalMinor,
-      paidMinor: sale.paidMinor,
-      status: sale.status,
-      balanceMinor: sale.totalMinor - sale.paidMinor,
-      note: sale.note,
-      createdAt: sale.createdAt.toISOString(),
-    },
-    items: sale.items.map((i) => ({
-      id: i.id,
-      productId: i.productId,
-      name: i.name,
-      unit: i.unit,
-      qty: i.qty,
-      unitPriceMinor: i.unitPriceMinor,
-      lineTotalMinor: i.lineTotalMinor,
-    })),
-    payments: sale.payments.map((p) => ({
-      id: p.id,
-      amountMinor: p.amountMinor,
-      method: p.method,
-      note: p.note,
-      paidAt: p.paidAt.toISOString(),
-      actorName: p.actor?.name ?? p.actor?.email ?? null,
-    })),
-  });
+  return ok(
+    mapSaleDetail(
+      {
+        id: sale.id,
+        number: sale.number,
+        customerId: sale.customerId,
+        customerName: sale.customer?.name ?? null,
+        issueDate: sale.issueDate,
+        subtotalMinor: sale.subtotalMinor,
+        discountMinor: sale.discountMinor,
+        totalMinor: sale.totalMinor,
+        paidMinor: sale.paidMinor,
+        status: sale.status,
+        note: sale.note,
+        createdAt: sale.createdAt,
+      },
+      sale.items,
+      sale.payments.map((p) => ({
+        id: p.id,
+        amountMinor: p.amountMinor,
+        method: p.method,
+        note: p.note,
+        paidAt: p.paidAt,
+        actorName: p.actor?.name ?? p.actor?.email ?? null,
+      })),
+    ),
+  );
 });
 
 export const DELETE = route(async (req: NextRequest, { params }: RouteParams) => {
@@ -78,7 +75,7 @@ export const DELETE = route(async (req: NextRequest, { params }: RouteParams) =>
     include: { items: true },
   });
   if (!sale) throw new ApiError(404, "NOT_FOUND", "Invoice not found.");
-  const paymentCount = await db.payment.count({ where: { saleId: sale.id } });
+  const paymentCount = await db.payment.count({ where: { saleId: sale.id, businessId: ctx.businessId } });
   if (paymentCount > 0 || sale.paidMinor !== 0) {
     throw new ApiError(
       422,

@@ -236,27 +236,37 @@ await expectRateError("F4 empty sourceReference rejected for PRODUCTION",
 
 console.log("\nG-J — versions, overlap, windows, deactivation");
 // v1: 1.5m/2.0m EUR per 1K, effective 2020→2026-09-30; v2: 3m/4m from 2026-10-01.
+// Fixture windows are RELATIVE to the run date so the harness never ages:
+// v1 active [now-60d, now+2d), v2 from now+2d (deactivated by J1).
+const DAY_MS = 86_400_000;
+const nowMs = Date.now();
+const v1From = new Date(nowMs - 60 * DAY_MS);
+const v1To = new Date(nowMs + 2 * DAY_MS);
+const v2From = new Date(nowMs + 2 * DAY_MS);
+const usageInV1 = new Date(nowMs - 30 * DAY_MS);
+const usageInV2 = new Date(nowMs + 10 * DAY_MS);
+const usageBeforeV1 = new Date(nowMs - 90 * DAY_MS);
 const rateV1 = await createAiCostRate({
   ...base, version: "2026-01-v1",
   inputRateNanoMinorPer1K: 1_500_000, outputRateNanoMinorPer1K: 2_000_000,
-  effectiveFrom: new Date("2020-01-01T00:00:00Z"), effectiveTo: new Date("2026-09-30T23:59:59Z"),
+  effectiveFrom: v1From, effectiveTo: v1To,
 });
 const rateV2 = await createAiCostRate({
   ...base, version: "2026-10-v1",
   inputRateNanoMinorPer1K: 3_000_000, outputRateNanoMinorPer1K: 4_000_000,
-  effectiveFrom: new Date("2026-10-01T00:00:00Z"),
+  effectiveFrom: v2From,
 });
 check("G1 v1 + v2 created (distinct versions)", !!rateV1?.id && !!rateV2?.id);
 await expectRateError("G2 duplicate version rejected",
   createAiCostRate({ ...base, version: "2026-01-v1", inputRateNanoMinorPer1K: 1, outputRateNanoMinorPer1K: 1, effectiveFrom: new Date("2030-01-01") }), "DUPLICATE_VERSION");
 await expectRateError("H overlapping active window rejected",
-  createAiCostRate({ ...base, version: "2026-05-v1", inputRateNanoMinorPer1K: 1, outputRateNanoMinorPer1K: 1, effectiveFrom: new Date("2026-05-01T00:00:00Z"), effectiveTo: new Date("2026-06-01T00:00:00Z") }), "OVERLAPPING_ACTIVE_RATE");
+  createAiCostRate({ ...base, version: "2026-05-v1", inputRateNanoMinorPer1K: 1, outputRateNanoMinorPer1K: 1, effectiveFrom: new Date(nowMs - 50 * DAY_MS), effectiveTo: new Date(nowMs - 40 * DAY_MS) }), "OVERLAPPING_ACTIVE_RATE");
 
-const rSep = await resolveAiCostRate({ provider: PROVIDER, model: "MODEL-A", currency: "EUR", environment: ENV, usageTimestamp: new Date("2026-09-10T12:00:00Z") });
-const rOct = await resolveAiCostRate({ provider: PROVIDER, model: "MODEL-A", currency: "EUR", environment: ENV, usageTimestamp: new Date("2026-10-02T12:00:00Z") });
+const rSep = await resolveAiCostRate({ provider: PROVIDER, model: "MODEL-A", currency: "EUR", environment: ENV, usageTimestamp: usageInV1 });
+const rOct = await resolveAiCostRate({ provider: PROVIDER, model: "MODEL-A", currency: "EUR", environment: ENV, usageTimestamp: usageInV2 });
 check("I1 usage Sep-10 resolves v1", rSep.ok && rSep.rate.version === "2026-01-v1", rSep.ok ? rSep.rate.version : rSep.reason);
 check("I2 usage Oct-02 resolves v2 (no retroactive v1)", rOct.ok && rOct.rate.version === "2026-10-v1", rOct.ok ? rOct.rate.version : rOct.reason);
-const rEarly = await resolveAiCostRate({ provider: PROVIDER, model: "MODEL-A", currency: "EUR", environment: ENV, usageTimestamp: new Date("2019-12-31T00:00:00Z") });
+const rEarly = await resolveAiCostRate({ provider: PROVIDER, model: "MODEL-A", currency: "EUR", environment: ENV, usageTimestamp: usageBeforeV1 });
 check("Z usage BEFORE effectiveFrom → RATE_NOT_FOUND (§104)", !rEarly.ok && rEarly.reason === "RATE_NOT_FOUND", rEarly.ok ? "resolved!" : rEarly.reason);
 
 const deactivated = await deactivateAiCostRate(rateV2.id);
@@ -265,7 +275,7 @@ check("J1 deactivate (never delete)", deactivated.active === false);
   const stillThere = await prisma.aiCostRate.findUnique({ where: { id: rateV2.id } });
   check("J2 deactivated rate row retained for history", !!stillThere);
 }
-const rInactive = await resolveAiCostRate({ provider: PROVIDER, model: "MODEL-A", currency: "EUR", environment: ENV, usageTimestamp: new Date("2026-10-02T12:00:00Z") });
+const rInactive = await resolveAiCostRate({ provider: PROVIDER, model: "MODEL-A", currency: "EUR", environment: ENV, usageTimestamp: usageInV2 });
 check("J3 inactive rate no longer resolves", !rInactive.ok && rInactive.reason === "RATE_NOT_FOUND");
 
 console.log("\nK/L — environment separation + verification gate");
@@ -323,7 +333,7 @@ check("P4 COMPLETE", deriveTokenStatus({ inputTokens: 1, outputTokens: 2, totalT
 
 console.log("\nS/T/U/V/W — KNOWN cost, idempotency, replay");
 const knownEvents = await makeUsageEvents(bizA.id, 2);
-const first = await attributeAiCost({ businessId: bizA.id, requestId: knownEvents[0].requestId, provider: PROVIDER, model: "MODEL-A", usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 }, environment: ENV, usageTimestamp: new Date("2026-09-10T12:00:00Z") });
+const first = await attributeAiCost({ businessId: bizA.id, requestId: knownEvents[0].requestId, provider: PROVIDER, model: "MODEL-A", usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 }, environment: ENV, usageTimestamp: usageInV1 });
 check("S exact KNOWN cost 55000 nano-minor @v1", first.outcome === "KNOWN" && first.costNanoMinor === 55_000n && first.rateVersion === "2026-01-v1", safeStr(first));
 {
   const rec = await prisma.aiCostRecord.findUnique({ where: { id: first.recordId } });
@@ -568,7 +578,7 @@ const { db: domainDb } = await import("../src/lib/db.ts");
   // G2: enabled + tiny global period ceiling vs REAL known cost → BLOCK.
   await prisma.aiCostRecord.deleteMany({});
   const g2ev = (await makeUsageEvents(bizA.id, 1))[0];
-  await attributeAiCost({ businessId: bizA.id, requestId: g2ev.requestId, provider: PROVIDER, model: "MODEL-A", usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 }, environment: ENV, usageTimestamp: new Date("2026-09-10T12:00:00Z") });
+  await attributeAiCost({ businessId: bizA.id, requestId: g2ev.requestId, provider: PROVIDER, model: "MODEL-A", usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 }, environment: ENV, usageTimestamp: usageInV1 });
   process.env.AI_COST_GUARD_ENABLED = "true";
   process.env.AI_COST_GUARD_MAX_PERIOD_COST_NANO_MINOR = "1";
   resetAiCostConfigCache();

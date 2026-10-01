@@ -31,6 +31,8 @@ import { DataPortabilityView } from "../settings/data-portability/data-portabili
 import { NotificationsPreferencesView } from "../settings/notifications-preferences-view";
 import { NotificationsView } from "../notifications/notifications-view";
 import { SearchCenterView } from "../search/search-view";
+import { EntityDetailView } from "../entities/entity-detail-view";
+import { ENTITY_ROUTES } from "@/lib/entity-routes";
 import { SubscriptionView } from "../billing/subscription-view";
 import { PaymentReturnView } from "../billing/payment-return-view";
 import { AuditView } from "../audit/audit-view";
@@ -60,6 +62,9 @@ function labelKeyOf(view: AppView): string {
     // Prompt 33 — Search Results Center document title.
     case "search":
       return "search";
+    // Prompt 34 — entity detail titles reuse the owning module's nav label.
+    case "entity":
+      return ENTITY_ROUTES[view.entity].labelKey;
     case "profile":
       return "profile";
     case "module": {
@@ -184,6 +189,23 @@ export function AppShell({
               {view.kind === "notifications" ? <NotificationsView /> : null}
               {view.kind === "settings:notifications" ? <NotificationsPreferencesView /> : null}
               {view.kind === "search" ? <SearchCenterView /> : null}
+              {view.kind === "entity" ? (
+                <ModuleBoundary
+                  moduleKey={viewKey}
+                  title={tBoundary("title")}
+                  description={tBoundary("description")}
+                  retry={tCommon("retry")}
+                  dashboardLabel={tNav("dashboard")}
+                  onDashboard={() => navigate({ kind: "dashboard" })}
+                >
+                  <EntityDetailView
+                    entity={view.entity}
+                    id={view.id}
+                    business={membership!.business}
+                    role={role}
+                  />
+                </ModuleBoundary>
+              ) : null}
               {view.kind === "profile" ? <ProfileView /> : null}
               {view.kind === "audit" ? <AuditView membership={membership!} /> : null}
               {view.kind === "module" ? (

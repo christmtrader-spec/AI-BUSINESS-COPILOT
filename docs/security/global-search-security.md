@@ -128,3 +128,17 @@ counts/duration only (`resultCount`, `groupCount`, `truncated`,
   FTS5 is a future, measured-only option.
 - No existence-leak protection differences: search simply cannot return rows
   outside the caller's business (the WHERE clause is the boundary).
+
+## Prompt 34 update — entity-detail destination security
+
+Search results now resolve to exact entity details. Security properties:
+
+- The search API response is UNCHANGED: closed type tokens, ids, no URLs.
+  The destination is computed CLIENT-SIDE from the closed
+  `SEARCH_TYPE_TO_ENTITY` map — a server or DB value can never inject a
+  destination, and `javascript:`/external/absolute URLs are unreachable.
+- Ids are charset-validated (`[A-Za-z0-9_-]{1,64}`), percent-encoded by the
+  centralized encoder and re-validated on parse (`parseEntityRoute`).
+- Detail endpoints re-verify session, membership and tenant scope, so a
+  forged or foreign id yields 404 — search remains a discovery layer and
+  the detail API remains the authority layer.

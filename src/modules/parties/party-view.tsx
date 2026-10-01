@@ -11,9 +11,6 @@ import { downloadCsv, exportStamp, fetchAllPages, toCsv } from "@/lib/csv";
 import { can, asRole, type Role } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   AlertDialog,
@@ -29,8 +26,12 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { DataTable, Ltr } from "@/components/shared/data-table";
-import { FormDialog, Pagination, SearchInput } from "@/components/shared/table-kit";
+import { Pagination, SearchInput } from "@/components/shared/table-kit";
 import { PlanLimitBanner } from "../billing/plan-limit-banner";
+import { PartyFormDialog } from "./party-form-dialog";
+import { navigateToEntity } from "@/modules/entities/entity-route";
+import { invalidateEntityDetail } from "@/modules/entities/entity-api";
+import type { EntityType } from "@/lib/entity-routes";
 import type { BusinessSummary } from "../shell/types";
 
 export type Party = {
@@ -66,6 +67,7 @@ export function PartyView({
   const tErrors = useTranslations("errors");
   const billingErrorText = useBillingErrorText();
   const queryClient = useQueryClient();
+  const businessId = useAppStore((s) => s.activeBusinessId);
 
   const writable = can(role, "data:write");
   const typeLabel = t(kind);
@@ -75,7 +77,6 @@ export function PartyView({
   const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Party | null>(null);
-  const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", note: "" });
 
   const { data, isLoading, error, refetch } = useQuery<PartyPage>({
     queryKey: ["parties", kind, q, page],
@@ -85,55 +86,23 @@ export function PartyView({
 
   function openCreate() {
     setEditing(null);
-    setForm({ name: "", phone: "", email: "", address: "", note: "" });
     setDialogOpen(true);
   }
 
   function openEdit(p: Party) {
     setEditing(p);
-    setForm({
-      name: p.name,
-      phone: p.phone ?? "",
-      email: p.email ?? "",
-      address: p.address ?? "",
-      note: p.note ?? "",
-    });
     setDialogOpen(true);
   }
 
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      const body = JSON.stringify({
-        name: form.name,
-        phone: form.phone || null,
-        email: form.email || null,
-        address: form.address || null,
-        note: form.note || null,
-      });
-      return editing
-        ? api(`${API_BASE[kind]}/${editing.id}`, { method: "PATCH", body })
-        : api(API_BASE[kind], { method: "POST", body });
-    },
-    onSuccess: () => {
-      toast({ title: t(editing ? "updatedToast" : "createdToast", { type: typeLabel }) });
-      setDialogOpen(false);
-      void queryClient.invalidateQueries({ queryKey: ["parties", kind] });
-      void queryClient.invalidateQueries({ queryKey: ["audit"] });
-    },
-    onError: (err) => {
-      toast({
-        title: billingErrorText(err) || (err instanceof ApiClientError ? err.message : tErrors("generic")),
-        variant: "destructive",
-      });
-    },
-  });
-
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => api(`${API_BASE[kind]}/${id}`, { method: "DELETE" }),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       toast({ title: t("deletedToast", { type: typeLabel }) });
       void queryClient.invalidateQueries({ queryKey: ["parties", kind] });
       void queryClient.invalidateQueries({ queryKey: ["audit"] });
+      // Prompt 34 §37 — a cached/open detail must not resurrect a deleted
+      // record.
+      invalidateEntityDetail(queryClient, businessId, kind as EntityType, id);
     },
     onError: (err) => {
       toast({
@@ -358,6 +327,7 @@ export function PartyView({
                 getRowId={(p) => p.id}
                 loading={isLoading}
                 skeletonRows={4}
+                onRowClick={(p) => navigateToEntity(kind, p.id)}
                 empty={
                   items.length === 0 && !q ? (
                     <EmptyState
@@ -394,77 +364,12 @@ export function PartyView({
         </CardContent>
       </Card>
 
-      <FormDialog
+      <PartyFormDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        title={editing ? t("edit", { type: typeLabel }) : t("add", { type: typeLabel })}
-        submitLabel={editing ? tCommon("save") : tCommon("add")}
-        cancelLabel={tCommon("cancel")}
-        pending={saveMutation.isPending}
-        disabled={!form.name.trim()}
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (form.name.trim()) saveMutation.mutate();
-        }}
-      >
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="p-name">{t("name")}</Label>
-            <Input
-              id="p-name"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder={t("namePlaceholder")}
-              maxLength={120}
-              required
-            />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="p-phone">{t("phone")}</Label>
-              <Input
-                id="p-phone"
-                value={form.phone}
-                onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                placeholder={t("phonePlaceholder")}
-                dir="ltr"
-                maxLength={40}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="p-email">{t("email")}</Label>
-              <Input
-                id="p-email"
-                type="email"
-                value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-                dir="ltr"
-                maxLength={200}
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="p-address">{t("address")}</Label>
-            <Input
-              id="p-address"
-              value={form.address}
-              onChange={(e) => setForm({ ...form, address: e.target.value })}
-              maxLength={300}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="p-note">{t("note")}</Label>
-            <Textarea
-              id="p-note"
-              value={form.note}
-              onChange={(e) => setForm({ ...form, note: e.target.value })}
-              placeholder={t("notePlaceholder")}
-              rows={2}
-              maxLength={1000}
-            />
-          </div>
-        </div>
-      </FormDialog>
+        kind={kind}
+        editing={editing}
+      />
     </div>
   );
 }

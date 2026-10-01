@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { CalendarDays, Download, Eye, Plus, ShoppingCart, Trash2, X } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
@@ -41,11 +41,14 @@ import {
 } from "../finance-shared/finance-kit";
 import { SaleFormDialog } from "./sale-form-dialog";
 import { SaleDetailDialog } from "./sale-detail-dialog";
+import { navigateToEntity } from "@/modules/entities/entity-route";
+import { invalidateEntityDetail } from "@/modules/entities/entity-api";
 import type { BusinessSummary } from "../shell/types";
 
 type SaleRow = {
   id: string;
   number: number;
+  customerId: string | null;
   customerName: string | null;
   issueDate: string;
   totalMinor: number;
@@ -87,6 +90,8 @@ export function SalesView({
   const tErrors = useTranslations("errors");
   const uiLocale = useLocale();
   const invalidate = useInvalidateFinance();
+  const queryClient = useQueryClient();
+  const businessId = useAppStore((s) => s.activeBusinessId);
   const view = useAppStore((s) => s.view);
   const navigate = useAppStore((s) => s.navigate);
 
@@ -169,10 +174,14 @@ export function SalesView({
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => api(`/api/v1/sales/${id}`, { method: "DELETE" }),
-    onSuccess: () => {
+    mutationFn: async (row: SaleRow) => api(`/api/v1/sales/${row.id}`, { method: "DELETE" }),
+    onSuccess: (_data, row) => {
       toast({ title: t("deletedToast") });
       invalidate();
+      // Prompt 34 §37 — targeted: deleted sale detail + the customer 360
+      // summary that aggregated it.
+      invalidateEntityDetail(queryClient, businessId, "sale", row.id);
+      if (row.customerId) invalidateEntityDetail(queryClient, businessId, "customer", row.customerId);
     },
     onError: (err) => {
       toast({
@@ -311,6 +320,7 @@ export function SalesView({
           <DataTable<SaleRow>
             ariaLabel={t("title")}
             sortLocale={business.locale}
+            onRowClick={(row) => navigateToEntity("sale", row.id)}
             columns={[
               {
                 id: "invoice",
@@ -421,7 +431,7 @@ export function SalesView({
                             <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
                             <AlertDialogAction
                               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                              onClick={() => deleteMutation.mutate(s.id)}
+                              onClick={() => deleteMutation.mutate(s)}
                             >
                               {tCommon("delete")}
                             </AlertDialogAction>

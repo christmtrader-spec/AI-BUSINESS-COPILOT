@@ -1,0 +1,221 @@
+"use client";
+
+/**
+ * Prompt 34 — Customer 360 detail page (§25).
+ * Header + contact + summary metrics + related invoices/payments. All
+ * money flows through the business money utilities (§43); related rows
+ * navigate via the centralized entity helpers (§34).
+ */
+
+import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslations } from "next-intl";
+import {
+  CreditCard,
+  HandCoins,
+  Pencil,
+  ReceiptText,
+  ShoppingCart,
+  Trash2,
+  TrendingUp,
+  Wallet,
+} from "lucide-react";
+import { toast } from "@/hooks/use-toast";
+import { api, ApiClientError } from "@/lib/api-client";
+import type { Role } from "@/lib/rbac";
+import { can } from "@/lib/rbac";
+import { useAppStore } from "@/store/app-store";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { FinanceStatusBadge, fmtCount, fmtDate, fmtMoney } from "../finance-shared/finance-kit";
+import type { BusinessSummary } from "../shell/types";
+import { invalidateEntityDetail } from "./entity-api";
+import { EntityHeader, EntityBreadcrumb, EntityTypeBadge } from "./entity-header";
+import { EntityMetricCard } from "./entity-metric-card";
+import { EntityDeleteDialog } from "./entity-delete-dialog";
+import { RelatedRecordList } from "./related-record-list";
+import { navigateToEntity, navigateToEntityList } from "./entity-route";
+import { PartyFormDialog } from "../parties/party-form-dialog";
+import type { CustomerDetail } from "@/lib/entities";
+
+export function CustomerDetailView({
+  data,
+  business,
+  uiLocale,
+  role,
+}: {
+  data: CustomerDetail;
+  business: BusinessSummary;
+  uiLocale: string;
+  role: Role;
+}) {
+  const t = useTranslations("entityDetail");
+  const tCommon = useTranslations("common");
+  const tSearch = useTranslations("search");
+  const tErrors = useTranslations("errors");
+  const queryClient = useQueryClient();
+  const businessId = useAppStore((s) => s.activeBusinessId);
+  const navigate = useAppStore((s) => s.navigate);
+
+  const writable = can(role, "data:write");
+  const c = data.customer;
+  const [editOpen, setEditOpen] = useState(false);
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => api(`/api/v1/customers/${c.id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast({ title: t("deletedToast", { type: t("customer") }) });
+      void queryClient.invalidateQueries({ queryKey: ["parties", "customer"] });
+      void queryClient.invalidateQueries({ queryKey: ["audit"] });
+      invalidateEntityDetail(queryClient, businessId, "customer", c.id);
+      navigateToEntityList("customer");
+    },
+    onError: (err) => {
+      toast({
+        title: err instanceof ApiClientError ? err.message : tErrors("generic"),
+        variant: "destructive",
+      });
+    },
+  });
+
+  const subtitle =
+    c.phone ?? c.email ?? t("noContact");
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-2">
+        <EntityBreadcrumb listLabel={t("customers")} title={c.name} />
+        <EntityHeader
+          icon={ReceiptText}
+          avatarInitials={c.name.slice(0, 2).toUpperCase()}
+          title={c.name}
+          subtitle={subtitle}
+          badge={<EntityTypeBadge label={t("customer")} />}
+          backLabel={t("backTo", { list: t("customers") })}
+          onBack={() => navigateToEntityList("customer")}
+          actions={
+            writable ? (
+              <>
+                <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+                  <Pencil className="size-4" aria-hidden="true" />
+                  {tCommon("edit")}
+                </Button>
+                <EntityDeleteDialog
+                  triggerLabel={tCommon("delete")}
+                  triggerIcon={Trash2}
+                  title={t("deleteTitle", { type: t("customer") })}
+                  description={t("deleteDesc")}
+                  confirmLabel={tCommon("delete")}
+                  cancelLabel={tCommon("cancel")}
+                  pending={deleteMutation.isPending}
+                  onConfirm={() => deleteMutation.mutate()}
+                />
+              </>
+            ) : null
+          }
+        />
+      </div>
+
+      {/* Financial summary (§25) — server-authoritative integer aggregates */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <EntityMetricCard
+          label={t("totalSales")}
+          value={fmtMoney(business, data.summary.totalSalesMinor)}
+          icon={TrendingUp}
+        />
+        <EntityMetricCard
+          label={t("paid")}
+          value={fmtMoney(business, data.summary.paidSalesMinor)}
+          icon={Wallet}
+          tone="positive"
+        />
+        <EntityMetricCard
+          label={t("receivable")}
+          value={fmtMoney(business, data.summary.receivableMinor)}
+          icon={HandCoins}
+          tone={data.summary.receivableMinor > 0 ? "warning" : "positive"}
+        />
+        <EntityMetricCard
+          label={t("invoices")}
+          value={fmtCount(uiLocale, data.summary.invoiceCount)}
+          hint={t("openInvoices", { count: fmtCount(uiLocale, data.summary.openInvoiceCount) })}
+          icon={ReceiptText}
+        />
+      </div>
+
+      {/* Contact card */}
+      <Card>
+        <CardContent className="grid gap-4 pt-6 sm:grid-cols-2">
+          <div className="flex flex-col gap-3">
+            <InfoRow label={t("phone")} value={c.phone} ltr />
+            <InfoRow label={t("email")} value={c.email} ltr />
+          </div>
+          <div className="flex flex-col gap-3">
+            <InfoRow label={t("address")} value={c.address} />
+            <InfoRow label={t("note")} value={c.note} />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Related records (§34) */}
+      <RelatedRecordList
+        title={t("recentSales")}
+        entity="sale"
+        emptyText={t("noRecentSales")}
+        onOpen={navigateToEntity}
+        items={data.recentSales.map((s) => ({
+          id: s.id,
+          icon: ShoppingCart,
+          primary: `INV-${String(s.number).padStart(4, "0")}`,
+          secondary: fmtDate(business, s.issueDate),
+          trailing: fmtMoney(business, s.totalMinor),
+          badge: <FinanceStatusBadge status={s.status} />,
+        }))}
+      />
+      <RelatedRecordList
+        title={t("recentPayments")}
+        entity="payment"
+        emptyText={t("noRecentPayments")}
+        onOpen={navigateToEntity}
+        items={data.recentPayments.map((p) => ({
+          id: p.id,
+          icon: CreditCard,
+          primary: tSearch(`method.${p.method}`),
+          secondary: p.note,
+          trailing: fmtMoney(business, p.amountMinor),
+          trailingMuted: fmtDate(business, p.paidAt),
+        }))}
+      />
+
+      <PartyFormDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        kind="customer"
+        editing={c}
+      />
+    </div>
+  );
+}
+
+export function InfoRow({
+  label,
+  value,
+  ltr,
+}: {
+  label: string;
+  value: string | null;
+  ltr?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{label}</p>
+      {value ? (
+        <p className="text-sm break-words" dir={ltr ? "ltr" : "auto"}>
+          {value}
+        </p>
+      ) : (
+        <p className="text-muted-foreground text-sm">—</p>
+      )}
+    </div>
+  );
+}

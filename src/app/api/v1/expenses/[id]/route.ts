@@ -1,8 +1,13 @@
 /**
+ * GET    /api/v1/expenses/[id] — expense detail + payments (data:read).
  * PATCH  /api/v1/expenses/[id] — update (data:write, audited). Amount may
- * never drop below what has already been paid (kept consistent with payments).
+ *        never drop below what has already been paid (kept consistent with payments).
  * DELETE /api/v1/expenses/[id] — soft delete (data:write). Blocked while
- * payments exist.
+ *        payments exist.
+ *
+ * Prompt 34 (§18/§20/§21/§85): tenant-scoped GET, soft-delete filter,
+ * explicit DTO with supplier name only (no supplier object), bounded
+ * payments list (≤20), integer minor units.
  */
 import { NextRequest } from "next/server";
 import type { Prisma } from "@prisma/client";
@@ -12,10 +17,14 @@ import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { expenseUpdateSchema } from "@/lib/schemas";
 import { statusOf } from "@/lib/money";
+import { mapExpenseDetail } from "@/lib/entities";
 
 export const dynamic = "force-dynamic";
 
 type RouteParams = { params: Promise<{ id: string }> };
+
+/** Bounded payments list (§18/§85). */
+const PAYMENTS_TAKE = 20;
 
 async function loadExpense(businessId: string, id: string) {
   const expense = await db.expense.findFirst({
@@ -24,6 +33,70 @@ async function loadExpense(businessId: string, id: string) {
   if (!expense) throw new ApiError(404, "NOT_FOUND", "Expense not found.");
   return expense;
 }
+
+export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
+  const { id } = await params;
+  const ctx = await getAuthContext(req);
+  requirePermission(ctx, "data:read");
+
+  // §20 — foreign/deleted record → 404 (same path as unknown id).
+  const expense = await db.expense.findFirst({
+    where: { id, businessId: ctx.businessId, deletedAt: null },
+    select: {
+      id: true,
+      category: true,
+      amountMinor: true,
+      paidMinor: true,
+      status: true,
+      spentAt: true,
+      note: true,
+      supplierId: true,
+      supplier: { select: { name: true } },
+      createdAt: true,
+    },
+  });
+  if (!expense) throw new ApiError(404, "NOT_FOUND", "Expense not found.");
+
+  // §85 — bounded, deterministic, explicit select (§86).
+  const payments = await db.payment.findMany({
+    where: { businessId: ctx.businessId, expenseId: id },
+    orderBy: [{ paidAt: "desc" }, { id: "desc" }],
+    take: PAYMENTS_TAKE,
+    select: {
+      id: true,
+      amountMinor: true,
+      method: true,
+      paidAt: true,
+      note: true,
+      actor: { select: { name: true, email: true } },
+    },
+  });
+
+  return ok(
+    mapExpenseDetail(
+      {
+        id: expense.id,
+        category: expense.category,
+        amountMinor: expense.amountMinor,
+        paidMinor: expense.paidMinor,
+        status: expense.status,
+        spentAt: expense.spentAt,
+        note: expense.note,
+        supplierId: expense.supplierId,
+        supplierName: expense.supplier?.name ?? null,
+        createdAt: expense.createdAt,
+      },
+      payments.map((p) => ({
+        id: p.id,
+        amountMinor: p.amountMinor,
+        method: p.method,
+        paidAt: p.paidAt,
+        note: p.note,
+        actorName: p.actor?.name ?? p.actor?.email ?? null,
+      })),
+    ),
+  );
+});
 
 export const PATCH = route(async (req: NextRequest, { params }: RouteParams) => {
   const { id } = await params;
@@ -97,7 +170,7 @@ export const DELETE = route(async (req: NextRequest, { params }: RouteParams) =>
   requirePermission(ctx, "data:write");
 
   const before = await loadExpense(ctx.businessId, id);
-  const paymentCount = await db.payment.count({ where: { expenseId: before.id } });
+  const paymentCount = await db.payment.count({ where: { expenseId: before.id, businessId: ctx.businessId } });
   if (paymentCount > 0 || before.paidMinor !== 0) {
     throw new ApiError(
       422,

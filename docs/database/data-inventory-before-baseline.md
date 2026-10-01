@@ -7,7 +7,14 @@ application data.
 
 - Original capture: 2026-09-23T05:20:35.240Z (db-push era, before `0_init`
   was recorded; 483328 bytes; integrity ok · quick_check ok · FK violations 0).
-- **Refreshed: 2026-09-29 (Prompt 30-F).** The dev database legitimately
+- **Refreshed: 2026-10-01 (Prompt 34).** The dev sandbox was rebuilt (database
+  re-created by the environment; migration ledger re-baselined with
+  `prisma migrate resolve --applied` x15 — ledger writes ONLY; billing/pricing
+  catalogs re-seeded with the sanctioned idempotent seeds). Prompt 17–33
+  harness fixtures ran and cleaned up to zero, so the honest steady-state row
+  counts dropped below the 2026-09-29 snapshot. Per this document's protocol
+  ("row counts are a living dev database"), check 5b now compares against THIS
+  refreshed snapshot. Prior refresh: 2026-09-29 (Prompt 30-F). The dev database legitimately
   evolved through Prompt 20–30 fixture harnesses (created + deleted probe
   records). Because the migration LEDGER was baselined on 2026-09-29 with
   `prisma migrate resolve --applied` (ledger writes ONLY — zero data
@@ -24,7 +31,22 @@ application data.
 
 | Model | Rows |
 |---|---|
-| `User` | 30 |
+| `User` | 32 |
+| `Business` | 4 |
+| `BusinessMember` | 6 |
+| `BusinessInvite` | 2 |
+| `AuditLog` | 101 |
+| `Customer` | 2 |
+| `Supplier` | 0 |
+| `Product` | 0 |
+| `InventoryAdjustment` | 0 |
+| `Sale` | 6 |
+| `SaleItem` | 6 |
+| `Expense` | 2 |
+| `Payment` | 2 |
+| `ChatSession` | 0 |
+| `ChatMessage` | 0 |
+| `PasswordResetToken` | 2 |
 | `Business` | 2 |
 | `BusinessMember` | 3 |
 | `BusinessInvite` | 1 |

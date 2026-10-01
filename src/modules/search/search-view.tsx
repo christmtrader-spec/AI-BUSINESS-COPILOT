@@ -11,6 +11,7 @@ import {
   useSearchQuery,
 } from "./search-api";
 import { SEARCH_TYPE_ICONS, formatSearchDate } from "./search-icons";
+import { entityViewFromSearchItem } from "../entities/entity-route";
 import type { SearchEntityType, SearchResultItem } from "@/lib/search/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -93,8 +94,10 @@ export function SearchCenterView() {
   const truncated = search.data?.truncated ?? false;
 
   function openResult(item: SearchResultItem) {
-    // Closed destination → module map (§14). No URLs from the server.
-    navigate({ kind: "module", module: item.destination });
+    // Prompt 34 §33 — type+id resolve through the CLOSED entity vocabulary
+    // (lib/entity-routes) to the exact entity detail. The server still only
+    // returns the allowlisted type + id; no URL is ever built from data.
+    navigate(entityViewFromSearchItem(item));
   }
 
   function clearSearch() {

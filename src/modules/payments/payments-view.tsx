@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { ArrowDownToLine, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
 import { can, asRole, type Role } from "@/lib/rbac";
+import { useAppStore } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -33,13 +34,17 @@ import { DataTable, DataTableToolbar, Ltr } from "@/components/shared/data-table
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
 import { fmtDate, fmtMoney, txKeys, useInvalidateFinance } from "../finance-shared/finance-kit";
 import { PaymentFormDialog } from "./payment-form-dialog";
+import { navigateToEntity } from "@/modules/entities/entity-route";
+import { invalidateEntityDetail } from "@/modules/entities/entity-api";
 import type { BusinessSummary } from "../shell/types";
 
 type PaymentRow = {
   id: string;
   direction: "IN" | "OUT";
+  saleId: string | null;
   saleNumber: number | null;
   customerName: string | null;
+  expenseId: string | null;
   expenseCategory: string | null;
   supplierName: string | null;
   amountMinor: number;
@@ -65,6 +70,8 @@ export function PaymentsView({
   const tCommon = useTranslations("common");
   const tErrors = useTranslations("errors");
   const invalidate = useInvalidateFinance();
+  const queryClient = useQueryClient();
+  const businessId = useAppStore((s) => s.activeBusinessId);
 
   const canPay = can(asRole(role), "finance:manage");
 
@@ -81,10 +88,14 @@ export function PaymentsView({
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => api(`/api/v1/payments/${id}`, { method: "DELETE" }),
-    onSuccess: () => {
+    mutationFn: async (row: PaymentRow) => api(`/api/v1/payments/${row.id}`, { method: "DELETE" }),
+    onSuccess: (_data, row) => {
       toast({ title: t("deletedToast") });
       invalidate();
+      // Prompt 34 §37 — targeted: reversed payment + its related document.
+      invalidateEntityDetail(queryClient, businessId, "payment", row.id);
+      if (row.saleId) invalidateEntityDetail(queryClient, businessId, "sale", row.saleId);
+      if (row.expenseId) invalidateEntityDetail(queryClient, businessId, "expense", row.expenseId);
     },
     onError: (err) => {
       toast({
@@ -163,6 +174,7 @@ export function PaymentsView({
             ariaLabel={t("title")}
             sortLocale={business.locale}
             refreshing={isFetching && !isLoading}
+            onRowClick={(row) => navigateToEntity("payment", row.id)}
             columns={[
               {
                 id: "date",
@@ -260,7 +272,7 @@ export function PaymentsView({
                               <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
                               <AlertDialogAction
                                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                onClick={() => deleteMutation.mutate(p.id)}
+                                onClick={() => deleteMutation.mutate(p)}
                               >
                                 {tCommon("delete")}
                               </AlertDialogAction>
