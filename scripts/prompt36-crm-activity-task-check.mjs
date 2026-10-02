@@ -618,8 +618,12 @@ check("AB1 opportunity detail still 200", oppDetail.status === 200);
 check("AB2 expected value untouched by activities/tasks", oppDetail.data?.expectedValueMinor === 5000, String(oppDetail.data?.expectedValueMinor));
 const wonMove = await call(wbA, `/api/v1/crm/opportunities/${oppId}/stage`, { method: "POST", body: JSON.stringify({ stage: "WON" }) });
 check("AB3 WON move 200", wonMove.status === 200, String(wonMove.status));
-const notifAfterWon = await db.notification.count({ where: { businessId: bizA } });
-check("AB4 WON created NO notification (§106)", notifAfterWon === notifBaseline, `${notifAfterWon}/${notifBaseline}`);
+// Prompt 37 — task ASSIGNMENT notifications are now real product events;
+// the §106 intent is that the WON STAGE TRANSITION itself never notifies.
+const nonCrmNotifAfterWon = await db.notification.count({
+  where: { businessId: bizA, type: { notIn: ["BUSINESS_CRM_TASK_ASSIGNED", "BUSINESS_CRM_TASK_DUE_SOON", "BUSINESS_CRM_TASK_OVERDUE"] } },
+});
+check("AB4 WON transition created NO notification (§106; P37 assignment events excluded)", nonCrmNotifAfterWon === notifBaseline, `${nonCrmNotifAfterWon}/${notifBaseline}`);
 const oppActCount = await db.crmActivity.count({ where: { opportunityId: oppId, deletedAt: null } });
 check("AB5 WON created NO automatic activity", oppActCount === 1, String(oppActCount));
 const oppTaskCount = await db.crmTask.count({ where: { opportunityId: oppId, deletedAt: null } });
@@ -752,9 +756,20 @@ const crmTypeNotifs = await db.notification.count({
   },
 });
 check("AR1 zero task/activity notification types ever created", crmTypeNotifs === 0, String(crmTypeNotifs));
-check("AR2 no NEW notifications beyond the P31 export completion", notifAfter - notifBaseline <= 1, `${notifAfter}/${notifBaseline}`);
+// Prompt 37 — BUSINESS_CRM_TASK_* notifications are legitimate now (the
+// harness's own task assignments emit them); anything ELSE beyond the
+// sanctioned export completion is a fabricated event type (§12 intent).
+const nonCrmNotifAfter = await db.notification.count({
+  where: {
+    businessId: bizA,
+    type: { notIn: ["BUSINESS_CRM_TASK_ASSIGNED", "BUSINESS_CRM_TASK_DUE_SOON", "BUSINESS_CRM_TASK_OVERDUE"] },
+  },
+});
+check("AR2 no NEW notifications beyond the P31 export completion (P37 CRM types excluded)", nonCrmNotifAfter - notifBaseline <= 1, `${nonCrmNotifAfter}/${notifBaseline}`);
 const queueBlob = JSON.stringify(queue.data);
-check("AR3 work queue carries no send/delivery fields", !queueBlob.includes("sendAt") && !queueBlob.includes("reminder") && !queueBlob.includes("delivery"));
+// Prompt 37 (§62) — the queue may carry reminder CONFIGURATION flags
+// (reminderEnabled/overdueAlertEnabled), never delivery/scheduling internals.
+check("AR3 work queue carries no send/delivery/scheduling fields", !queueBlob.includes("sendAt") && !queueBlob.includes("delivery") && !queueBlob.includes("cron") && !queueBlob.includes("sourceEventId"), "P37 flags allowed");
 
 /* ------------------------- AQ financial non-interference ------------------- */
 console.log("\n== AQ FINANCIAL NON-INTERFERENCE (after) ==");

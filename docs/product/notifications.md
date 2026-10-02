@@ -4,7 +4,7 @@
 > Status: **IMPLEMENTED** — describes the shipped behavior of the in-app
 > notification center, the transactional email channel, and notification
 > preferences. Security properties: `docs/security/notification-security.md`;
-> the full 19-type catalog with per-type policy:
+> the full 22-type catalog with per-type policy:
 > `docs/product/notification-matrix.md`.
 
 ## 1. What the notification platform is
@@ -21,7 +21,7 @@ the product, delivered through two channels:
 Five categories: **Security** (account/security state changes), **Billing**
 (trial, subscription, payment outcomes), **AI** (usage-limit thresholds),
 **Business** (export/import job outcomes), **System** (operator
-announcements). The closed catalog has exactly 19 types; users cannot create,
+announcements). The closed catalog has exactly 22 types (Prompt 37 adds the three BUSINESS_CRM_TASK_* types); users cannot create,
 forward, or reply to notifications, and nothing in a notification mutates
 product state — it summarizes and links to the relevant screen.
 
@@ -56,7 +56,7 @@ product state — it summarizes and links to the relevant screen.
 
 ## 3. Preferences (`#/settings/notifications`)
 
-- **Per-category, per-channel controls**: each of the 19 types is listed
+- **Per-category, per-channel controls**: each of the 22 types is listed
   under its category with its available channels (IN_APP and/or EMAIL).
   IN_APP is always on; where EMAIL is user-controllable, a switch writes one
   explicit preference row (type + channel + enabled).
@@ -90,7 +90,7 @@ product state — it summarizes and links to the relevant screen.
   emails can be retried only by platform operators (never by users); the
   per-delivery attempt cap is `NOTIFICATION_EMAIL_MAX_ATTEMPTS` (default 3).
 
-## 5. Event coverage (19 catalog types)
+## 5. Event coverage (22 catalog types)
 
 Full per-type policy (channels, priority, severity, defaults, dedupe keys,
 data sensitivity): `docs/product/notification-matrix.md`. Trigger sources:
@@ -115,6 +115,9 @@ data sensitivity): `docs/product/notification-matrix.md`. Trigger sources:
 | `BUSINESS_EXPORT_FAILED` | Data export job FAILED (stable safe failure code only) |
 | `BUSINESS_IMPORT_COMPLETED` | Data import job COMPLETED (after DB commit) |
 | `BUSINESS_IMPORT_FAILED` | Data import job FAILED (safe failure summary) |
+| `BUSINESS_CRM_TASK_ASSIGNED` | CRM task created with / reassigned to another user (after commit; self-assignment suppressed — Prompt 37) |
+| `BUSINESS_CRM_TASK_DUE_SOON` | Reminder processor (operator-scheduled CLI) within the reminder window; one per task+dueAt+assignee |
+| `BUSINESS_CRM_TASK_OVERDUE` | Reminder processor once the task is past due; one per task+dueAt+assignee |
 | `SYSTEM_ANNOUNCEMENT` | Authorized platform operator service only — explicit recipients, no audience queries |
 
 Deliberately unmapped events (subscription CREATED, trial-ending reminders,

@@ -170,9 +170,9 @@ export async function createActivity(
   input: {
     type: ActivityType;
     title: string;
-    description: string | null;
+    description?: string | null;
     occurredAt: string;
-    durationMinutes: number | null;
+    durationMinutes?: number | null;
     customerId?: string | null;
     leadId?: string | null;
     opportunityId?: string | null;

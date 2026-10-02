@@ -336,6 +336,74 @@ Full policy: `docs/security/platform-admin-security.md`.
   blocked); BLOCKED = catalog unhealthy. Public payloads carry the status
   only.
 
+## 11d. CRM task reminder scheduler (Prompt 37)
+
+CRM task reminders (due-soon + overdue notifications, Prompt 37) are driven
+by an **EXTERNAL, operator-managed scheduler**. The application contains NO
+in-process scheduler; if the schedule below is not installed, reminders
+simply do not fire and the app stays healthy (§191).
+
+**EXAMPLES ONLY — OPERATOR-MANAGED — NOT AUTO-INSTALLED:**
+
+- **Linux cron (recommended: every 5 minutes, §70):**
+
+  ```
+  # /etc/crontab — EXAMPLE, operator-managed (Prompt 37 §70)
+  */5 * * * * app cd /srv/my-project && bun scripts/process-crm-task-reminders.mjs --apply >> /var/log/aibc-crm-reminders.log 2>&1
+  ```
+
+- **systemd timer (§71)** — `aibc-crm-reminders.service`:
+
+  ```ini
+  [Unit]
+  Description=AI Business Copilot CRM task reminders (Prompt 37)
+
+  [Service]
+  Type=oneshot
+  User=app
+  WorkingDirectory=/srv/my-project
+  ExecStart=/usr/local/bin/bun scripts/process-crm-task-reminders.mjs --apply
+  ```
+
+  and `aibc-crm-reminders.timer`:
+
+  ```ini
+  [Timer]
+  OnBootSec=5min
+  OnUnitInactiveSec=5min
+
+  [Install]
+  WantedBy=timers.target
+  ```
+
+  systemd prevents overlapping runs of the same unit (concurrency
+  protection, §73).
+
+- **Windows Task Scheduler (§72)**: trigger every 5 minutes; program
+  `bun.exe`; arguments `scripts/process-crm-task-reminders.mjs --apply`;
+  working directory = project root; enable "Do not start a new instance".
+
+- **Overlap protection** is the scheduler's job (`flock` for cron, systemd
+  unit concurrency, Task Scheduler instance policy). The processor itself is
+  IDEMPOTENT — a repeated/overlapping run dedupes on the Notification
+  `(userId, type, sourceEventId)` unique index and produces zero duplicates
+  (§73/§81).
+
+- **Dry run first**: `bun scripts/process-crm-task-reminders.mjs` (no
+  `--apply`) prints safe counters only (mode/scanned/candidates/created/
+  duplicates/skipped/failed) and never writes.
+
+- **Limits**: `CRM_REMINDER_MAX_PER_RUN` (default 100, range 10–500) caps
+  notification attempts per run; `CRM_REMINDER_OVERDUE_LOOKBACK_HOURS`
+  (default 168, range 1–720) bounds overdue rescanning — an operational
+  scanning boundary, NOT a retention policy (§41). See
+  `docs/product/crm-task-reminders.md` and
+  `docs/security/crm-task-reminders-security.md`.
+
+- **No scheduler HTTP endpoint, no CRON_SECRET**: the CLI runs locally
+  against the database (§158/§171). Scheduler availability must never affect
+  `/api/health` or `/api/ready` (§190/§191).
+
 ## 12. Related procedures
 
 - Rollback: `docs/deployment/release-rollback.md` (§118/§119) — forward-only

@@ -406,6 +406,24 @@ export function useCrmTasks(
  * Server-driven work queue (§118): buckets + counts arrive classified —
  * the client only renders. `mine=false` + assignee shows that member's queue.
  */
+/**
+ * Prompt 37 (§63/§64) — reminder CONFIGURATION summary (business-scoped,
+ * server-computed). Not notification counts.
+ */
+export function useCrmReminderSummary() {
+  const businessId = useAppStore((s) => s.activeBusinessId);
+  return useQuery({
+    queryKey: [...crmKeys.workQueue(businessId), "reminderSummary"],
+    queryFn: () =>
+      api<{ dueSoonEnabledCount: number; overdueAlertsEnabledCount: number; dueSoonNext24hCount: number }>(
+        "/api/v1/crm/tasks/reminder-summary",
+      ),
+    enabled: Boolean(businessId),
+    staleTime: 15_000,
+    retry: false,
+  });
+}
+
 export function useCrmWorkQueue(params: { assignedToUserId?: string | null; enabled?: boolean } = {}) {
   const businessId = useAppStore((s) => s.activeBusinessId);
   const search = new URLSearchParams();

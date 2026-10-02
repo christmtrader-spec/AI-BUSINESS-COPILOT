@@ -5,6 +5,7 @@ import { OPERATIONAL_EVENTS } from "@/lib/observability/events";
 import { NOTIFICATION_CATALOG, type NotificationType } from "./catalog";
 import { composeSourceEventId } from "./dedupe";
 import { notifyFailSafe } from "./service";
+import type { NotifyResult } from "./service";
 import { deviceLabelFromUserAgent } from "@/lib/auth/sessions/service";
 
 /**
@@ -417,6 +418,125 @@ export function notifyImportFailed(input: {
     type: "BUSINESS_IMPORT_FAILED",
     sourceEventId: composeSourceEventId("import", input.jobId),
     data: { dataset: input.dataset.slice(0, 40), reason: input.reasonCode },
+  });
+}
+
+/* ------------------------- BUSINESS — CRM TASK (P37) ---------------------- */
+
+/**
+ * Prompt 37 (§48) — task ASSIGNED notification. Event-driven and immediate:
+ * called by the task service strictly AFTER the create/update COMMIT
+ * (§34/§35). The recipient is always the server-resolved
+ * task.assignedToUserId (§198) — never a request value. Fire-safe (§36).
+ * The sourceEventId is composed by the caller from (taskId, assigneeUserId,
+ * updatedAt) per §179.
+ */
+export function notifyCrmTaskAssigned(input: {
+  businessId: string;
+  taskId: string;
+  assigneeUserId: string;
+  taskTitle: string;
+  priority: string;
+  contextType: "CUSTOMER" | "LEAD" | "OPPORTUNITY";
+  contextTitle: string;
+  dueAt: Date | null;
+  businessTimezone: string;
+  sourceEventId: string;
+}): Promise<NotifyResult | null> {
+  return notifyFailSafe({
+    userId: input.assigneeUserId,
+    businessId: input.businessId,
+    type: "BUSINESS_CRM_TASK_ASSIGNED",
+    sourceEventId: input.sourceEventId,
+    data: {
+      taskId: input.taskId,
+      taskTitle: input.taskTitle.slice(0, 160),
+      priority: input.priority,
+      contextType: input.contextType,
+      contextTitle: input.contextTitle.slice(0, 160),
+      dueAt: input.dueAt ? input.dueAt.toISOString() : null,
+      businessTimezone: input.businessTimezone.slice(0, 64),
+    },
+  });
+}
+
+/**
+ * Prompt 37 (§49/§180) — DUE-SOON reminder. Time-driven: called ONLY by the
+ * reminder processor. Deterministic source id from (taskId, dueAt,
+ * assigneeUserId) — NO run timestamp, so repeated processor runs collapse
+ * onto the same identity and dedupe (§27/§180).
+ */
+export function notifyCrmTaskDueSoon(input: {
+  businessId: string;
+  taskId: string;
+  assigneeUserId: string;
+  taskTitle: string;
+  priority: string;
+  contextType: "CUSTOMER" | "LEAD" | "OPPORTUNITY";
+  contextTitle: string;
+  dueAt: Date;
+  reminderMinutesBefore: number;
+  businessTimezone: string;
+}): Promise<NotifyResult | null> {
+  return notifyFailSafe({
+    userId: input.assigneeUserId,
+    businessId: input.businessId,
+    type: "BUSINESS_CRM_TASK_DUE_SOON",
+    sourceEventId: composeSourceEventId(
+      "crm-task-due-soon",
+      input.taskId,
+      input.dueAt.toISOString(),
+      input.assigneeUserId,
+    ),
+    data: {
+      taskId: input.taskId,
+      taskTitle: input.taskTitle.slice(0, 160),
+      priority: input.priority,
+      contextType: input.contextType,
+      contextTitle: input.contextTitle.slice(0, 160),
+      dueAt: input.dueAt.toISOString(),
+      reminderMinutesBefore: input.reminderMinutesBefore,
+      businessTimezone: input.businessTimezone.slice(0, 64),
+    },
+  });
+}
+
+/**
+ * Prompt 37 (§50/§181) — OVERDUE notification. Time-driven: called ONLY by
+ * the reminder processor. Same deterministic identity law as due-soon
+ * (§28/§181). WARNING severity — never ERROR merely because a task is late
+ * (§14); no shame language in templates (§54).
+ */
+export function notifyCrmTaskOverdue(input: {
+  businessId: string;
+  taskId: string;
+  assigneeUserId: string;
+  taskTitle: string;
+  priority: string;
+  contextType: "CUSTOMER" | "LEAD" | "OPPORTUNITY";
+  contextTitle: string;
+  dueAt: Date;
+  businessTimezone: string;
+}): Promise<NotifyResult | null> {
+  return notifyFailSafe({
+    userId: input.assigneeUserId,
+    businessId: input.businessId,
+    type: "BUSINESS_CRM_TASK_OVERDUE",
+    sourceEventId: composeSourceEventId(
+      "crm-task-overdue",
+      input.taskId,
+      input.dueAt.toISOString(),
+      input.assigneeUserId,
+    ),
+    data: {
+      taskId: input.taskId,
+      taskTitle: input.taskTitle.slice(0, 160),
+      priority: input.priority,
+      contextType: input.contextType,
+      contextTitle: input.contextTitle.slice(0, 160),
+      dueAt: input.dueAt.toISOString(),
+      businessTimezone: input.businessTimezone.slice(0, 64),
+    },
   });
 }
 

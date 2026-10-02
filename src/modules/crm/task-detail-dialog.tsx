@@ -13,7 +13,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { CalendarClock, CalendarDays, Flag, Pencil, RefreshCcw, StickyNote, Trash2, UserRound } from "lucide-react";
+import { AlarmClock, BellRing, CalendarClock, CalendarDays, Flag, Pencil, RefreshCcw, StickyNote, Trash2, UserRound } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
@@ -30,7 +30,7 @@ import { TaskFormDialog } from "./task-form-dialog";
 import { TaskStatusDialog } from "./task-status-dialog";
 import { useTaskMutations, type CrmContextInput } from "./crm-api";
 import { navigateToEntity } from "../entities/entity-route";
-import type { TaskPriority, TaskStatus } from "@/lib/crm/task-types";
+import { isReminderOffset, type TaskPriority, type TaskStatus } from "@/lib/crm/task-types";
 import type { BusinessSummary } from "../shell/types";
 import { fmtDateTime } from "../finance-shared/finance-kit";
 
@@ -47,6 +47,10 @@ export type TaskDetailData = {
   createdBy: { id: string; name: string | null } | null;
   createdAt: string;
   updatedAt: string;
+  // Prompt 37 (§61) — reminder configuration summary.
+  reminderEnabled: boolean;
+  reminderMinutesBefore: number | null;
+  overdueAlertEnabled: boolean;
 };
 
 function DetailRow({ icon: Icon, label, value }: { icon: typeof Flag; label: string; value: string | null }) {
@@ -86,6 +90,7 @@ export function TaskDetailDialog({
   const tCommon = useTranslations("common");
   const tErrors = useTranslations("errors");
   const tCtx = useTranslations("crm.activities.contextType");
+  const tRem = useTranslations("crm.taskReminder");
   const { remove } = useTaskMutations();
   const [editOpen, setEditOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -152,6 +157,22 @@ export function TaskDetailDialog({
               label={t("context")}
               value={`${tCtx(task.context.type)}: ${task.context.title}`}
             />
+            {/* Prompt 37 (§61/§109) — reminder summary; plain language, no
+                internal codes, no sourceEventId. */}
+            <DetailRow
+              icon={BellRing}
+              label={tRem("enableReminder")}
+              value={
+                task.reminderEnabled && isReminderOffset(task.reminderMinutesBefore)
+                  ? tRem(`offsets.${task.reminderMinutesBefore}`)
+                  : tRem("noReminder")
+              }
+            />
+            <DetailRow
+              icon={AlarmClock}
+              label={tRem("overdueAlert")}
+              value={task.overdueAlertEnabled ? tRem("overdueOn") : tRem("overdueOff")}
+            />
           </div>
 
           {task.context.id ? (
@@ -210,6 +231,9 @@ export function TaskDetailDialog({
                 priority: task.priority,
                 dueAt: task.dueAt,
                 assignedToUserId: task.assignedTo?.id ?? null,
+                reminderEnabled: task.reminderEnabled,
+                reminderMinutesBefore: task.reminderMinutesBefore,
+                overdueAlertEnabled: task.overdueAlertEnabled,
                 context: task.context,
               }
             : null

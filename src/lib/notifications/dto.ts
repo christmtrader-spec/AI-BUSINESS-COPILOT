@@ -23,6 +23,8 @@ const actionRoutePathMap: Record<string, string> = {
   usage: "#/settings/billing",
   notifications: "#/notifications",
   dashboard: "#/dashboard",
+  // Prompt 37 (§23/§88) — the only CRM task CTA: opens the Tasks workspace.
+  crmTasks: "#/crm?tab=tasks",
 };
 
 export type NotificationDTO = {

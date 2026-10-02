@@ -118,7 +118,7 @@ export type ChannelPolicy = "ALWAYS" | "IF_ENABLED" | "NEVER";
 
 export type ChannelPolicySet = Record<NotificationChannel, ChannelPolicy>;
 
-/** Internal allowlisted action routes (§102/§103). */
+/** Internal allowlisted action routes (§102/§103 + Prompt 37 §23). */
 export const ACTION_ROUTES = [
   "security",
   "billing",
@@ -126,6 +126,7 @@ export const ACTION_ROUTES = [
   "usage",
   "notifications",
   "dashboard",
+  "crmTasks",
 ] as const;
 
 export type ActionRoute = (typeof ACTION_ROUTES)[number];
@@ -152,5 +153,10 @@ export function actionRoutePath(route: ActionRoute): string {
       return "#/notifications";
     case "dashboard":
       return "#/dashboard";
+    case "crmTasks":
+      // Prompt 37 (§23/§88/§89) — the CTA opens the existing CRM Tasks
+      // workspace. Task deep-links (#/tasks/<id>) are a FUTURE enhancement
+      // and deliberately absent (§23).
+      return "#/crm?tab=tasks";
   }
 }

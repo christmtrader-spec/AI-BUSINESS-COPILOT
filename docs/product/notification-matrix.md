@@ -48,8 +48,27 @@ Notes:
   address.
 - Ephemeral expiry (`expiresAfterDays`): SECURITY_NEW_LOGIN and
   SECURITY_SESSIONS_SIGNED_OUT 30 days; AI alerts 60 days; BUSINESS job
-  outcomes 30 days; SYSTEM_ANNOUNCEMENT 90 days; all other SECURITY and
+  outcomes 30 days; BUSINESS_CRM_TASK_DUE_SOON 7 days;
+  BUSINESS_CRM_TASK_OVERDUE 14 days; BUSINESS_CRM_TASK_ASSIGNED 30 days;
+  SYSTEM_ANNOUNCEMENT 90 days; all other SECURITY and
   BILLING types never expire (null).
+
+## CRM task notifications (Prompt 37)
+
+Three types complete the first REAL scheduled automation (assignment =
+event-driven; due-soon/overdue = time-driven via the operator-scheduled
+processor `scripts/process-crm-task-reminders.mjs`):
+
+- `BUSINESS_CRM_TASK_ASSIGNED` (NORMAL/INFO, expiry 30d) — task created with
+  or reassigned to another user; self-assignment never notifies.
+- `BUSINESS_CRM_TASK_DUE_SOON` (HIGH/WARNING, expiry 7d) — one per
+  (task, dueAt, assignee) inside the configured reminder window.
+- `BUSINESS_CRM_TASK_OVERDUE` (HIGH/WARNING, expiry 14d) — one per
+  (task, dueAt, assignee) once due; WARNING severity, never ERROR.
+
+All three: category BUSINESS, IN_APP ALWAYS, EMAIL IF_ENABLED,
+preferenceAvailable, actionRoute `crmTasks` → `#/crm?tab=tasks`. Full
+semantics: `docs/product/crm-task-reminders.md`.
 
 ## Unmapped events
 

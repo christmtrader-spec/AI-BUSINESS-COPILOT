@@ -14,7 +14,7 @@ import { ApiError } from "@/lib/api-helpers";
 import { audit } from "@/lib/audit";
 import { parseInstant } from "./normalization";
 import { resolveCrmContextInBusiness, assertAssigneeInBusiness } from "./service";
-import { isTaskTransitionValid, isTaskStatus, type TaskStatus } from "./task-types";
+import { isTaskTransitionValid, isTaskStatus, normalizeReminderConfig, type TaskStatus } from "./task-types";
 import { mapTask, type CrmTaskRow } from "./task-dto";
 import type { TaskPriority } from "./task-types";
 import type { Prisma } from "@prisma/client";
@@ -70,6 +70,10 @@ function fullTaskSelect(businessId: string) {
     },
     createdAt: true,
     updatedAt: true,
+    // Prompt 37 (§93) — safe reminder configuration fields.
+    reminderEnabled: true,
+    reminderMinutesBefore: true,
+    overdueAlertEnabled: true,
   } satisfies Prisma.CrmTaskSelect;
 }
 
@@ -153,13 +157,17 @@ export async function createTask(
   actorId: string,
   input: {
     title: string;
-    description: string | null;
+    description?: string | null;
     priority: TaskPriority;
-    dueAt: string | null;
-    assignedToUserId: string | null;
+    dueAt?: string | null;
+    assignedToUserId?: string | null;
     customerId?: string | null;
     leadId?: string | null;
     opportunityId?: string | null;
+    // Prompt 37 (§163) — optional; defaults false/null/false when absent.
+    reminderEnabled?: boolean | null;
+    reminderMinutesBefore?: number | null;
+    overdueAlertEnabled?: boolean | null;
   },
   auditMeta: { ip: string | null; userAgent: string | null },
 ): Promise<string> {
@@ -167,6 +175,14 @@ export async function createTask(
   if (input.dueAt && !dueAt) {
     throw new ApiError(422, "VALIDATION_ERROR", "dueAt must be a valid datetime.", {
       field: "dueAt",
+    });
+  }
+  // §8 — server-authoritative reminder consistency (dueAt dependency,
+  // closed offset vocabulary, offset requires reminderEnabled).
+  const reminder = normalizeReminderConfig(input, Boolean(dueAt));
+  if (reminder.invalid) {
+    throw new ApiError(422, "VALIDATION_ERROR", reminderErrorMessage(reminder.invalidReason), {
+      field: "reminder",
     });
   }
   const context = await resolveCrmContextInBusiness(input, businessId);
@@ -184,8 +200,11 @@ export async function createTask(
       opportunityId: context.opportunityId,
       createdByUserId: actorId,
       status: "OPEN", // §25 — server sets the initial status
+      reminderEnabled: reminder.reminderEnabled,
+      reminderMinutesBefore: reminder.reminderMinutesBefore,
+      overdueAlertEnabled: reminder.overdueAlertEnabled,
     },
-    select: { id: true },
+    select: { id: true, updatedAt: true },
   });
   await audit({
     businessId,
@@ -203,10 +222,18 @@ export async function createTask(
       customerId: context.customerId,
       leadId: context.leadId,
       opportunityId: context.opportunityId,
+      reminderEnabled: reminder.reminderEnabled,
+      overdueAlertEnabled: reminder.overdueAlertEnabled,
     },
     ip: auditMeta.ip,
     userAgent: auditMeta.userAgent,
   });
+  // §34 — assignment notification AFTER commit; creation with another user
+  // assigned notifies the assignee (never the actor self-assigning).
+  // Fire-safe: a notification failure never rolls back the task (§36).
+  if (assignedToUserId && assignedToUserId !== actorId) {
+    notifyAssignmentSafe(businessId, created.id, assignedToUserId, created.updatedAt);
+  }
   return created.id;
 }
 
@@ -221,12 +248,25 @@ export async function updateTask(
     priority?: TaskPriority;
     dueAt?: string | null;
     assignedToUserId?: string | null;
+    // Prompt 37 (§164) — optional; absent fields behave exactly as before.
+    reminderEnabled?: boolean | null;
+    reminderMinutesBefore?: number | null;
+    overdueAlertEnabled?: boolean | null;
   },
   auditMeta: { ip: string | null; userAgent: string | null },
 ): Promise<void> {
   const existing = await db.crmTask.findFirst({
     where: { id, businessId, deletedAt: null },
-    select: { id: true, title: true, priority: true, dueAt: true, assignedToUserId: true },
+    select: {
+      id: true,
+      title: true,
+      priority: true,
+      dueAt: true,
+      assignedToUserId: true,
+      reminderEnabled: true,
+      reminderMinutesBefore: true,
+      overdueAlertEnabled: true,
+    },
   });
   if (!existing) throw new ApiError(404, "NOT_FOUND", "Task not found.");
   let dueAt: Date | null | undefined;
@@ -237,6 +277,24 @@ export async function updateTask(
         field: "dueAt",
       });
     }
+  }
+  // §8 — reminder consistency for the resulting dueAt. When dueAt becomes
+  // null the server automatically resets all reminder fields; when a
+  // request explicitly enables a reminder without a viable dueAt it is a 422.
+  const effectiveDueAtExists = dueAt !== undefined ? Boolean(dueAt) : Boolean(existing.dueAt);
+  const reminder = normalizeReminderConfig(
+    input,
+    effectiveDueAtExists,
+    {
+      reminderEnabled: existing.reminderEnabled,
+      overdueAlertEnabled: existing.overdueAlertEnabled,
+      reminderMinutesBefore: existing.reminderMinutesBefore,
+    },
+  );
+  if (reminder.invalid) {
+    throw new ApiError(422, "VALIDATION_ERROR", reminderErrorMessage(reminder.invalidReason), {
+      field: "reminder",
+    });
   }
   const assignedToUserId =
     "assignedToUserId" in input
@@ -251,10 +309,16 @@ export async function updateTask(
     data.assignedToUser =
       assignedToUserId === null ? { disconnect: true } : { connect: { id: assignedToUserId } };
   }
+  // §8 — reminder fields always written from the normalized config: a
+  // dueAt reset clears them; explicit values persist; absent values keep
+  // the stored ones (§164 backward compatibility).
+  data.reminderEnabled = reminder.reminderEnabled;
+  data.reminderMinutesBefore = reminder.reminderMinutesBefore;
+  data.overdueAlertEnabled = reminder.overdueAlertEnabled;
   const updated = await db.crmTask.update({
     where: { id: existing.id },
     data,
-    select: { id: true, title: true, priority: true, dueAt: true, assignedToUserId: true },
+    select: { id: true, title: true, priority: true, dueAt: true, assignedToUserId: true, updatedAt: true },
   });
   await audit({
     businessId,
@@ -267,16 +331,31 @@ export async function updateTask(
       priority: existing.priority,
       dueAt: existing.dueAt ? existing.dueAt.toISOString() : null,
       assignedToUserId: existing.assignedToUserId,
+      reminderEnabled: existing.reminderEnabled,
+      overdueAlertEnabled: existing.overdueAlertEnabled,
     },
     after: {
       title: updated.title,
       priority: updated.priority,
       dueAt: updated.dueAt ? updated.dueAt.toISOString() : null,
       assignedToUserId: updated.assignedToUserId,
+      reminderEnabled: reminder.reminderEnabled,
+      overdueAlertEnabled: reminder.overdueAlertEnabled,
     },
     ip: auditMeta.ip,
     userAgent: auditMeta.userAgent,
   });
+  // §35 — reassignment notification strictly AFTER the DB update commits:
+  // oldAssignee !== newAssignee AND newAssignee !== null AND newAssignee !==
+  // actor. Fire-safe (§36); a failure never rolls back the update.
+  if (
+    assignedToUserId !== undefined &&
+    assignedToUserId !== null &&
+    assignedToUserId !== existing.assignedToUserId &&
+    assignedToUserId !== actorId
+  ) {
+    notifyAssignmentSafe(businessId, updated.id, assignedToUserId, updated.updatedAt);
+  }
 }
 
 /**
@@ -362,4 +441,98 @@ export async function deleteTask(
     ip: auditMeta.ip,
     userAgent: auditMeta.userAgent,
   });
+}
+
+/* ------------------------------------------------------------------------ */
+/* Prompt 37 — assignment notification plumbing (§34/§35/§36/§48/§179).      */
+/* ------------------------------------------------------------------------ */
+
+/** Stable 422 messages for reminder-consistency failures (§8). */
+function reminderErrorMessage(reason: string | null): string {
+  switch (reason) {
+    case "REMINDER_OFFSET_REQUIRED":
+      return "A reminder offset is required when the due reminder is enabled.";
+    case "REMINDER_OFFSET_INVALID":
+      return "The reminder offset must be one of the supported values.";
+    case "REMINDER_OFFSET_WITHOUT_ENABLED":
+      return "A reminder offset cannot be set while the due reminder is disabled.";
+    default:
+      return "The reminder configuration is invalid.";
+  }
+}
+
+/**
+ * Fire-safe assignment notification AFTER commit (§34/§35/§48). Loads the
+ * committed task + business timezone server-side and delegates to the
+ * notification event mapper. EVERY failure is swallowed (§36): a
+ * notification is communication, never authority.
+ */
+function notifyAssignmentSafe(
+  businessId: string,
+  taskId: string,
+  assigneeUserId: string,
+  updatedAt: Date,
+): void {
+  void (async () => {
+    try {
+      const { notifyCrmTaskAssigned } = await import("@/lib/notifications/event-mappers");
+      const task = await db.crmTask.findFirst({
+        where: { id: taskId, businessId },
+        select: {
+          title: true,
+          priority: true,
+          dueAt: true,
+          customerId: true,
+          customer: { select: { name: true } },
+          leadId: true,
+          lead: { select: { name: true, companyName: true } },
+          opportunityId: true,
+          opportunity: { select: { title: true } },
+        },
+      });
+      if (!task) return;
+      const timezone = await db.business
+        .findUnique({ where: { id: businessId }, select: { timezone: true } })
+        .then((b) => b?.timezone ?? "UTC");
+      let contextType: "CUSTOMER" | "LEAD" | "OPPORTUNITY" = "CUSTOMER";
+      let contextTitle = "";
+      if (task.customerId && task.customer) {
+        contextType = "CUSTOMER";
+        contextTitle = task.customer.name;
+      } else if (task.leadId && task.lead) {
+        contextType = "LEAD";
+        contextTitle = task.lead.companyName ?? task.lead.name;
+      } else if (task.opportunityId && task.opportunity) {
+        contextType = "OPPORTUNITY";
+        contextTitle = task.opportunity.title;
+      }
+      await notifyCrmTaskAssigned({
+        businessId,
+        taskId,
+        assigneeUserId,
+        taskTitle: task.title,
+        priority: task.priority as TaskPriority,
+        contextType,
+        contextTitle,
+        dueAt: task.dueAt,
+        businessTimezone: timezone,
+        sourceEventId: composeAssignmentSourceEventId(taskId, assigneeUserId, updatedAt),
+      });
+    } catch {
+      // Swallowed by design (§36) — the notifyFailSafe inside the mapper
+      // already records the failure; nothing here may break the task flow.
+    }
+  })();
+}
+
+/** §179 — deterministic assignment event identity (task, assignee, updatedAt). */
+function composeAssignmentSourceEventId(
+  taskId: string,
+  assigneeUserId: string,
+  updatedAt: Date,
+): string {
+  // Composed from durable server identifiers only (§169/§179). The mapper
+  // sanitizes the string again before persistence.
+  const raw = `crm-task-assigned:${taskId}:${assigneeUserId}:${updatedAt.toISOString()}`;
+  return raw.replace(/[^a-zA-Z0-9._:-]/g, "").slice(0, 300);
 }

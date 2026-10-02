@@ -663,6 +663,10 @@ export const DATASET_FETCHERS: Record<ExportDatasetKey, DatasetFetcher> = {
           priority: true,
           dueAt: true,
           completedAt: true,
+          // Prompt 37 (§151) — reminder configuration is business data.
+          reminderEnabled: true,
+          reminderMinutesBefore: true,
+          overdueAlertEnabled: true,
           customerId: true,
           leadId: true,
           opportunityId: true,
@@ -684,6 +688,9 @@ export const DATASET_FETCHERS: Record<ExportDatasetKey, DatasetFetcher> = {
           priority: t.priority,
           dueAt: iso(t.dueAt),
           completedAt: iso(t.completedAt),
+          reminderEnabled: t.reminderEnabled,
+          reminderMinutesBefore: t.reminderMinutesBefore,
+          overdueAlertEnabled: t.overdueAlertEnabled,
           customerId: t.customerId,
           leadId: t.leadId,
           opportunityId: t.opportunityId,
@@ -693,7 +700,7 @@ export const DATASET_FETCHERS: Record<ExportDatasetKey, DatasetFetcher> = {
           createdAt: t.createdAt.toISOString(),
           updatedAt: t.updatedAt.toISOString(),
         },
-        csv: [t.id, t.title, t.description, t.status, t.priority, iso(t.dueAt), iso(t.completedAt), t.customerId, t.leadId, t.opportunityId, t.assignedToUserId, t.createdByUserId, iso(t.deletedAt), t.createdAt.toISOString(), t.updatedAt.toISOString()],
+        csv: [t.id, t.title, t.description, t.status, t.priority, iso(t.dueAt), iso(t.completedAt), String(t.reminderEnabled), t.reminderMinutesBefore, String(t.overdueAlertEnabled), t.customerId, t.leadId, t.opportunityId, t.assignedToUserId, t.createdByUserId, iso(t.deletedAt), t.createdAt.toISOString(), t.updatedAt.toISOString()],
       })),
       truncated,
     };
@@ -842,7 +849,7 @@ export const DATASET_CSV_COLUMNS: Record<ExportDatasetKey, string[]> = {
   crm_leads: ["id", "name", "company_name", "phone", "email", "source", "source_detail", "status", "note", "assigned_to_user_id", "customer_id", "converted_at", "deleted_at", "created_at", "updated_at"],
   crm_opportunities: ["id", "title", "description", "lead_id", "customer_id", "stage", "probability_pct", "expected_value", "currency_code", "expected_close_date", "assigned_to_user_id", "lost_reason", "won_at", "lost_at", "deleted_at", "created_at", "updated_at"],
   crm_activities: ["id", "type", "title", "description", "occurred_at", "duration_minutes", "customer_id", "lead_id", "opportunity_id", "created_by_user_id", "deleted_at", "created_at", "updated_at"],
-  crm_tasks: ["id", "title", "description", "status", "priority", "due_at", "completed_at", "customer_id", "lead_id", "opportunity_id", "assigned_to_user_id", "created_by_user_id", "deleted_at", "created_at", "updated_at"],
+  crm_tasks: ["id", "title", "description", "status", "priority", "due_at", "completed_at", "reminder_enabled", "reminder_minutes_before", "overdue_alert_enabled", "customer_id", "lead_id", "opportunity_id", "assigned_to_user_id", "created_by_user_id", "deleted_at", "created_at", "updated_at"],
   subscription_summary: ["plan_code", "plan_name", "status", "billing_period", "current_period_start", "current_period_end", "trial_start", "trial_end", "cancel_at_period_end", "canceled_at", "ended_at", "created_at"],
   usage_summary: ["metric", "used", "limit", "remaining", "percentage_used", "period_start", "period_end"],
 };

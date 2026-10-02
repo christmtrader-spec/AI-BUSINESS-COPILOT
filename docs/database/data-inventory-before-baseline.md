@@ -7,7 +7,7 @@ application data.
 
 - Original capture: 2026-09-23T05:20:35.240Z (db-push era, before `0_init`
   was recorded; 483328 bytes; integrity ok · quick_check ok · FK violations 0).
-- **Refreshed: 2026-10-02 (Prompt 36).** The dev sandbox was rebuilt again
+- **Refreshed: 2026-10-02 (Prompt 37).** The dev sandbox was rebuilt again
   (database re-created by the environment; migration ledger re-baselined with
   `prisma migrate resolve --applied` ×17 — ledger writes ONLY; billing/pricing
   catalogs re-seeded with the sanctioned idempotent seed; `.env` restored with
@@ -33,19 +33,19 @@ application data.
 
 | Model | Rows |
 |---|---|
-| `User` | 18 |
-| `Business` | 4 |
-| `BusinessMember` | 6 |
-| `BusinessInvite` | 2 |
-| `AuditLog` | 45 |
+| `User` | 8 |
+| `Business` | 3 |
+| `BusinessMember` | 4 |
+| `BusinessInvite` | 1 |
+| `AuditLog` | 28 |
 | `Customer` | 2 |
 | `Supplier` | 0 |
 | `Product` | 0 |
 | `InventoryAdjustment` | 0 |
-| `Sale` | 6 |
-| `SaleItem` | 6 |
-| `Expense` | 2 |
-| `Payment` | 2 |
+| `Sale` | 3 |
+| `SaleItem` | 3 |
+| `Expense` | 1 |
+| `Payment` | 1 |
 | `ChatSession` | 0 |
 | `ChatMessage` | 0 |
 | `PasswordResetToken` | 2 |

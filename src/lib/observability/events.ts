@@ -42,6 +42,12 @@ export const OPERATIONAL_EVENTS = {
   // the raw query, its variants and result contents are NEVER logged
   // because search strings may carry emails/phones/invoice numbers).
   searchExecuted: "search.executed",
+  // Prompt 37 (§170) — CRM reminder processor operational events. Payloads
+  // carry counts/mode/run-id ONLY — never task contents, emails, titles or
+  // notification bodies (§69/§170).
+  crmReminderProcessorStarted: "crm.reminder.processor.started",
+  crmReminderProcessorCompleted: "crm.reminder.processor.completed",
+  crmReminderProcessorFailed: "crm.reminder.processor.failed",
 } as const;
 
 export type OperationalEvent = (typeof OPERATIONAL_EVENTS)[keyof typeof OPERATIONAL_EVENTS];

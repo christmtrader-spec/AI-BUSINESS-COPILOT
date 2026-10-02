@@ -16,6 +16,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   AlarmClock,
+  BellRing,
   CalendarClock,
   CalendarClock as CalendarClockIcon,
   CheckCircle2,
@@ -99,6 +100,9 @@ export function TasksView({ business, role }: { business: BusinessSummary; role:
       createdBy: null,
       createdAt: task.dueAt ?? new Date().toISOString(),
       updatedAt: task.dueAt ?? new Date().toISOString(),
+      reminderEnabled: task.reminderEnabled,
+      reminderMinutesBefore: null,
+      overdueAlertEnabled: task.overdueAlertEnabled,
     });
     setDetailOpen(true);
     // Fetch the authoritative detail (queue rows are summary-shaped).
@@ -117,6 +121,9 @@ export function TasksView({ business, role }: { business: BusinessSummary; role:
           createdBy: d.createdBy ? { id: d.createdBy.id, name: d.createdBy.name } : null,
           createdAt: d.createdAt,
           updatedAt: d.updatedAt,
+          reminderEnabled: d.reminderEnabled,
+          reminderMinutesBefore: d.reminderMinutesBefore,
+          overdueAlertEnabled: d.overdueAlertEnabled,
         });
       })
       .catch(() => undefined);
@@ -259,6 +266,7 @@ function TaskQueueCard({
 }) {
   const t = useTranslations("crm.tasks");
   const tCtx = useTranslations("crm.activities.contextType");
+  const tRem = useTranslations("crm.taskReminder");
   const completed = task.status === "COMPLETED";
 
   return (
@@ -297,6 +305,17 @@ function TaskQueueCard({
           <PriorityBadge priority={task.priority as TaskDetailData["priority"]} />
           <TaskStatusBadge status={task.status as TaskStatus} />
           {overdue ? <OverdueBadge label={t("overdueBadge")} /> : null}
+          {/* Prompt 37 (§62) — small reminder badge with an accessible
+              label (icon + text, never color alone). */}
+          {task.reminderEnabled || task.overdueAlertEnabled ? (
+            <span
+              className="text-muted-foreground inline-flex items-center gap-1"
+              title={tRem("badgeLabel")}
+            >
+              <BellRing className="size-3" aria-hidden="true" />
+              <span className="sr-only">{tRem("badgeLabel")}</span>
+            </span>
+          ) : null}
           {task.dueAt ? (
             <span className="text-muted-foreground flex items-center gap-1" dir="ltr">
               <CalendarClock className="size-3" aria-hidden="true" />

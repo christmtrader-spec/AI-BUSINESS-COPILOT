@@ -78,6 +78,8 @@ export async function getWorkQueue(
         dueAt: true,
         createdAt: true,
         assignedToUserId: true,
+        reminderEnabled: true,
+        overdueAlertEnabled: true,
         assignedToUser: { select: { id: true, name: true, email: true } },
         leadId: true,
         lead: { select: { id: true, name: true, companyName: true } },
@@ -145,6 +147,8 @@ export async function getWorkQueue(
       contextType,
       contextId,
       contextTitle,
+      reminderEnabled: row.reminderEnabled,
+      overdueAlertEnabled: row.overdueAlertEnabled,
     };
   });
 

@@ -141,13 +141,13 @@ export async function createOpportunity(
   actorId: string,
   input: {
     title: string;
-    description: string | null;
-    leadId: string | null;
-    customerId: string | null;
+    description?: string | null;
+    leadId?: string | null;
+    customerId?: string | null;
     stage: OpportunityStage;
     probabilityPct?: number;
     expectedValueMinor?: number;
-    expectedCloseDate: string | null;
+    expectedCloseDate?: string | null;
     assignedToUserId: string | null;
   },
   auditMeta: { ip: string | null; userAgent: string | null },

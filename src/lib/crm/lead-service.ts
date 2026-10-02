@@ -161,12 +161,12 @@ export async function createLead(
   actorId: string,
   input: {
     name: string;
-    companyName: string | null;
-    phone: string | null;
-    email: string | null;
+    companyName?: string | null;
+    phone?: string | null;
+    email?: string | null;
     source: LeadSource;
-    sourceDetail: string | null;
-    note: string | null;
+    sourceDetail?: string | null;
+    note?: string | null;
     assignedToUserId: string | null;
   },
   auditMeta: { ip: string | null; userAgent: string | null },

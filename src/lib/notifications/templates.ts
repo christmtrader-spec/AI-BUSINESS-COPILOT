@@ -40,6 +40,37 @@ function formatDateTime(iso: string, locale: "en" | "fa"): string {
   }).format(date);
 }
 
+/**
+ * Prompt 37 (§22/§102/§138/§139) — business-timezone-aware timestamp for
+ * CRM task notifications. The timezone comes from the SERVER-validated
+ * notification data (Business.timezone — never the browser/request). Law:
+ *  1. validate the IANA zone by constructing an Intl formatter,
+ *  2. fall back safely to UTC on any invalid value,
+ *  3. never throw, never trust an arbitrary timezone string,
+ *  4. DST-correct — Intl.DateTimeFormat handles transitions natively;
+ *     no manual offset math, no hardcoded city.
+ */
+function formatDateTimeInBusinessZone(
+  iso: string,
+  locale: "en" | "fa",
+  timeZone: string,
+): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  let tz = "UTC";
+  try {
+    const probe = new Intl.DateTimeFormat("en-CA", { timeZone });
+    tz = probe.resolvedOptions().timeZone || "UTC";
+  } catch {
+    tz = "UTC";
+  }
+  return new Intl.DateTimeFormat(locale === "fa" ? "fa-IR" : "en-GB", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: tz,
+  }).format(date);
+}
+
 function formatNumber(value: number, locale: "en" | "fa"): string {
   return new Intl.NumberFormat(locale === "fa" ? "fa-IR" : "en-US").format(value);
 }
@@ -65,6 +96,41 @@ function datasetLabels(datasets: readonly string[], locale: "en" | "fa"): string
       return map[key] ?? key;
     });
   return labels.join(locale === "fa" ? "، " : ", ");
+}
+
+/**
+ * Prompt 37 (§52/§101) — localized TASK priority label, reusing the CRM
+ * priority vocabulary translations (crm.tasks.priority). Unknown values
+ * fall back to the raw token (schema-validated upstream).
+ */
+function crmPriorityLabel(priority: string, locale: "en" | "fa"): string {
+  const map = messagesFor(locale).crm?.tasks?.priority as Record<string, string> | undefined;
+  return map?.[priority] ?? priority;
+}
+
+/**
+ * Prompt 37 (§53/§101) — localized due-soon lead time, reusing the
+ * crm.taskReminder.offsets vocabulary keyed by the closed minute values.
+ * Falls back to the formatted raw minutes.
+ */
+function crmReminderOffsetLabel(minutes: number, locale: "en" | "fa"): string {
+  const map = messagesFor(locale).crm?.taskReminder?.offsets as Record<string, string> | undefined;
+  return map?.[String(minutes)] ?? formatNumber(minutes, locale);
+}
+
+/**
+ * Prompt 37 (§52) — localized context type label (Customer/Lead/Opportunity),
+ * reusing the crm.activities.contextType vocabulary.
+ */
+function crmContextLabel(type: string, locale: "en" | "fa"): string {
+  const map = messagesFor(locale).crm?.activities?.contextType as Record<string, string> | undefined;
+  return map?.[type] ?? type;
+}
+
+/** Prompt 37 — localized "no due date" filler for assigned tasks without dueAt. */
+function crmNoDueDateLabel(locale: "en" | "fa"): string {
+  const map = messagesFor(locale).crm?.tasks?.contextCard as Record<string, string> | undefined;
+  return map?.noDueDate ?? "";
 }
 
 /**
@@ -137,6 +203,33 @@ function deriveValues(type: NotificationType, data: Record<string, unknown>, loc
       return {
         dataset: (messages.datasets as Record<string, string>)[String(data.dataset)] ?? String(data.dataset ?? ""),
         reason: reasonMap[String(data.reason)] ?? String(data.reason ?? ""),
+      };
+    case "BUSINESS_CRM_TASK_ASSIGNED":
+      return {
+        task: String(data.taskTitle ?? ""),
+        context: String(data.contextTitle ?? ""),
+        contextLabel: crmContextLabel(String(data.contextType ?? ""), locale),
+        priority: crmPriorityLabel(String(data.priority ?? ""), locale),
+        due: data.dueAt
+          ? formatDateTimeInBusinessZone(String(data.dueAt), locale, String(data.businessTimezone ?? "UTC"))
+          : crmNoDueDateLabel(locale),
+      };
+    case "BUSINESS_CRM_TASK_DUE_SOON":
+      return {
+        task: String(data.taskTitle ?? ""),
+        context: String(data.contextTitle ?? ""),
+        contextLabel: crmContextLabel(String(data.contextType ?? ""), locale),
+        priority: crmPriorityLabel(String(data.priority ?? ""), locale),
+        due: formatDateTimeInBusinessZone(String(data.dueAt), locale, String(data.businessTimezone ?? "UTC")),
+        reminder: crmReminderOffsetLabel(Number(data.reminderMinutesBefore ?? 0), locale),
+      };
+    case "BUSINESS_CRM_TASK_OVERDUE":
+      return {
+        task: String(data.taskTitle ?? ""),
+        context: String(data.contextTitle ?? ""),
+        contextLabel: crmContextLabel(String(data.contextType ?? ""), locale),
+        priority: crmPriorityLabel(String(data.priority ?? ""), locale),
+        due: formatDateTimeInBusinessZone(String(data.dueAt), locale, String(data.businessTimezone ?? "UTC")),
       };
     case "SYSTEM_ANNOUNCEMENT":
       return { message: String(data.message ?? "") };

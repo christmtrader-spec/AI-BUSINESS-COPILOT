@@ -1672,8 +1672,7 @@ model CrmTask {
   status            String    @default("OPEN")
   priority          String    @default("NORMAL")
 
-  // Optional future instant — stored UTC (§16 of prompt 36). NO reminder
-  // delivery is built on this field in Prompt 36 (§33/§66 — future phase).
+  // Optional future instant — stored UTC (§16 of prompt 36).
   dueAt             DateTime?
 
   // Set only through the dedicated /status endpoint; non-null iff COMPLETED.
@@ -1701,6 +1700,16 @@ model CrmTask {
 
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+
+  // Prompt 37 — per-task reminder configuration (tenant business data, §5).
+  // reminderEnabled=true ⇒ ONE due-soon notification for the CURRENT dueAt
+  // value (§6). overdueAlertEnabled=true ⇒ ONE overdue notification (§6).
+  // No recurring reminders, no daily overdue spam (§6/§175). Server keeps
+  // these consistent: dueAt=null ⇒ all three reset (§8). Offsets are a
+  // closed vocabulary validated in src/lib/crm/task-types.ts (§7).
+  reminderEnabled        Boolean @default(false)
+  reminderMinutesBefore  Int?
+  overdueAlertEnabled    Boolean @default(false)
 
   @@index([businessId, deletedAt])
   @@index([businessId, status])

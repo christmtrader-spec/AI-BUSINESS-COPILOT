@@ -33,6 +33,10 @@ export type CrmTaskRow = {
   createdByUser: AssigneeRow | null;
   createdAt: Date;
   updatedAt: Date;
+  // Prompt 37 (§93) — safe business configuration fields.
+  reminderEnabled: boolean;
+  reminderMinutesBefore: number | null;
+  overdueAlertEnabled: boolean;
 };
 
 export type TaskDTO = {
@@ -48,6 +52,11 @@ export type TaskDTO = {
   createdBy: CrmAssigneeRef | null;
   createdAt: string;
   updatedAt: string;
+  // Prompt 37 (§93) — safe business configuration fields. NO notification
+  // ids, NO sourceEventId, NO scheduler state (§93).
+  reminderEnabled: boolean;
+  reminderMinutesBefore: number | null;
+  overdueAlertEnabled: boolean;
 };
 
 export type TaskListResponse = {
@@ -89,5 +98,8 @@ export function mapTask(row: CrmTaskRow): TaskDTO {
     createdBy: mapUserRef(row.createdByUser),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    reminderEnabled: row.reminderEnabled,
+    reminderMinutesBefore: row.reminderMinutesBefore,
+    overdueAlertEnabled: row.overdueAlertEnabled,
   };
 }

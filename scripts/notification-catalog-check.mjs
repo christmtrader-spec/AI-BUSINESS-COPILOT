@@ -144,6 +144,35 @@ const EXAMPLE_DATA = {
   BUSINESS_EXPORT_FAILED: { reason: "EXPORT_LIMIT_EXCEEDED" },
   BUSINESS_IMPORT_COMPLETED: { dataset: "customers", created: 3, updated: 0, skipped: 1, failed: 0 },
   BUSINESS_IMPORT_FAILED: { dataset: "customers", reason: "IMPORT_COMMIT_FAILED" },
+  // Prompt 37 — CRM task notifications (bounded, schema-conformant examples).
+  BUSINESS_CRM_TASK_ASSIGNED: {
+    taskId: "task0001abc",
+    taskTitle: "Prepare proposal",
+    priority: "HIGH",
+    contextType: "CUSTOMER",
+    contextTitle: "Acme",
+    dueAt: "2026-10-05T10:00:00.000Z",
+    businessTimezone: "Asia/Tehran",
+  },
+  BUSINESS_CRM_TASK_DUE_SOON: {
+    taskId: "task0001abc",
+    taskTitle: "Prepare proposal",
+    priority: "HIGH",
+    contextType: "CUSTOMER",
+    contextTitle: "Acme",
+    dueAt: "2026-10-05T10:00:00.000Z",
+    reminderMinutesBefore: 60,
+    businessTimezone: "Asia/Tehran",
+  },
+  BUSINESS_CRM_TASK_OVERDUE: {
+    taskId: "task0001abc",
+    taskTitle: "Prepare proposal",
+    priority: "HIGH",
+    contextType: "CUSTOMER",
+    contextTitle: "Acme",
+    dueAt: "2026-10-05T10:00:00.000Z",
+    businessTimezone: "Asia/Tehran",
+  },
   SYSTEM_ANNOUNCEMENT: { message: "Scheduled maintenance on Sunday." },
 };
 

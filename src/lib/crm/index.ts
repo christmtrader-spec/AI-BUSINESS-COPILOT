@@ -104,6 +104,18 @@ export {
   deleteTask,
 } from "./task-service";
 export { getWorkQueue, WORK_QUEUE_MAX } from "./work-queue";
+export { getCrmReminderSummary } from "./reminder-summary";
+export {
+  processCrmTaskReminders,
+  reminderMaxPerRun,
+  reminderOverdueLookbackHours,
+  CRM_REMINDER_MAX_PER_RUN_DEFAULT,
+  CRM_REMINDER_MAX_PER_RUN_MIN,
+  CRM_REMINDER_MAX_PER_RUN_MAX,
+  CRM_REMINDER_OVERDUE_LOOKBACK_HOURS_DEFAULT,
+  CRM_REMINDER_OVERDUE_LOOKBACK_HOURS_MIN,
+  CRM_REMINDER_OVERDUE_LOOKBACK_HOURS_MAX,
+} from "./task-reminder-processor";
 export {
   getTimeline,
   TIMELINE_CANDIDATES_PER_SOURCE,

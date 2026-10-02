@@ -17,6 +17,9 @@ export type WorkQueueTask = {
   contextType: CrmContextType;
   contextId: string;
   contextTitle: string;
+  // Prompt 37 (§62) — reminder flags for an optional accessible badge.
+  reminderEnabled: boolean;
+  overdueAlertEnabled: boolean;
 };
 
 export type WorkQueueResponse = {

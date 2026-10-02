@@ -151,3 +151,13 @@ future prompt may implement CRM import with explicit reference mapping.
 - **CRM Task import: NOT IMPLEMENTED** (Prompt 36). Same context rule plus
   server-owned status/completedAt bookkeeping; an importer could silently
   violate the state machine. Export of both datasets is fully supported.
+- **CRM Task reminder configuration import: NOT IMPLEMENTED** (Prompt 37).
+  `reminderEnabled` / `reminderMinutesBefore` / `overdueAlertEnabled` are
+  exported as business configuration, but they are not importable: their
+  validity is stateful (reminder requires the CURRENT `dueAt`, offsets are
+  a closed vocabulary validated server-side, and `dueAt = null` resets the
+  whole configuration). Importing them without re-deriving the task's live
+  state could persist invalid reminder configurations that the scheduled
+  processor would then trust. Re-enable reminders per task in the UI after
+  any future import; notification history itself is not business data and
+  stays outside the export/import catalog.

@@ -47,6 +47,12 @@ export const NOTIFICATION_TYPES = [
   "BUSINESS_EXPORT_FAILED",
   "BUSINESS_IMPORT_COMPLETED",
   "BUSINESS_IMPORT_FAILED",
+  // Prompt 37 (§12) — CRM task notifications. Deliberately ABSENT (noise
+  // avoidance, §12): BUSINESS_CRM_TASK_COMPLETED / _UPDATED / _DELETED /
+  // _REOPENED would fire on every routine task interaction.
+  "BUSINESS_CRM_TASK_ASSIGNED",
+  "BUSINESS_CRM_TASK_DUE_SOON",
+  "BUSINESS_CRM_TASK_OVERDUE",
   "SYSTEM_ANNOUNCEMENT",
 ] as const;
 
@@ -70,6 +76,14 @@ const boundedText = (max: number) => z.string().max(max);
 const boundedInt = (max: number) => z.number().int().min(0).max(max);
 const minorAmount = z.number().int().min(0).max(1_000_000_000_000);
 const currencyCode = z.string().regex(/^[A-Z]{3}$/);
+
+// Prompt 37 (§20) — server-selected domain ids only: bounded length + safe
+// characters (same closed id policy as Prompts 34/36). Never a route URL,
+// never client-fabricated content.
+const domainId = z.string().regex(/^[a-zA-Z0-9_-]{6,64}$/);
+const crmTaskPriority = z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]);
+const crmContextType = z.enum(["CUSTOMER", "LEAD", "OPPORTUNITY"]);
+const businessTimezone = z.string().min(1).max(64);
 
 export type NotificationCatalogEntry = {
   type: NotificationType;
@@ -491,6 +505,103 @@ export const NOTIFICATION_CATALOG: Record<NotificationType, NotificationCatalogE
     emailDefaultEnabled: true,
     source: "DataImportJob FAILED (safe failure summary, §99/§330)",
     dedupe: "import:<DataImportJobId>",
+  },
+
+  /* --------------------- BUSINESS — CRM TASK (P37) ------------------------ */
+  /*
+   * Prompt 37 (§12–§20/§24/§47): CRM task notifications carry a STRICT
+   * data schema — task title + context title + due instant + business
+   * timezone + priority. NEVER task description, contact details,
+   * financial values, AI data or security data (§17/§18/§19). The
+   * business NAME itself is not part of the data (§47) — the Notification
+   * row carries businessId and the Notification Center resolves the name.
+   * Dedupe reuses the platform (userId, type, sourceEventId) unique index
+   * (§25) — no separate reminder state, no reminder-history model (§174).
+   */
+  BUSINESS_CRM_TASK_ASSIGNED: {
+    type: "BUSINESS_CRM_TASK_ASSIGNED",
+    category: "BUSINESS",
+    priority: "NORMAL",
+    severity: "INFO",
+    channels: inAppAlwaysEmailOptional,
+    mandatory: true,
+    preferenceAvailable: true,
+    titleKey: "items.BUSINESS_CRM_TASK_ASSIGNED.title",
+    bodyKey: "items.BUSINESS_CRM_TASK_ASSIGNED.body",
+    emailTemplateKey: "items.BUSINESS_CRM_TASK_ASSIGNED.email",
+    dataSchema: z.object({
+      taskId: domainId,
+      taskTitle: boundedText(160),
+      priority: crmTaskPriority,
+      contextType: crmContextType,
+      contextTitle: boundedText(160),
+      dueAt: isoTimestamp.nullable(),
+      businessTimezone,
+    }),
+    actionRoute: "crmTasks",
+    expiresAfterDays: 30,
+    emailDefaultEnabled: true,
+    source:
+      "CrmTask create/update commit with a NEW assignee ≠ actor (§34/§35) — event-driven, immediate; self-assignment and unchanged assignments never notify (§33)",
+    dedupe:
+      "crm-task-assigned:<taskId>:<assigneeUserId>:<updatedAt ISO> (§179) — stable per assignment event; update retries after further edits are a NEW logical event",
+  },
+  BUSINESS_CRM_TASK_DUE_SOON: {
+    type: "BUSINESS_CRM_TASK_DUE_SOON",
+    category: "BUSINESS",
+    priority: "HIGH",
+    severity: "WARNING",
+    channels: inAppAlwaysEmailOptional,
+    mandatory: true,
+    preferenceAvailable: true,
+    titleKey: "items.BUSINESS_CRM_TASK_DUE_SOON.title",
+    bodyKey: "items.BUSINESS_CRM_TASK_DUE_SOON.body",
+    emailTemplateKey: "items.BUSINESS_CRM_TASK_DUE_SOON.email",
+    dataSchema: z.object({
+      taskId: domainId,
+      taskTitle: boundedText(160),
+      priority: crmTaskPriority,
+      contextType: crmContextType,
+      contextTitle: boundedText(160),
+      dueAt: isoTimestamp,
+      reminderMinutesBefore: z.number().int().min(5).max(10080),
+      businessTimezone,
+    }),
+    actionRoute: "crmTasks",
+    expiresAfterDays: 7,
+    emailDefaultEnabled: true,
+    source:
+      "crm-task-reminders processor (operator-scheduled external cron/systemd, §37/§70) — ONE due-soon notification per (task, dueAt, assignee) while OPEN/IN_PROGRESS (§6/§9)",
+    dedupe:
+      "crm-task-due-soon:<taskId>:<dueAt ISO>:<assigneeUserId> (§25/§27/§180) — no run timestamp; repeated processor runs dedupe via the Notification unique index",
+  },
+  BUSINESS_CRM_TASK_OVERDUE: {
+    type: "BUSINESS_CRM_TASK_OVERDUE",
+    category: "BUSINESS",
+    priority: "HIGH",
+    severity: "WARNING",
+    channels: inAppAlwaysEmailOptional,
+    mandatory: true,
+    preferenceAvailable: true,
+    titleKey: "items.BUSINESS_CRM_TASK_OVERDUE.title",
+    bodyKey: "items.BUSINESS_CRM_TASK_OVERDUE.body",
+    emailTemplateKey: "items.BUSINESS_CRM_TASK_OVERDUE.email",
+    dataSchema: z.object({
+      taskId: domainId,
+      taskTitle: boundedText(160),
+      priority: crmTaskPriority,
+      contextType: crmContextType,
+      contextTitle: boundedText(160),
+      dueAt: isoTimestamp,
+      businessTimezone,
+    }),
+    actionRoute: "crmTasks",
+    expiresAfterDays: 14,
+    emailDefaultEnabled: true,
+    source:
+      "crm-task-reminders processor (operator-scheduled external cron/systemd, §37/§70) — ONE overdue notification per (task, dueAt, assignee) while OPEN/IN_PROGRESS (§6/§9)",
+    dedupe:
+      "crm-task-overdue:<taskId>:<dueAt ISO>:<assigneeUserId> (§25/§28/§181) — no run timestamp; repeated processor runs dedupe via the Notification unique index",
   },
 
   /* -------------------------------- SYSTEM -------------------------------- */

@@ -201,6 +201,20 @@ platform uses the existing `EMAIL_*` transport — it introduces no SMTP
 variables of its own. Details: `docs/security/notification-security.md`,
 `docs/product/notifications.md`, `docs/product/notification-matrix.md`.
 
+## Prompt 37 variables — CRM task reminder processor
+
+| Variable | Required | Secret? | Purpose |
+|---|---|---|---|
+| `CRM_REMINDER_MAX_PER_RUN` | Optional (default 100) | No | Maximum notification attempts per processor run (bounded 10–500). If more candidates exist the run stops at the cap and the next run continues (Prompt 37 §40). |
+| `CRM_REMINDER_OVERDUE_LOOKBACK_HOURS` | Optional (default 168) | No | Overdue scanning window in hours (bounded 1–720): only overdue tasks with `dueAt >= now − lookback` are considered. An OPERATIONAL scanning boundary, not a legal retention policy (Prompt 37 §41). |
+
+Both are optional, operator-tunable, and contain no secret values. There is
+deliberately NO `CRON_SECRET` or scheduler HTTP endpoint: the processor is the
+local CLI `scripts/process-crm-task-reminders.mjs` invoked by an
+operator-managed cron/systemd/Task Scheduler (see
+`docs/deployment/production-operations.md` §11d,
+`docs/adr/0037-crm-task-reminders-and-scheduler.md`).
+
 ## `NODE_ENV` — the database guard flag (not in `.env.example` on purpose)
 
 `NODE_ENV` is a runtime flag, not a configured secret, but it is load-bearing for database safety:

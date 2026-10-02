@@ -177,3 +177,149 @@ export const ACTIVE_TASK_STATUSES = ["OPEN", "IN_PROGRESS"] as const;
 export function isActiveTaskStatus(status: string): boolean {
   return status === "OPEN" || status === "IN_PROGRESS";
 }
+
+/* ------------------------------------------------------------------------ */
+/* Prompt 37 — per-task reminder configuration (§5–§9).                      */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * Closed reminder-offset vocabulary (§7). Minutes BEFORE dueAt for the ONE
+ * due-soon notification. No arbitrary integers — 0/1/3/999999 are rejected.
+ * 10080 = 7 days (the maximum, §42).
+ */
+export const REMINDER_OFFSET_MINUTES = [5, 10, 15, 30, 60, 120, 240, 1440, 2880, 10080] as const;
+
+export type ReminderOffsetMinutes = (typeof REMINDER_OFFSET_MINUTES)[number];
+
+export function isReminderOffset(value: unknown): value is ReminderOffsetMinutes {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    (REMINDER_OFFSET_MINUTES as readonly number[]).includes(value)
+  );
+}
+
+/** Maximum reminder offset — also the due-soon scan horizon (§42/§43). */
+export const REMINDER_MAX_OFFSET_MINUTES: ReminderOffsetMinutes = 10080;
+export const REMINDER_MAX_LOOKAHEAD_MS = REMINDER_MAX_OFFSET_MINUTES * 60_000;
+
+/**
+ * Reminder configuration consistency for a task whose dueAt is (or would
+ * become) `dueAt` (§8). Returns the NORMALIZED config:
+ *
+ *  - reminderEnabled=false ⇒ reminderMinutesBefore MUST be null
+ *  - reminderEnabled=true  ⇒ dueAt MUST exist AND the offset MUST be in the
+ *    closed vocabulary
+ *  - overdueAlertEnabled=true ⇒ dueAt MUST exist
+ *  - dueAt=null ⇒ everything resets (prevents invalid persisted state)
+ *
+ * `invalid` marks a request the server must reject with 422 (an explicit
+ * reminder setting that contradicts reality); `reset` marks the silent
+ * server-side reset that happens when dueAt disappears (§8).
+ */
+export type ReminderConfigInput = {
+  reminderEnabled?: boolean | null | undefined;
+  reminderMinutesBefore?: number | null | undefined;
+  overdueAlertEnabled?: boolean | null | undefined;
+};
+
+export type NormalizedReminderConfig = {
+  reminderEnabled: boolean;
+  reminderMinutesBefore: number | null;
+  overdueAlertEnabled: boolean;
+  invalid: boolean;
+  invalidReason: string | null;
+  reset: boolean;
+};
+
+export function normalizeReminderConfig(
+  input: ReminderConfigInput,
+  dueAtExists: boolean,
+  current?: {
+    reminderEnabled: boolean;
+    overdueAlertEnabled: boolean;
+    reminderMinutesBefore?: number | null;
+  },
+): NormalizedReminderConfig {
+  // dueAt disappears ⇒ server automatically resets everything (§8).
+  if (!dueAtExists) {
+    return {
+      reminderEnabled: false,
+      reminderMinutesBefore: null,
+      overdueAlertEnabled: false,
+      invalid: false,
+      invalidReason: null,
+      reset: true,
+    };
+  }
+  const reminderEnabled = input.reminderEnabled ?? current?.reminderEnabled ?? false;
+  const overdueAlertEnabled = input.overdueAlertEnabled ?? current?.overdueAlertEnabled ?? false;
+  const offsetProvided = input.reminderMinutesBefore !== undefined && input.reminderMinutesBefore !== null;
+  // §164 — an offset ABSENT from the request falls back to the STORED one so
+  // an unrelated PATCH (title change) on a reminder-configured task keeps its
+  // configuration instead of failing validation.
+  const offset = offsetProvided
+    ? (input.reminderMinutesBefore as number)
+    : (current?.reminderMinutesBefore ?? null);
+
+  if (!reminderEnabled && offsetProvided) {
+    // An orphaned offset without reminderEnabled is inconsistent (§8).
+    return {
+      reminderEnabled,
+      reminderMinutesBefore: null,
+      overdueAlertEnabled,
+      invalid: true,
+      invalidReason: "REMINDER_OFFSET_WITHOUT_ENABLED",
+      reset: false,
+    };
+  }
+  if (reminderEnabled) {
+    if (offset === null) {
+      return {
+        reminderEnabled,
+        reminderMinutesBefore: null,
+        overdueAlertEnabled,
+        invalid: true,
+        invalidReason: "REMINDER_OFFSET_REQUIRED",
+        reset: false,
+      };
+    }
+    if (!isReminderOffset(offset)) {
+      return {
+        reminderEnabled,
+        reminderMinutesBefore: null,
+        overdueAlertEnabled,
+        invalid: true,
+        invalidReason: "REMINDER_OFFSET_INVALID",
+        reset: false,
+      };
+    }
+  }
+  return {
+    reminderEnabled,
+    reminderMinutesBefore: reminderEnabled ? (offset as ReminderOffsetMinutes) : null,
+    overdueAlertEnabled,
+    invalid: false,
+    invalidReason: null,
+    reset: false,
+  };
+}
+
+/**
+ * DUE-SOON window (§75): the processor may notify when
+ *   now >= dueAt - reminderMinutesBefore  AND  now < dueAt
+ * Strict boundaries: dueAt == now is NOT due-soon (it is overdue — §76
+ * prevents a same-run double alert); now == dueAt - offset IS due-soon
+ * (inclusive lower bound — §117 threshold semantics).
+ */
+export function isDueSoonNow(dueAt: Date, reminderMinutesBefore: number, now: Date): boolean {
+  if (!isReminderOffset(reminderMinutesBefore)) return false;
+  const t = dueAt.getTime();
+  const n = now.getTime();
+  return n >= t - reminderMinutesBefore * 60_000 && n < t;
+}
+
+/** OVERDUE instant (§75): now >= dueAt, active statuses only (query filters). */
+export function isOverdueNow(dueAt: Date, now: Date): boolean {
+  return now.getTime() >= dueAt.getTime();
+}

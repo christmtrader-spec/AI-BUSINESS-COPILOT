@@ -292,6 +292,13 @@ rule("17 no AuditLog used as public timeline", (bad) => {
 });
 
 rule("18 no fake reminder scheduler", (bad) => {
+  // Prompt 37 (§98) — the scheduler is an EXTERNAL operator-managed process.
+  // ALLOWED scheduler surfaces (the CLI + the DB-only processor):
+  //   scripts/process-crm-task-reminders.mjs
+  //   src/lib/crm/task-reminder-processor.ts
+  //   docs/*scheduler*
+  // FORBIDDEN: setInterval/setTimeout-based scheduling in APP RUNTIME —
+  // i.e. anything under src/ that schedules reminders from request/UI code.
   const offenders = [
     "src/lib/crm/work-queue.ts",
     "src/lib/crm/task-service.ts",
@@ -303,6 +310,17 @@ rule("18 no fake reminder scheduler", (bad) => {
     if (!src) continue;
     if (/setTimeout|cron|scheduleReminder|sendReminder|nodemailer/i.test(src)) {
       bad(f, 1, "fake reminder scheduler pattern");
+    }
+  }
+  // The ALLOWED processor must also stay loop-free and email-free — it is
+  // invoked externally and only writes notifications (§2/§37/§56).
+  const processor = read("src/lib/crm/task-reminder-processor.ts") ?? "";
+  if (processor) {
+    if (/setInterval|setTimeout|requestAnimationFrame/.test(processor)) {
+      bad("src/lib/crm/task-reminder-processor.ts", 1, "processor embeds its own timer");
+    }
+    if (/nodemailer|createTransport/i.test(processor)) {
+      bad("src/lib/crm/task-reminder-processor.ts", 1, "processor sends email directly");
     }
   }
 });

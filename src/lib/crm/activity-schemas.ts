@@ -11,9 +11,10 @@
  */
 import { z } from "zod";
 import { ACTIVITY_TYPES } from "./activity-types";
+import { optionalPreserved } from "./schema-presence";
 
-/** ≤64-char context ids; empty → null normalization everywhere. */
-const contextIdSchema = z.string().trim().max(64).nullish().transform((v) => v || null);
+/** ≤64-char context ids; empty → null normalization everywhere. Absence-preserving (Prompt 37 bug fix). */
+const contextIdSchema = optionalPreserved(z.string().trim().max(64));
 
 /** Occurred-at raw string — length-bounded here, instant-parsed server-side. */
 const occurredAtSchema = z
@@ -22,19 +23,19 @@ const occurredAtSchema = z
   .min(1, "occurredAt is required")
   .max(40);
 
-const durationSchema = z
-  .number()
-  .int()
-  .min(1, "Duration must be at least 1 minute")
-  .max(1440, "Duration cannot exceed 1440 minutes")
-  .nullish()
-  .transform((v) => v ?? null);
+const durationSchema = optionalPreserved(
+  z
+    .number()
+    .int()
+    .min(1, "Duration must be at least 1 minute")
+    .max(1440, "Duration cannot exceed 1440 minutes"),
+);
 
 /** §21 — the client controls exactly these fields; business/actor are set by the server. */
 export const activityCreateSchema = z.object({
   type: z.enum(ACTIVITY_TYPES),
   title: z.string().trim().min(2).max(160),
-  description: z.string().trim().max(4000).nullish().transform((v) => v || null),
+  description: optionalPreserved(z.string().trim().max(4000)),
   occurredAt: occurredAtSchema,
   durationMinutes: durationSchema,
   customerId: contextIdSchema,
@@ -52,7 +53,7 @@ export type ActivityCreateInput = z.infer<typeof activityCreateSchema>;
 export const activityUpdateSchema = z.object({
   type: z.enum(ACTIVITY_TYPES).optional(),
   title: z.string().trim().min(2).max(160).optional(),
-  description: z.string().trim().max(4000).nullish().transform((v) => v || null),
+  description: optionalPreserved(z.string().trim().max(4000)),
   occurredAt: occurredAtSchema.optional(),
   durationMinutes: durationSchema,
 });

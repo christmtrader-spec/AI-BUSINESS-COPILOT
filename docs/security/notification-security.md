@@ -50,9 +50,16 @@ URLs, no forbidden keys, no direct SMTP from the domain, no payload logging).
 
 ## 2. Catalog governance
 
-- The catalog is a **closed 19-type directory** (`NOTIFICATION_TYPES` in
+- The catalog is a **closed 22-type directory** (`NOTIFICATION_TYPES` in
   `src/lib/notifications/catalog.ts`): 7 SECURITY, 5 BILLING, 2 AI,
-  4 BUSINESS, 1 SYSTEM. There is no dynamic template registration.
+  7 BUSINESS, 1 SYSTEM. There is no dynamic template registration. The three
+  Prompt 37 BUSINESS types (`BUSINESS_CRM_TASK_ASSIGNED`, `BUSINESS_CRM_TASK_DUE_SOON`,
+  `BUSINESS_CRM_TASK_OVERDUE`) carry strict bounded data schemas (task title,
+  context title, priority, dueAt, business timezone — never the task
+  description or contact details) and a single closed action route
+  (`crmTasks` → `#/crm?tab=tasks`); their reminder source event ids are
+  composed only from task id + dueAt/updatedAt + assignee id. See
+  `docs/security/crm-task-reminders-security.md`.
 - The client can **never introduce a type**: `Notification.type` is validated
   against the catalog before persistence (unknown → `NOTIFICATION_TYPE_UNKNOWN`,
   422), preference updates resolve the type through the same catalog, and

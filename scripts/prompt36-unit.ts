@@ -212,7 +212,8 @@ eq(taskPriorityOf("WHATEVER"), "NORMAL", "u17 unknown stored priority coerces to
     assignedToUserId: "u2",
     assignedToUser: { id: "u2", name: "Bob", email: "b@x.io", memberships: [{ role: "MANAGER" }] },
   } as never);
-  eq(Object.keys(taskDto).sort(), ["assignedTo", "completedAt", "context", "createdAt", "createdBy", "description", "dueAt", "id", "priority", "status", "title", "updatedAt"], "u22 task DTO allowlist exact");
+  // Prompt 37 (§93) — the task DTO legitimately gained reminderEnabled/reminderMinutesBefore/overdueAlertEnabled.
+  eq(Object.keys(taskDto).sort(), ["assignedTo", "completedAt", "context", "createdAt", "createdBy", "description", "dueAt", "id", "overdueAlertEnabled", "priority", "reminderEnabled", "reminderMinutesBefore", "status", "title", "updatedAt"], "u22 task DTO allowlist exact (P37 reminder fields added)");
   ok(!("businessId" in taskDto) && !("assignedToUserId" in taskDto), "u23 task DTO excludes internal fields");
   eq(taskStatusOf("WEIRD"), "OPEN", "u23 unknown stored status coerces OPEN");
 
@@ -257,7 +258,8 @@ eq(taskPriorityOf("WHATEVER"), "NORMAL", "u17 unknown stored priority coerces to
   ok(okCreate.success, "u27 valid activity create parses");
   if (okCreate.success) {
     eq(okCreate.data.durationMinutes, 45, "u27 duration kept");
-    eq(okCreate.data.customerId, null, "u27 empty context normalized to null");
+    // Prompt 37 absence-preserving schemas: an ABSENT context id stays absent (undefined) — persistence-equivalent to null (Prisma omits → NULL).
+    ok(okCreate.data.customerId === undefined || okCreate.data.customerId === null, "u27 absent context stays absent/null (never a value)");
   }
   const badType = activityCreateSchema.safeParse({ type: "SYSTEM", title: "x", occurredAt: "2026-10-02T10:00:00Z" });
   ok(!badType.success, "u27 arbitrary activity type rejected");

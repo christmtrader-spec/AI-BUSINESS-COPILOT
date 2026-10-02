@@ -63,6 +63,10 @@ export {
   notifyExportFailed,
   notifyImportCompleted,
   notifyImportFailed,
+  // Prompt 37 (§48–§50) — CRM task assignment + reminder notifications.
+  notifyCrmTaskAssigned,
+  notifyCrmTaskDueSoon,
+  notifyCrmTaskOverdue,
   createSystemAnnouncement,
   notificationCatalogHealth,
 } from "./event-mappers";

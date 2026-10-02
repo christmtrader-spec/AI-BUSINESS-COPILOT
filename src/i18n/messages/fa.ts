@@ -2461,6 +2461,31 @@ const fa: Messages = {
       reopenedToast: "وظیفه بازگشایی شد",
       statusError: "به‌روزرسانی وظیفه ممکن نشد.",
     },
+    // Prompt 37 — پیکربندی یادآور برای هر وظیفه
+    taskReminder: {
+      reminders: "یادآورها",
+      enableReminder: "یادآور سررسید",
+      remindBefore: "یادآوری",
+      overdueAlert: "هشدار تأخیر",
+      setDueDateFirst: "برای فعال‌شدن یادآورها، تاریخ سررسید را تعیین کنید.",
+      offsets: {
+        "5": "۵ دقیقه",
+        "10": "۱۰ دقیقه",
+        "15": "۱۵ دقیقه",
+        "30": "۳۰ دقیقه",
+        "60": "۱ ساعت",
+        "120": "۲ ساعت",
+        "240": "۴ ساعت",
+        "1440": "۱ روز",
+        "2880": "۲ روز",
+        "10080": "۷ روز",
+      },
+      noReminder: "بدون یادآور سررسید",
+      overdueOn: "روشن",
+      overdueOff: "خاموش",
+      badgeLabel: "یادآور تنظیم شده است",
+      upcoming24h: "یادآورهای پیش‌رو (۲۴ ساعت)",
+    },
   },
   entityDetail: {
     // Entity type + list labels (closed vocabulary — §3)
@@ -2674,6 +2699,7 @@ const fa: Messages = {
       usage: "مشاهده مصرف هوش مصنوعی",
       notifications: "بازکردن اعلان‌ها",
       dashboard: "بازکردن پیشخوان",
+      crmTasks: "بازکردن وظایف CRM",
     },
     emailFooter: "این پیام را به دلیل فعالیت حساب خود دریافت می‌کنید. مدیریت اعلان‌های اختیاری در تنظیمات حساب شما انجام می‌شود.",
     items: {
@@ -2766,6 +2792,21 @@ const fa: Messages = {
         title: "درون‌ریزی ناموفق بود",
         body: "درون‌ریزی {dataset} ناموفق بود. {reason}",
         email: "درون‌ریزی {dataset} ناموفق بود.\n\n{reason}\n\nجزئیات را در مرکز انتقال داده ببینید.",
+      },
+      BUSINESS_CRM_TASK_ASSIGNED: {
+        title: "وظیفه به شما واگذار شد",
+        body: "«{task}» به شما واگذار شد.\n{contextLabel}: {context}\nسررسید: {due}\nاولویت: {priority}",
+        email: "وظیفه «{task}» به شما واگذار شد.\n\n{contextLabel}: {context}\nسررسید: {due}\nاولویت: {priority}\n\nبرای بررسی، میز کار وظایف را باز کنید.",
+      },
+      BUSINESS_CRM_TASK_DUE_SOON: {
+        title: "سررسید وظیفه نزدیک است",
+        body: "«{task}» تا {reminder} دیگر سررسید می‌شود.\n{contextLabel}: {context}\nسررسید: {due}\nاولویت: {priority}",
+        email: "وظیفه «{task}» تا {reminder} دیگر سررسید می‌شود.\n\n{contextLabel}: {context}\nسررسید: {due}\nاولویت: {priority}\n\nبرای بررسی، میز کار وظایف را باز کنید.",
+      },
+      BUSINESS_CRM_TASK_OVERDUE: {
+        title: "وظیفه از سررسید گذشته است",
+        body: "«{task}» از سررسید گذشته است.\n{contextLabel}: {context}\nسررسید: {due}\nاولویت: {priority}",
+        email: "وظیفه «{task}» از سررسید گذشته است.\n\n{contextLabel}: {context}\nسررسید: {due}\nاولویت: {priority}\n\nبرای بررسی، میز کار وظایف را باز کنید.",
       },
       SYSTEM_ANNOUNCEMENT: {
         title: "اطلاعیه سرویس",

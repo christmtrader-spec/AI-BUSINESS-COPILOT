@@ -2458,6 +2458,31 @@ const en = {
       reopenedToast: "Task reopened",
       statusError: "Could not update the task.",
     },
+    // Prompt 37 — per-task reminder configuration (§58–§63/§101).
+    taskReminder: {
+      reminders: "Reminders",
+      enableReminder: "Due reminder",
+      remindBefore: "Remind me",
+      overdueAlert: "Overdue alert",
+      setDueDateFirst: "Set a due date to enable reminders.",
+      offsets: {
+        "5": "5 minutes",
+        "10": "10 minutes",
+        "15": "15 minutes",
+        "30": "30 minutes",
+        "60": "1 hour",
+        "120": "2 hours",
+        "240": "4 hours",
+        "1440": "1 day",
+        "2880": "2 days",
+        "10080": "7 days",
+      },
+      noReminder: "No due reminder",
+      overdueOn: "On",
+      overdueOff: "Off",
+      badgeLabel: "Reminder configured",
+      upcoming24h: "Upcoming reminders (24h)",
+    },
   },
   entityDetail: {
     // Entity type + list labels (closed vocabulary — §3)
@@ -2671,6 +2696,7 @@ const en = {
       usage: "View AI usage",
       notifications: "Open notifications",
       dashboard: "Open dashboard",
+      crmTasks: "Open CRM tasks",
     },
     emailFooter: "You are receiving this message because of activity on your account. Manage optional notifications in your settings.",
     items: {
@@ -2763,6 +2789,21 @@ const en = {
         title: "Import failed",
         body: "The import of {dataset} failed. {reason}",
         email: "The import of {dataset} failed.\n\n{reason}\n\nOpen the Data Portability center for details.",
+      },
+      BUSINESS_CRM_TASK_ASSIGNED: {
+        title: "Task assigned to you",
+        body: "“{task}” was assigned to you.\n{contextLabel}: {context}\nDue: {due}\nPriority: {priority}",
+        email: "The task “{task}” was assigned to you.\n\n{contextLabel}: {context}\nDue: {due}\nPriority: {priority}\n\nOpen the CRM tasks workspace to review it.",
+      },
+      BUSINESS_CRM_TASK_DUE_SOON: {
+        title: "CRM task due soon",
+        body: "“{task}” is due in {reminder}.\n{contextLabel}: {context}\nDue: {due}\nPriority: {priority}",
+        email: "The task “{task}” is due in {reminder}.\n\n{contextLabel}: {context}\nDue: {due}\nPriority: {priority}\n\nOpen the CRM tasks workspace to review it.",
+      },
+      BUSINESS_CRM_TASK_OVERDUE: {
+        title: "CRM task overdue",
+        body: "“{task}” is overdue.\n{contextLabel}: {context}\nDue: {due}\nPriority: {priority}",
+        email: "The task “{task}” is overdue.\n\n{contextLabel}: {context}\nDue: {due}\nPriority: {priority}\n\nOpen the CRM tasks workspace to review it.",
       },
       SYSTEM_ANNOUNCEMENT: {
         title: "Service announcement",

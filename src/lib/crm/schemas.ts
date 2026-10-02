@@ -7,6 +7,7 @@
  * integer 0–100 (150/-10/NaN/decimal all fail — §7).
  */
 import { z } from "zod";
+import { optionalPreserved } from "./schema-presence";
 import { LEAD_SOURCES, OPPORTUNITY_STAGES, CONVERSION_MODES } from "./types";
 import { PROBABILITY_MIN, PROBABILITY_MAX } from "./constants";
 import { optionalEmail } from "../schemas";
@@ -28,13 +29,13 @@ export type LeadCreateInput = z.infer<typeof leadCreateSchema>;
 /** §21 — generic PATCH never touches status/customerId/convertedAt. */
 export const leadUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
-  companyName: z.string().trim().max(160).nullish().transform((v) => v || null),
-  phone: z.string().trim().max(40).nullish().transform((v) => v || null),
+  companyName: optionalPreserved(z.string().trim().max(160)),
+  phone: optionalPreserved(z.string().trim().max(40)),
   email: optionalEmail,
   source: z.enum(LEAD_SOURCES).optional(),
-  sourceDetail: z.string().trim().max(120).nullish().transform((v) => v || null),
-  note: z.string().trim().max(2000).nullish().transform((v) => v || null),
-  assignedToUserId: z.string().trim().max(64).nullish().transform((v) => v || null),
+  sourceDetail: optionalPreserved(z.string().trim().max(120)),
+  note: optionalPreserved(z.string().trim().max(2000)),
+  assignedToUserId: optionalPreserved(z.string().trim().max(64)),
 });
 export type LeadUpdateInput = z.infer<typeof leadUpdateSchema>;
 
@@ -80,12 +81,7 @@ const probabilitySchema = z
   .min(PROBABILITY_MIN)
   .max(PROBABILITY_MAX);
 /** Optional date-only string (YYYY-MM-DD) or full ISO — normalized later (§84). */
-const closeDateSchema = z
-  .string()
-  .trim()
-  .max(40)
-  .nullish()
-  .transform((v) => v || null);
+const closeDateSchema = optionalPreserved(z.string().trim().max(40));
 
 export const opportunityCreateSchema = z.object({
   title: z.string().trim().min(2).max(160),
@@ -103,13 +99,13 @@ export type OpportunityCreateInput = z.infer<typeof opportunityCreateSchema>;
 /** §31 — generic PATCH never changes stage (dedicated /stage endpoint). */
 export const opportunityUpdateSchema = z.object({
   title: z.string().trim().min(2).max(160).optional(),
-  description: z.string().trim().max(4000).nullish().transform((v) => v || null),
-  leadId: z.string().trim().max(64).nullish().transform((v) => v || null),
-  customerId: z.string().trim().max(64).nullish().transform((v) => v || null),
+  description: optionalPreserved(z.string().trim().max(4000)),
+  leadId: optionalPreserved(z.string().trim().max(64)),
+  customerId: optionalPreserved(z.string().trim().max(64)),
   probabilityPct: probabilitySchema.optional(),
   expectedValueMinor: z.number().int().min(0).max(9_000_000_000).optional(),
   expectedCloseDate: closeDateSchema,
-  assignedToUserId: z.string().trim().max(64).nullish().transform((v) => v || null),
+  assignedToUserId: optionalPreserved(z.string().trim().max(64)),
 });
 export type OpportunityUpdateInput = z.infer<typeof opportunityUpdateSchema>;
 

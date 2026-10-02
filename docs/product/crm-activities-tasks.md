@@ -76,8 +76,9 @@ deliveries and financial records.
 
 | Capability | Status |
 |---|---|
-| Scheduled reminder delivery (email/push/SMS/calendar) | **NOT IMPLEMENTED** — a due task is only surfaced in the queue/lists; no scheduler exists, no fake cron/`setInterval` loops |
-| Task/activity notifications (`TASK_DUE`, …) | **NOT IMPLEMENTED** — Prompt 32 platform unchanged |
+| Task assignment / due-soon / overdue notifications | **IMPLEMENTED in Prompt 37** — see `docs/product/crm-task-reminders.md` (operator-managed external scheduler, one due-soon + one overdue notification per dueAt) |
+| Recurring reminders, multiple reminders per task, per-user defaults | **NOT IMPLEMENTED** (Prompt 37 §175/§176) |
+| Push / SMS / WhatsApp / Telegram / calendar integration | **NOT IMPLEMENTED** (Prompt 37 §202) |
 | AI grounding of activity/task text | **NOT IMPLEMENTED** — descriptions never enter the AI snapshot |
 | Global Search for tasks/activities | **NOT IMPLEMENTED** — descriptions may hold private operational context; SearchType vocabulary unchanged |
 | CRM import (activities/tasks) | **NOT IMPLEMENTED** (see `docs/data/data-import.md`) |

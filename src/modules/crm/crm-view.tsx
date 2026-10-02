@@ -14,7 +14,7 @@
  */
 
 import { useTranslations } from "next-intl";
-import { AlarmClock, CalendarClock, Handshake, ListTodo, Target, TrendingUp, UserPlus } from "lucide-react";
+import { AlarmClock, BellRing, CalendarClock, Handshake, ListTodo, Target, TrendingUp, UserPlus } from "lucide-react";
 import { useAppStore, type CrmTab } from "@/store/app-store";
 import type { BusinessSummary } from "../shell/types";
 import type { Role } from "@/lib/rbac";
@@ -26,6 +26,7 @@ import { EntityMetricCard } from "../entities/entity-metric-card";
 import {
   useCrmLeads,
   useCrmOpportunities,
+  useCrmReminderSummary,
   useCrmSummary,
   useCrmWorkQueue,
 } from "./crm-api";
@@ -49,6 +50,7 @@ export function CrmView({
   const t = useTranslations("crm");
   const tSummary = useTranslations("crm.summary");
   const tQueue = useTranslations("crm.tasks.queue");
+  const tRem = useTranslations("crm.taskReminder");
   const navigate = useAppStore((s) => s.navigate);
   const uiLocale = useAppStore((s) => s.locale);
 
@@ -59,6 +61,9 @@ export function CrmView({
   // §88 — server-computed work-queue counts (viewer scope). One bounded
   // request shared by every tab; counts are NEVER merged into money cards.
   const queue = useCrmWorkQueue();
+  // Prompt 37 (§63/§64) — reminder CONFIGURATION counts (not notification
+  // counts); server-computed, business-scoped, optional UI only.
+  const reminderSummary = useCrmReminderSummary();
 
   // Pipeline board data: first 100 opportunities grouped by the closed
   // stage. The server summary remains the authority for headline metrics.
@@ -170,6 +175,19 @@ export function CrmView({
             </>
           ) : null}
         </CardContent>
+        {/* Prompt 37 (§63) — optional "Upcoming reminders" line: tasks with
+            reminder windows opening in the next 24h. Server-computed;
+            never a notification count. */}
+        {reminderSummary.data ? (
+          <CardContent className="border-t pt-3">
+            <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
+              <BellRing className="size-3.5" aria-hidden="true" />
+              {tRem("upcoming24h")}
+              <span className="text-foreground font-medium">{reminderSummary.data.dueSoonNext24hCount}</span>
+              <span className="sr-only">{tRem("upcoming24h")}</span>
+            </p>
+          </CardContent>
+        ) : null}
       </Card>
 
       <Tabs value={tab} onValueChange={switchTab}>
