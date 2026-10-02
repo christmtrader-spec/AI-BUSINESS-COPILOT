@@ -24,6 +24,8 @@ export {
   opportunityUpdateSchema,
   opportunityStageSchema,
 } from "./schemas";
+export { activityCreateSchema, activityUpdateSchema } from "./activity-schemas";
+export { taskCreateSchema, taskUpdateSchema, taskStatusSchema } from "./task-schemas";
 export {
   parseExpectedCloseDate,
   normalizePhone,
@@ -73,3 +75,44 @@ export {
 } from "./opportunity-service";
 export { convertLead } from "./conversion";
 export { computeCrmSummary } from "./summary";
+
+// ---------------------------------------------------------------------------
+// Prompt 36 — CRM Activities + Tasks (§17).
+//
+// SERVER-ONLY LAW (Prompt 35 lesson): UI modules must import the pure
+// sub-modules DIRECTLY (activity-types / task-types / activity-dto /
+// task-dto / normalization) — never this barrel, which re-exports the
+// server services (db/auth/audit would leak into client bundles).
+// ---------------------------------------------------------------------------
+export {
+  ACTIVITY_PAGE_SIZE_DEFAULT,
+  ACTIVITY_PAGE_SIZE_MAX,
+  listActivities,
+  getActivity,
+  createActivity,
+  updateActivity,
+  deleteActivity,
+} from "./activity-service";
+export {
+  TASK_PAGE_SIZE_DEFAULT,
+  TASK_PAGE_SIZE_MAX,
+  listTasks,
+  getTask,
+  createTask,
+  updateTask,
+  changeTaskStatus,
+  deleteTask,
+} from "./task-service";
+export { getWorkQueue, WORK_QUEUE_MAX } from "./work-queue";
+export {
+  getTimeline,
+  TIMELINE_CANDIDATES_PER_SOURCE,
+  TIMELINE_PAGE_SIZE_DEFAULT,
+  TIMELINE_PAGE_SIZE_MAX,
+} from "./timeline";
+export {
+  assertExactlyOneContext,
+  resolveCrmContextInBusiness,
+  assertOpportunityInBusiness,
+  loadCrmContextOr404,
+} from "./service";

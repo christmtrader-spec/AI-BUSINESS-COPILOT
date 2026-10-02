@@ -38,6 +38,7 @@ import { RelatedRecordList } from "./related-record-list";
 import { navigateToEntity, navigateToEntityList } from "./entity-route";
 import { StageBadge } from "../crm/crm-badges";
 import { invalidateCrmAfterMutation } from "../crm/crm-api";
+import { CrmTimelineCard } from "../crm/crm-timeline";
 import { PartyFormDialog } from "../parties/party-form-dialog";
 import { SaleFormDialog } from "../sales/sale-form-dialog";
 import type { CustomerDetail } from "@/lib/entities";
@@ -246,6 +247,17 @@ export function CustomerDetailView({
           />
         ) : null}
       </section>
+
+      {/* Prompt 36 (§49/§129) — CRM TIMELINE below the CRM pipeline section:
+          activities + active tasks for this customer, with Add activity /
+          Create task CTAs. Financial cards above stay untouched (§49). */}
+      <CrmTimelineCard
+        contextType="CUSTOMER"
+        contextId={c.id}
+        contextTitle={c.name}
+        business={business}
+        writable={writable}
+      />
 
       <PartyFormDialog
         open={editOpen}

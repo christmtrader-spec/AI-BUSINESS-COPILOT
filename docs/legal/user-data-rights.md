@@ -147,3 +147,11 @@ business dataset: they are covered by the data-export right (JSON/CSV datasets
 deletion does not delete business CRM rows; assignment links are anonymized to
 NULL. CRM contains no tracking/marketing data (no pixels, no advertising IDs,
 no behavioral profiles).
+
+Prompt 36 extends the same rights to CRM activities and tasks
+(`CrmActivity`, `CrmTask`): exportable through the `crm_activities` /
+`crm_tasks` JSON/CSV datasets, soft-deletable by authorized tenant roles,
+cascade-deleted with the business, and classified CONFIDENTIAL BUSINESS
+DATA (descriptions may contain personal contact details and are never
+logged, audited verbatim, or sent to AI). No reminder delivery exists, so
+no reminder-related processing of personal data occurs.

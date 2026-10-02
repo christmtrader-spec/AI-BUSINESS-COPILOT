@@ -175,6 +175,12 @@ Cleanup is implemented once, in `scripts/prune-expired-notifications.mjs`
 ## CRM leads & opportunities (Prompt 35)
 
 `CrmLead` / `CrmOpportunity` follow the tenant lifecycle: rows live as long as
+
+`CrmActivity` / `CrmTask` (Prompt 36) follow the same lifecycle: rows live as
+long as the tenant exists, are soft-deleted (`deletedAt`) in normal
+operations, cascade with business deletion, and detach their context/assignee
+links (SetNull) when the referenced entity or user is removed. There is no
+reminder/notification retention: due dates are classification data only.
 the business lives; normal operations use soft delete (`deletedAt`) and the
 rows are removed with business deletion (cascade). No separate retention period
 is configured — as with the rest of this inventory, any future fixed retention

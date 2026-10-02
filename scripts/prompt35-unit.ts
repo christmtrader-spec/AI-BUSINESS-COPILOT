@@ -283,7 +283,8 @@ eq(ENTITY_DESTINATION.OPPORTUNITY, "opportunities", "u25 OPPORTUNITY destination
 ok(SEARCH_DESTINATIONS.length === 8, "u25 destinations cover 8 entities");
 
 /* 26 — CRM tab vocabulary + default (§37) */
-eq([...CRM_TABS], ["leads", "pipeline", "opportunities"], "u26 CRM tabs closed");
+// Prompt 36 (§43/§115) added the closed `tasks` tab — vocabulary extended.
+eq([...CRM_TABS], ["leads", "pipeline", "opportunities", "tasks"], "u26 CRM tabs closed (P36 vocabulary)");
 ok(CRM_DEFAULT_TAB === "pipeline", "u26 default tab is pipeline (documented)");
 ok(isCrmTab("leads") && !isCrmTab("unknown"), "u26 unknown tab rejected");
 eq(CRM_ENTITY_TAB.lead, "leads", "u26 lead back-target tab");

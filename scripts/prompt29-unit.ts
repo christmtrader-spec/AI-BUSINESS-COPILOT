@@ -247,13 +247,20 @@ import { startupBlockingProblems, getProductionConfigReport } from "../src/lib/c
     delete process.env.DATABASE_URL;
     delete process.env.NEXTAUTH_SECRET;
     delete process.env.NEXTAUTH_URL;
+    // Hermetic: the verification mode must not leak from the ambient .env
+    // (unset → BLOCKED in production per §402 — the honest missing-env case).
+    const savedEvMode = process.env.AUTH_EMAIL_VERIFICATION_MODE;
+    delete process.env.AUTH_EMAIL_VERIFICATION_MODE;
     const problems = startupBlockingProblems();
     check("startup:missing-mandatory-blocks", problems.length >= 3, problems.join(","));
 
     process.env.DATABASE_URL = "file:/tmp/scratch.db";
     process.env.NEXTAUTH_SECRET = "x".repeat(44);
     process.env.NEXTAUTH_URL = "https://app.example.com";
+    process.env.AUTH_EMAIL_VERIFICATION_MODE = "OPTIONAL"; // valid without SMTP (§185)
     check("startup:valid-mandatory-passes", startupBlockingProblems().length === 0, "");
+    if (savedEvMode === undefined) delete process.env.AUTH_EMAIL_VERIFICATION_MODE;
+    else process.env.AUTH_EMAIL_VERIFICATION_MODE = savedEvMode;
 
     process.env.NEXTAUTH_SECRET = "short";
     const rep = getProductionConfigReport();

@@ -63,6 +63,15 @@ model User {
   // avoid Prisma ambiguity (both CRM models reference User).
   crmLeadAssignments      CrmLead[]            @relation("CrmLeadAssignee")
   crmOpportunityAssignments CrmOpportunity[]   @relation("CrmOpportunityAssignee")
+
+  // Prompt 36 — CRM Activities + Tasks (§5/§7/§61): explicit relation names
+  // for the three User references (creator of activities, assignee and
+  // creator of tasks). Activity/task creators are Restrict — a user with
+  // created CRM records follows the existing account-deletion policy
+  // (documented in docs/legal/data-deletion-matrix.md before migration).
+  crmActivityCreations    CrmActivity[]        @relation("CrmActivityCreator")
+  crmTaskCreations        CrmTask[]            @relation("CrmTaskCreator")
+  crmTaskAssignments      CrmTask[]            @relation("CrmTaskAssignee")
 }
 
 // ---------------------------------------------------------------------------
@@ -266,6 +275,9 @@ model Business {
   // Prompt 35 — Advanced CRM Foundation (§8/§11).
   crmLeads             CrmLead[]
   crmOpportunities     CrmOpportunity[]
+  // Prompt 36 — CRM Activities + Tasks (§4): tenant-scoped, cascade.
+  crmActivities        CrmActivity[]
+  crmTasks             CrmTask[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -357,6 +369,11 @@ model Customer {
   // SetNull so deleting a customer never breaks CRM history rows.
   crmLeads        CrmLead[]
   crmOpportunities CrmOpportunity[]
+  // Prompt 36 (§4/§61) — CRM activity/task contexts. SetNull: deleting the
+  // customer (hard cascade path) detaches history rows but never destroys
+  // them; the normal UI soft-delete hides them from active timelines.
+  crmActivities   CrmActivity[]
+  crmTasks        CrmTask[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -1523,6 +1540,11 @@ model CrmLead {
 
   opportunities    CrmOpportunity[]
 
+  // Prompt 36 (§4) — timeline records anchored on this lead (SetNull: the
+  // lead row itself is soft-deleted, never physically removed).
+  activities       CrmActivity[]
+  tasks            CrmTask[]
+
   @@index([businessId, deletedAt])
   @@index([businessId, status])
   @@index([businessId, createdAt])
@@ -1567,10 +1589,125 @@ model CrmOpportunity {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
+  // Prompt 36 (§4) — timeline records anchored on this opportunity (SetNull).
+  activities         CrmActivity[]
+  tasks              CrmTask[]
+
   @@index([businessId, deletedAt])
   @@index([businessId, stage])
   @@index([businessId, expectedCloseDate])
   @@index([businessId, assignedToUserId])
   @@index([customerId])
   @@index([leadId])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 36 — CRM Activities + Tasks (§4–§9).
+//
+// Operational, NON-accounting context: Activity = a historical business
+// interaction (closed type vocabulary, §6 of prompt 36); Task = a future/
+// current action (closed status/priority vocabularies + server state
+// machine, §12/§13 of prompt 36). Both are soft-deleted (deletedAt),
+// cascade with the business, and NEVER touch Sale/Expense/Payment/
+// Receivable/Payable/Inventory aggregates (§102).
+// Every row belongs to EXACTLY ONE context (customer XOR lead XOR
+// opportunity — §8, enforced in the service layer).
+// ---------------------------------------------------------------------------
+model CrmActivity {
+  id              String    @id @default(cuid())
+
+  businessId      String
+  business        Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  // Closed vocabulary ACTIVITY_TYPES (§6 of prompt 36) — no arbitrary strings.
+  type            String
+
+  title           String
+  description     String?
+
+  // Real point in time — stored UTC (§16 of prompt 36).
+  occurredAt      DateTime
+
+  // Optional integer minutes, 1–1440 (§14 of prompt 36).
+  durationMinutes Int?
+
+  // EXACTLY ONE of these three is non-null (§8 of prompt 36 — service layer
+  // enforces; the DB allows nulls because SQLite/Prisma cannot express XOR).
+  leadId          String?
+  lead            CrmLead? @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  opportunityId   String?
+  opportunity     CrmOpportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+
+  customerId      String?
+  customer        Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  createdByUserId String
+  createdByUser   User @relation("CrmActivityCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  deletedAt       DateTime?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([businessId, deletedAt])
+  @@index([businessId, occurredAt])
+  @@index([businessId, type])
+  @@index([businessId, createdByUserId])
+  @@index([customerId, occurredAt])
+  @@index([leadId, occurredAt])
+  @@index([opportunityId, occurredAt])
+}
+
+model CrmTask {
+  id                String    @id @default(cuid())
+
+  businessId        String
+  business          Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  title             String
+  description       String?
+
+  // Closed vocabularies + server state machine (§12/§13 of prompt 36).
+  status            String    @default("OPEN")
+  priority          String    @default("NORMAL")
+
+  // Optional future instant — stored UTC (§16 of prompt 36). NO reminder
+  // delivery is built on this field in Prompt 36 (§33/§66 — future phase).
+  dueAt             DateTime?
+
+  // Set only through the dedicated /status endpoint; non-null iff COMPLETED.
+  completedAt       DateTime?
+
+  // EXACTLY ONE context (§8 of prompt 36).
+  leadId            String?
+  lead              CrmLead? @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  opportunityId     String?
+  opportunity       CrmOpportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+
+  customerId        String?
+  customer          Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  // Assignee is OPTIONAL and validated against the current business's
+  // active memberships (§10/§69 of prompt 36). SetNull on user deletion.
+  assignedToUserId  String?
+  assignedToUser    User? @relation("CrmTaskAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+
+  createdByUserId   String
+  createdByUser     User @relation("CrmTaskCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  deletedAt         DateTime?
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([businessId, deletedAt])
+  @@index([businessId, status])
+  @@index([businessId, priority])
+  @@index([businessId, dueAt])
+  @@index([businessId, assignedToUserId])
+  @@index([customerId, dueAt])
+  @@index([leadId, dueAt])
+  @@index([opportunityId, dueAt])
 }

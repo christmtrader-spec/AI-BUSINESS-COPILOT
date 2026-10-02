@@ -1,82 +1,41 @@
 "use client";
 
 /**
- * Prompt 35 — CRM module view (§36/§37/§136).
+ * Prompt 35/36 — CRM module view (§36/§37/§43/§87).
  *
- * Visual hierarchy (§136): summary strip (forecast metrics, clearly
- * labeled) → tabs (Leads | Pipeline | Opportunities) → tab content.
- * Sales revenue NEVER mixes into CRM cards (§136/§45).
+ * Visual hierarchy: forecast summary strip (pipeline values ONLY) →
+ * WORK QUEUE summary (task COUNTS, visually separate — §87/§88/§89) →
+ * tabs (Leads | Pipeline | Opportunities | Tasks) → tab content.
+ * Sales revenue NEVER mixes into CRM cards; task counts never mix into
+ * financial metric cards (§87).
  *
- * Tab state rides the hash (#/crm?tab=…) through the store (§37): the tab
- * is store-driven so deep links, back/forward and refresh all land on the
- * same tab deterministically.
+ * Tab state rides the hash (#/crm?tab=…) through the store (§37); bare
+ * #/crm and unknown tabs land on the default (pipeline).
  */
 
-import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Handshake, Target, TrendingUp, UserPlus } from "lucide-react";
+import { AlarmClock, CalendarClock, Handshake, ListTodo, Target, TrendingUp, UserPlus } from "lucide-react";
 import { useAppStore, type CrmTab } from "@/store/app-store";
 import type { BusinessSummary } from "../shell/types";
 import type { Role } from "@/lib/rbac";
 import { PageHeader } from "@/components/shared/primitives";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EntityMetricCard } from "../entities/entity-metric-card";
-import { api } from "@/lib/api-client";
 import {
   useCrmLeads,
   useCrmOpportunities,
   useCrmSummary,
+  useCrmWorkQueue,
 } from "./crm-api";
+import { useCustomerOptions, useLeadOptions } from "./crm-context-options";
 import { LeadsTable } from "./leads-table";
 import { OpportunitiesTable } from "./opportunities-table";
+import { TasksView } from "./tasks-view";
 import { PipelineBoard, type PipelineStageColumn } from "./pipeline-board";
 import { fmtCount, fmtMoney } from "../finance-shared/finance-kit";
 import { OPPORTUNITY_STAGES } from "@/lib/crm/types";
-
-type Option = { id: string; name: string };
-
-/**
- * Tenant-safe customer option list (id/name only — §80). Loads once per
- * mount via useEffect — render phase stays pure (React hooks law).
- */
-function useCustomerOptions(enabled: boolean): Option[] {
-  const [customers, setCustomers] = useState<Option[]>([]);
-  useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    void api<{ items: { id: string; name: string }[] }>("/api/v1/customers?pageSize=100")
-      .then((res) => {
-        if (!cancelled) setCustomers(res.items);
-      })
-      .catch(() => {
-        if (!cancelled) setCustomers([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled]);
-  return customers;
-}
-
-function useLeadOptions(enabled: boolean): Option[] {
-  const [leads, setLeads] = useState<Option[]>([]);
-  useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    void api<{ items: { id: string; name: string }[] }>("/api/v1/crm/leads?pageSize=100")
-      .then((res) => {
-        if (!cancelled) setLeads(res.items);
-      })
-      .catch(() => {
-        if (!cancelled) setLeads([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled]);
-  return leads;
-}
 
 export function CrmView({
   business,
@@ -89,12 +48,17 @@ export function CrmView({
 }) {
   const t = useTranslations("crm");
   const tSummary = useTranslations("crm.summary");
+  const tQueue = useTranslations("crm.tasks.queue");
   const navigate = useAppStore((s) => s.navigate);
   const uiLocale = useAppStore((s) => s.locale);
 
   const summary = useCrmSummary();
-  const customers = useCustomerOptions(true);
-  const leads = useLeadOptions(true);
+  const customers = useCustomerOptions();
+  const leads = useLeadOptions();
+
+  // §88 — server-computed work-queue counts (viewer scope). One bounded
+  // request shared by every tab; counts are NEVER merged into money cards.
+  const queue = useCrmWorkQueue();
 
   // Pipeline board data: first 100 opportunities grouped by the closed
   // stage. The server summary remains the authority for headline metrics.
@@ -124,12 +88,13 @@ export function CrmView({
   };
 
   const s = summary.data;
+  const q = queue.data;
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title={t("title")} subtitle={t("subtitle")} />
 
-      {/* §136 — forecast summary strip. ALL CRM metrics, clearly labeled. */}
+      {/* §136 — forecast summary strip. Financial/forecast metrics only. */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {summary.isPending ? (
           [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-24 rounded-xl" />)
@@ -163,11 +128,56 @@ export function CrmView({
         ) : null}
       </div>
 
+      {/* §87/§88 — separate WORK QUEUE section: task counts, no money. */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ListTodo className="size-4" aria-hidden="true" />
+            {tQueue("title")}
+          </CardTitle>
+          <button
+            type="button"
+            onClick={() => navigate({ kind: "crm", tab: "tasks" })}
+            className="text-primary text-sm underline decoration-dotted underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {tQueue("openQueue")}
+          </button>
+        </CardHeader>
+        <CardContent className="grid grid-cols-3 gap-3">
+          {queue.isPending ? (
+            [0, 1, 2].map((i) => <Skeleton key={i} className="h-16 rounded-xl" />)
+          ) : q ? (
+            <>
+              <QueueCount
+                label={tQueue("myOpenTasks")}
+                count={q.counts.myOpenTaskCount}
+                uiLocale={uiLocale}
+                icon={ListTodo}
+              />
+              <QueueCount
+                label={tQueue("myOverdueTasks")}
+                count={q.counts.myOverdueTaskCount}
+                uiLocale={uiLocale}
+                icon={AlarmClock}
+                alert={q.counts.myOverdueTaskCount > 0}
+              />
+              <QueueCount
+                label={tQueue("myDueToday")}
+                count={q.counts.myDueTodayCount}
+                uiLocale={uiLocale}
+                icon={CalendarClock}
+              />
+            </>
+          ) : null}
+        </CardContent>
+      </Card>
+
       <Tabs value={tab} onValueChange={switchTab}>
         <TabsList aria-label={t("title")}>
           <TabsTrigger value="leads">{t("tabs.leads")}</TabsTrigger>
           <TabsTrigger value="pipeline">{t("tabs.pipeline")}</TabsTrigger>
           <TabsTrigger value="opportunities">{t("tabs.opportunities")}</TabsTrigger>
+          <TabsTrigger value="tasks">{t("tabs.tasks")}</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -183,14 +193,45 @@ export function CrmView({
           />
           <p className="text-muted-foreground text-xs">{t("pipelineNote")}</p>
         </div>
+      ) : tab === "tasks" ? (
+        <TasksView business={business} role={role} />
       ) : (
-        <OpportunitiesTable
-          business={business}
-          role={role}
-          customers={customers}
-          leads={leads}
-        />
+        <OpportunitiesTable business={business} role={role} customers={customers} leads={leads} />
       )}
+    </div>
+  );
+}
+
+/** §89 — task-count chip, visually distinct from money metric cards. */
+function QueueCount({
+  label,
+  count,
+  uiLocale,
+  icon: Icon,
+  alert = false,
+}: {
+  label: string;
+  count: number;
+  uiLocale: string;
+  icon: typeof ListTodo;
+  alert?: boolean;
+}) {
+  return (
+    <div className="bg-muted/30 flex min-h-16 flex-col justify-center gap-1 rounded-xl border p-3">
+      <p className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium">
+        <Icon className="size-3.5" aria-hidden="true" />
+        {label}
+      </p>
+      <p
+        className={
+          alert
+            ? "text-destructive flex items-baseline gap-1.5 text-xl font-semibold"
+            : "flex items-baseline gap-1.5 text-xl font-semibold"
+        }
+      >
+        {fmtCount(uiLocale, count)}
+        {alert ? <AlarmClock className="size-4" aria-hidden="true" /> : null}
+      </p>
     </div>
   );
 }

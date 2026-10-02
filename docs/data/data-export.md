@@ -37,6 +37,10 @@ so they stay plain text.
 | `sale_items` | line items (saleId, productId, name, unit, qty, unit price, line total) — **auto-included with sales** | Confidential |
 | `expenses` | supplier reference, category, amount/paid (minor), status, spentAt | Confidential |
 | `payments` | tenant finance payments (sale/expense reference, direction, amount, method, paidAt) | Confidential |
+| `crm_leads` | CRM leads (Prompt 35 §86): contact, source, status, note, assignee/customer ids, convertedAt, deletedAt | Confidential |
+| `crm_opportunities` | CRM opportunities (Prompt 35 §86): stage, probabilityPct, expectedValue (minor), currency, links, lost/won metadata, deletedAt | Confidential |
+| `crm_activities` | CRM activities (Prompt 36 §62): type, title, description, occurredAt, durationMinutes, context ids, createdBy, deletedAt | Confidential |
+| `crm_tasks` | CRM tasks (Prompt 36 §62): status, priority, dueAt, completedAt, context ids, assignee, createdBy, deletedAt | Confidential |
 | `subscription_summary` | plan code/name, status, billing period, trial, cancel flags — customer-visible state only | Confidential |
 | `usage_summary` | current-period usage facts (metric, used, limit, remaining) — the same numbers the Usage page shows | Confidential |
 

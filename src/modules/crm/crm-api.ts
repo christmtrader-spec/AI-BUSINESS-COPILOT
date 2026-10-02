@@ -21,7 +21,11 @@ import type {
   CrmSummary,
   LeadListResponse,
   OpportunityListResponse,
-} from "@/lib/crm";
+} from "@/lib/crm/types";
+import type { ActivityListResponse } from "@/lib/crm/activity-dto";
+import type { TaskListResponse } from "@/lib/crm/task-dto";
+import type { WorkQueueResponse } from "@/lib/crm/work-queue-types";
+import type { TimelineResponse } from "@/lib/crm/timeline-types";
 
 /** §50 — CRM query-key factory (pure, businessId-scoped). */
 export const crmKeys = {
@@ -32,6 +36,15 @@ export const crmKeys = {
     ["crm", businessId ?? "none", "opportunities"] as const,
   summary: (businessId: string | null | undefined) =>
     ["crm", businessId ?? "none", "summary"] as const,
+  // Prompt 36 (§55) — every key carries businessId; context ids where relevant.
+  activities: (businessId: string | null | undefined) =>
+    ["crm", businessId ?? "none", "activities"] as const,
+  tasks: (businessId: string | null | undefined) =>
+    ["crm", businessId ?? "none", "tasks"] as const,
+  workQueue: (businessId: string | null | undefined) =>
+    ["crm", businessId ?? "none", "workQueue"] as const,
+  timeline: (businessId: string | null | undefined) =>
+    ["crm", businessId ?? "none", "timeline"] as const,
 };
 
 /** Invalidate the whole CRM domain for the active business (§51 — switch). */
@@ -51,9 +64,37 @@ export function invalidateCrmAfterMutation(
   void queryClient.invalidateQueries({ queryKey: crmKeys.leads(businessId) });
   void queryClient.invalidateQueries({ queryKey: crmKeys.opportunities(businessId) });
   void queryClient.invalidateQueries({ queryKey: crmKeys.summary(businessId) });
+  void queryClient.invalidateQueries({ queryKey: crmKeys.activities(businessId) });
+  void queryClient.invalidateQueries({ queryKey: crmKeys.tasks(businessId) });
+  void queryClient.invalidateQueries({ queryKey: crmKeys.workQueue(businessId) });
+  void queryClient.invalidateQueries({ queryKey: crmKeys.timeline(businessId) });
   void queryClient.invalidateQueries({ queryKey: ["search"] });
   if (opts.customers) {
     void queryClient.invalidateQueries({ queryKey: ["parties", "customer"] });
+  }
+}
+
+/**
+ * Prompt 36 (§56) — invalidate ONLY the timeline/activity/task caches plus
+ * the owning entity's detail (and the customer 360 for CUSTOMER contexts).
+ * Never a whole-QueryClient clear.
+ */
+export function invalidateCrmContextCaches(
+  queryClient: QueryClient,
+  businessId: string | null | undefined,
+  context: { type: "CUSTOMER" | "LEAD" | "OPPORTUNITY"; id: string } | null,
+) {
+  void queryClient.invalidateQueries({ queryKey: crmKeys.activities(businessId) });
+  void queryClient.invalidateQueries({ queryKey: crmKeys.tasks(businessId) });
+  void queryClient.invalidateQueries({ queryKey: crmKeys.workQueue(businessId) });
+  void queryClient.invalidateQueries({ queryKey: crmKeys.timeline(businessId) });
+  if (context?.id) {
+    const entity =
+      context.type === "CUSTOMER" ? "customer" : context.type === "LEAD" ? "lead" : "opportunity";
+    invalidateEntityDetail(queryClient, businessId, entity, context.id);
+    if (context.type === "CUSTOMER") {
+      void queryClient.invalidateQueries({ queryKey: ["parties", "customer"] });
+    }
   }
 }
 
@@ -276,3 +317,221 @@ export const OPEN_STAGES_EXPORT = ["DISCOVERY", "QUALIFIED", "PROPOSAL", "NEGOTI
 
 /** Re-export for dialogs that surface server validation messages. */
 export { ApiClientError };
+
+/* ========================================================================== */
+/* Prompt 36 — Activities / Tasks / Work Queue / Timeline (§55/§56/§116)      */
+/* ========================================================================== */
+
+export type CrmContextInput = { type: "CUSTOMER" | "LEAD" | "OPPORTUNITY"; id: string };
+
+/** Build the query suffix for a context filter pair (contextId is a value, not a URL builder). */
+function contextQuery(ctx: CrmContextInput): string {
+  return `contextType=${encodeURIComponent(ctx.type)}&contextId=${encodeURIComponent(ctx.id)}`;
+}
+
+/** Activities for one context (timeline/detail pages) — bounded page size. */
+export function useCrmActivities(
+  ctx: CrmContextInput | null,
+  params: { q?: string; page?: number; pageSize?: number } = {},
+) {
+  const businessId = useAppStore((s) => s.activeBusinessId);
+  const search = new URLSearchParams({
+    page: String(params.page ?? 1),
+    pageSize: String(params.pageSize ?? 25),
+  });
+  if (params.q) search.set("q", params.q);
+  if (ctx) {
+    search.set("contextType", ctx.type);
+    search.set("contextId", ctx.id);
+  }
+  return useQuery({
+    queryKey: [
+      ...crmKeys.activities(businessId),
+      ctx ? `${ctx.type}:${ctx.id}` : "all",
+      { q: params.q ?? "", page: params.page ?? 1, pageSize: params.pageSize ?? 25 },
+    ],
+    queryFn: () => api<ActivityListResponse>(`/api/v1/crm/activities?${search.toString()}`),
+    enabled: Boolean(businessId && (ctx ? ctx.id : true)),
+    staleTime: 15_000,
+    retry: false,
+  });
+}
+
+/** Tasks list with filters (context view + active-task cards). */
+export function useCrmTasks(
+  params: {
+    q?: string;
+    status?: string | null;
+    priority?: string | null;
+    assignedToUserId?: string | null;
+    ctx?: CrmContextInput | null;
+    page?: number;
+    pageSize?: number;
+  },
+) {
+  const businessId = useAppStore((s) => s.activeBusinessId);
+  const search = new URLSearchParams({
+    page: String(params.page ?? 1),
+    pageSize: String(params.pageSize ?? 25),
+  });
+  if (params.q) search.set("q", params.q);
+  if (params.status) search.set("status", params.status);
+  if (params.priority) search.set("priority", params.priority);
+  if (params.assignedToUserId) search.set("assignedToUserId", params.assignedToUserId);
+  if (params.ctx) {
+    search.set("contextType", params.ctx.type);
+    search.set("contextId", params.ctx.id);
+  }
+  return useQuery({
+    queryKey: [
+      ...crmKeys.tasks(businessId),
+      {
+        q: params.q ?? "",
+        status: params.status ?? "",
+        priority: params.priority ?? "",
+        assignedToUserId: params.assignedToUserId ?? "",
+        ctx: params.ctx ? `${params.ctx.type}:${params.ctx.id}` : "",
+        page: params.page ?? 1,
+        pageSize: params.pageSize ?? 25,
+      },
+    ],
+    queryFn: () => api<TaskListResponse>(`/api/v1/crm/tasks?${search.toString()}`),
+    enabled: Boolean(businessId),
+    staleTime: 15_000,
+    retry: false,
+  });
+}
+
+/**
+ * Server-driven work queue (§118): buckets + counts arrive classified —
+ * the client only renders. `mine=false` + assignee shows that member's queue.
+ */
+export function useCrmWorkQueue(params: { assignedToUserId?: string | null; enabled?: boolean } = {}) {
+  const businessId = useAppStore((s) => s.activeBusinessId);
+  const search = new URLSearchParams();
+  if (params.assignedToUserId) search.set("assignedToUserId", params.assignedToUserId);
+  return useQuery({
+    queryKey: [
+      ...crmKeys.workQueue(businessId),
+      { assignedToUserId: params.assignedToUserId ?? "" },
+    ],
+    queryFn: () =>
+      api<WorkQueueResponse>(
+        search.toString() ? `/api/v1/crm/tasks/work-queue?${search.toString()}` : "/api/v1/crm/tasks/work-queue",
+      ),
+    enabled: Boolean(businessId) && (params.enabled ?? true),
+    staleTime: 10_000,
+    retry: false,
+  });
+}
+
+/** Unified timeline for one context (§34) — server-merged + bounded. */
+export function useCrmTimeline(
+  ctx: CrmContextInput | null,
+  params: { page?: number; pageSize?: number } = {},
+) {
+  const businessId = useAppStore((s) => s.activeBusinessId);
+  return useQuery({
+    queryKey: [
+      ...crmKeys.timeline(businessId),
+      ctx ? `${ctx.type}:${ctx.id}` : "none",
+      { page: params.page ?? 1, pageSize: params.pageSize ?? 25 },
+    ],
+    queryFn: () => {
+      const search = new URLSearchParams({
+        contextType: ctx!.type,
+        contextId: ctx!.id,
+        page: String(params.page ?? 1),
+        pageSize: String(params.pageSize ?? 25),
+      });
+      return api<TimelineResponse>(`/api/v1/crm/timeline?${search.toString()}`);
+    },
+    enabled: Boolean(businessId && ctx?.id),
+    staleTime: 15_000,
+    retry: false,
+  });
+}
+
+/** Activity mutations (§56) — targeted timeline + entity-detail invalidation. */
+export function useActivityMutations() {
+  const queryClient = useQueryClient();
+  const businessId = useAppStore((s) => s.activeBusinessId);
+
+  const after = (ctx: CrmContextInput | null) => {
+    invalidateCrmContextCaches(queryClient, businessId, ctx);
+    // Customer/lead/opportunity 360s embed the timeline — refresh their keys.
+    if (ctx?.type === "CUSTOMER") {
+      void queryClient.invalidateQueries({ queryKey: ["parties", "customer"] });
+    }
+  };
+
+  const create = useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      api<unknown>("/api/v1/crm/activities", { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: (_d, variables) => after(contextFromBody(variables)),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body, ctx }: { id: string; body: Record<string, unknown>; ctx: CrmContextInput | null }) =>
+      api<unknown>(`/api/v1/crm/activities/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (_d, variables) => after(variables.ctx),
+  });
+
+  const remove = useMutation({
+    mutationFn: ({ id, ctx }: { id: string; ctx: CrmContextInput | null }) =>
+      api<unknown>(`/api/v1/crm/activities/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    onSuccess: (_d, variables) => after(variables.ctx),
+  });
+
+  return { create, update, remove };
+}
+
+function contextFromBody(body: Record<string, unknown>): CrmContextInput | null {
+  if (typeof body.customerId === "string" && body.customerId) return { type: "CUSTOMER", id: body.customerId };
+  if (typeof body.leadId === "string" && body.leadId) return { type: "LEAD", id: body.leadId };
+  if (typeof body.opportunityId === "string" && body.opportunityId) return { type: "OPPORTUNITY", id: body.opportunityId };
+  return null;
+}
+
+/** Task mutations (§56) — list + workQueue + timeline + context detail. */
+export function useTaskMutations() {
+  const queryClient = useQueryClient();
+  const businessId = useAppStore((s) => s.activeBusinessId);
+
+  const after = (ctx: CrmContextInput | null) => invalidateCrmContextCaches(queryClient, businessId, ctx);
+
+  const create = useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      api<unknown>("/api/v1/crm/tasks", { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: (_d, variables) => after(contextFromBody(variables)),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body, ctx }: { id: string; body: Record<string, unknown>; ctx: CrmContextInput | null }) =>
+      api<unknown>(`/api/v1/crm/tasks/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (_d, variables) => after(variables.ctx),
+  });
+
+  const changeStatus = useMutation({
+    mutationFn: ({ id, status, ctx }: { id: string; status: string; ctx: CrmContextInput | null }) =>
+      api<unknown>(`/api/v1/crm/tasks/${encodeURIComponent(id)}/status`, {
+        method: "POST",
+        body: JSON.stringify({ status }),
+      }),
+    onSuccess: (_d, variables) => after(variables.ctx),
+  });
+
+  const remove = useMutation({
+    mutationFn: ({ id, ctx }: { id: string; ctx: CrmContextInput | null }) =>
+      api<unknown>(`/api/v1/crm/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    onSuccess: (_d, variables) => after(variables.ctx),
+  });
+
+  return { create, update, changeStatus, remove };
+}

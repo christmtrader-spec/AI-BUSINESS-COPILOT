@@ -209,6 +209,27 @@ advertising IDs, no behavioral profiles, no location/device fingerprinting, no
 hidden scoring. Search over CRM records follows the Prompt 33 privacy rules:
 queries are never logged or persisted (§90).
 
+### 4.11 CRM activities & tasks (Prompt 36)
+
+Two tenant-owned CRM models record operational context (non-accounting).
+`CrmActivity` stores a closed `type` (NOTE/CALL/EMAIL/MEETING/OTHER), title,
+an optional free-text `description`, `occurredAt` (UTC instant), optional
+`durationMinutes` (1–1440), and EXACTLY ONE context anchor (customerId /
+leadId / opportunityId, SetNull) plus the creator link. `CrmTask` stores
+title, optional description, server-controlled `status`
+(OPEN/IN_PROGRESS/COMPLETED/CANCELED), closed `priority`
+(LOW/NORMAL/HIGH/URGENT), optional `dueAt` (UTC instant), `completedAt`,
+exactly one context anchor, and an optional assignee (SetNull).
+Classification: CONFIDENTIAL BUSINESS DATA (§60) — descriptions may contain
+personal contact details; they are never logged, never audited verbatim and
+never sent to AI. Reminders/notifications for due tasks are NOT implemented
+(future phase).
+
+| Category | Examples (where stored) | Purpose · actor/context | Origin | Third-party processed | Exported? | Deleted? · Retention status | Class |
+|---|---|---|---|---|---|---|---|
+| CRM activity | `CrmActivity` — type, title, description?, occurredAt, durationMinutes?, exactly-one context (customer/lead/opportunity), createdBy | Business CRM management (interaction history) · tenant members (legal basis: contract/service operation) | U: entered by members · S: timestamps | No | Yes (`crm_activities` dataset — Prompt 36 §62) | Soft delete (`deletedAt`) in normal ops; DELETED with business (cascade); context/user links SET NULL (creator link follows account-deletion policy — Restrict) | CONFIDENTIAL BUSINESS DATA — may be personal data (names, phones/emails inside descriptions) |
+| CRM task | `CrmTask` — title, description?, status, priority, dueAt?, completedAt?, exactly-one context, assignee?, createdBy | Business CRM management (follow-up work queue) · tenant members | U: entered by members · S: status/completedAt bookkeeping | No | Yes (`crm_tasks` dataset — Prompt 36 §62) | Soft delete (`deletedAt`) in normal ops; DELETED with business (cascade); assignment/context SET NULL; creator Restrict | CONFIDENTIAL BUSINESS DATA |
+
 ## 5. Business data vs personal data
 
 The tenant/business split is the backbone of this inventory, and it is deliberately conservative:

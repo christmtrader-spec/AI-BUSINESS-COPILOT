@@ -25,6 +25,65 @@ export function toIsoOrNull(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
 }
 
+/**
+ * Prompt 36 (§14/§15/§16) — parse a full datetime instant (activity
+ * occurredAt / task dueAt). These are REAL points in time — UTC instants —
+ * NOT date-only values, so the Prompt 35 UTC-midnoon rule does NOT apply.
+ * Accepts any parseable ISO-8601 string; returns null for garbage.
+ */
+export function parseInstant(raw: string | null | undefined): Date | null {
+  if (!raw) return null;
+  const value = raw.trim();
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/**
+ * Prompt 36 (§119) — convert a business-timezone wall-clock reading
+ * ("YYYY-MM-DDTHH:mm" from a datetime-local input) into the true UTC
+ * instant, so users always schedule in the BUSINESS clock regardless of
+ * their device timezone. Two-pass offset resolution handles DST boundaries;
+ * invalid zones fall back to UTC; garbage input returns null.
+ */
+export function zonedWallClockToUtc(
+  raw: string | null | undefined,
+  timeZone: string,
+): Date | null {
+  if (!raw) return null;
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(raw.trim());
+  if (!match) return null;
+  const [, day, time] = match;
+  const guess = new Date(`${day}T${time}:00Z`); // pretend the wall clock is UTC
+  if (Number.isNaN(guess.getTime())) return null;
+  let tz = timeZone;
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone });
+  } catch {
+    tz = "UTC";
+  }
+  const asUtc = (d: Date) =>
+    new Date(
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: tz,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      })
+        .format(d)
+        .replace(/,\s*/, "T") + "Z",
+    );
+  // Two passes converge everywhere except the theoretical double-DST hour.
+  let offset = guess.getTime() - asUtc(guess).getTime();
+  offset = guess.getTime() + offset - asUtc(new Date(guess.getTime() + offset)).getTime();
+  const instant = new Date(guess.getTime() + offset);
+  return Number.isNaN(instant.getTime()) ? null : instant;
+}
+
 /** Closed-enum coercion for DB rows that may pre-date validation (§79). */
 export function leadStatusOf(value: string): LeadStatus {
   return isLeadStatus(value) ? value : "NEW";

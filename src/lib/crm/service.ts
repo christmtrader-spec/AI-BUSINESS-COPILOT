@@ -131,6 +131,102 @@ export async function assertLeadInBusiness(
 }
 
 /**
+ * Prompt 36 (§8) — EXACTLY ONE context: count the non-null ids. Zero or
+ * multiple → 422; ambiguous ownership would break timeline semantics.
+ */
+export function assertExactlyOneContext(input: {
+  customerId?: string | null;
+  leadId?: string | null;
+  opportunityId?: string | null;
+}): void {
+  const provided = [input.customerId, input.leadId, input.opportunityId].filter(Boolean).length;
+  if (provided !== 1) {
+    throw new ApiError(
+      422,
+      "VALIDATION_ERROR",
+      "Exactly one of customerId, leadId or opportunityId is required.",
+      { field: "context" },
+    );
+  }
+}
+
+/**
+ * Prompt 36 (§8/§9/§70) — resolve the activity/task context against the
+ * CURRENT business: the referenced record must exist in this business and
+ * be soft-alive, or the write is rejected (422 — client-supplied id at
+ * write time, same semantics as the other write-time relation checks).
+ * Returns the normalized triple (nulls where empty).
+ */
+export async function resolveCrmContextInBusiness(
+  input: { customerId?: string | null; leadId?: string | null; opportunityId?: string | null },
+  businessId: string,
+): Promise<{ customerId: string | null; leadId: string | null; opportunityId: string | null }> {
+  assertExactlyOneContext(input);
+  const customerId = await assertCustomerInBusiness(input.customerId, businessId);
+  const leadId = await assertLeadInBusiness(input.leadId, businessId);
+  const opportunityId = await assertOpportunityInBusiness(input.opportunityId, businessId);
+  return { customerId, leadId, opportunityId };
+}
+
+/**
+ * Prompt 36 (§20/§70) — validate an opportunity relation for the SAME
+ * business and not soft-deleted (mirrors the other two context guards).
+ */
+export async function assertOpportunityInBusiness(
+  opportunityId: string | null | undefined,
+  businessId: string,
+): Promise<string | null> {
+  if (!opportunityId) return null;
+  const opportunity = await db.crmOpportunity.findFirst({
+    where: { id: opportunityId, businessId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!opportunity) {
+    throw new ApiError(
+      422,
+      "VALIDATION_ERROR",
+      "The referenced opportunity does not exist in this business.",
+      { field: "opportunityId" },
+    );
+  }
+  return opportunityId;
+}
+
+/**
+ * Prompt 36 (§20/§34) — load the timeline/queue context (READ path) or
+ * throw 404: foreign-tenant and soft-deleted contexts are indistinguishable
+ * from unknown ids (existence never leaks across tenants, §15).
+ */
+export async function loadCrmContextOr404(
+  contextType: "CUSTOMER" | "LEAD" | "OPPORTUNITY",
+  contextId: string,
+  businessId: string,
+): Promise<{ type: typeof contextType; id: string; title: string }> {
+  if (contextType === "CUSTOMER") {
+    const row = await db.customer.findFirst({
+      where: { id: contextId, businessId, deletedAt: null },
+      select: { id: true, name: true },
+    });
+    if (!row) throw new ApiError(404, "NOT_FOUND", "Customer not found.");
+    return { type: contextType, id: row.id, title: row.name };
+  }
+  if (contextType === "LEAD") {
+    const row = await db.crmLead.findFirst({
+      where: { id: contextId, businessId, deletedAt: null },
+      select: { id: true, name: true, companyName: true },
+    });
+    if (!row) throw new ApiError(404, "NOT_FOUND", "Lead not found.");
+    return { type: contextType, id: row.id, title: row.companyName ?? row.name };
+  }
+  const row = await db.crmOpportunity.findFirst({
+    where: { id: contextId, businessId, deletedAt: null },
+    select: { id: true, title: true },
+  });
+  if (!row) throw new ApiError(404, "NOT_FOUND", "Opportunity not found.");
+  return { type: contextType, id: row.id, title: row.title };
+}
+
+/**
  * Load a customer for CONVERSION (§24): foreign/deleted customer resolves
  * to 404 — same observable behavior as an unknown id, no leak (§15).
  */

@@ -172,3 +172,13 @@ dangling id strings. Nothing rewrites or anonymizes them — NOT CURRENTLY AUTOM
 | Opportunity delete (user action) | Soft delete (`deletedAt`): hidden from lists/search/summary; audit remains. No financial effect. |
 | Account deletion | `assignedToUserId` links SET NULL (the CRM rows are business data and stay with the business). |
 | Customer deletion (soft) | CRM links resolve as "not found" (queries filter `deletedAt: null` on the customer side); CRM rows are not destroyed. |
+
+### CRM Activities & Tasks (Prompt 36)
+
+| Event | CRM effect |
+|---|---|
+| Business deletion | `CrmActivity` / `CrmTask` DELETED (cascade). |
+| Activity/Task delete (user action) | Soft delete (`deletedAt`): hidden from timeline/lists/work queue/export-active; audit remains (§23/§28). Deleting a task never deletes its customer/lead/opportunity, any activity, or any financial record. |
+| Account deletion | `CrmTask.assignedToUserId` SET NULL. Creator links (`createdByUserId`) are `onDelete: Restrict` — the same project-specific policy as other creator-linked records: account deletion is gated by the existing rules and the tenant rows are not silently rewritten; documented here BEFORE the migration (§61 honesty rule). |
+| Customer/Lead/Opportunity deletion (soft) | Rows remain (tenant data per retention policy) but disappear from ACTIVE timelines (queries filter `deletedAt: null` on the context side, §104). No automatic cross-context reassignment (§126). |
+| Context deletion (hard cascade path) | Context column SET NULL (schema `onDelete: SetNull`); the history row itself is not destroyed by the context going away. |

@@ -43,6 +43,7 @@ import { OpportunityFormDialog } from "../crm/opportunity-form-dialog";
 import { OpportunityStageDialog } from "../crm/opportunity-stage-dialog";
 import { StageBadge } from "../crm/crm-badges";
 import { invalidateCrmAfterMutation } from "../crm/crm-api";
+import { CrmTimelineCard, CrmActiveTasksCard } from "../crm/crm-timeline";
 import { SaleFormDialog } from "../sales/sale-form-dialog";
 import type { OpportunityDetail } from "@/lib/crm";
 
@@ -228,6 +229,22 @@ export function OpportunityDetailView({
           ]}
         />
       ) : null}
+
+      {/* Prompt 36 (§39/§51) — Timeline + Tasks. Winning the opportunity
+          creates NO automatic activity/task/notification (§106). */}
+      <CrmTimelineCard
+        contextType="OPPORTUNITY"
+        contextId={data.id}
+        contextTitle={data.title}
+        business={business}
+        writable={writable}
+      />
+      <CrmActiveTasksCard
+        contextType="OPPORTUNITY"
+        contextId={data.id}
+        business={business}
+        writable={writable}
+      />
 
       <OpportunityFormDialog
         open={editOpen}

@@ -1,0 +1,739 @@
+     1→import "server-only";
+     2→
+     3→/**
+     4→ * Export dataset catalog — Prompt 31 §5/§6/§41-§54.
+     5→ *
+     6→ * LAWS:
+     7→ *  - EXPLICIT allowlist: a dataset key that is not in this catalog can
+     8→ *    never be exported (§39/§239 — unknown dataset rejected).
+     9→ *  - Every dataset is classified (§6): PUBLIC_BUSINESS / CONFIDENTIAL /
+    10→ *    HIGHLY_SENSITIVE. No dataset below contains authentication or
+    11→ *    security secrets (§9/§12-§19 — enforced again by the static scanner).
+    12→ *  - Tenant-owned only: fetchers filter by businessId unconditionally
+    13→ *    (§32); the caller's ctx.businessId is the ONLY business key used.
+    14→ *  - Per-row businessId is deliberately EXCLUDED (§10 — the manifest
+    15→ *    carries the business identity; per-row copies are unnecessary).
+    16→ *  - Financial export is READ-ONLY representation of the same records the
+    17→ *    UI already shows (§222/§223) — amounts as exact integer minor units
+    18→ *    in JSON, exact decimal strings in CSV (§226/§227).
+    19→ *  - NOT exported (explicit Prompt 31 decisions, documented):
+    20→ *      · AI chat transcripts (user-personal, out of portability scope §53)
+    21→ *      · tenant audit trail (actor identities + history, not in catalog §5)
+    22→ *      · receivables/payables (DERIVED views of sales/expenses — the same
+    23→ *        facts are already inside those datasets)
+    24→ *      · anything platform: subscriptions internals, provider costs, AI
+    25→ *        rates, platform audit, operators (§9/§51/§52/§189).
+    26→ */
+    27→
+    28→import { db } from "@/lib/db";
+    29→import type { Prisma } from "@prisma/client";
+    30→import { formatMinorToDecimal } from "./money-csv";
+    31→
+    32→export type ExportSensitivity = "PUBLIC_BUSINESS" | "CONFIDENTIAL" | "HIGHLY_SENSITIVE";
+    33→
+    34→export type ExportDatasetKey =
+    35→  | "business"
+    36→  | "members"
+    37→  | "customers"
+    38→  | "suppliers"
+    39→  | "products"
+    40→  | "inventory"
+    41→  | "sales"
+    42→  | "sale_items"
+    43→  | "expenses"
+    44→  | "payments"
+    45→  | "crm_leads"
+    46→  | "crm_opportunities"
+    47→  | "subscription_summary"
+    48→  | "usage_summary";
+    49→
+    50→export const EXPORT_DATASET_KEYS = [
+    51→  "business",
+    52→  "members",
+    53→  "customers",
+    54→  "suppliers",
+    55→  "products",
+    56→  "inventory",
+    57→  "sales",
+    58→  "sale_items",
+    59→  "expenses",
+    60→  "payments",
+    61→  "crm_leads",
+    62→  "crm_opportunities",
+    63→  "subscription_summary",
+    64→  "usage_summary",
+    65→] as const satisfies readonly ExportDatasetKey[];
+    66→
+    67→/** `sales` always carries its line items (§46 — never flatten relationships). */
+    68→export const DATASET_IMPLICATIONS: Partial<Record<ExportDatasetKey, ExportDatasetKey[]>> = {
+    69→  sales: ["sale_items"],
+    70→};
+    71→
+    72→export type DatasetMeta = {
+    73→  key: ExportDatasetKey;
+    74→  sensitivity: ExportSensitivity;
+    75→  /** CSV table file name (machine header names stay stable, §193). */
+    76→  csvFile: string;
+    77→  /** i18n key under portability.datasets. */
+    78→  labelKey: string;
+    79→};
+    80→
+    81→export const EXPORT_CATALOG: Record<ExportDatasetKey, DatasetMeta> = {
+    82→  business: { key: "business", sensitivity: "PUBLIC_BUSINESS", csvFile: "business.csv", labelKey: "business" },
+    83→  members: { key: "members", sensitivity: "CONFIDENTIAL", csvFile: "members.csv", labelKey: "members" },
+    84→  customers: { key: "customers", sensitivity: "CONFIDENTIAL", csvFile: "customers.csv", labelKey: "customers" },
+    85→  suppliers: { key: "suppliers", sensitivity: "CONFIDENTIAL", csvFile: "suppliers.csv", labelKey: "suppliers" },
+    86→  products: { key: "products", sensitivity: "CONFIDENTIAL", csvFile: "products.csv", labelKey: "products" },
+    87→  inventory: { key: "inventory", sensitivity: "CONFIDENTIAL", csvFile: "inventory.csv", labelKey: "inventory" },
+    88→  sales: { key: "sales", sensitivity: "CONFIDENTIAL", csvFile: "sales.csv", labelKey: "sales" },
+    89→  sale_items: { key: "sale_items", sensitivity: "CONFIDENTIAL", csvFile: "sale_items.csv", labelKey: "saleItems" },
+    90→  expenses: { key: "expenses", sensitivity: "CONFIDENTIAL", csvFile: "expenses.csv", labelKey: "expenses" },
+    91→  payments: { key: "payments", sensitivity: "CONFIDENTIAL", csvFile: "payments.csv", labelKey: "payments" },
+    92→  // Prompt 35 (§86) — CRM datasets: CONFIDENTIAL (personal contact data);
+    93→  // relationships carried as stable ids; forecast values exported as minor
+    94→  // integers; never any platform/AI-cost/security data.
+    95→  crm_leads: { key: "crm_leads", sensitivity: "CONFIDENTIAL", csvFile: "crm_leads.csv", labelKey: "crmLeads" },
+    96→  crm_opportunities: { key: "crm_opportunities", sensitivity: "CONFIDENTIAL", csvFile: "crm_opportunities.csv", labelKey: "crmOpportunities" },
+    97→  subscription_summary: { key: "subscription_summary", sensitivity: "CONFIDENTIAL", csvFile: "subscription.csv", labelKey: "subscriptionSummary" },
+    98→  usage_summary: { key: "usage_summary", sensitivity: "CONFIDENTIAL", csvFile: "usage.csv", labelKey: "usageSummary" },
+    99→};
+   100→
+   101→/* ------------------------------ row building ------------------------------- */
+   102→
+   103→export type ExportRow = {
+   104→  /** JSON row — IDs + relationships preserved, money as minor integers (§54/§226). */
+   105→  json: Record<string, unknown>;
+   106→  /** CSV row — exact decimal strings for money, ISO-8601 UTC dates (§227/§231). */
+   107→  csv: Array<string | number | null>;
+   108→};
+   109→
+   110→export type DatasetFetchResult = {
+   111→  rows: ExportRow[];
+   112→  /** True when the dataset hit the export record cap (job must FAIL, §26). */
+   113→  truncated: boolean;
+   114→};
+   115→
+   116→export type DatasetFetchCtx = {
+   117→  businessId: string;
+   118→  /** Business decimal precision for money → CSV decimal strings. */
+   119→  decimalPrecision: number;
+   120→  /** Hard cap applied per fetch — caller passes EXPORT_MAX_RECORDS headroom. */
+   121→  maxRecords: number;
+   122→};
+   123→
+   124→function iso(value: Date | null | undefined): string | null {
+   125→  return value ? value.toISOString() : null;
+   126→}
+   127→
+   128→/* ------------------------------- fetchers ---------------------------------- */
+   129→/* Every fetcher takes rows in ascending createdAt order for deterministic
+   130→   output, and never reads beyond the tenant scope. */
+   131→
+   132→type Customer = Prisma.CustomerGetPayload<object>;
+   133→
+   134→function customerRow(c: Customer, precision: number): ExportRow {
+   135→  void precision; // customers carry no money fields
+   136→  return {
+   137→    json: {
+   138→      id: c.id,
+   139→      name: c.name,
+   140→      phone: c.phone,
+   141→      email: c.email,
+   142→      address: c.address,
+   143→      note: c.note,
+   144→      deletedAt: iso(c.deletedAt),
+   145→      createdAt: c.createdAt.toISOString(),
+   146→      updatedAt: c.updatedAt.toISOString(),
+   147→    },
+   148→    csv: [c.id, c.name, c.phone, c.email, c.address, c.note, iso(c.deletedAt), c.createdAt.toISOString(), c.updatedAt.toISOString()],
+   149→  };
+   150→}
+   151→
+   152→function supplierRow(s: Prisma.SupplierGetPayload<object>, precision: number): ExportRow {
+   153→  void precision;
+   154→  return {
+   155→    json: {
+   156→      id: s.id,
+   157→      name: s.name,
+   158→      phone: s.phone,
+   159→      email: s.email,
+   160→      address: s.address,
+   161→      note: s.note,
+   162→      deletedAt: iso(s.deletedAt),
+   163→      createdAt: s.createdAt.toISOString(),
+   164→      updatedAt: s.updatedAt.toISOString(),
+   165→    },
+   166→    csv: [s.id, s.name, s.phone, s.email, s.address, s.note, iso(s.deletedAt), s.createdAt.toISOString(), s.updatedAt.toISOString()],
+   167→  };
+   168→}
+   169→
+   170→function productRow(p: Prisma.ProductGetPayload<object>, precision: number): ExportRow {
+   171→  return {
+   172→    json: {
+   173→      id: p.id,
+   174→      name: p.name,
+   175→      sku: p.sku,
+   176→      unit: p.unit,
+   177→      salePriceMinor: p.salePriceMinor,
+   178→      costPriceMinor: p.costPriceMinor,
+   179→      stockQty: p.stockQty,
+   180→      lowStockAt: p.lowStockAt,
+   181→      isActive: p.isActive,
+   182→      deletedAt: iso(p.deletedAt),
+   183→      createdAt: p.createdAt.toISOString(),
+   184→      updatedAt: p.updatedAt.toISOString(),
+   185→    },
+   186→    csv: [
+   187→      p.id,
+   188→      p.name,
+   189→      p.sku,
+   190→      p.unit,
+   191→      formatMinorToDecimal(p.salePriceMinor, precision),
+   192→      formatMinorToDecimal(p.costPriceMinor, precision),
+   193→      p.stockQty,
+   194→      p.lowStockAt,
+   195→      p.isActive ? "true" : "false",
+   196→      iso(p.deletedAt),
+   197→      p.createdAt.toISOString(),
+   198→      p.updatedAt.toISOString(),
+   199→    ],
+   200→  };
+   201→}
+   202→
+   203→async function fetchWithCap<T>(
+   204→  cap: number,
+   205→  query: (take: number) => Promise<T[]>,
+   206→): Promise<{ items: T[]; truncated: boolean }> {
+   207→  // Fetch one row beyond the cap so truncation is DETECTABLE, never silent.
+   208→  const items = await query(cap + 1);
+   209→  return { items: items.slice(0, cap), truncated: items.length > cap };
+   210→}
+   211→
+   212→export type DatasetFetcher = (ctx: DatasetFetchCtx) => Promise<DatasetFetchResult>;
+   213→
+   214→export const DATASET_FETCHERS: Record<ExportDatasetKey, DatasetFetcher> = {
+   215→  business: async (ctx) => {
+   216→    const b = await db.business.findUnique({
+   217→      where: { id: ctx.businessId },
+   218→      select: {
+   219→        name: true,
+   220→        slug: true,
+   221→        currencyCode: true,
+   222→        currencySymbol: true,
+   223→        decimalPrecision: true,
+   224→        locale: true,
+   225→        timezone: true,
+   226→        createdAt: true,
+   227→      },
+   228→    });
+   229→    if (!b) return { rows: [], truncated: false };
+   230→    return {
+   231→      rows: [
+   232→        {
+   233→          json: { ...b, createdAt: b.createdAt.toISOString() },
+   234→          csv: [b.name, b.slug, b.currencyCode, b.currencySymbol, b.decimalPrecision, b.locale, b.timezone, b.createdAt.toISOString()],
+   235→        },
+   236→      ],
+   237→      truncated: false,
+   238→    };
+   239→  },
+   240→
+   241→  members: async (ctx) => {
+   242→    // §41 — business-portability identity (email), role, status, joinedAt.
+   243→    // NEVER: password/MFA/session/security data (none is even selected).
+   244→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   245→      db.businessMember.findMany({
+   246→        where: { businessId: ctx.businessId },
+   247→        orderBy: { createdAt: "asc" },
+   248→        take,
+   249→        select: {
+   250→          role: true,
+   251→          createdAt: true,
+   252→          user: { select: { email: true, name: true } },
+   253→        },
+   254→      }),
+   255→    );
+   256→    return {
+   257→      rows: items.map((m) => ({
+   258→        json: {
+   259→          email: m.user.email,
+   260→          name: m.user.name,
+   261→          role: m.role,
+   262→          status: "ACTIVE",
+   263→          joinedAt: m.createdAt.toISOString(),
+   264→        },
+   265→        csv: [m.user.email, m.user.name, m.role, "ACTIVE", m.createdAt.toISOString()],
+   266→      })),
+   267→      truncated,
+   268→    };
+   269→  },
+   270→
+   271→  customers: async (ctx) => {
+   272→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   273→      db.customer.findMany({
+   274→        where: { businessId: ctx.businessId },
+   275→        orderBy: { createdAt: "asc" },
+   276→        take,
+   277→      }),
+   278→    );
+   279→    return { rows: items.map((c) => customerRow(c, ctx.decimalPrecision)), truncated };
+   280→  },
+   281→
+   282→  suppliers: async (ctx) => {
+   283→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   284→      db.supplier.findMany({
+   285→        where: { businessId: ctx.businessId },
+   286→        orderBy: { createdAt: "asc" },
+   287→        take,
+   288→      }),
+   289→    );
+   290→    return { rows: items.map((s) => supplierRow(s, ctx.decimalPrecision)), truncated };
+   291→  },
+   292→
+   293→  products: async (ctx) => {
+   294→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   295→      db.product.findMany({
+   296→        where: { businessId: ctx.businessId },
+   297→        orderBy: { createdAt: "asc" },
+   298→        take,
+   299→      }),
+   300→    );
+   301→    return { rows: items.map((p) => productRow(p, ctx.decimalPrecision)), truncated };
+   302→  },
+   303→
+   304→  inventory: async (ctx) => {
+   305→    // §45 — preserve ACTUAL recorded adjustments; no inferred stock history.
+   306→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   307→      db.inventoryAdjustment.findMany({
+   308→        where: { businessId: ctx.businessId },
+   309→        orderBy: { createdAt: "asc" },
+   310→        take,
+   311→        select: { id: true, productId: true, delta: true, reason: true, createdAt: true },
+   312→      }),
+   313→    );
+   314→    return {
+   315→      rows: items.map((a) => ({
+   316→        json: {
+   317→          id: a.id,
+   318→          productId: a.productId,
+   319→          delta: a.delta,
+   320→          reason: a.reason,
+   321→          createdAt: a.createdAt.toISOString(),
+   322→        },
+   323→        csv: [a.id, a.productId, a.delta, a.reason, a.createdAt.toISOString()],
+   324→      })),
+   325→      truncated,
+   326→    };
+   327→  },
+   328→
+   329→  sales: async (ctx) => {
+   330→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   331→      db.sale.findMany({
+   332→        where: { businessId: ctx.businessId },
+   333→        orderBy: { createdAt: "asc" },
+   334→        take,
+   335→        select: {
+   336→          id: true,
+   337→          number: true,
+   338→          customerId: true,
+   339→          subtotalMinor: true,
+   340→          discountMinor: true,
+   341→          totalMinor: true,
+   342→          paidMinor: true,
+   343→          status: true,
+   344→          issueDate: true,
+   345→          note: true,
+   346→          deletedAt: true,
+   347→          createdAt: true,
+   348→          updatedAt: true,
+   349→        },
+   350→      }),
+   351→    );
+   352→    return {
+   353→      rows: items.map((s) => ({
+   354→        json: {
+   355→          id: s.id,
+   356→          number: s.number,
+   357→          customerId: s.customerId,
+   358→          subtotalMinor: s.subtotalMinor,
+   359→          discountMinor: s.discountMinor,
+   360→          totalMinor: s.totalMinor,
+   361→          paidMinor: s.paidMinor,
+   362→          status: s.status,
+   363→          issueDate: s.issueDate.toISOString(),
+   364→          note: s.note,
+   365→          deletedAt: iso(s.deletedAt),
+   366→          createdAt: s.createdAt.toISOString(),
+   367→          updatedAt: s.updatedAt.toISOString(),
+   368→        },
+   369→        csv: [
+   370→          s.id,
+   371→          s.number,
+   372→          s.customerId,
+   373→          formatMinorToDecimal(s.subtotalMinor, ctx.decimalPrecision),
+   374→          formatMinorToDecimal(s.discountMinor, ctx.decimalPrecision),
+   375→          formatMinorToDecimal(s.totalMinor, ctx.decimalPrecision),
+   376→          formatMinorToDecimal(s.paidMinor, ctx.decimalPrecision),
+   377→          s.status,
+   378→          s.issueDate.toISOString(),
+   379→          s.note,
+   380→          iso(s.deletedAt),
+   381→          s.createdAt.toISOString(),
+   382→          s.updatedAt.toISOString(),
+   383→        ],
+   384→      })),
+   385→      truncated,
+   386→    };
+   387→  },
+   388→
+   389→  sale_items: async (ctx) => {
+   390→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   391→      db.saleItem.findMany({
+   392→        where: { sale: { businessId: ctx.businessId } },
+   393→        orderBy: { id: "asc" },
+   394→        take,
+   395→        select: {
+   396→          id: true,
+   397→          saleId: true,
+   398→          productId: true,
+   399→          name: true,
+   400→          unit: true,
+   401→          qty: true,
+   402→          unitPriceMinor: true,
+   403→          lineTotalMinor: true,
+   404→        },
+   405→      }),
+   406→    );
+   407→    return {
+   408→      rows: items.map((i) => ({
+   409→        json: {
+   410→          id: i.id,
+   411→          saleId: i.saleId,
+   412→          productId: i.productId,
+   413→          name: i.name,
+   414→          unit: i.unit,
+   415→          qty: i.qty,
+   416→          unitPriceMinor: i.unitPriceMinor,
+   417→          lineTotalMinor: i.lineTotalMinor,
+   418→        },
+   419→        csv: [
+   420→          i.id,
+   421→          i.saleId,
+   422→          i.productId,
+   423→          i.name,
+   424→          i.unit,
+   425→          i.qty,
+   426→          formatMinorToDecimal(i.unitPriceMinor, ctx.decimalPrecision),
+   427→          formatMinorToDecimal(i.lineTotalMinor, ctx.decimalPrecision),
+   428→        ],
+   429→      })),
+   430→      truncated,
+   431→    };
+   432→  },
+   433→
+   434→  expenses: async (ctx) => {
+   435→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   436→      db.expense.findMany({
+   437→        where: { businessId: ctx.businessId },
+   438→        orderBy: { createdAt: "asc" },
+   439→        take,
+   440→        select: {
+   441→          id: true,
+   442→          supplierId: true,
+   443→          category: true,
+   444→          amountMinor: true,
+   445→          paidMinor: true,
+   446→          status: true,
+   447→          spentAt: true,
+   448→          note: true,
+   449→          deletedAt: true,
+   450→          createdAt: true,
+   451→          updatedAt: true,
+   452→        },
+   453→      }),
+   454→    );
+   455→    return {
+   456→      rows: items.map((e) => ({
+   457→        json: {
+   458→          id: e.id,
+   459→          supplierId: e.supplierId,
+   460→          category: e.category,
+   461→          amountMinor: e.amountMinor,
+   462→          paidMinor: e.paidMinor,
+   463→          status: e.status,
+   464→          spentAt: e.spentAt.toISOString(),
+   465→          note: e.note,
+   466→          deletedAt: iso(e.deletedAt),
+   467→          createdAt: e.createdAt.toISOString(),
+   468→          updatedAt: e.updatedAt.toISOString(),
+   469→        },
+   470→        csv: [
+   471→          e.id,
+   472→          e.supplierId,
+   473→          e.category,
+   474→          formatMinorToDecimal(e.amountMinor, ctx.decimalPrecision),
+   475→          formatMinorToDecimal(e.paidMinor, ctx.decimalPrecision),
+   476→          e.status,
+   477→          e.spentAt.toISOString(),
+   478→          e.note,
+   479→          iso(e.deletedAt),
+   480→          e.createdAt.toISOString(),
+   481→          e.updatedAt.toISOString(),
+   482→        ],
+   483→      })),
+   484→      truncated,
+   485→    };
+   486→  },
+   487→
+   488→  // Prompt 35 (§86) — CRM leads export (soft-deleted included: portability
+   489→  // mirrors the tenant lifecycle; §105/§106 policy analog).
+   490→  crm_leads: async (ctx) => {
+   491→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   492→      db.crmLead.findMany({
+   493→        where: { businessId: ctx.businessId },
+   494→        orderBy: { createdAt: "asc" },
+   495→        take,
+   496→        select: {
+   497→          id: true,
+   498→          name: true,
+   499→          companyName: true,
+   500→          phone: true,
+   501→          email: true,
+   502→          source: true,
+   503→          sourceDetail: true,
+   504→          status: true,
+   505→          note: true,
+   506→          assignedToUserId: true,
+   507→          customerId: true,
+   508→          convertedAt: true,
+   509→          deletedAt: true,
+   510→          createdAt: true,
+   511→          updatedAt: true,
+   512→        },
+   513→      }),
+   514→    );
+   515→    return {
+   516→      rows: items.map((l) => ({
+   517→        json: {
+   518→          id: l.id,
+   519→          name: l.name,
+   520→          companyName: l.companyName,
+   521→          phone: l.phone,
+   522→          email: l.email,
+   523→          source: l.source,
+   524→          sourceDetail: l.sourceDetail,
+   525→          status: l.status,
+   526→          note: l.note,
+   527→          assignedToUserId: l.assignedToUserId,
+   528→          customerId: l.customerId,
+   529→          convertedAt: iso(l.convertedAt),
+   530→          deletedAt: iso(l.deletedAt),
+   531→          createdAt: l.createdAt.toISOString(),
+   532→          updatedAt: l.updatedAt.toISOString(),
+   533→        },
+   534→        csv: [l.id, l.name, l.companyName, l.phone, l.email, l.source, l.sourceDetail, l.status, l.note, l.assignedToUserId, l.customerId, iso(l.convertedAt), iso(l.deletedAt), l.createdAt.toISOString(), l.updatedAt.toISOString()],
+   535→      })),
+   536→      truncated,
+   537→    };
+   538→  },
+   539→
+   540→  crm_opportunities: async (ctx) => {
+   541→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   542→      db.crmOpportunity.findMany({
+   543→        where: { businessId: ctx.businessId },
+   544→        orderBy: { createdAt: "asc" },
+   545→        take,
+   546→        select: {
+   547→          id: true,
+   548→          title: true,
+   549→          description: true,
+   550→          leadId: true,
+   551→          customerId: true,
+   552→          stage: true,
+   553→          probabilityPct: true,
+   554→          expectedValueMinor: true,
+   555→          currencyCode: true,
+   556→          expectedCloseDate: true,
+   557→          assignedToUserId: true,
+   558→          lostReason: true,
+   559→          wonAt: true,
+   560→          lostAt: true,
+   561→          deletedAt: true,
+   562→          createdAt: true,
+   563→          updatedAt: true,
+   564→        },
+   565→      }),
+   566→    );
+   567→    return {
+   568→      rows: items.map((o) => ({
+   569→        json: {
+   570→          id: o.id,
+   571→          title: o.title,
+   572→          description: o.description,
+   573→          leadId: o.leadId,
+   574→          customerId: o.customerId,
+   575→          stage: o.stage,
+   576→          probabilityPct: o.probabilityPct,
+   577→          expectedValueMinor: o.expectedValueMinor,
+   578→          currencyCode: o.currencyCode,
+   579→          expectedCloseDate: iso(o.expectedCloseDate),
+   580→          assignedToUserId: o.assignedToUserId,
+   581→          lostReason: o.lostReason,
+   582→          wonAt: iso(o.wonAt),
+   583→          lostAt: iso(o.lostAt),
+   584→          deletedAt: iso(o.deletedAt),
+   585→          createdAt: o.createdAt.toISOString(),
+   586→          updatedAt: o.updatedAt.toISOString(),
+   587→        },
+   588→        csv: [o.id, o.title, o.description, o.leadId, o.customerId, o.stage, o.probabilityPct, formatMinorToDecimal(o.expectedValueMinor, ctx.decimalPrecision), o.currencyCode, iso(o.expectedCloseDate), o.assignedToUserId, o.lostReason, iso(o.wonAt), iso(o.lostAt), iso(o.deletedAt), o.createdAt.toISOString(), o.updatedAt.toISOString()],
+   589→      })),
+   590→      truncated,
+   591→    };
+   592→  },
+   593→
+   594→  payments: async (ctx) => {
+   595→    // §48 — tenant FINANCE payments (sale/expense settlements). This is NOT
+   596→    // platform subscription billing; no provider/payment-transaction fields.
+   597→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   598→      db.payment.findMany({
+   599→        where: { businessId: ctx.businessId },
+   600→        orderBy: { paidAt: "asc" },
+   601→        take,
+   602→        select: {
+   603→          id: true,
+   604→          saleId: true,
+   605→          expenseId: true,
+   606→          direction: true,
+   607→          amountMinor: true,
+   608→          method: true,
+   609→          note: true,
+   610→          paidAt: true,
+   611→          createdAt: true,
+   612→        },
+   613→      }),
+   614→    );
+   615→    return {
+   616→      rows: items.map((p) => ({
+   617→        json: {
+   618→          id: p.id,
+   619→          saleId: p.saleId,
+   620→          expenseId: p.expenseId,
+   621→          direction: p.direction,
+   622→          amountMinor: p.amountMinor,
+   623→          method: p.method,
+   624→          note: p.note,
+   625→          paidAt: p.paidAt.toISOString(),
+   626→          createdAt: p.createdAt.toISOString(),
+   627→        },
+   628→        csv: [
+   629→          p.id,
+   630→          p.saleId,
+   631→          p.expenseId,
+   632→          p.direction,
+   633→          formatMinorToDecimal(p.amountMinor, ctx.decimalPrecision),
+   634→          p.method,
+   635→          p.note,
+   636→          p.paidAt.toISOString(),
+   637→          p.createdAt.toISOString(),
+   638→        ],
+   639→      })),
+   640→      truncated,
+   641→    };
+   642→  },
+   643→
+   644→  subscription_summary: async (ctx) => {
+   645→    // §51 — customer-visible subscription state ONLY. Provider verification
+   646→    // internals, webhook signatures and merchant credentials do not exist here.
+   647→    const sub = await db.subscription.findUnique({
+   648→      where: { businessId: ctx.businessId },
+   649→      select: {
+   650→        plan: { select: { code: true, name: true } },
+   651→        status: true,
+   652→        billingPeriod: true,
+   653→        currentPeriodStart: true,
+   654→        currentPeriodEnd: true,
+   655→        trialStart: true,
+   656→        trialEnd: true,
+   657→        cancelAtPeriodEnd: true,
+   658→        canceledAt: true,
+   659→        endedAt: true,
+   660→        createdAt: true,
+   661→      },
+   662→    });
+   663→    if (!sub) return { rows: [], truncated: false };
+   664→    return {
+   665→      rows: [
+   666→        {
+   667→          json: {
+   668→            planCode: sub.plan.code,
+   669→            planName: sub.plan.name,
+   670→            status: sub.status,
+   671→            billingPeriod: sub.billingPeriod,
+   672→            currentPeriodStart: iso(sub.currentPeriodStart),
+   673→            currentPeriodEnd: iso(sub.currentPeriodEnd),
+   674→            trialStart: iso(sub.trialStart),
+   675→            trialEnd: iso(sub.trialEnd),
+   676→            cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+   677→            canceledAt: iso(sub.canceledAt),
+   678→            endedAt: iso(sub.endedAt),
+   679→            createdAt: sub.createdAt.toISOString(),
+   680→          },
+   681→          csv: [
+   682→            sub.plan.code,
+   683→            sub.plan.name,
+   684→            sub.status,
+   685→            sub.billingPeriod,
+   686→            iso(sub.currentPeriodStart),
+   687→            iso(sub.currentPeriodEnd),
+   688→            iso(sub.trialStart),
+   689→            iso(sub.trialEnd),
+   690→            sub.cancelAtPeriodEnd ? "true" : "false",
+   691→            iso(sub.canceledAt),
+   692→            iso(sub.endedAt),
+   693→            sub.createdAt.toISOString(),
+   694→          ],
+   695→        },
+   696→      ],
+   697→      truncated: false,
+   698→    };
+   699→  },
+   700→
+   701→  usage_summary: async (ctx) => {
+   702→    // §52 — customer-facing usage facts (the same numbers the Usage page
+   703→    // shows). NO provider cost, NO AI rates, NO internal economics.
+   704→    const { getUsageSummary } = await import("@/lib/billing/usage");
+   705→    const summary = await getUsageSummary(ctx.businessId);
+   706→    const rows: ExportRow[] = Object.values(summary.metrics).map((m) => ({
+   707→      json: {
+   708→        metric: m.metric,
+   709→        used: m.used,
+   710→        limit: m.limit,
+   711→        remaining: m.remaining,
+   712→        percentageUsed: m.percentageUsed,
+   713→        periodStart: summary.period.start,
+   714→        periodEnd: summary.period.end,
+   715→      },
+   716→      csv: [m.metric, m.used, m.limit, m.remaining, m.percentageUsed, summary.period.start, summary.period.end],
+   717→    }));
+   718→    return { rows, truncated: false };
+   719→  },
+   720→};
+   721→
+   722→/** Stable CSV column headers per dataset (machine names, §193). */
+   723→export const DATASET_CSV_COLUMNS: Record<ExportDatasetKey, string[]> = {
+   724→  business: ["name", "slug", "currency_code", "currency_symbol", "decimal_precision", "locale", "timezone", "created_at"],
+   725→  members: ["email", "name", "role", "status", "joined_at"],
+   726→  customers: ["id", "name", "phone", "email", "address", "note", "deleted_at", "created_at", "updated_at"],
+   727→  suppliers: ["id", "name", "phone", "email", "address", "note", "deleted_at", "created_at", "updated_at"],
+   728→  products: ["id", "name", "sku", "unit", "sale_price", "cost_price", "stock_qty", "low_stock_at", "is_active", "deleted_at", "created_at", "updated_at"],
+   729→  inventory: ["id", "product_id", "delta", "reason", "created_at"],
+   730→  sales: ["id", "number", "customer_id", "subtotal", "discount", "total", "paid", "status", "issue_date", "note", "deleted_at", "created_at", "updated_at"],
+   731→  sale_items: ["id", "sale_id", "product_id", "name", "unit", "qty", "unit_price", "line_total"],
+   732→  expenses: ["id", "supplier_id", "category", "amount", "paid", "status", "spent_at", "note", "deleted_at", "created_at", "updated_at"],
+   733→  payments: ["id", "sale_id", "expense_id", "direction", "amount", "method", "note", "paid_at", "created_at"],
+   734→  crm_leads: ["id", "name", "company_name", "phone", "email", "source", "source_detail", "status", "note", "assigned_to_user_id", "customer_id", "converted_at", "deleted_at", "created_at", "updated_at"],
+   735→  crm_opportunities: ["id", "title", "description", "lead_id", "customer_id", "stage", "probability_pct", "expected_value", "currency_code", "expected_close_date", "assigned_to_user_id", "lost_reason", "won_at", "lost_at", "deleted_at", "created_at", "updated_at"],
+   736→  subscription_summary: ["plan_code", "plan_name", "status", "billing_period", "current_period_start", "current_period_end", "trial_start", "trial_end", "cancel_at_period_end", "canceled_at", "ended_at", "created_at"],
+   737→  usage_summary: ["metric", "used", "limit", "remaining", "percentage_used", "period_start", "period_end"],
+   738→};
+   739→

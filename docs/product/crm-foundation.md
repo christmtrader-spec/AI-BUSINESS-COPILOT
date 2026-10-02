@@ -126,3 +126,25 @@ navigation. No query logging, no search history.
 - No CRM notification types; no CRM plan gating (NOT CONFIGURED).
 - Recent-lists in details are bounded windows (≤10); full history lives in
   the lists.
+
+---
+
+## Prompt 36 — CRM Activities & Tasks (shipped)
+
+Prompt 36 extends this foundation with the operational layer: activities
+(closed type vocabulary, historical interactions), tasks (closed
+status/priority vocabularies, server state machine with completion/reopen),
+an exactly-one context anchor rule, a server-driven work queue
+(overdue / today / upcoming / unscheduled buckets in the business
+timezone), and a unified entity timeline (activities + active tasks,
+bounded ≤50 per source, merged newest-first).
+
+- Tasks tab on `#/crm` (tabs: leads · pipeline · opportunities · tasks —
+  default remains pipeline; bare/unknown → pipeline).
+- Work-queue summary counts render in their own card, separate from the
+  forecast/money strip.
+- No reminder delivery, no task notifications, no AI grounding, no Global
+  Search expansion, no CRM import for activities/tasks.
+- Full details: `docs/product/crm-activities-tasks.md` · security:
+  `docs/security/crm-activities-tasks-security.md` · decision record:
+  `docs/adr/0036-crm-activities-and-tasks.md`.

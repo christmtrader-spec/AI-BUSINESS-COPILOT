@@ -33,6 +33,7 @@ import { LeadConvertDialog } from "../crm/lead-convert-dialog";
 import { LeadStatusDialog } from "../crm/lead-status-dialog";
 import { LeadStatusBadge } from "../crm/crm-badges";
 import { invalidateCrmAfterMutation } from "../crm/crm-api";
+import { CrmTimelineCard, CrmActiveTasksCard } from "../crm/crm-timeline";
 import type { LeadDetail } from "@/lib/crm";
 
 export function LeadDetailView({
@@ -205,6 +206,23 @@ export function LeadDetailView({
           secondary: o.expectedCloseDate ? fmtDate(business, o.expectedCloseDate) : undefined,
           trailing: `${o.probabilityPct}%`,
         }))}
+      />
+
+      {/* Prompt 36 (§38/§50) — Timeline + Tasks sections. Historical context
+          is preserved after conversion (§105): existing lead activities stay
+          attached to the lead. Financially non-interfering (§102). */}
+      <CrmTimelineCard
+        contextType="LEAD"
+        contextId={data.id}
+        contextTitle={data.name}
+        business={business}
+        writable={writable}
+      />
+      <CrmActiveTasksCard
+        contextType="LEAD"
+        contextId={data.id}
+        business={business}
+        writable={writable}
       />
 
       <LeadFormDialog open={editOpen} onOpenChange={setEditOpen} editing={data} />

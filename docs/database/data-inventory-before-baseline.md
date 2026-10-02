@@ -7,16 +7,18 @@ application data.
 
 - Original capture: 2026-09-23T05:20:35.240Z (db-push era, before `0_init`
   was recorded; 483328 bytes; integrity ok · quick_check ok · FK violations 0).
-- **Refreshed: 2026-10-01 (Prompt 34).** The dev sandbox was rebuilt (database
-  re-created by the environment; migration ledger re-baselined with
-  `prisma migrate resolve --applied` x15 — ledger writes ONLY; billing/pricing
-  catalogs re-seeded with the sanctioned idempotent seeds). Prompt 17–33
-  harness fixtures ran and cleaned up to zero, so the honest steady-state row
-  counts dropped below the 2026-09-29 snapshot. Per this document's protocol
-  ("row counts are a living dev database"), check 5b now compares against THIS
-  refreshed snapshot. Prior refresh: 2026-09-29 (Prompt 30-F). The dev database legitimately
-  evolved through Prompt 20–30 fixture harnesses (created + deleted probe
-  records). Because the migration LEDGER was baselined on 2026-09-29 with
+- **Refreshed: 2026-10-02 (Prompt 36).** The dev sandbox was rebuilt again
+  (database re-created by the environment; migration ledger re-baselined with
+  `prisma migrate resolve --applied` ×17 — ledger writes ONLY; billing/pricing
+  catalogs re-seeded with the sanctioned idempotent seed; `.env` restored with
+  `NEXTAUTH_URL`/`NEXTAUTH_SECRET` after the environment reset dropped them).
+  Prompt 17–36 harness fixtures ran and cleaned up to zero. Per this
+  document's protocol ("row counts are a living dev database"), check 5b now
+  compares against THIS refreshed snapshot (integrity ok · quick_check ok ·
+  FK violations 0 · 1253376 bytes). Prior refreshes: 2026-10-01 (Prompt 34),
+  2026-09-29 (Prompt 30-F). The dev database legitimately
+  evolved through Prompt 20–36 fixture harnesses (created + deleted probe
+  records). Because the migration LEDGER was baselined with
   `prisma migrate resolve --applied` (ledger writes ONLY — zero data
   mutation, verified before/after with `scripts/db-inventory.mjs`), check 5b
   now compares against THIS refreshed snapshot so the invariant it actually
@@ -31,11 +33,11 @@ application data.
 
 | Model | Rows |
 |---|---|
-| `User` | 32 |
+| `User` | 18 |
 | `Business` | 4 |
 | `BusinessMember` | 6 |
 | `BusinessInvite` | 2 |
-| `AuditLog` | 101 |
+| `AuditLog` | 45 |
 | `Customer` | 2 |
 | `Supplier` | 0 |
 | `Product` | 0 |
@@ -47,21 +49,6 @@ application data.
 | `ChatSession` | 0 |
 | `ChatMessage` | 0 |
 | `PasswordResetToken` | 2 |
-| `Business` | 2 |
-| `BusinessMember` | 3 |
-| `BusinessInvite` | 1 |
-| `AuditLog` | 47 |
-| `Customer` | 1 |
-| `Supplier` | 0 |
-| `Product` | 0 |
-| `InventoryAdjustment` | 0 |
-| `Sale` | 3 |
-| `SaleItem` | 3 |
-| `Expense` | 1 |
-| `Payment` | 1 |
-| `ChatSession` | 0 |
-| `ChatMessage` | 0 |
-| `PasswordResetToken` | 4 |
 
 > Note: `PasswordResetToken` rows may legitimately decrease over time via
 > documented expired-token cleanup (Prompt 18). Prompt 30 additions

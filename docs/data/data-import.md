@@ -143,3 +143,11 @@ tenant-local reference resolution plus stage/forecast validation, and the
 conversion bookkeeping must never be fabricated by an importer. CRM export
 (`crm_leads`, `crm_opportunities` JSON/CSV datasets) is fully supported. A
 future prompt may implement CRM import with explicit reference mapping.
+- **CRM Activity import: NOT IMPLEMENTED** (Prompt 36). Reason: every
+  activity row requires exactly-one same-business context resolution
+  (customer XOR lead XOR opportunity) plus an immutable creator identity;
+  fabricating those links from a file would risk cross-referencing errors
+  that break timeline semantics.
+- **CRM Task import: NOT IMPLEMENTED** (Prompt 36). Same context rule plus
+  server-owned status/completedAt bookkeeping; an importer could silently
+  violate the state machine. Export of both datasets is fully supported.

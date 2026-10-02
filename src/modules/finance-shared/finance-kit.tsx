@@ -64,6 +64,23 @@ export function fmtDate(business: BusinessSummary, iso: string): string {
 }
 
 /**
+ * Prompt 36 (§16/§119) — date + time rendered in the BUSINESS timezone
+ * (never the browser's). Used for activity occurredAt / task dueAt where
+ * the instant matters.
+ */
+export function fmtDateTime(business: BusinessSummary, iso: string): string {
+  try {
+    return new Intl.DateTimeFormat(business.locale === "fa" ? "fa-IR" : "en-US", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: business.timezone,
+    }).format(new Date(iso));
+  } catch {
+    return fmtDate(business, iso);
+  }
+}
+
+/**
  * Locale-aware count numerals (fa gets ۰۱۲۳…, en gets 0123…). Used for
  * interpolated counts so RTL copy reads natively (A05/A06).
  */

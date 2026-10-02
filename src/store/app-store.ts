@@ -58,8 +58,13 @@ export type AppView =
   /** Prompt 30 §250 — email verification landing (token from the email link). */
   | { kind: "verify-email"; token: string };
 
-/** Prompt 35 (§37) — closed CRM tab vocabulary. */
-export const CRM_TABS = ["leads", "pipeline", "opportunities"] as const;
+/**
+ * Prompt 35 (§37) — closed CRM tab vocabulary.
+ * Prompt 36 (§43/§54) — adds `tasks` (the work queue). There is NO
+ * `activities` tab: activities are contextual timeline records rendered on
+ * entity pages, never a standalone list (§54).
+ */
+export const CRM_TABS = ["leads", "pipeline", "opportunities", "tasks"] as const;
 export type CrmTab = (typeof CRM_TABS)[number];
 
 /**
