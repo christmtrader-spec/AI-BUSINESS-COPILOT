@@ -600,3 +600,45 @@ export function notificationCatalogHealth(): {
   }
   return { types: Object.keys(NOTIFICATION_CATALOG).length, healthy: issues.length === 0, issues };
 }
+
+/* ------------------- BUSINESS — INVENTORY (Prompt 38) --------------------- */
+
+/**
+ * Prompt 38 (§38-a) — LOW-STOCK alert. Time-driven: called ONLY by the
+ * inventory-low-stock processor. Deterministic source id from
+ * (productId, stockQty, recipientUserId) — NO run timestamp, so repeated
+ * processor runs at the same stock level collapse onto the same identity
+ * and dedupe (§25/§27/§38-a identity law). WARNING severity — running low
+ * is an operational warning, never an ERROR (§14); factual copy, no
+ * shame/blame language (§54).
+ */
+export function notifyInventoryLowStock(input: {
+  businessId: string;
+  productId: string;
+  recipientUserId: string;
+  productName: string;
+  sku: string | null;
+  unit: string | null;
+  stockQty: number;
+  lowStockAt: number;
+}): Promise<NotifyResult | null> {
+  return notifyFailSafe({
+    userId: input.recipientUserId,
+    businessId: input.businessId,
+    type: "BUSINESS_INVENTORY_LOW_STOCK",
+    sourceEventId: composeSourceEventId(
+      "inventory-low-stock",
+      input.productId,
+      String(Math.trunc(input.stockQty)),
+      input.recipientUserId,
+    ),
+    data: {
+      productId: input.productId,
+      productName: input.productName.slice(0, 160),
+      sku: input.sku === null ? null : input.sku.slice(0, 64),
+      unit: input.unit === null ? null : input.unit.slice(0, 24),
+      stockQty: Math.max(0, Math.trunc(input.stockQty)),
+      lowStockAt: Math.max(0, Math.trunc(input.lowStockAt)),
+    },
+  });
+}

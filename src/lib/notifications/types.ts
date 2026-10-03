@@ -127,6 +127,10 @@ export const ACTION_ROUTES = [
   "notifications",
   "dashboard",
   "crmTasks",
+  // Prompt 38 — inventory low-stock alerts open the existing Products
+  // workspace. Product deep-links (#/products/<id>) are deliberately
+  // absent (same law as crmTasks — no deep links yet).
+  "products",
 ] as const;
 
 export type ActionRoute = (typeof ACTION_ROUTES)[number];
@@ -158,5 +162,8 @@ export function actionRoutePath(route: ActionRoute): string {
       // workspace. Task deep-links (#/tasks/<id>) are a FUTURE enhancement
       // and deliberately absent (§23).
       return "#/crm?tab=tasks";
+    case "products":
+      // Prompt 38 — the CTA opens the existing Products workspace.
+      return "#/products";
   }
 }

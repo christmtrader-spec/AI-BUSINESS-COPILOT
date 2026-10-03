@@ -53,6 +53,12 @@ export const NOTIFICATION_TYPES = [
   "BUSINESS_CRM_TASK_ASSIGNED",
   "BUSINESS_CRM_TASK_DUE_SOON",
   "BUSINESS_CRM_TASK_OVERDUE",
+  // Prompt 38 (§6) — inventory low-stock alerts. Completes the MVP
+  // notification scope ("overdue, low stock"). Deliberately ABSENT
+  // (noise avoidance): BUSINESS_INVENTORY_RESTOCKED / OUT_OF_STOCK —
+  // restock is a success (no alert), and stock-out is already covered by
+  // the same low-stock event (qty 0 ≤ any threshold).
+  "BUSINESS_INVENTORY_LOW_STOCK",
   "SYSTEM_ANNOUNCEMENT",
 ] as const;
 
@@ -602,6 +608,44 @@ export const NOTIFICATION_CATALOG: Record<NotificationType, NotificationCatalogE
       "crm-task-reminders processor (operator-scheduled external cron/systemd, §37/§70) — ONE overdue notification per (task, dueAt, assignee) while OPEN/IN_PROGRESS (§6/§9)",
     dedupe:
       "crm-task-overdue:<taskId>:<dueAt ISO>:<assigneeUserId> (§25/§28/§181) — no run timestamp; repeated processor runs dedupe via the Notification unique index",
+  },
+
+  /* ------------------- BUSINESS — INVENTORY (Prompt 38) ------------------- */
+  /*
+   * Prompt 38 (§5–§11): low-stock alerts carry a STRICT data schema —
+   * product name + optional SKU/unit + stock quantity + threshold. NEVER
+   * cost prices, supplier terms, margin data or AI data (§14/§18 of P37
+   * apply by analogy). The business NAME is not part of the data — the
+   * Notification row carries businessId and the Notification Center
+   * resolves the name. Dedupe reuses the platform (userId, type,
+   * sourceEventId) unique index — no separate alert-state model.
+   */
+  BUSINESS_INVENTORY_LOW_STOCK: {
+    type: "BUSINESS_INVENTORY_LOW_STOCK",
+    category: "BUSINESS",
+    priority: "NORMAL",
+    severity: "WARNING",
+    channels: inAppAlwaysEmailOptional,
+    mandatory: true,
+    preferenceAvailable: true,
+    titleKey: "items.BUSINESS_INVENTORY_LOW_STOCK.title",
+    bodyKey: "items.BUSINESS_INVENTORY_LOW_STOCK.body",
+    emailTemplateKey: "items.BUSINESS_INVENTORY_LOW_STOCK.email",
+    dataSchema: z.object({
+      productId: domainId,
+      productName: boundedText(160),
+      sku: boundedText(64).nullable(),
+      unit: boundedText(24).nullable(),
+      stockQty: z.number().int().min(0).max(1_000_000_000),
+      lowStockAt: z.number().int().min(0).max(1_000_000_000),
+    }),
+    actionRoute: "products",
+    expiresAfterDays: 30,
+    emailDefaultEnabled: true,
+    source:
+      "inventory-low-stock processor (operator-scheduled external cron/systemd) — ONE alert per (product, stockQty, recipient) while the product is active (§38-a identity law)",
+    dedupe:
+      "inventory-low-stock:<productId>:<stockQty>:<recipientUserId> — no run timestamp; repeated runs at the same qty dedupe via the Notification unique index; a different qty is a NEW logical event (restock → fresh drop re-alerts)",
   },
 
   /* -------------------------------- SYSTEM -------------------------------- */

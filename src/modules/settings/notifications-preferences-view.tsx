@@ -27,9 +27,10 @@ import type { EffectivePreference } from "../notifications/types";
 const SECTIONS = ["SECURITY", "BILLING", "AI", "BUSINESS", "SYSTEM"] as const;
 type Section = (typeof SECTIONS)[number];
 
-// 22 catalog types in display order — mirrors src/lib/notifications/catalog.ts
-// (Prompt 37 adds the three BUSINESS_CRM_TASK_* entries to the BUSINESS
-// section; their EMAIL channel is preference-controlled per §16/§52).
+// 23 catalog types in display order — mirrors src/lib/notifications/catalog.ts
+// (Prompt 37 adds the three BUSINESS_CRM_TASK_* entries and Prompt 38 the
+// BUSINESS_INVENTORY_LOW_STOCK entry to the BUSINESS section; their EMAIL
+// channel is preference-controlled per §16/§52).
 const TYPES_BY_SECTION: Record<Section, string[]> = {
   SECURITY: [
     "SECURITY_PASSWORD_CHANGED",
@@ -56,6 +57,7 @@ const TYPES_BY_SECTION: Record<Section, string[]> = {
     "BUSINESS_CRM_TASK_ASSIGNED",
     "BUSINESS_CRM_TASK_DUE_SOON",
     "BUSINESS_CRM_TASK_OVERDUE",
+    "BUSINESS_INVENTORY_LOW_STOCK",
   ],
   SYSTEM: ["SYSTEM_ANNOUNCEMENT"],
 };

@@ -52,6 +52,11 @@ export const OPERATIONAL_EVENTS = {
   // the defensive re-check (deleted/reassigned/contextless). Safe category
   // only — never task ids, titles or recipient details (§11).
   crmAssignmentNotifySkipped: "crm.assignment.notify_skipped",
+  // Prompt 38 (§38-a) — inventory low-stock processor operational events.
+  // Payloads carry counts/mode/run-id ONLY — never product names, SKUs,
+  // prices, quantities or recipient details (same safe-log law as P37).
+  inventoryLowStockProcessorCompleted: "inventory.lowstock.processor.completed",
+  inventoryLowStockProcessorFailed: "inventory.lowstock.processor.failed",
 } as const;
 
 export type OperationalEvent = (typeof OPERATIONAL_EVENTS)[keyof typeof OPERATIONAL_EVENTS];

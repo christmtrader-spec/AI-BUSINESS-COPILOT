@@ -173,6 +173,15 @@ const EXAMPLE_DATA = {
     dueAt: "2026-10-05T10:00:00.000Z",
     businessTimezone: "Asia/Tehran",
   },
+  // Prompt 38 — low-stock inventory alert (bounded, schema-conformant).
+  BUSINESS_INVENTORY_LOW_STOCK: {
+    productId: "prod0001abc",
+    productName: "Copy paper A4",
+    sku: "PAP-A4-500",
+    unit: "box",
+    stockQty: 2,
+    lowStockAt: 5,
+  },
   SYSTEM_ANNOUNCEMENT: { message: "Scheduled maintenance on Sunday." },
 };
 

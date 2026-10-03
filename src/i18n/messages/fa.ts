@@ -2700,6 +2700,7 @@ const fa: Messages = {
       notifications: "بازکردن اعلان‌ها",
       dashboard: "بازکردن پیشخوان",
       crmTasks: "بازکردن وظایف CRM",
+      products: "بازکردن محصولات",
     },
     emailFooter: "این پیام را به دلیل فعالیت حساب خود دریافت می‌کنید. مدیریت اعلان‌های اختیاری در تنظیمات حساب شما انجام می‌شود.",
     items: {
@@ -2807,6 +2808,11 @@ const fa: Messages = {
         title: "وظیفه از سررسید گذشته است",
         body: "«{task}» از سررسید گذشته است.\n{contextLabel}: {context}\nسررسید: {due}\nاولویت: {priority}",
         email: "وظیفه «{task}» از سررسید گذشته است.\n\n{contextLabel}: {context}\nسررسید: {due}\nاولویت: {priority}\n\nبرای بررسی، میز کار وظایف را باز کنید.",
+      },
+      BUSINESS_INVENTORY_LOW_STOCK: {
+        title: "موجودی محصول رو به اتمام است",
+        body: "موجودی «{product}» رو به اتمام است.\nموجودی فعلی: {stock} {unit} \u00b7 حد هشدار: {threshold}\nکد کالا: {sku}",
+        email: "موجودی محصول «{product}» رو به اتمام است.\n\nموجودی فعلی: {stock} {unit}\nحد هشدار: {threshold}\nکد کالا: {sku}\n\nبرای شارژ مجدد، میز کار محصولات را باز کنید.",
       },
       SYSTEM_ANNOUNCEMENT: {
         title: "اطلاعیه سرویس",

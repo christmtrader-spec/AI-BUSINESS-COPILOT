@@ -2697,6 +2697,7 @@ const en = {
       notifications: "Open notifications",
       dashboard: "Open dashboard",
       crmTasks: "Open CRM tasks",
+      products: "Open Products",
     },
     emailFooter: "You are receiving this message because of activity on your account. Manage optional notifications in your settings.",
     items: {
@@ -2804,6 +2805,11 @@ const en = {
         title: "CRM task overdue",
         body: "“{task}” is overdue.\n{contextLabel}: {context}\nDue: {due}\nPriority: {priority}",
         email: "The task “{task}” is overdue.\n\n{contextLabel}: {context}\nDue: {due}\nPriority: {priority}\n\nOpen the CRM tasks workspace to review it.",
+      },
+      BUSINESS_INVENTORY_LOW_STOCK: {
+        title: "Product low on stock",
+        body: "\u201c{product}\u201d is low on stock.\nIn stock: {stock} {unit} \u00b7 Alert threshold: {threshold}\nSKU: {sku}",
+        email: "The product \u201c{product}\u201d is low on stock.\n\nIn stock: {stock} {unit}\nAlert threshold: {threshold}\nSKU: {sku}\n\nOpen the Products workspace to restock it.",
       },
       SYSTEM_ANNOUNCEMENT: {
         title: "Service announcement",

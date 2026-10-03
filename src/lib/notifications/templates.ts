@@ -231,6 +231,20 @@ function deriveValues(type: NotificationType, data: Record<string, unknown>, loc
         priority: crmPriorityLabel(String(data.priority ?? ""), locale),
         due: formatDateTimeInBusinessZone(String(data.dueAt), locale, String(data.businessTimezone ?? "UTC")),
       };
+    case "BUSINESS_INVENTORY_LOW_STOCK": {
+      // Prompt 38 (§38-a) — quantities use the locale numeral system; the
+      // unit label is the product's own unit string (or a dash when unset).
+      // SKU is optional in the schema and rendered as a dash when absent —
+      // never an empty "{sku}" hole in the sentence.
+      const sku = data.sku == null ? "" : String(data.sku);
+      return {
+        product: String(data.productName ?? ""),
+        stock: formatNumber(Number(data.stockQty ?? 0), locale),
+        threshold: formatNumber(Number(data.lowStockAt ?? 0), locale),
+        unit: data.unit == null || data.unit === "" ? "–" : String(data.unit),
+        sku: sku === "" ? "–" : sku,
+      };
+    }
     case "SYSTEM_ANNOUNCEMENT":
       return { message: String(data.message ?? "") };
     default: {
