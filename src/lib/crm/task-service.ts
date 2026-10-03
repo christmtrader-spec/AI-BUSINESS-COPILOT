@@ -12,9 +12,13 @@ import "server-only";
 import { db } from "@/lib/db";
 import { ApiError } from "@/lib/api-helpers";
 import { audit } from "@/lib/audit";
+import { logError } from "@/lib/observability/logger";
+import { OPERATIONAL_EVENTS } from "@/lib/observability/events";
 import { parseInstant } from "./normalization";
 import { resolveCrmContextInBusiness, assertAssigneeInBusiness } from "./service";
 import { isTaskTransitionValid, isTaskStatus, normalizeReminderConfig, type TaskStatus } from "./task-types";
+import { isAssignmentRowEligible } from "./task-reminder-safety";
+import { readLiveTaskContext } from "./task-context-read";
 import { mapTask, type CrmTaskRow } from "./task-dto";
 import type { TaskPriority } from "./task-types";
 import type { Prisma } from "@prisma/client";
@@ -230,9 +234,12 @@ export async function createTask(
   });
   // §34 — assignment notification AFTER commit; creation with another user
   // assigned notifies the assignee (never the actor self-assigning).
-  // Fire-safe: a notification failure never rolls back the task (§36).
+  // AWAITED (Prompt 37-F §14/§15): the helper is fire-safe (never throws),
+  // so awaiting makes the request deterministic — the notification attempt
+  // completes before control returns — while a notification failure never
+  // rolls back the committed task (§36).
   if (assignedToUserId && assignedToUserId !== actorId) {
-    notifyAssignmentSafe(businessId, created.id, assignedToUserId, created.updatedAt);
+    await notifyAssignmentSafe(businessId, created.id, assignedToUserId, created.updatedAt);
   }
   return created.id;
 }
@@ -347,14 +354,15 @@ export async function updateTask(
   });
   // §35 — reassignment notification strictly AFTER the DB update commits:
   // oldAssignee !== newAssignee AND newAssignee !== null AND newAssignee !==
-  // actor. Fire-safe (§36); a failure never rolls back the update.
+  // actor. AWAITED (Prompt 37-F §14/§15) and fire-safe (§36); a failure
+  // never rolls back the update.
   if (
     assignedToUserId !== undefined &&
     assignedToUserId !== null &&
     assignedToUserId !== existing.assignedToUserId &&
     assignedToUserId !== actorId
   ) {
-    notifyAssignmentSafe(businessId, updated.id, assignedToUserId, updated.updatedAt);
+    await notifyAssignmentSafe(businessId, updated.id, assignedToUserId, updated.updatedAt);
   }
 }
 
@@ -462,67 +470,89 @@ function reminderErrorMessage(reason: string | null): string {
 }
 
 /**
- * Fire-safe assignment notification AFTER commit (§34/§35/§48). Loads the
- * committed task + business timezone server-side and delegates to the
- * notification event mapper. EVERY failure is swallowed (§36): a
- * notification is communication, never authority.
+ * Post-commit assignment notification (§34/§35/§48/§179) — Prompt 37-F
+ * hardened (§13–§20):
+ *
+ *  - AWAITABLE and fire-safe: the caller awaits this helper (deterministic
+ *    request completion, §14/§15) and the helper itself swallows every
+ *    failure, so a notification problem can never roll back the committed
+ *    task mutation (§36). Never wrapped in the task's transaction.
+ *  - RELOADS the committed task and re-verifies eligibility BEFORE sending
+ *    (§16/§18/§20): task exists in THIS business, NOT soft-deleted, the
+ *    current assignee STILL equals the intended recipient (a concurrent
+ *    reassignment B→C must never notify B), and the exactly-one context is
+ *    still resolvable (§17 — no CUSTOMER/"" fallback).
+ *  - Recipient remains task.assignedToUserId — server-authoritative (§19).
  */
-function notifyAssignmentSafe(
+async function notifyAssignmentSafe(
   businessId: string,
   taskId: string,
   assigneeUserId: string,
   updatedAt: Date,
-): void {
-  void (async () => {
-    try {
-      const { notifyCrmTaskAssigned } = await import("@/lib/notifications/event-mappers");
-      const task = await db.crmTask.findFirst({
-        where: { id: taskId, businessId },
-        select: {
-          title: true,
-          priority: true,
-          dueAt: true,
-          customerId: true,
-          customer: { select: { name: true } },
-          leadId: true,
-          lead: { select: { name: true, companyName: true } },
-          opportunityId: true,
-          opportunity: { select: { title: true } },
-        },
-      });
-      if (!task) return;
-      const timezone = await db.business
-        .findUnique({ where: { id: businessId }, select: { timezone: true } })
-        .then((b) => b?.timezone ?? "UTC");
-      let contextType: "CUSTOMER" | "LEAD" | "OPPORTUNITY" = "CUSTOMER";
-      let contextTitle = "";
-      if (task.customerId && task.customer) {
-        contextType = "CUSTOMER";
-        contextTitle = task.customer.name;
-      } else if (task.leadId && task.lead) {
-        contextType = "LEAD";
-        contextTitle = task.lead.companyName ?? task.lead.name;
-      } else if (task.opportunityId && task.opportunity) {
-        contextType = "OPPORTUNITY";
-        contextTitle = task.opportunity.title;
-      }
-      await notifyCrmTaskAssigned({
-        businessId,
-        taskId,
-        assigneeUserId,
-        taskTitle: task.title,
-        priority: task.priority as TaskPriority,
-        contextType,
-        contextTitle,
-        dueAt: task.dueAt,
-        businessTimezone: timezone,
-        sourceEventId: composeAssignmentSourceEventId(taskId, assigneeUserId, updatedAt),
-      });
-    } catch {
-      // Swallowed by design (§36) — the notifyFailSafe inside the mapper
-      // already records the failure; nothing here may break the task flow.
+): Promise<void> {
+  try {
+    const { notifyCrmTaskAssigned } = await import("@/lib/notifications/event-mappers");
+    // §16/§18/§20 — fresh post-commit read: id + businessId scope; the row
+    // predicate re-checks deletedAt + current assignee (reassignment race).
+    const task = (await db.crmTask.findFirst({
+      where: { id: taskId, businessId },
+      select: {
+        id: true,
+        businessId: true,
+        deletedAt: true,
+        assignedToUserId: true,
+        title: true,
+        priority: true,
+        dueAt: true,
+        customerId: true,
+        leadId: true,
+        opportunityId: true,
+      },
+    })) as {
+      id: string;
+      businessId: string;
+      deletedAt: Date | null;
+      assignedToUserId: string | null;
+      title: string;
+      priority: string;
+      dueAt: Date | null;
+      customerId: string | null;
+      leadId: string | null;
+      opportunityId: string | null;
+    } | null;
+    if (!task || !isAssignmentRowEligible(task, businessId, assigneeUserId)) {
+      // §16/§18/§20 — gone/reassigned: skip quietly. Only a SAFE error
+      // category is logged (no ids, no titles, §11).
+      logError(OPERATIONAL_EVENTS.crmAssignmentNotifySkipped, { reason: "NOT_DELIVERABLE" });
+      return;
     }
-  })();
+    // §17/§36 — the context is re-read DIRECTLY against CURRENT rows
+    // (deletedAt-filtered, business-scoped). A deleted/missing context skips
+    // the notification — never a CUSTOMER/"" fallback.
+    const context = await readLiveTaskContext(businessId, task);
+    if (!context) {
+      logError(OPERATIONAL_EVENTS.crmAssignmentNotifySkipped, { reason: "CONTEXT_UNRESOLVABLE" });
+      return;
+    }
+    const timezone = await db.business
+      .findUnique({ where: { id: businessId }, select: { timezone: true } })
+      .then((b) => b?.timezone ?? "UTC");
+    await notifyCrmTaskAssigned({
+      businessId,
+      taskId,
+      assigneeUserId,
+      taskTitle: task.title,
+      priority: task.priority as TaskPriority,
+      contextType: context.type,
+      contextTitle: context.title,
+      dueAt: task.dueAt,
+      businessTimezone: timezone,
+      sourceEventId: composeAssignmentSourceEventId(taskId, assigneeUserId, updatedAt),
+    });
+  } catch {
+    // Swallowed by design (§36) — the notifyFailSafe inside the mapper
+    // already records the failure; nothing here may break the task flow.
+  }
 }
 
 /** §179 — deterministic assignment event identity (task, assignee, updatedAt). */

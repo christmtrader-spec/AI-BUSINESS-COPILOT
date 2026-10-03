@@ -7,7 +7,7 @@
  * an operator's cron would. Fixtures use the P37- prefix and are torn down
  * to ZERO leftovers (§183/§184 — fixture-scoped notification deletes).
  *
- * Sections (§112 A–AR):
+ * Sections (§112 A–AR + Prompt 37-F §76):
  *   A–B  create-with-assignment → BUSINESS_CRM_TASK_ASSIGNED to staff only
  *   C    self-assignment suppresses            D  reassignment notifies new assignee only
  *   E–I  due reminder disabled/enabled, exact threshold, before/after window
@@ -23,6 +23,15 @@
  *   AM/AN bounded max run + overdue lookback
  *   AI–AK Persian/English notifications + timezone rendering
  *   AO–AQ no scheduler loop + static scans + catalog check
+ *   F-CLI   CLI hardening: conflict/unknown/invalid flags BEFORE any run (§5–§9),
+ *           zero-write proof (§40), safe output (§46), safe debug output (§47)
+ *   F-CONC  CONCURRENT real processor runs: due-soon (§24) + overdue (§25)
+ *           dedupe to EXACTLY ONE notification (P37-CONC- fixtures, §23)
+ *   F-RACE  defensive re-checks: no task mutation (§64), completion (§31),
+ *           cancellation (§32), reminder-disable (§34), deleted context (§36),
+ *           soft-deleted task (§63), reassignment dedupe (§26), assignee+dueAt
+ *           change (§29), immutable history (§28)
+ *   F-HEALTH processor failure independence of /api/health + /api/ready (§68/§97)
  *   AH   cleanup (ZERO P37- leftovers)
  *
  * Run: bun scripts/prompt37-crm-reminder-check.mjs   (dev server on :3000)
@@ -550,7 +559,213 @@ const explicitSale = await call(wbA, "/api/v1/sales", {
 });
 check("AE2 explicit sale still works after reminder ops", explicitSale.status === 200 || explicitSale.status === 201, String(explicitSale.status));
 
-/* --------------------------- AO–AQ scans + catalog ------------------------- */
+/* ========================================================================== */
+/* PROMPT 37-F — FINALIZATION E2E (§5–§9/§23–§47/§26–§36/§63/§64/§68)         */
+/* ========================================================================== */
+
+/** Counts a fixture table snapshot for the §40 dry-run-conflict proof. */
+async function snapshotCounts() {
+  const [n, d, t, a] = await Promise.all([
+    db.notification.count(),
+    db.notificationDelivery.count(),
+    db.crmTask.count(),
+    db.auditLog.count(),
+  ]);
+  return { n, d, t, a };
+}
+
+/* ------------------------- P37-F-1: CLI hardening ------------------------- */
+console.log("\n== P37-F CLI HARDENING ==");
+section("F-CLI");
+{
+  // An eligible candidate EXISTS while every invalid invocation runs —
+  // proving the conflict/unknown/invalid paths never touch the database.
+  const tCli = await createTask(wbA, { title: `${PREFIX}T-cliflag`, assignedToUserId: staffAId, dueAt: minFromNow(30), reminderEnabled: true, reminderMinutesBefore: 60 });
+  check("FCLI0 eligible candidate exists for the CLI proofs", tCli.status === 201 && Boolean(tCli.data?.id));
+
+  const before = await snapshotCounts();
+  const conflict = runProcessor([`--business-id=${bizA}`, "--apply", "--dry-run"]);
+  const after = await snapshotCounts();
+  check("FCLI1 --apply --dry-run ⇒ exit 1 BEFORE any run (§5)", conflict.exitCode === 1, String(conflict.exitCode));
+  check("FCLI2 conflict run wrote ZERO rows — notifications/deliveries/tasks/audit unchanged (§40)", JSON.stringify(before) === JSON.stringify(after), `${JSON.stringify(before)} → ${JSON.stringify(after)}`);
+  check("FCLI3 conflict output carries NO task id (validation precedes DB access)", Boolean(tCli.data?.id) && !conflict.out.includes(tCli.data?.id));
+  check("FCLI4 conflict error is a clear safe usage error (§5)", conflict.err.includes("CLI_USAGE_INVALID") && conflict.err.includes("CONFLICTING_FLAGS"));
+
+  const unknown = runProcessor(["--foobar"]);
+  check("FCLI5 unknown flag ⇒ exit 1, no processor call (§45)", unknown.exitCode === 1 && unknown.err.includes("UNKNOWN_FLAG"));
+  check("FCLI6 unknown-flag run created nothing", (await snapshotCounts()).n === before.n);
+
+  const badBiz = runProcessor(["--business-id=xx"]);
+  check("FCLI7 malformed --business-id ⇒ exit 1 (§7/§44)", badBiz.exitCode === 1 && badBiz.err.includes("INVALID_BUSINESS_ID"));
+  check("FCLI8 malformed business-id run created nothing", (await snapshotCounts()).n === before.n);
+
+  const badMax1 = runProcessor(["--max=abc"]);
+  const badMax2 = runProcessor(["--max=10000"]);
+  const badMax3 = runProcessor(["--max=9"]);
+  check("FCLI9 non-numeric / >500 / <10 --max all ⇒ exit 1 (§8/§43)", badMax1.exitCode === 1 && badMax2.exitCode === 1 && badMax3.exitCode === 1);
+
+  const dupApply = runProcessor([`--business-id=${bizA}`, "--apply", "--apply", "--dry-run"]);
+  check("FCLI10 duplicate --apply still conflicts with --dry-run (deterministic §6)", dupApply.exitCode === 1 && dupApply.err.includes("CONFLICTING_FLAGS"));
+
+  // §46 — safe output: a REAL candidate run must not leak fixture content.
+  const secretTask = tCli.data?.id;
+  const scoped = runProcessor([`--business-id=${bizA}`, "--apply"]);
+  const combined = scoped.out + scoped.err;
+  check("FCLI11 CLI output carries NO task title/email/phone/task id/business id (§46)", !combined.includes(`${PREFIX}T-cliflag`) && !combined.includes(emailStaffA) && !combined.includes("+98912") && !combined.includes(secretTask) && !combined.includes(bizA));
+  check("FCLI12 the eligible candidate was actually processed (counts only)", scoped.exitCode === 0 && (scoped.parsed?.result?.created ?? 0) + (scoped.parsed?.result?.duplicates ?? 0) >= 1, JSON.stringify(scoped.parsed?.result));
+
+  // §47 — safe debug output under CRM_REMINDER_DEBUG=1.
+  const dbg = Bun.spawnSync({ cmd: ["bun", "scripts/process-crm-task-reminders.mjs", `--business-id=${bizA}`], cwd: process.cwd(), stdout: "pipe", stderr: "pipe", env: { ...process.env, CRM_REMINDER_DEBUG: "1" } });
+  const dbgOut = dbg.stdout.toString();
+  const dbgLine = dbgOut.split("\n").find((l) => l.includes('"debug"'));
+  let dbgObj = null;
+  try { dbgObj = JSON.parse(dbgLine ?? ""); } catch {}
+  check("FCLI13 debug output is the exact safe aggregate shape (§10)", Boolean(dbgObj) && dbgObj.debug === "crm-task-reminders" && dbgObj.phase === "candidate-scan" && Number.isFinite(dbgObj.dueSoonScanned) && Number.isFinite(dbgObj.overdueScanned) && Number.isFinite(dbgObj.max) && (dbgObj.mode === "DRY_RUN" || dbgObj.mode === "APPLY"), dbgLine?.slice(0, 140));
+  check("FCLI14 debug output carries NO task id/business id/dueAt/email (§47)", Boolean(secretTask) && !dbgOut.includes(secretTask) && !dbgOut.includes(bizA) && !dbgOut.includes(emailStaffA) && !dbgOut.includes(`${PREFIX}T-cliflag`));
+}
+
+/* ------------------ P37-F-2: CONCURRENT processor runs -------------------- */
+console.log("\n== P37-F CONCURRENCY ==");
+section("F-CONC");
+/** Async twin of runProcessor so TWO real CLI processes overlap. */
+async function runProcessorAsync(flags = []) {
+  const proc = Bun.spawn({ cmd: ["bun", "scripts/process-crm-task-reminders.mjs", ...flags], cwd: process.cwd(), stdout: "pipe", stderr: "pipe", env: { ...process.env } });
+  const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+  const exitCode = await proc.exited;
+  let parsed = null;
+  for (const line of out.split("\n")) {
+    try { const obj = JSON.parse(line); if (obj.result) parsed = obj; } catch {}
+  }
+  return { exitCode, parsed, out, err };
+}
+{
+  // §24 — dueAt = now + 59m, offset 60 ⇒ both runs see the SAME candidate.
+  const tConcDue = await createTask(wbA, { title: `${PREFIX}CONC-due`, assignedToUserId: staffAId, dueAt: minFromNow(59), reminderEnabled: true, reminderMinutesBefore: 60 });
+  check("FCONC1 concurrent due-soon fixture created (due +59m, offset 60)", tConcDue.status === 201);
+  const [runA, runB] = await Promise.all([
+    runProcessorAsync([`--business-id=${bizA}`, "--apply"]),
+    runProcessorAsync([`--business-id=${bizA}`, "--apply"]),
+  ]);
+  check("FCONC2 both concurrent processors exit 0", runA.exitCode === 0 && runB.exitCode === 0, `${runA.exitCode}/${runB.exitCode}`);
+  const concDueNotifs = (await crmNotifs(staffAId)).filter((n) => n.type === "BUSINESS_CRM_TASK_DUE_SOON" && n.dataJson?.includes(tConcDue.data?.id));
+  check("FCONC3 EXACTLY ONE due-soon notification despite overlapping runs (§23/§24)", concDueNotifs.length === 1, String(concDueNotifs.length));
+  const logical = (runA.parsed?.result?.created ?? 0) + (runB.parsed?.result?.created ?? 0) + (runA.parsed?.result?.duplicates ?? 0) + (runB.parsed?.result?.duplicates ?? 0);
+  check("FCONC4 both runs report the same logical event (created OR duplicate)", logical >= 1, String(logical));
+
+  // §25 — overdue race: dueAt = now − 5m, alert enabled.
+  const tConcOver = await createTask(wbA, { title: `${PREFIX}CONC-over`, assignedToUserId: staffAId, dueAt: minFromNow(-5), overdueAlertEnabled: true });
+  check("FCONC5 concurrent overdue fixture created (due −5m)", tConcOver.status === 201);
+  const [runC, runD] = await Promise.all([
+    runProcessorAsync([`--business-id=${bizA}`, "--apply"]),
+    runProcessorAsync([`--business-id=${bizA}`, "--apply"]),
+  ]);
+  check("FCONC6 both concurrent overdue processors exit 0", runC.exitCode === 0 && runD.exitCode === 0);
+  const concOverNotifs = (await crmNotifs(staffAId)).filter((n) => n.type === "BUSINESS_CRM_TASK_OVERDUE" && n.dataJson?.includes(tConcOver.data?.id));
+  check("FCONC7 EXACTLY ONE overdue notification despite overlapping runs (§25)", concOverNotifs.length === 1, String(concOverNotifs.length));
+}
+
+/* ------------------- P37-F-3: race + regression hardening ------------------ */
+console.log("\n== P37-F RACES ==");
+section("F-RACE");
+{
+  // §64 — dynamic no-task-mutation proof across a REAL apply run.
+  const tMut = await createTask(wbA, { title: `${PREFIX}T-nomut`, assignedToUserId: staffAId, dueAt: minFromNow(31), reminderEnabled: true, reminderMinutesBefore: 60, overdueAlertEnabled: true, priority: "HIGH" });
+  const snapBefore = await db.crmTask.findUnique({ where: { id: tMut.data?.id }, select: { status: true, dueAt: true, reminderEnabled: true, reminderMinutesBefore: true, overdueAlertEnabled: true, assignedToUserId: true, deletedAt: true, completedAt: true } });
+  await runProcessor([`--business-id=${bizA}`, "--apply"]);
+  const snapAfter = await db.crmTask.findUnique({ where: { id: tMut.data?.id }, select: { status: true, dueAt: true, reminderEnabled: true, reminderMinutesBefore: true, overdueAlertEnabled: true, assignedToUserId: true, deletedAt: true, completedAt: true } });
+  check("FRACE1 processor mutated NOTHING on the task row (§64, dynamic)", JSON.stringify(snapBefore) === JSON.stringify(snapAfter), `${JSON.stringify(snapBefore)} → ${JSON.stringify(snapAfter)}`);
+
+  // §31 — completion race: candidate seen, then COMPLETED before the next apply.
+  const tRC = await createTask(wbA, { title: `${PREFIX}T-racec`, assignedToUserId: staffAId, dueAt: minFromNow(32), reminderEnabled: true, reminderMinutesBefore: 60 });
+  const dryRC = runProcessor([`--business-id=${bizA}`]);
+  check("FRACE2 completion race: dry run sees the due-soon candidate (§31)", (dryRC.parsed?.result?.dueSoonCandidates ?? 0) >= 1, JSON.stringify(dryRC.parsed?.result));
+  await call(wbA, `/api/v1/crm/tasks/${tRC.data?.id}/status`, { method: "POST", body: JSON.stringify({ status: "COMPLETED" }) });
+  await runProcessor([`--business-id=${bizA}`, "--apply"]);
+  check("FRACE3 COMPLETED task received NO reminder (§31)", (await crmNotifs(staffAId)).filter((n) => n.dataJson?.includes(tRC.data?.id) && n.type === "BUSINESS_CRM_TASK_DUE_SOON").length === 0);
+
+  // §32 — cancellation race.
+  const tRX = await createTask(wbA, { title: `${PREFIX}T-racex`, assignedToUserId: staffAId, dueAt: minFromNow(33), reminderEnabled: true, reminderMinutesBefore: 60 });
+  await runProcessor([`--business-id=${bizA}`]);
+  await call(wbA, `/api/v1/crm/tasks/${tRX.data?.id}/status`, { method: "POST", body: JSON.stringify({ status: "CANCELED" }) });
+  await runProcessor([`--business-id=${bizA}`, "--apply"]);
+  check("FRACE4 CANCELED task received NO reminder (§32)", (await crmNotifs(staffAId)).filter((n) => n.dataJson?.includes(tRX.data?.id) && n.type === "BUSINESS_CRM_TASK_DUE_SOON").length === 0);
+
+  // §34/§30 — configuration race: reminder disabled between scan and apply.
+  const tRD = await createTask(wbA, { title: `${PREFIX}T-raced`, assignedToUserId: staffAId, dueAt: minFromNow(34), reminderEnabled: true, reminderMinutesBefore: 60 });
+  const dryRD = runProcessor([`--business-id=${bizA}`]);
+  check("FRACE5 config race: dry run sees the candidate (§34)", (dryRD.parsed?.result?.dueSoonCandidates ?? 0) >= 1);
+  await call(wbA, `/api/v1/crm/tasks/${tRD.data?.id}`, { method: "PATCH", body: JSON.stringify({ reminderEnabled: false }) });
+  const afterDisable = await call(wbA, `/api/v1/crm/tasks/${tRD.data?.id}`);
+  check("FRACE6 disable keeps dueAt but resets offset (§8/§30)", afterDisable.data?.dueAt && afterDisable.data?.reminderEnabled === false && afterDisable.data?.reminderMinutesBefore === null);
+  await runProcessor([`--business-id=${bizA}`, "--apply"]);
+  check("FRACE7 disabled reminder produced NO stale notification (§34)", (await crmNotifs(staffAId)).filter((n) => n.dataJson?.includes(tRD.data?.id) && n.type === "BUSINESS_CRM_TASK_DUE_SOON").length === 0);
+
+  // §36 — deleted context: the fresh context re-check must skip the task.
+  const delCust = await call(wbA, "/api/v1/customers", { method: "POST", body: JSON.stringify({ name: `${PREFIX}C-delctx` }) });
+  check("FRACE8 deleted-context fixture customer created", delCust.status === 201 && Boolean(delCust.data?.id));
+  const tDC = await createTask(wbA, { title: `${PREFIX}T-delctx`, customerId: delCust.data?.id, assignedToUserId: staffAId, dueAt: minFromNow(35), reminderEnabled: true, reminderMinutesBefore: 60 });
+  const delRes = await call(wbA, `/api/v1/customers/${delCust.data?.id}`, { method: "DELETE" });
+  check("FRACE9 context customer soft-deleted", delRes.status === 200 || delRes.status === 204 || delRes.status === 201, String(delRes.status));
+  await runProcessor([`--business-id=${bizA}`, "--apply"]);
+  check("FRACE10 deleted context ⇒ NO due-soon notification (§36)", (await crmNotifs(staffAId)).filter((n) => n.dataJson?.includes(tDC.data?.id) && n.type === "BUSINESS_CRM_TASK_DUE_SOON").length === 0);
+
+  // §63 — soft-deleted task: processor ignores it entirely.
+  const tDT = await createTask(wbA, { title: `${PREFIX}T-deltask`, assignedToUserId: staffAId, dueAt: minFromNow(36), reminderEnabled: true, reminderMinutesBefore: 60 });
+  await call(wbA, `/api/v1/crm/tasks/${tDT.data?.id}`, { method: "DELETE" });
+  await runProcessor([`--business-id=${bizA}`, "--apply"]);
+  check("FRACE11 soft-deleted task ⇒ zero reminder notifications (§63)", (await crmNotifs(staffAId)).filter((n) => n.dataJson?.includes(tDT.data?.id) && n.type !== "BUSINESS_CRM_TASK_ASSIGNED").length === 0);
+
+  // §26 — reassignment dedupe: retry of the same event ⇒ no duplicate; B→C ⇒ new event.
+  const tRDup = await createTask(wbA, { title: `${PREFIX}T-rededup`, assignedToUserId: staffBId, customerId: custId });
+  await new Promise((r) => setTimeout(r, 500));
+  const bCount1 = (await crmNotifs(staffBId)).filter((n) => n.dataJson?.includes(tRDup.data?.id) && n.type === "BUSINESS_CRM_TASK_ASSIGNED").length;
+  check("FRACE12 assignment created for staff B exactly once", bCount1 === 1, String(bCount1));
+  await call(wbA, `/api/v1/crm/tasks/${tRDup.data?.id}`, { method: "PATCH", body: JSON.stringify({ assignedToUserId: staffBId }) });
+  await new Promise((r) => setTimeout(r, 500));
+  const bCount2 = (await crmNotifs(staffBId)).filter((n) => n.dataJson?.includes(tRDup.data?.id) && n.type === "BUSINESS_CRM_TASK_ASSIGNED").length;
+  check("FRACE13 unchanged-assignment retry ⇒ NO duplicate for B (§26)", bCount2 === 1, String(bCount2));
+  await call(wbA, `/api/v1/crm/tasks/${tRDup.data?.id}`, { method: "PATCH", body: JSON.stringify({ assignedToUserId: staffAId }) });
+  await new Promise((r) => setTimeout(r, 500));
+  const aCount = (await crmNotifs(staffAId)).filter((n) => n.dataJson?.includes(tRDup.data?.id) && n.type === "BUSINESS_CRM_TASK_ASSIGNED").length;
+  check("FRACE14 B→A reassignment notifies the NEW assignee exactly once (§26)", aCount === 1, String(aCount));
+  check("FRACE15 B still holds exactly ONE assignment row from the ORIGINAL event", (await crmNotifs(staffBId)).filter((n) => n.dataJson?.includes(tRDup.data?.id) && n.type === "BUSINESS_CRM_TASK_ASSIGNED").length === 1);
+
+  // §29 — assignee + dueAt change together: future reminder uses B + T2.
+  const tBoth = await createTask(wbA, { title: `${PREFIX}T-both`, assignedToUserId: staffAId, dueAt: minFromNow(37), reminderEnabled: true, reminderMinutesBefore: 60 });
+  await runProcessor([`--business-id=${bizA}`, "--apply"]);
+  const aBefore = (await crmNotifs(staffAId)).filter((n) => n.dataJson?.includes(tBoth.data?.id) && n.type === "BUSINESS_CRM_TASK_DUE_SOON").length;
+  check("FRACE16 T1 reminder fired for A (assignee A + dueAt T1)", aBefore === 1, String(aBefore));
+  await call(wbA, `/api/v1/crm/tasks/${tBoth.data?.id}`, { method: "PATCH", body: JSON.stringify({ assignedToUserId: staffBId, dueAt: minFromNow(21) }) });
+  await runProcessor([`--business-id=${bizA}`, "--apply"]);
+  const bForTask = (await crmNotifs(staffBId)).filter((n) => n.dataJson?.includes(tBoth.data?.id) && n.type === "BUSINESS_CRM_TASK_DUE_SOON");
+  const aForTask = (await crmNotifs(staffAId)).filter((n) => n.dataJson?.includes(tBoth.data?.id) && n.type === "BUSINESS_CRM_TASK_DUE_SOON");
+  check("FRACE17 future reminder uses B + T2 — exactly one for B (§29)", bForTask.length === 1, String(bForTask.length));
+  check("FRACE18 NO reminder to A for T2 (identity changed)", aForTask.length === 1 && aForTask[0].sourceEventId !== bForTask[0]?.sourceEventId);
+  await runProcessor([`--business-id=${bizA}`, "--apply"]);
+  check("FRACE19 repeat apply stays duplicate-safe for B + T2", (await crmNotifs(staffBId)).filter((n) => n.dataJson?.includes(tBoth.data?.id) && n.type === "BUSINESS_CRM_TASK_DUE_SOON").length === 1);
+
+  // §28 — due date change: new identity, history immutable.
+  const tHist = (await crmNotifs(staffAId)).filter((n) => n.dataJson?.includes(tBoth.data?.id) && n.type === "BUSINESS_CRM_TASK_DUE_SOON")[0];
+  const histId = tHist?.id;
+  const histCreatedAt = tHist?.createdAt;
+  await call(wbA, `/api/v1/crm/tasks/${tBoth.data?.id}`, { method: "PATCH", body: JSON.stringify({ dueAt: minFromNow(15), reminderEnabled: true, reminderMinutesBefore: 60 }) });
+  await runProcessor([`--business-id=${bizA}`, "--apply"]);
+  const histRow = await db.notification.findUnique({ where: { id: histId }, select: { id: true, createdAt: true } });
+  check("FRACE20 historical T1 notification REMAINS immutable after dueAt change (§28)", Boolean(histRow) && histRow.createdAt.getTime() === histCreatedAt.getTime());
+}
+
+/* ------------------------- P37-F-4: health honesty ------------------------- */
+console.log("\n== P37-F HEALTH ==");
+section("F-HEALTH");
+{
+  const health = await apiJson(jarFetch(new Map()), "/api/health");
+  check("FHEALTH1 /api/health = 200 (§97)", health.res.status === 200, String(health.res.status));
+  const ready = await apiJson(jarFetch(new Map()), "/api/ready");
+  check("FHEALTH2 /api/ready answers honestly (§97/§68)", ready.res.status === 200 || ready.res.status === 503, String(ready.res.status));
+  check("FHEALTH3 readiness body carries an explicit status (scheduler NOT a dependency)", typeof ready.body?.status === "string" || typeof ready.body?.data?.status === "string", JSON.stringify(ready.body)?.slice(0, 120));
+}
+
+/* ------------------------------ AO–AQ scans ------------------------------- */
 console.log("\n== AO–AQ SCANS ==");
 section("AO");
 function runScan(script) {
@@ -558,7 +773,7 @@ function runScan(script) {
   return p.exitCode;
 }
 check("AO1 crm-activity-task-static-scan green (no scheduler regressions, §98)", runScan("scripts/crm-activity-task-static-scan.mjs") === 0);
-check("AO2 crm-reminder-static-scan green (20 rules, §97/§144)", runScan("scripts/crm-reminder-static-scan.mjs") === 0);
+check("AO2 crm-reminder-static-scan green (26 rules incl. Prompt 37-F safe logging, §97/§12/§144)", runScan("scripts/crm-reminder-static-scan.mjs") === 0);
 check("AO3 notification-static-scan green (§143)", runScan("scripts/notification-static-scan.mjs") === 0);
 check("AQ1 notification-catalog-check green (§142)", runScan("scripts/notification-catalog-check.mjs") === 0);
 {

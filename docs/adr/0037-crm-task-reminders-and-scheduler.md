@@ -1,7 +1,7 @@
 # ADR 0037 — CRM Task Reminders and the Operator-Managed External Scheduler
 
-**Status:** Accepted (Prompt 37)
-**Date:** 2026-10-02
+**Status:** Accepted (Prompt 37) · Finalized (Prompt 37-F)
+**Date:** 2026-10-02 · Finalized 2026-10-03
 **Supersedes:** the Prompt 36 position "reminders are NOT implemented" (docs/adr/0036 §Non-goals — now realized as this ADR).
 
 ## Context
@@ -54,3 +54,13 @@ The deployment reality is fixed by the product's documented architecture:
 ## Future work (explicitly NOT in Prompt 37)
 
 Multiple configurable reminders per task; per-user/per-business defaults; calendar integration; push/SMS; multi-node scheduling with a central lease. All require a new ADR.
+
+## Prompt 37-F finalization — concurrency semantics (§67)
+
+The processor is designed to be **idempotent under overlapping invocations**: the deterministic `(userId, type, sourceEventId)` identity and the Notification unique index collapse duplicate attempts, verified with real concurrent CLI runs (due-soon and overdue each dedupe to exactly ONE notification row). However:
+
+- **Single-node scheduler ownership remains the documented deployment model.** Idempotency is a safety NET, not a distributed-coordination mechanism.
+- The **database unique constraint is the final duplicate-protection boundary** — no lease table, no distributed mutex, no Redis, no queue exists or is planned.
+- Overlap protection at the OS layer (flock / systemd unit concurrency / Task Scheduler instance policy) is still RECOMMENDED so wasted work is avoided, but correctness never depends on it.
+- Multi-node deployments are NOT claimed safe: two nodes scheduling the same database would still dedupe correctly per event, but there is no central ownership, no leader election and no horizontal scaling story. Do not present this design as "distributed safe".
+- CLI usage validation (Prompt 37-F §5–§9) happens before the processor import — conflicting/unknown/invalid arguments exit 1 with zero database access, so a misconfigured cron entry can never create a partial or dangerous run.

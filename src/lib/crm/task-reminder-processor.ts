@@ -36,6 +36,11 @@ import { db } from "@/lib/db";
 import { logInfo, logError } from "@/lib/observability/logger";
 import { OPERATIONAL_EVENTS } from "@/lib/observability/events";
 import { isDueSoonNow, isOverdueNow, type TaskPriority } from "./task-types";
+import { readLiveTaskContext } from "./task-context-read";
+import {
+  isReminderCandidateStillEligible,
+  type FreshReminderTaskState,
+} from "./task-reminder-safety";
 
 /* ------------------------------- configuration ---------------------------- */
 
@@ -117,12 +122,6 @@ type CandidateRow = {
   assignedToUserId: string | null;
   reminderEnabled: boolean;
   overdueAlertEnabled: boolean;
-  customerId: string | null;
-  customer: { name: string } | null;
-  leadId: string | null;
-  lead: { name: string; companyName: string | null } | null;
-  opportunityId: string | null;
-  opportunity: { title: string } | null;
 };
 
 /* ------------------------------- queries (§43/§44) ------------------------ */
@@ -138,12 +137,6 @@ const candidateSelect = {
   assignedToUserId: true,
   reminderEnabled: true,
   overdueAlertEnabled: true,
-  customerId: true,
-  customer: { select: { name: true } },
-  leadId: true,
-  lead: { select: { name: true, companyName: true } },
-  opportunityId: true,
-  opportunity: { select: { title: true } },
 } as const;
 
 /** §195 — deterministic in-query order: dueAt asc, id asc. */
@@ -247,19 +240,20 @@ export async function processCrmTaskReminders(
     timezoneByBusiness.set(businessId, tz || "UTC");
   }
 
+  // Prompt 37-F (§10/§47) — the debug switch emits ONLY safe aggregate
+  // metadata: counts and run configuration. NO task ids, business ids,
+  // dueAt values, offsets, assignee ids, titles or bodies ever reach this
+  // output (§11 safe logging law — enforced by crm-reminder-static-scan
+  // rules 21–26 and the §47 safe-debug E2E/unit checks).
   if (process.env.CRM_REMINDER_DEBUG === "1") {
     console.log(
       JSON.stringify({
-        debug: "dueSoonRows",
-        now: now.toISOString(),
+        debug: "crm-task-reminders",
+        phase: "candidate-scan",
+        dueSoonScanned: dueSoonRows.length,
+        overdueScanned: overdueRows.length,
         max,
-        rows: dueSoonRows.map((r) => ({
-          id: r.id,
-          dueAt: r.dueAt.toISOString(),
-          offset: r.reminderMinutesBefore,
-          assigned: Boolean(r.assignedToUserId),
-          businessId: r.businessId,
-        })),
+        mode,
       }),
     );
   }
@@ -275,9 +269,12 @@ export async function processCrmTaskReminders(
     failed: 0,
   };
 
-  // Defensive re-check data guard (§68): a candidate that no longer satisfies
-  // its own precondition (assignee vanished, config flipped between query and
-  // processing, context gone) is SKIPPED, never half-processed.
+  // Defensive re-check data guard (§68/§31–§36): a candidate that no longer
+  // satisfies its own precondition (completed, canceled, deleted, reassigned,
+  // rescheduled, config flipped between query and processing, context gone)
+  // is SKIPPED, never half-processed. The FRESH state is re-read from the
+  // database immediately before notify — the scanned row alone is not
+  // trusted (§35: minimal select, never the description).
   for (const candidate of bounded) {
     const row = candidate.row;
     try {
@@ -293,16 +290,44 @@ export async function processCrmTaskReminders(
           continue;
         }
       } else if (!row.overdueAlertEnabled) {
-        // Defensive re-check — config flipped between query and processing.
         result.skipped += 1;
         continue;
       }
 
-      const context = contextOf(row);
-      if (!context) {
+      // §35 — fresh minimal task state, re-read NOW (no description loaded).
+      const fresh = (await db.crmTask.findFirst({
+        where: { id: row.id, businessId: row.businessId },
+        select: {
+          id: true,
+          businessId: true,
+          status: true,
+          deletedAt: true,
+          dueAt: true,
+          assignedToUserId: true,
+          reminderEnabled: true,
+          reminderMinutesBefore: true,
+          overdueAlertEnabled: true,
+        },
+      })) as FreshReminderTaskState | null;
+      if (
+        !fresh ||
+        !isReminderCandidateStillEligible(candidate.kind, fresh, assigneeId, row.dueAt, now)
+      ) {
+        // §31/§32/§33/§34 — completed/canceled/deleted/reassigned/rescheduled/
+        // reconfigured between scan and notify ⇒ no notification.
         result.skipped += 1;
         continue;
       }
+
+      // §36 — context re-check against CURRENT rows: the context must still
+      // exist AND belong to the same business (deletedAt-filtered read). A
+      // deleted context skips the notification entirely (no CUSTOMER/"").
+      const freshContext = await readFreshContext(fresh);
+      if (!freshContext) {
+        result.skipped += 1;
+        continue;
+      }
+      const context = freshContext;
       const businessTimezone = timezoneByBusiness.get(row.businessId) ?? "UTC";
 
       if (mode === "DRY_RUN") {
@@ -380,20 +405,22 @@ export async function processCrmTaskReminders(
   return result;
 }
 
-/** §45 — context title resolution with the EXACTLY-ONE context law. */
-function contextOf(
-  row: CandidateRow,
-): { type: "CUSTOMER" | "LEAD" | "OPPORTUNITY"; title: string } | null {
-  if (row.customerId && row.customer?.name) {
-    return { type: "CUSTOMER", title: row.customer.name.slice(0, 160) };
-  }
-  if (row.leadId && row.lead) {
-    return { type: "LEAD", title: (row.lead.companyName ?? row.lead.name).slice(0, 160) };
-  }
-  if (row.opportunityId && row.opportunity?.title) {
-    return { type: "OPPORTUNITY", title: row.opportunity.title.slice(0, 160) };
-  }
-  return null;
+/**
+ * §36 — re-read the candidate's context against CURRENT rows. The task row
+ * itself must still be live, and the context row is read DIRECTLY with a
+ * deletedAt filter (a relation include would NOT exclude soft-deleted
+ * contexts). Returns null when the task or its context is gone — the caller
+ * skips. Read-only; never mutates anything.
+ */
+async function readFreshContext(
+  fresh: FreshReminderTaskState,
+): Promise<{ type: "CUSTOMER" | "LEAD" | "OPPORTUNITY"; title: string } | null> {
+  const refs = await db.crmTask.findFirst({
+    where: { id: fresh.id, businessId: fresh.businessId, deletedAt: null },
+    select: { customerId: true, leadId: true, opportunityId: true },
+  });
+  if (!refs) return null;
+  return readLiveTaskContext(fresh.businessId, refs);
 }
 
 /** Deterministic identity mirror of the event mappers (§180/§181). */

@@ -1,3 +1,15 @@
+/**
+ * p37-final-probe.mjs — DIAGNOSTIC-ONLY (Prompt 37-F §77).
+ *
+ * NOT part of the test suite and NOT a substitute for the real E2E harness
+ * (scripts/prompt37-crm-reminder-check.mjs). Contains NO production logic:
+ * it drives the same HTTP APIs a user would, prints a fresh PATCH→CLI dump
+ * window for manual diagnosis of dueAt/reminder persistence, and cleans up
+ * every fixture it creates (P37FINAL- prefix + its own user's notifications).
+ * It prints only ephemeral fixture ids — no secrets, no real tenant data.
+ *
+ * Run: bun scripts/p37-final-probe.mjs   (dev server on :3000)
+ */
 /** DEFINITIVE: HTTP PATCH → parallel fresh dump + CLI debug. */
 import { readFileSync } from "node:fs";
 const BASE = "http://localhost:3000";

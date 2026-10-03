@@ -387,18 +387,51 @@ simply do not fire and the app stays healthy (§191).
   unit concurrency, Task Scheduler instance policy). The processor itself is
   IDEMPOTENT — a repeated/overlapping run dedupes on the Notification
   `(userId, type, sourceEventId)` unique index and produces zero duplicates
-  (§73/§81).
+  (§73/§81). Idempotency is a safety net, NOT distributed scheduling: keep
+  ONE scheduling owner per database (Prompt 37-F ADR §67).
 
 - **Dry run first**: `bun scripts/process-crm-task-reminders.mjs` (no
   `--apply`) prints safe counters only (mode/scanned/candidates/created/
   duplicates/skipped/failed) and never writes.
 
+- **CLI usage contract (Prompt 37-F §5–§9)** — validated BEFORE the
+  processor runs (zero database access on rejection, exit 1):
+  - `--apply` + `--dry-run` together → exit 1 (`CONFLICTING_FLAGS`).
+  - Unknown flags (e.g. `--foobar`) → exit 1 (`UNKNOWN_FLAG`).
+  - `--business-id=<id>` must match `^[a-zA-Z0-9_-]{6,64}$`, else exit 1
+    (`INVALID_BUSINESS_ID`).
+  - `--max=<n>` must be a decimal integer within 10–500, else exit 1
+    (`INVALID_MAX` / `MAX_OUT_OF_RANGE`) — the CLI never silently clamps a
+    dangerous workload. Duplicate boolean flags are accepted idempotently;
+    duplicate value flags take the last occurrence.
+  - Exit codes: 0 = run completed (dry or apply) · 1 = invalid usage OR
+    systemic failure. A single bad candidate never aborts the run.
+
+- **Troubleshooting**:
+  - *Exit 1 with `CLI_USAGE_INVALID`*: fix the flags above — nothing was
+    written.
+  - *Exit 1 with an error name and no result*: systemic (usually the
+    database) — check the DB path/service; the run made no partial
+    notification commitments beyond per-candidate isolation.
+  - *Reminders not firing*: the schedule is not installed or not running —
+    reminders resume on the next successful run within the configured
+    windows; missed reminders are not replayed beyond the overdue lookback.
+  - *`failed` > 0*: per-candidate errors (the run continues); investigate
+    with the dry-run counters — logs never contain task content.
+
 - **Limits**: `CRM_REMINDER_MAX_PER_RUN` (default 100, range 10–500) caps
   notification attempts per run; `CRM_REMINDER_OVERDUE_LOOKBACK_HOURS`
   (default 168, range 1–720) bounds overdue rescanning — an operational
-  scanning boundary, NOT a retention policy (§41). See
-  `docs/product/crm-task-reminders.md` and
+  scanning boundary, NOT a retention policy (§41). Invalid/NaN/negative /
+  out-of-range values are clamped into the documented bounds (never
+  unbounded). See `docs/product/crm-task-reminders.md` and
   `docs/security/crm-task-reminders-security.md`.
+
+- **Log hygiene**: the CLI/processor emit counts/mode/runId/timestamps only
+  (Prompt 37-F §11 — no task ids, business ids, dueAt values, offsets,
+  titles or bodies). Cron redirection (`>> /var/log/...`) plus the OS
+  standard log rotation (logrotate/systemd-journald) is the supported
+  retention mechanism; the application retains no reminder logs of its own.
 
 - **No scheduler HTTP endpoint, no CRON_SECRET**: the CLI runs locally
   against the database (§158/§171). Scheduler availability must never affect

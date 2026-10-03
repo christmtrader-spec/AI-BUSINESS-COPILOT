@@ -26,6 +26,15 @@
  *  18  no public HTTP scheduler endpoint (CLI talks to the DB directly)
  *  19  no fake distributed locking
  *  20  no task mutation during reminder processing (notification-only)
+ *
+ * Prompt 37-F (§12) — safe logging law:
+ *  21  no per-task IDs in console logging
+ *  22  no business IDs in console logging
+ *  23  no task dueAt in console logging
+ *  24  no per-task reminder offset in console logging
+ *  25  no assigned-user IDs in logging (console OR structured logger)
+ *  26  no debug-mode bypass of the logging policy (CRM_REMINDER_DEBUG emits
+ *      ONLY the safe aggregate metadata shape §10)
  */
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -374,6 +383,93 @@ rule("20 no task mutation during reminder processing", (bad) => {
   }
   if (/completedAt|status\s*[:=]\s*"(COMPLETED|CANCELED|OPEN|IN_PROGRESS)"/.test(src.replace(/\/\*[\s\S]*?\*\//g, ""))) {
     bad(PROCESSOR, 1, "processor writes task state fields");
+  }
+});
+
+/* ------------------- Prompt 37-F rules 21–26 (safe logging) ---------------- */
+
+const LOGGED_FILES = [PROCESSOR, CLI];
+
+/** Extracts every console.* call line (skipping comment lines) with its file:line. */
+function consoleLines(src) {
+  const out = [];
+  src.split("\n").forEach((l, i) => {
+    const t = l.trim();
+    if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return;
+    if (/console\.(log|info|debug|error|warn)\s*\(/.test(l)) out.push({ line: l, n: i + 1 });
+  });
+  return out;
+}
+
+function consoleRule(name, banned, why) {
+  rule(name, (bad) => {
+    for (const f of LOGGED_FILES) {
+      const src = read(f);
+      if (!src) continue;
+      for (const { line, n } of consoleLines(src)) {
+        if (banned.test(line)) bad(f, n, why);
+      }
+    }
+  });
+}
+
+consoleRule(
+  "21 no per-task IDs in console logging",
+  /taskId|task\.id|row\.id|r\.id\b|candidate\.row/,
+  "console line references a per-task identifier",
+);
+
+consoleRule(
+  "22 no business IDs in console logging",
+  /businessId/,
+  "console line references a business identifier",
+);
+
+consoleRule(
+  "23 no task dueAt in console logging",
+  /dueAt/,
+  "console line references a task due instant",
+);
+
+consoleRule(
+  "24 no per-task reminder offset in console logging",
+  /reminderMinutesBefore|offset\s*[:=]|\.offset\b/,
+  "console line references a per-task reminder offset",
+);
+
+rule("25 no assigned-user IDs in logging (console OR structured logger)", (bad) => {
+  const files = [...LOGGED_FILES, TASK_SERVICE];
+  for (const f of files) {
+    const src = read(f);
+    if (!src) continue;
+    src.split("\n").forEach((l, i) => {
+      const t = l.trim();
+      if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return;
+      const isLogCall = /console\.(log|info|debug|error|warn)\s*\(/.test(l) || /log(Info|Error|Warn)\s*\(/.test(l);
+      if (isLogCall && /assignedToUserId|assigneeUserId|\bassignee\b/.test(l)) {
+        bad(f, i + 1, "log line references an assignee identifier");
+      }
+    });
+  }
+});
+
+rule("26 no debug-mode bypass of the logging policy", (bad) => {
+  const src = read(PROCESSOR) ?? "";
+  if (!src) {
+    bad(PROCESSOR, 1, "processor missing");
+    return;
+  }
+  const idx = src.indexOf("CRM_REMINDER_DEBUG");
+  if (idx === -1) return; // removed entirely — also compliant (§10)
+  // The guarded block must be EXACTLY the safe aggregate-metadata shape
+  // (§10): counts + mode only. Any row mapping, identifier or per-task
+  // field access inside the debug block is a policy bypass.
+  const block = src.slice(idx, src.indexOf("}", src.indexOf("console.log", idx)) + 1);
+  for (const must of ["candidate-scan", "dueSoonScanned", "overdueScanned", "max", "mode"]) {
+    if (!block.includes(must)) bad(PROCESSOR, lineOf(src, idx), `safe debug output missing "${must}"`);
+  }
+  if (/\.map\(|taskId|task\.id|row\.id|businessId|dueAt|reminderMinutesBefore|assignedToUserId|assignee|title/.test(block)) {
+    bad(PROCESSOR, lineOf(src, idx), "debug block emits unsafe metadata");
   }
 });
 

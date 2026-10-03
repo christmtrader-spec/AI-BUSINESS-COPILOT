@@ -1,6 +1,6 @@
 # CRM Task Reminders + Scheduled Notification Processor
 
-**Prompt 37 · Status: IMPLEMENTED · Real scheduled CRM automation, operator-managed scheduling.**
+**Prompt 37 · Status: IMPLEMENTED + FINALIZED (Prompt 37-F) · Real scheduled CRM automation, operator-managed scheduling.**
 
 CRM Tasks can now generate REAL notifications:
 
@@ -9,6 +9,14 @@ CRM Tasks can now generate REAL notifications:
 3. **Task overdue** — ONE notification per task+dueAt once the due instant has passed.
 
 Everything else about a CRM Task (state machine, exactly-one context, assignee validation, soft delete, audit) is unchanged from Prompt 36.
+
+**Prompt 37-F hardening (final behavior):**
+
+- **Strict CLI (§5–§9):** `--apply --dry-run` is rejected with exit 1 BEFORE the processor import, before any database access and before any write-capable operation. Unknown flags exit 1. `--business-id=` values are validated immediately against the same safe ID law as the processor (`^[a-zA-Z0-9_-]{6,64}$`). `--max=` is strict: non-numeric or outside 10–500 exits 1 (never a silently clamped dangerous workload). Duplicate boolean flags are accepted idempotently; duplicate value flags take the LAST occurrence (deterministic, documented).
+- **Safe logging law (§10/§11):** the former per-row `CRM_REMINDER_DEBUG` dump was replaced by strictly safe aggregate metadata — `{ debug: "crm-task-reminders", phase: "candidate-scan", dueSoonScanned, overdueScanned, max, mode }` — no task ids, business ids, dueAt values, offsets, assignee ids or titles. Logs carry only job/mode/runId/timestamps/counts/error categories. Enforced by `crm-reminder-static-scan` rules 21–26 plus dedicated unit + E2E checks (§46/§47).
+- **Defensive re-check before every notification (§31–§36):** between the candidate scan and the notify step the processor re-reads the task's CURRENT minimal state (no description) and skips when the task was completed, canceled, soft-deleted, reassigned, rescheduled or reconfigured meanwhile, or when its context row no longer exists in the same business (a soft-deleted CUSTOMER/LEAD/OPPORTUNITY context can never produce a notification — the context is re-read directly with a `deletedAt` filter, never defaulted to `CUSTOMER`/`""`).
+- **Assignment notification reliability (§13–§20):** the post-commit helper is now awaited by the task service (deterministic request completion) while remaining fire-safe — a notification failure never rolls back the committed task mutation. Before sending, the helper reloads the committed task and verifies: same business, not soft-deleted, the current assignee STILL equals the intended recipient (a concurrent reassignment B→C can never notify B) and the context is still resolvable. The recipient remains server-authoritative `task.assignedToUserId` (§19).
+- **Concurrency (§23–§25):** overlapping processor runs are duplicate-safe by construction — verified with REAL concurrent CLI invocations on the same due-soon and overdue candidates (exactly ONE notification row each). The unique `(userId, type, sourceEventId)` index remains the final boundary; no reminder-history table, no Redis, no queue, no distributed lock.
 
 ---
 
@@ -63,9 +71,12 @@ The repository ships `scripts/process-crm-task-reminders.mjs`:
 
 ```bash
 bun scripts/process-crm-task-reminders.mjs                    # DRY RUN (default — no writes)
+bun scripts/process-crm-task-reminders.mjs --dry-run          # explicit dry run
 bun scripts/process-crm-task-reminders.mjs --apply            # create notifications
 bun scripts/process-crm-task-reminders.mjs --apply --business-id=<id> --max=100
 ```
+
+**CLI contract (Prompt 37-F §5–§9):** `--apply --dry-run` → exit 1 before ANY processing (zero DB access); unknown flags → exit 1; `--business-id=` validated immediately (`^[a-zA-Z0-9_-]{6,64}$`); `--max=` is a strict decimal integer within 10–500 (never silently clamped). Duplicate boolean flags are accepted idempotently; duplicate value flags take the last occurrence. Usage validation always precedes the processor import.
 
 **EXAMPLES ONLY — OPERATOR-MANAGED — NEVER AUTO-INSTALLED:**
 
@@ -113,9 +124,10 @@ All three: category BUSINESS, mandatory, `preferenceAvailable = true`, `emailDef
 
 - **Task form:** "Reminders" section — due-reminder switch, offset select (localized labels), overdue-alert switch. Without a due date all reminder controls are disabled with "Set a due date to enable reminders."; clearing the due date disables them immediately. The server re-validates everything (§58/§59).
 - **Task detail:** Reminder ("1 hour before" / "No due reminder") + Overdue alert (On/Off) — no internal codes (§61/§109).
-- **Work queue:** small bell badge with an accessible label when any reminder is configured (icon + text, never color alone, §62).
+- **Work queue:** small bell badge with an accessible label ("Reminder configured") when any reminder is configured (icon + text, never color alone, §62).
 - **CRM dashboard Work Queue card:** "Upcoming reminders (24h)" — tasks with reminder windows opening within 24h; a configuration count, never a notification count (§63).
 - `GET /api/v1/crm/tasks/reminder-summary` returns `{ dueSoonEnabledCount, overdueAlertsEnabledCount, dueSoonNext24hCount }` (§64).
+- **Notification Preferences (Prompt 37-F):** the Settings screen lists all three CRM task types under the Business section — IN_APP shown as "Always enabled" (mandatory), EMAIL as the preference-controlled toggle (§52/§54). Toggling EMAIL off persists server-side and future reminders keep their IN_APP delivery while EMAIL is skipped (verified E2E §84).
 - Clicking the notification CTA opens the EXISTING `#/crm?tab=tasks` workspace — no new page, no task deep-link (§23/§88/§89).
 
 ## 10. Data portability

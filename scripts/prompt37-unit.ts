@@ -308,6 +308,195 @@ ok("26d. every catalog actionRoute is in the closed vocabulary", Object.values(N
   ok("i18n e. EN cta + FA cta for crmTasks", en.notifications.cta.crmTasks.length > 3 && fa.notifications.cta.crmTasks.length > 3);
 }
 
+/* ========================================================================== */
+/* PROMPT 37-F — FINALIZATION UNIT AREAS (§75 areas 1–20)                     */
+/* ========================================================================== */
+
+import { parseReminderCliArgs, CLI_MAX_MIN, CLI_MAX_MAX } from "../scripts/lib/crm-reminder-cli.mjs";
+import {
+  isReminderCandidateStillEligible,
+  isAssignmentDeliverable,
+  resolveExactlyOneContext,
+  type FreshReminderTaskState,
+  type FreshAssignmentTaskState,
+} from "../src/lib/crm/task-reminder-safety";
+import { reminderMaxPerRun, reminderOverdueLookbackHours } from "../src/lib/crm/task-reminder-processor";
+
+const PROC_SRC = (await import("node:fs")).readFileSync("src/lib/crm/task-reminder-processor.ts", "utf8");
+const SVC_SRC = (await import("node:fs")).readFileSync("src/lib/crm/task-service.ts", "utf8");
+const CLI_SRC = (await import("node:fs")).readFileSync("scripts/process-crm-task-reminders.mjs", "utf8");
+
+/* -------- area 1/2/3: CLI conflicting flags, unknown flag, business id ----- */
+{
+  const conflict = parseReminderCliArgs(["--apply", "--dry-run"]);
+  ok("F1a. --apply --dry-run ⇒ INVALID CONFLICTING_FLAGS (§5)", !conflict.ok && conflict.code === "CONFLICTING_FLAGS");
+  const conflictRev = parseReminderCliArgs(["--dry-run", "--apply"]);
+  ok("F1b. conflict is order-independent", !conflictRev.ok && conflictRev.code === "CONFLICTING_FLAGS");
+  const unknown = parseReminderCliArgs(["--foobar"]);
+  ok("F2a. --foobar ⇒ INVALID UNKNOWN_FLAG (§45)", !unknown.ok && unknown.code === "UNKNOWN_FLAG");
+  const unknownMax = parseReminderCliArgs(["--max"]);
+  ok("F2b. bare --max (no '=') ⇒ unknown flag", !unknownMax.ok && unknownMax.code === "UNKNOWN_FLAG");
+  const dupApply = parseReminderCliArgs(["--apply", "--apply"]);
+  ok("F2c. duplicate --apply accepted idempotently (§6)", dupApply.ok && dupApply.options.dryRun === false);
+  const dupDry = parseReminderCliArgs(["--dry-run", "--dry-run"]);
+  ok("F2d. duplicate --dry-run accepted idempotently", dupDry.ok && dupDry.options.dryRun === true);
+  const noFlags = parseReminderCliArgs([]);
+  ok("F2e. (no flags) ⇒ DRY_RUN default (§65)", noFlags.ok && noFlags.options.dryRun === true);
+  const badBiz = parseReminderCliArgs(["--business-id=x"]);
+  ok("F3a. --business-id=x (too short) ⇒ INVALID_BUSINESS_ID (§7)", !badBiz.ok && badBiz.code === "INVALID_BUSINESS_ID");
+  const pathBiz = parseReminderCliArgs(["--business-id=../../etc/passwd"]);
+  ok("F3b. path-like business id rejected", !pathBiz.ok && pathBiz.code === "INVALID_BUSINESS_ID");
+  const emptyBiz = parseReminderCliArgs(["--business-id="]);
+  ok("F3c. empty business id rejected", !emptyBiz.ok && emptyBiz.code === "INVALID_BUSINESS_ID");
+  const goodBiz = parseReminderCliArgs(["--business-id=cmabc123def"]);
+  ok("F3d. well-formed business id accepted", goodBiz.ok && goodBiz.options.businessId === "cmabc123def");
+  // §9 — no eval / Function / dynamic execution anywhere in the CLI path.
+  ok("F3e. CLI parser uses no eval/Function/dynamic exec (§9)", !/eval\(|new Function|child_process|execSync|spawnSync/.test((await import("node:fs")).readFileSync("scripts/lib/crm-reminder-cli.mjs", "utf8")));
+}
+
+/* -------- area 4: safe debug output (§10/§47) ------------------------------ */
+{
+  const idx = PROC_SRC.indexOf("CRM_REMINDER_DEBUG");
+  const block = PROC_SRC.slice(idx, PROC_SRC.indexOf("}", PROC_SRC.indexOf("console.log", idx)) + 1);
+  ok("F4a. debug block emits ONLY the safe aggregate shape (§10)", block.includes("candidate-scan") && block.includes("dueSoonScanned") && block.includes("overdueScanned") && block.includes("max") && block.includes("mode"));
+  ok("F4b. debug block carries NO task/business/dueAt/offset/assignee data (§47)", !/taskId|businessId|dueAt|reminderMinutesBefore|assignedToUserId|\.map\(|title/.test(block));
+}
+
+/* -------- area 5: assignment await contract (§13/§14/§15) ------------------- */
+{
+  ok("F5a. notifyAssignmentSafe is an async, awaitable fire-safe helper (§14)", /async function notifyAssignmentSafe\(/.test(SVC_SRC));
+  const createFn = SVC_SRC.slice(SVC_SRC.indexOf("export async function createTask"), SVC_SRC.indexOf("/** Generic update"));
+  const updateFn = SVC_SRC.slice(SVC_SRC.indexOf("export async function updateTask"), SVC_SRC.indexOf("/**\n * Status transition"));
+  ok("F5b. createTask AWAITS the assignment notification (§14)", createFn.includes("await notifyAssignmentSafe("));
+  ok("F5c. updateTask AWAITS the assignment notification (§14)", updateFn.includes("await notifyAssignmentSafe("));
+  ok("F5d. notification is NOT wrapped in the task transaction (§14)", !/\.\$transaction[\s\S]{0,200}notifyCrmTaskAssigned/.test(SVC_SRC));
+  ok("F5e. helper swallows failures — fire-safe contract kept (§36)", SVC_SRC.indexOf("Swallowed by design") > SVC_SRC.indexOf("async function notifyAssignmentSafe"));
+}
+
+/* -------- areas 6/7/8/13/14/15/16: defensive predicates (§31–§36) ----------- */
+{
+  const now = T0;
+  const dueAt = m(30); // due in 30 minutes
+  const assignee = "userAabc123";
+  const freshBase = (over: Partial<FreshReminderTaskState> = {}): FreshReminderTaskState => ({
+    id: "taskF37abc",
+    businessId: "bizF37abc",
+    status: "OPEN",
+    deletedAt: null,
+    dueAt,
+    assignedToUserId: assignee,
+    reminderEnabled: true,
+    reminderMinutesBefore: 60,
+    overdueAlertEnabled: true,
+    ...over,
+  });
+
+  ok("F6a. unchanged active task ⇒ still eligible (control)", isReminderCandidateStillEligible("DUE_SOON", freshBase(), assignee, dueAt, now));
+  ok("F6b. soft-deleted task ⇒ skip (§16/§63)", !isReminderCandidateStillEligible("DUE_SOON", freshBase({ deletedAt: new Date() }), assignee, dueAt, now));
+  ok("F6c. row vanished (null) ⇒ skip (§16)", !isReminderCandidateStillEligible("DUE_SOON", null, assignee, dueAt, now));
+  ok("F6d. missing-context task ⇒ predicate level handles context separately; deleted assignment ⇒ skip (§16/§7)", !isAssignmentDeliverable(null, "bizF37abc", assignee));
+  ok("F6e. foreign business row ⇒ assignment not deliverable (§18)", !isAssignmentDeliverable({ id: "t", businessId: "OTHERBIZ1", deletedAt: null, assignedToUserId: assignee, customerId: "c", customer: { name: "C" }, leadId: null, lead: null, opportunityId: null, opportunity: null }, "bizF37abc", assignee));
+
+  ok("F13a. COMPLETED race ⇒ no due-soon notification (§31)", !isReminderCandidateStillEligible("DUE_SOON", freshBase({ status: "COMPLETED" }), assignee, dueAt, now));
+  ok("F13b. COMPLETED race ⇒ no overdue notification (§31)", !isReminderCandidateStillEligible("OVERDUE", freshBase({ status: "COMPLETED" }), assignee, dueAt, now));
+  ok("F14a. CANCELED race ⇒ no due-soon notification (§32)", !isReminderCandidateStillEligible("DUE_SOON", freshBase({ status: "CANCELED" }), assignee, dueAt, now));
+  ok("F14b. CANCELED race ⇒ no overdue notification (§32)", !isReminderCandidateStillEligible("OVERDUE", freshBase({ status: "CANCELED" }), assignee, dueAt, now));
+  ok("F15a. reassigned race (fresh assignee ≠ expected) ⇒ no notification (§33)", !isReminderCandidateStillEligible("DUE_SOON", freshBase({ assignedToUserId: "userBabc123" }), assignee, dueAt, now));
+  ok("F15b. unassigned race (assignee null) ⇒ no notification", !isReminderCandidateStillEligible("OVERDUE", freshBase({ assignedToUserId: null }), assignee, dueAt, now));
+  ok("F16a. configuration race — reminder disabled mid-run ⇒ skip (§34/§30)", !isReminderCandidateStillEligible("DUE_SOON", freshBase({ reminderEnabled: false }), assignee, dueAt, now));
+  ok("F16b. configuration race — overdue alert disabled mid-run ⇒ skip (§34/§30)", !isReminderCandidateStillEligible("OVERDUE", freshBase({ overdueAlertEnabled: false }), assignee, dueAt, now));
+  ok("F16c. dueAt changed mid-run ⇒ stale identity skipped (§29/§62)", !isReminderCandidateStillEligible("DUE_SOON", freshBase({ dueAt: m(20) }), assignee, dueAt, now));
+  ok("F16d. overdue candidate whose dueAt moved further future ⇒ stale identity skipped (§29/§62)", !isReminderCandidateStillEligible("OVERDUE", freshBase({ dueAt: m(90) }), assignee, dueAt, m(35)));
+}
+
+/* -------- areas 7/8: assignment context + reassignment race (§17/§20) ------- */
+{
+  const ctxRow = (over: Partial<FreshAssignmentTaskState> = {}): FreshAssignmentTaskState => ({
+    id: "taskF37abc",
+    businessId: "bizF37abc",
+    deletedAt: null,
+    assignedToUserId: "userBabc123",
+    customerId: "custF37abc",
+    customer: { name: "Acme" },
+    leadId: null,
+    lead: null,
+    opportunityId: null,
+    opportunity: null,
+    ...over,
+  });
+  ok("F7a. assignment deliverable with resolvable context (control)", isAssignmentDeliverable(ctxRow(), "bizF37abc", "userBabc123"));
+  ok("F7b. missing context (all null) ⇒ NOT deliverable — no CUSTOMER/\"\" fallback (§17)", !isAssignmentDeliverable(ctxRow({ customerId: null, customer: null, leadId: null, opportunityId: null }), "bizF37abc", "userBabc123"));
+  ok("F7c. context id present but relation gone ⇒ NOT deliverable (§36 mirror)", !isAssignmentDeliverable(ctxRow({ customer: null }), "bizF37abc", "userBabc123"));
+  ok("F8a. reassignment race — committed assignee C ≠ recipient B ⇒ skip (§20)", !isAssignmentDeliverable(ctxRow({ assignedToUserId: "userCabc123" }), "bizF37abc", "userBabc123"));
+  ok("F8b. deleted-before-notify ⇒ assignment skipped (§16)", !isAssignmentDeliverable(ctxRow({ deletedAt: new Date() }), "bizF37abc", "userBabc123"));
+  ok("F8c. resolveExactlyOneContext: LEAD uses companyName, bounded 160", resolveExactlyOneContext({ customerId: null, customer: null, leadId: "l1", lead: { name: "n", companyName: "c".repeat(200) }, opportunityId: null, opportunity: null })?.title.length === 160);
+  ok("F8d. resolveExactlyOneContext: OPPORTUNITY title", resolveExactlyOneContext({ customerId: null, customer: null, leadId: null, lead: null, opportunityId: "o1", opportunity: { title: "Opp" } })?.type === "OPPORTUNITY");
+}
+
+/* -------- areas 9/10/17/18: concurrent identity determinism ----------------- */
+{
+  const dueIso = "2026-10-05T10:00:00.000Z";
+  const idA = composeSourceEventId("crm-task-due-soon", "task01abcxyz", dueIso, "user01abcxyz");
+  const idB = composeSourceEventId("crm-task-due-soon", "task01abcxyz", dueIso, "user01abcxyz");
+  ok("F9a. CONCURRENT due-soon runs derive the SAME identity ⇒ unique index collapses to ONE row (§23/§24)", idA === idB);
+  const idC = composeSourceEventId("crm-task-overdue", "task01abcxyz", dueIso, "user01abcxyz");
+  const idD = composeSourceEventId("crm-task-overdue", "task01abcxyz", dueIso, "user01abcxyz");
+  ok("F10a. CONCURRENT overdue runs derive the SAME identity (§25)", idC === idD);
+  ok("F10b. due-soon vs overdue identities never collide even concurrently", idA !== idC);
+  ok("F17a. assignment identity deterministic across retries of the SAME event (§21/§26)", composeSourceEventId("crm-task-assigned", "t1", "userBabc123", "2026-10-05T10:00:00.000Z") === composeSourceEventId("crm-task-assigned", "t1", "userBabc123", "2026-10-05T10:00:00.000Z"));
+  ok("F17b. assignment identity changes ONLY with a new event (updatedAt)", composeSourceEventId("crm-task-assigned", "t1", "userBabc123", "2026-10-05T10:00:00.000Z") !== composeSourceEventId("crm-task-assigned", "t1", "userBabc123", "2026-10-05T10:00:01.000Z"));
+  ok("F18a. reminder identity contains NO run timestamp — stable across days", idA === composeSourceEventId("crm-task-due-soon", "task01abcxyz", dueIso, "user01abcxyz"));
+  ok("F18b. reminder identity contains NO title/description/context text (§49)", !idA.includes("Prepare") && !idA.includes("Acme"));
+}
+
+/* -------- area 11/12: processor defensive re-check + no mutation ------------ */
+{
+  const freshIdx = PROC_SRC.indexOf("// §35 — fresh minimal task state");
+  const notifyIdx = PROC_SRC.indexOf("notifyCrmTaskDueSoon");
+  ok("F11a. fresh DB re-read happens BEFORE notifyCrmTaskDueSoon (§35)", freshIdx !== -1 && notifyIdx !== -1 && freshIdx < notifyIdx);
+  ok("F11b. the eligibility predicate is applied to the fresh row (§31–§34)", PROC_SRC.includes("isReminderCandidateStillEligible("));
+  const freshSelect = PROC_SRC.slice(freshIdx, PROC_SRC.indexOf("isReminderCandidateStillEligible(", freshIdx)).replace(/\/\/[^\n]*/g, "");
+  ok("F11c. fresh re-check loads NO description (minimal select, §35)", freshSelect.includes("deletedAt") && freshSelect.includes("reminderEnabled") && !freshSelect.includes("description"));
+  ok("F12a. processor never mutates tasks (§64/§167/§168)", !/crmTask\.(update|updateMany|create|delete|deleteMany|upsert)/.test(PROC_SRC));
+  ok("F12b. fresh context re-check is deletedAt-filtered + business-scoped (§36)", /readFreshContext/.test(PROC_SRC) && /deletedAt: null/.test(PROC_SRC.slice(PROC_SRC.indexOf("async function readFreshContext"))));
+}
+
+/* -------- area 19: dry-run no-write semantics (§39/§166) --------------------- */
+{
+  const CLI_LIB_SRC = (await import("node:fs")).readFileSync("scripts/lib/crm-reminder-cli.mjs", "utf8");
+  ok("F19a. CLI defaults to DRY_RUN; APPLY only via --apply (§65)", CLI_LIB_SRC.includes("dryRun: apply ? false : true") && CLI_SRC.includes("parseReminderCliArgs"));
+  ok("F19b. dry-run branch performs a read-only existence check, never notify (§39)", PROC_SRC.includes("db.notification.findFirst") && !PROC_SRC.includes("db.notification.create"));
+  const dryBranch = PROC_SRC.slice(PROC_SRC.indexOf('if (mode === "DRY_RUN")'), PROC_SRC.indexOf("// APPLY (§167)"));
+  ok("F19c. DRY_RUN branch contains zero notify calls (§166)", !dryBranch.includes("notifyCrmTaskDueSoon") && !dryBranch.includes("notifyCrmTaskOverdue"));
+  ok("F19d. no delivery/audit writes in the processor at all (§39)", !PROC_SRC.includes("notificationDelivery.create") && !PROC_SRC.includes("auditLog.create"));
+}
+
+/* -------- area 20: max bound (§40/§71) --------------------------------------- */
+{
+  const prevMax = process.env.CRM_REMINDER_MAX_PER_RUN;
+  const prevLook = process.env.CRM_REMINDER_OVERDUE_LOOKBACK_HOURS;
+  delete process.env.CRM_REMINDER_MAX_PER_RUN;
+  delete process.env.CRM_REMINDER_OVERDUE_LOOKBACK_HOURS;
+  ok("F20a. default max = 100 (§105)", reminderMaxPerRun(undefined) === 100);
+  ok("F20b. option below minimum clamps UP to 10", reminderMaxPerRun(1) === 10);
+  ok("F20c. option above hard max clamps DOWN to 500 (§43 — never >500)", reminderMaxPerRun(10_000) === 500);
+  ok("F20d. NaN option falls back to the default (never unbounded)", reminderMaxPerRun(Number.NaN) === 100);
+  ok("F20e. Infinity option falls back to the default", reminderMaxPerRun(Number.POSITIVE_INFINITY) === 100);
+  process.env.CRM_REMINDER_MAX_PER_RUN = "100000";
+  ok("F20f. env max clamped to 500 (§71 — negative/NaN/infinite/unbounded rejected)", reminderMaxPerRun(undefined) === 500);
+  process.env.CRM_REMINDER_MAX_PER_RUN = "-5";
+  ok("F20g. negative env max clamps UP to 10 (never negative workload)", reminderMaxPerRun(undefined) === 10);
+  process.env.CRM_REMINDER_MAX_PER_RUN = "abc";
+  ok("F20h. non-numeric env max falls back to default", reminderMaxPerRun(undefined) === 100);
+  process.env.CRM_REMINDER_OVERDUE_LOOKBACK_HOURS = "99999";
+  ok("F20i. overdue lookback env clamped to 720h (§71)", reminderOverdueLookbackHours() === 720);
+  process.env.CRM_REMINDER_OVERDUE_LOOKBACK_HOURS = "0";
+  ok("F20j. zero overdue lookback clamps UP to 1h", reminderOverdueLookbackHours() === 1);
+  if (prevMax === undefined) delete process.env.CRM_REMINDER_MAX_PER_RUN; else process.env.CRM_REMINDER_MAX_PER_RUN = prevMax;
+  if (prevLook === undefined) delete process.env.CRM_REMINDER_OVERDUE_LOOKBACK_HOURS; else process.env.CRM_REMINDER_OVERDUE_LOOKBACK_HOURS = prevLook;
+  ok("F20k. CLI max bounds match the processor contract 10–500 (§8)", CLI_MAX_MIN === 10 && CLI_MAX_MAX === 500);
+}
+
 /* --------------------------------- summary ---------------------------------- */
 console.log("\n=========================================");
 console.log(`PROMPT 37 UNIT: ${passed}/${passed + failed} PASS`);

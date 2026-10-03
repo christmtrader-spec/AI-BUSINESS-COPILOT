@@ -2965,3 +2965,201 @@ Stage Summary — FINAL HONEST STATE (§142/§143/§144/§145):
 - Known limitations (honest): timeline = bounded recent window (≤50/source) not full history (documented §36/§73); work queue = assigned tasks only (unassigned tasks visible in task list, not queue — per §29); timeline hasMore is window-based (approximate past the 100-row window); activities/tasks NOT in Global Search (deliberate §107); task quick-complete in the context card is one-way (complete only; reopen via detail dialog); reminder/notification/AI/import all NOT IMPLEMENTED by design (§33/§65/§64/§63).
 - Files: added 10 (lib/crm) + 7 (API routes) + 9 (crm module UI) + 3 (scripts) + 3 (docs) + 1 fixture script + 1 migration = 34; modified 23 (schema, index barrel, normalization, service, crm-api, crm-badges, crm-view, 3 entity detail views, finance-kit, export-catalog, export-panel, i18n ×2, app-store, worklog, 3 legal docs, data-export/import, crm-foundation, prompt35-unit u26, prompt29-unit hermetic, data-inventory snapshot).
 - NEXT: STOP. §146 respected — Prompt 37 NOT started. No scheduled reminders, email/push notifications, calendar sync, WhatsApp/Telegram, marketing automation, AI task generation/lead scoring, semantic CRM search, custom workflows, or autonomous agents added. Wait for the next explicit task.
+
+---
+
+Task ID: p37-finalization
+Agent: Z.ai Code
+Task: Prompt 37-F — Prompt 37 Finalization + Hardening + Release Closure
+
+Baseline:
+Prompt 37 implementation already present in the repository (schema migration
+20261002113000_prompt37_crm_task_reminders, crm task lib + reminder processor,
+notification catalog/mappers/templates/policies, CLI + static scan + unit + E2E
+harnesses, product/security/ADR docs).
+
+IMPORTANT HISTORICAL CORRECTION (§2):
+The immediately preceding Worklog entry ended with "Prompt 37 NOT started"
+(§146 of Prompt 36, written BEFORE Prompt 37 existed). That line was a truthful
+record of the PREVIOUS repository state at the time it was written and is
+PRESERVED verbatim above — history was not rewritten. Between that record and
+this entry, Prompt 37 was implemented in the repository (the artifacts listed
+above were committed under the Prompt 37 task). This entry records the CURRENT
+execution (Prompt 37-F finalization) and the CURRENT verified state. Historical
+report ≠ current execution ≠ current verification.
+
+Audit (§4) — performed BEFORE any change:
+docs/PROJECT-CONSTITUTION.md · ARCHITECTURE.md · TECH-DECISION-RECORD.md ·
+RISK-REGISTER.md · worklog.md → P37 docs (product/security/ADR 0037) →
+source (schema/migration, task-types/-schemas/-service/-reminder-processor,
+notifications integration, CLI, scans, unit/E2E/probe) · dev.log monitored
+throughout.
+
+Fixes implemented (all verified):
+1. CLI CONFLICT (§5–§9): conflicting-flags detection ran AFTER the processor
+   (an `--apply --dry-run` run executed in APPLY mode before exiting 1) and
+   unknown flags were silently ignored. Rewritten `scripts/process-crm-task-
+   reminders.mjs` + new pure parser `scripts/lib/crm-reminder-cli.mjs`:
+   validation NOW precedes the processor import / any DB access —
+   `--apply --dry-run` → exit 1 CONFLICTING_FLAGS · unknown flag → exit 1
+   UNKNOWN_FLAG · `--business-id` validated immediately against the P37 safe-ID
+   law → exit 1 INVALID_BUSINESS_ID · `--max` strict decimal integer 10–500
+   (non-numeric/9/10000 → exit 1; never a silently clamped dangerous workload) ·
+   duplicate boolean flags idempotent, value flags last-wins (deterministic,
+   documented) · no eval/Function/dynamic exec (§9). Verified live: all 7
+   invalid combos exit 1 with safe JSON errors and zero DB access.
+2. UNSAFE DEBUG LOGGING (§10/§11/§47): the `CRM_REMINDER_DEBUG` per-row dump
+   (task ids, business ids, dueAt, offsets, assignment state) replaced by the
+   exact safe aggregate shape `{debug:"crm-task-reminders",phase:"candidate-scan",
+   dueSoonScanned,overdueScanned,max,mode}`.
+3. ASSIGNMENT NOTIFICATION RELIABILITY (§13–§21): `notifyAssignmentSafe` was
+   fire-and-forget. Now `async` + AWAITED by createTask/updateTask (deterministic
+   request completion §14/§15) while remaining fire-safe (every failure swallowed
+   inside the helper — a notification failure never rolls back the committed task
+   §36). Post-commit reload re-verifies: same business · NOT soft-deleted (§16) ·
+   current assignee STILL equals the recipient (reassignment race B→C never
+   notifies B, §18/§20) · context still resolvable. The CUSTOMER/"" context
+   fallback was REMOVED (§17): context is re-read DIRECTLY with `deletedAt: null`
+   + business scope via new server-only `src/lib/crm/task-context-read.ts`
+   (a relation include does NOT exclude soft-deleted contexts — a real hole found
+   and closed). Skips log only the safe category `crm.assignment.notify_skipped`
+   (new operational event, reason word only). Event id law unchanged
+   (taskId+assignee+updatedAt, §21).
+4. PROCESSOR DEFENSIVE RE-CHECKS (§31–§36): before every notify the processor
+   re-reads the current minimal task state (no description) via new pure
+   predicates in `src/lib/crm/task-reminder-safety.ts`
+   (`isReminderCandidateStillEligible`, `isAssignmentRowEligible`,
+   `isAssignmentDeliverable`, `resolveExactlyOneContext`) and SKIPS on
+   completed/canceled/deleted/reassigned/rescheduled/reconfigured candidates;
+   context liveness re-checked per candidate (§36). Candidate select slimmed to
+   the minimal field set. Task rows remain read-only (§64 — now also proven
+   dynamically with a full-row before/after snapshot in E2E).
+5. STATIC SCAN (§12): `crm-reminder-static-scan.mjs` extended 20 → 26 rules
+   (no per-task ids / business ids / dueAt / per-task offsets / assignee ids in
+   console or structured logs; no debug-mode bypass of the logging policy).
+6. SETTINGS UI BUG FOUND + FIXED (§54): the Notification Preferences screen
+   still listed only the 19 pre-P37 types — the three CRM task EMAIL
+   preferences were missing from the Business section (the API accepted them;
+   the UI enumeration was stale). `notifications-preferences-view.tsx` now
+   lists all 22 catalog types; browser-verified: the three rows render
+   (IN_APP "Always enabled" + EMAIL toggle), toggle persists server-side.
+
+New/updated tests (all real-DB or real-process):
+- prompt37-unit.ts: 113 → 181/181 (§75 areas 1–20: CLI conflict/unknown/
+  business-id/max semantics, safe debug output, assignment await contract,
+  deleted-task/missing-context/reassignment/completed/canceled/config-race
+  predicates, concurrent identity determinism, defensive re-check presence,
+  no task mutation, dry-run no-write, max bounds incl. env clamping).
+- prompt37-crm-reminder-check.mjs: 129 → 149/149 (§76): F-CLI (conflict+snapshot
+  zero-writes §40, unknown/invalid flags, safe output §46, safe debug §47),
+  F-CONC (REAL concurrent CLI processes: due-soon due+59m offset 60 → exactly 1
+  notification §24; overdue due−5m → exactly 1 §25; P37-CONC- fixtures cleaned),
+  F-RACE (no-task-mutation §64 dynamic; completion §31 / cancellation §32 /
+  reminder-disable §34 races; deleted context §36; soft-deleted task §63;
+  reassignment dedupe §26; assignee+dueAt change §29; immutable history §28),
+  F-HEALTH (§68/§97). Cleanup AH still ZERO P37- leftovers (71 notifications
+  identity-deleted).
+- p37-final-probe.mjs: marked DIAGNOSTIC-ONLY per §77 (no production logic,
+  cleans fixtures, no secrets).
+
+Environment drift repaired (sandbox reset, NOT code): `.env` had been wiped to
+DATABASE_URL-only and the `_prisma_migrations` ledger was absent again.
+Restored per the documented living-dev-DB protocol: migration ledger
+re-baselined (`prisma migrate resolve --applied` ×18 — ledger writes only;
+`migrate status` → 18 applied / 0 pending), billing+pricing catalogs re-seeded
+(sanctioned idempotent seeds), dev env baseline restored (NEXTAUTH_URL,
+APP_BASE_URL, NEXTAUTH_SECRET generated, AUTH_EMAIL_VERIFICATION_MODE=OPTIONAL,
+BILLING_TRIALS_ENABLED/DAYS/PLAN, MFA_ENABLED, MFA_ENCRYPTION_KEY generated;
+no EMAIL_PROVIDER so the dev console transport prints reset links — P18's
+harness depends on it). Data-inventory snapshot refreshed to the post-regression
+verified state (integrity ok · quick_check ok · FK 0) with a dated note.
+
+Verification (EXACT results — all EXECUTED this session):
+- P37: unit 181/181 · crm-reminder-static-scan 26/26 · prompt37 E2E 149/149
+  (re-run green after isolated build AND after the Settings fix; P37-/P37QA-
+  fixtures torn down to ZERO leftovers).
+- FULL REGRESSION P17–P36 (all EXECUTED): p17 30/30 · p18 28/28 (after env
+  restore) · p19 24/24 (after inventory refresh) · p20-billing 56/56 ·
+  p20-state-machine 38/38 · p21 76/76 · p22 72/72 · p23-api 34/34 ·
+  p23-contract 45/45 · p24 67/67 · p25 68/68 · p26 108/108 · p26-rate-scan
+  CLEAN · p27 65/65 · p28 86/86 · p29 105/105 (node runtime for node:sqlite) ·
+  p29-unit 91/91 · p30 93/93 · p30-unit 54/54 · p31 106/106 · p31-unit 71/71 ·
+  p32 102/102 · p33 76/76 · p33-unit 64/64 · p34-entity 111/111 ·
+  p34-unit 139/139 · p35 148/148 · p35-unit 104/104 · p36 161/161 ·
+  p36-unit 95/95 — NO regressions.
+- Static scans: crm-reminder 26/26 · crm-activity-task 21/21 · crm 20/20 ·
+  notification-static GREEN · notification-catalog GREEN · search 67/67 ·
+  entity-detail 20/20 · identity-security 20/20 · ai-context-secret CLEAN ·
+  privacy-inventory CONSISTENT · privacy-deletion 32/32 ·
+  data-portability 53/53 · i18n audit CLEAN (112 files, 1681 usages, 0 missing,
+  0 parity gaps).
+- lint: 0 errors/warnings · tsc --noEmit: 0 errors.
+- ISOLATED BUILD (§93): dev stopped, `bun run build` exit 0, dev restarted via
+  ensure-dev.sh, P37 E2E re-run green post-build (149/149).
+- Health (§97): GET /api/health 200 — database reachable, 18 migrations
+  applied / 0 pending · /api/ready honest-degraded UNCHANGED (configuration
+  BLOCKED dev-expected · email NOT_CONFIGURED · payments BLOCKED deliberate ·
+  aiCostRates NOT_CONFIGURED · legal REQUIRES_REVIEW · backups/restoreDrill
+  NOT_CONFIGURED · notifications PARTIAL) — database+migrations READY; the
+  reminder scheduler is NOT a readiness dependency (§68, E2E-verified).
+
+Browser QA (agent-browser, real flows, P37QA fixtures with Asia/Tehran business
+timezone, torn down to ZERO leftovers):
+- Desktop 1366×768 + 1920×1080: CRM #/crm?tab=tasks — work queue + "Upcoming
+  reminders (24h) 1" strip; Tasks sections Overdue/Due today/Upcoming/No due
+  date with Tehran display (07:37Z → 11:07 AM) + reminder bell + accessible
+  "Reminder configured" label; Create-task dialog: REMINDERS section with
+  "Set a date…" gating (switches disabled without dueAt, enabled after),
+  offset select (5 min → 7 days), overdue toggle, Add → task persisted with
+  reminderEnabled=true/offset 60/overdue=true and dueAt interpreted in the
+  BUSINESS timezone (08:55 Tehran → 05:25Z stored ✓); task detail shows
+  "DUE REMINDER 1 hour" / "OVERDUE ALERT Off"; Edit→Save preserves the reminder
+  config (§60 regression via real UI) ✓.
+- Notification Center: all three CRM types render (due soon ×2, overdue ×1)
+  with Tehran times (12:52Z → 16:22), localized lead time ("due in 7 days"/
+  "due in 1 hour"), Business attribution, no HTML; CTA navigates exactly to
+  `#/crm?tab=tasks` (no deep link) ✓.
+- Settings → Notification Preferences: the three CRM rows now render under
+  Business (bug fix above); DUE_SOON EMAIL off → server row {enabled:false}
+  while IN_APP stays "Always enabled"; re-enabled afterwards ✓ (§54).
+- Mobile 360×640 / 390×844 / 412×915: ZERO horizontal overflow
+  (scrollWidth==clientWidth), dialogs usable, controls not clipped ✓.
+- FA/RTL: dir=rtl, Persian vocabulary (یادآورها/یادآور سررسید/هشدار تأخیر/
+  برای فعال‌شدن یادآورها…) + Persian offset labels (۵ دقیقه … ۷ روز, no ASCII
+  digits) + Persian ICU numerals (۲۴ ساعت), mirrored layout, LTR islands for
+  datetime/money ✓.
+- Dark mode EN+FA: reminder controls readable; priority/status are text chips
+  (never color-only) ✓.
+- Console after the full session: 0 errors, 0 warnings, no Radix
+  DialogTitle/DialogDescription accessibility warnings; dev.log clean ✓.
+- EMAIL: provider NOT configured in this environment → no production email
+  claimed; delivery-row semantics verified locally (SKIPPED
+  PREFERENCE_DISABLED / RECIPIENT_UNVERIFIED states from the E2E).
+
+Known limitations (honest):
+- Single-node scheduler architecture; idempotency is a safety net, NOT
+  distributed coordination (ADR §67) — one scheduling owner per database.
+- Scheduler down ⇒ no reminders fire until the next run; no replay beyond the
+  overdue lookback (documented).
+- One due-soon + one overdue per (task, dueAt); no recurring/multiple
+  reminders, no calendar, no push/SMS/WhatsApp, no CRM import (unchanged).
+- The overdue lookback is a scanning boundary, not retention.
+- EMAIL delivery end-to-end depends on operator SMTP configuration (verified
+  locally at the delivery-row level only).
+- p37-final-probe.mjs retained as DIAGNOSTIC-ONLY (labeled).
+
+Stage Summary — FINAL STATE (§102–§107):
+- PROMPT 37 = CLOSED. PROMPT 38 = NOT STARTED. No new migration in 37-F (18
+  applied / 0 pending, schema unchanged). No Redis/queue/worker/distributed
+  lock. No in-process scheduler. No new notification types (exactly the three
+  CRM types; no COMPLETED/UPDATED/DELETED/REOPENED noise). Catalog/static
+  scans/CRT regression all green. Documentation reconciled truthfully
+  (product + security + ADR + env-vars + production-operations + data
+  inventory). Worklog history preserved; this entry reconciles the stale
+  "Prompt 37 NOT started" record with the actual final state.
+- Files: added 3 (scripts/lib/crm-reminder-cli.mjs, src/lib/crm/
+  task-reminder-safety.ts, src/lib/crm/task-context-read.ts); modified 15
+  (CLI, processor, task-service, events, static scan, unit, E2E, probe,
+  notifications-preferences-view, product/security/ADR/env-vars/prod-ops
+  docs, data-inventory).
+- NEXT: STOP (§110). Await the next explicit task. Do NOT implement Prompt 38.

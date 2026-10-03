@@ -205,7 +205,7 @@ variables of its own. Details: `docs/security/notification-security.md`,
 
 | Variable | Required | Secret? | Purpose |
 |---|---|---|---|
-| `CRM_REMINDER_MAX_PER_RUN` | Optional (default 100) | No | Maximum notification attempts per processor run (bounded 10–500). If more candidates exist the run stops at the cap and the next run continues (Prompt 37 §40). |
+| `CRM_REMINDER_MAX_PER_RUN` | Optional (default 100) | No | Maximum notification attempts per processor run (bounded 10–500; invalid/NaN/negative values are clamped into the documented bounds — never unbounded). If more candidates exist the run stops at the cap and the next run continues (Prompt 37 §40). The CLI's `--max=` flag is additionally STRICT (Prompt 37-F §8): non-numeric or outside 10–500 exits 1 before any run. |
 | `CRM_REMINDER_OVERDUE_LOOKBACK_HOURS` | Optional (default 168) | No | Overdue scanning window in hours (bounded 1–720): only overdue tasks with `dueAt >= now − lookback` are considered. An OPERATIONAL scanning boundary, not a legal retention policy (Prompt 37 §41). |
 
 Both are optional, operator-tunable, and contain no secret values. There is

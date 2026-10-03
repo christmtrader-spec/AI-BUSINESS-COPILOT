@@ -48,6 +48,10 @@ export const OPERATIONAL_EVENTS = {
   crmReminderProcessorStarted: "crm.reminder.processor.started",
   crmReminderProcessorCompleted: "crm.reminder.processor.completed",
   crmReminderProcessorFailed: "crm.reminder.processor.failed",
+  // Prompt 37-F (§17/§18) — post-commit assignment notification skipped by
+  // the defensive re-check (deleted/reassigned/contextless). Safe category
+  // only — never task ids, titles or recipient details (§11).
+  crmAssignmentNotifySkipped: "crm.assignment.notify_skipped",
 } as const;
 
 export type OperationalEvent = (typeof OPERATIONAL_EVENTS)[keyof typeof OPERATIONAL_EVENTS];

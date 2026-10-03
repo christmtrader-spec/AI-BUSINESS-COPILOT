@@ -1,6 +1,6 @@
 # CRM Task Reminders — Security
 
-**Prompt 37 · Status: IMPLEMENTED.** Security posture of the CRM task assignment notifications, reminder configuration and the scheduled reminder processor.
+**Prompt 37 · Status: IMPLEMENTED + FINALIZED (Prompt 37-F).** Security posture of the CRM task assignment notifications, reminder configuration and the scheduled reminder processor.
 
 ## 1. Tenant isolation
 
@@ -41,6 +41,15 @@ Per-type strict schemas (Prompt 32 §23 machinery + Prompt 37 §17–§19):
 
 - The processor logs counts/mode/limits only (`crm.reminder.processor.completed`), never titles, context names, emails or notification bodies (§69/§170).
 - The CLI prints the same safe counters; errors are logged as error NAMES, not payloads (§66/§68).
+- **Prompt 37-F hardening (§10/§11/§47):** the per-row `CRM_REMINDER_DEBUG` dump (task ids, business ids, dueAt, offsets, assignment state) was REPLACED by strictly safe aggregate metadata — `{ debug: "crm-task-reminders", phase: "candidate-scan", dueSoonScanned, overdueScanned, max, mode }`. Static scan rules 21–26 pin this: no per-task ids, business ids, dueAt values, per-task offsets or assignee ids in ANY console/structured log line, and no debug-mode bypass of the policy. Verified dynamically by the §46/§47 E2E checks (fixture ids/titles/emails never appear in captured CLI output, with and without `CRM_REMINDER_DEBUG=1`).
+
+## 6b. Defensive re-checks and race safety (Prompt 37-F, §16–§20/§31–§36)
+
+- **Reminder path:** before every notification the processor re-reads the task's current minimal state (`id, businessId, status, deletedAt, dueAt, assignedToUserId, reminderEnabled, reminderMinutesBefore, overdueAlertEnabled` — never the description) and skips unless the task is still active (OPEN/IN_PROGRESS), still live (`deletedAt = null`), still assigned to the SAME user, still due at the SAME instant and still configured (§31–§34). The pure predicates live in `src/lib/crm/task-reminder-safety.ts` and are unit-tested against every race.
+- **Context liveness (§36/§17):** the context row is re-read DIRECTLY with `deletedAt: null` + business scope (`src/lib/crm/task-context-read.ts`) — a soft-deleted/foreign context (which a relation include would NOT exclude) skips the notification. There is NO `CUSTOMER`/`""` fallback anywhere.
+- **Assignment path:** the post-commit helper (`notifyAssignmentSafe`) is awaited by the task service (deterministic completion, §14/§15) and re-verifies before sending: same business, not soft-deleted, current assignee STILL equals the intended recipient (a concurrent reassignment B→C can never notify B, §20) and the context still resolvable (§17/§18). A skipped attempt logs only a SAFE category (`crm.assignment.notify_skipped` with a reason word — no ids, no titles).
+- **Concurrent processor idempotency (§23–§25):** overlapping runs dedupe on the Notification unique index — proven with REAL concurrent CLI processes on the same due-soon and overdue candidates (exactly ONE row each). This is duplicate safety, NOT distributed scheduling: single-node scheduler ownership remains the deployment model (§70/§73/§74).
+- **Notification failure isolation (§37):** a `null` outcome counts as `failed` and the run continues; no retry with a fresh sourceEventId, no task mutation.
 
 ## 7. Template + email safety
 
@@ -60,7 +69,7 @@ Per-type strict schemas (Prompt 32 §23 machinery + Prompt 37 §17–§19):
 
 ## 10. Static verification
 
-- `scripts/crm-reminder-static-scan.mjs` — 20 rules (§97), all green.
+- `scripts/crm-reminder-static-scan.mjs` — 26 rules (§97 + Prompt 37-F safe-logging rules 21–26), all green.
 - `scripts/crm-activity-task-static-scan.mjs` — 21 rules incl. the updated scheduler-allowlist rule (§98), all green.
 - `scripts/notification-static-scan.mjs` — 28 checks incl. the Prompt 37 CRM rules (§99), all green.
 - `scripts/notification-catalog-check.mjs` — 453/453 including the three CRM entries (§100/§142).
