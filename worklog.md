@@ -3163,3 +3163,34 @@ Stage Summary — FINAL STATE (§102–§107):
   notifications-preferences-view, product/security/ADR/env-vars/prod-ops
   docs, data-inventory).
 - NEXT: STOP (§110). Await the next explicit task. Do NOT implement Prompt 38.
+
+---
+
+Task ID: deep-qa-post-p37f
+Agent: Z.ai Code
+Task: User directive (Persian): "Continue the build with precise, complete detail. Deep and precise testing of the entire project, identifying all bugs and errors and fixing them." — full-project deep test round after Prompt 37-F closure. NO new feature prompt was provided; Prompt 38 remains NOT STARTED (per P37-F §110, awaiting an explicit prompt).
+
+Work Log:
+- Baseline audit: dev server healthy (GET /api/health 200, migrations 18/0), git tree clean, worklog P37-F closure entry confirmed as the current state.
+- FULL REGRESSION re-run (every suite EXECUTED this session): p17 30/30 · p18 28/28 · p19 24/24 · p20-billing 56/56 · p20-state-machine 38/38 · p21 76/76 · p22 72/72 · p23-api 34/34 · p23-contract 45/45 · p24 67/67 · p25 68/68 · p26 108/108 (+ rate-literal scan CLEAN) · p27 65/65 · p28 86/86 · p29 105/105 · p29-unit 91/91 · p30 93/93 · p30-unit 54/54 · p31 106/106 · p31-unit 71/71 · p32 102/102 · p33 76/76 · p33-unit 64/64 · p34 111/111 · p34-unit 139/139 · p35 148/148 · p35-unit 104/104 · p36 161/161 · p36-unit 95/95 · p37-unit 181/181 · p37 static scan 26/26 · p37 E2E 149/149 — ZERO failures.
+- Static scans re-run: crm-reminder 26/26 · crm-activity-task 21/21 · crm 20/20 · notification-static 28/28 · search 67/67 · entity-detail 20/20 · identity-security 20/20 · ai-context-secret 11/11 CLEAN · privacy-inventory CONSISTENT · privacy-deletion 32/32 · data-portability-audit 53/53 · audit-usage CONSISTENT · i18n-audit CLEAN (112 files, 1681 usages, 0 missing, 0 parity).
+- lint 0 errors · tsc --noEmit 0 errors. DB inventory: integrity ok · quick_check ok · FK 0.
+- Environment issue found + resolved (NOT a code bug): the sandbox reaped the background dev server mid-run (p36 first attempt died with ECONNREFUSED after p35 had passed). Restarted via `bash scripts/ensure-dev.sh`; p36 then 161/161. Runtime footgun documented below.
+- RUNTIME FOOTGUN (documenting, no code change): bun-required suites — prompt21, prompt22, prompt23-provider-contract, prompt23-payments-api-check, prompt24, prompt25, prompt26, prompt27, prompt37-crm-reminder-check use Bun.* APIs or extensionless TS imports and MUST run with `bun scripts/...`, not `node`. p20-state-machine.test.ts runs directly via `bun scripts/prompt20-state-machine.test.ts` (it is a script with its own pass/fail summary, NOT a bun-test file — `bun test` reports "0 tests"). p29 deliberately uses node (node:sqlite). Unit harnesses (p29-unit…p36-unit, p37-unit) run with `bun --preload ./scripts/lib/register-server-only-shim.ts scripts/<name>.ts`.
+- Browser QA (agent-browser, REAL user journey, session-scoped fixtures torn down to ZERO leftovers):
+  - Sign-in via the real UI form (fresh deep-qa-* account created through the public register API) → onboarding "Create your business" → trial step (Skip) → "Workspace is ready" → dashboard renders with the full module sidebar. ✓
+  - Customers: Add-customer dialog → row appears in the table. ✓
+  - CRM → Tasks: work-queue strip (Overdue/Due today/Upcoming reminders 24h); Create-task dialog — §59 gating verified live: reminder switches DISABLED until dueAt set, "Remind me" (offset) DISABLED until reminderEnabled, full offset vocabulary (5 min → 7 days) matches the closed word list; task persisted 201 with reminderEnabled/offset/overdueAlert intact.
+  - Reminder pipeline E2E in-browser: task due in ~30 min with 60-min offset → real CLI `process-crm-task-reminders.mjs --apply` → 2 DUE_SOON notifications created (scanned 2, duplicates 0, skipped 0, failed 0; completion log aggregates only — no per-task ids, §47 law holds). SECOND --apply run: created 0, duplicates 2 — idempotency proven against live data. ✓
+  - Notification Center: 2 "CRM task due soon" entries with lead time ("due in 1 hour"), context + business attribution, unread markers; CTA click navigates EXACTLY to #/crm?tab=tasks (no deep link, P37 actionRoute law). ✓
+  - Task detail dialog: DUE REMINDER "1 hour" / OVERDUE ALERT "On". Self-assignment (owner assigns task to self via PATCH) correctly produces NO assignment notification (§34 "never the actor self-assigning"). ✓
+  - PATCH assignee flow verified via API for all 3 tasks (200 + assignedTo set) — the AWAITED notifyAssignmentSafe path executed post-commit without delaying/failing the PATCH.
+  - Mobile 390×844: scrollWidth==clientWidth (zero horizontal overflow). FA/RTL: dir=rtl, lang=fa, Persian vocabulary (وظایف سررسیدگذشته/سررسید امروز/یادآورهای پیشرو/یادآور تنظیم شده است) + ICU numerals (۲۴), zero overflow. Dark mode: near-black bg, controls readable (emulate-media, restored afterwards). Console: 0 errors, 0 warnings across the whole session.
+- QA observation (documented, NOT a bug, NO "fix" invented): clicking a day inside Chromium's NATIVE datetime-local popup via browser automation dispatches a page-level pointer event that Radix Dialog treats as an outside click and dismisses the dialog. Real users' native pickers do not dispatch page events (popup is browser chrome); the datetime-local input itself (keyboard/typing) works correctly and remains the supported path. Leaving behavior unchanged — changing DialogContent outside-click semantics to "fix" an automation artifact would regress real UX (overlay-click-to-close).
+- Fixtures: deep-qa-* user + business + customer + 3 tasks + 2 notifications ALL deleted; re-check reports 0 users / 0 business leftovers. Screenshots saved as qa-p38-*.png evidence.
+- Final state: /api/health 200 (18 applied / 0 pending), no source modifications were required this round — the suite of Prompt 17–37 code withstood full regression + live browser QA with zero product bugs found.
+
+Stage Summary:
+- Deep-test round COMPLETE: 32 test suites (~2,700 assertions) + 13 static scans + lint + tsc + DB integrity + full browser journey — ALL GREEN. No product code changed; no migrations; no dependency changes.
+- PROMPT 37 remains CLOSED. PROMPT 38 NOT STARTED (no explicit prompt text provided by the user yet — the directive was "continue + deep test + fix", which resolved to verification; no speculative P38 implementation was attempted, per the STOP discipline of §110 P37-F).
+- Next phase recommendation (for the next explicit user prompt): candidates from the roadmap's remaining MVP surface — e.g. supplier/payables depth, inventory workflows, reports expansion — but the actual Prompt 38 text MUST be awaited; do not infer scope.
