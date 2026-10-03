@@ -215,7 +215,7 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
   eq(sale.sale.balanceMinor, 10, "v14 sale balance derived server-side");
 
   const exp = mapExpenseDetail(
-    { id: "e1", category: "Rent", amountMinor: 900, paidMinor: 0, status: "UNPAID", spentAt: base, note: null, supplierId: null, supplierName: null, createdAt: base },
+    { id: "e1", category: "Rent", amountMinor: 900, paidMinor: 0, status: "UNPAID", spentAt: base, dueDate: null, reference: null, note: null, supplierId: null, supplierName: null, createdAt: base },
     [{ id: "p1", amountMinor: 100, method: "CASH", paidAt: base, note: null, actorName: "Zed" }],
   );
   eq(Object.keys(exp), ["expense", "payments"], "v14 ExpenseDetail top-level keys");
@@ -237,7 +237,7 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
     collectKeys(mapSupplierDetail({ id: "x", name: "n", phone: null, email: null, address: null, note: null, createdAt: base }, computeSupplierSummary([]), [], [])),
     collectKeys(mapProductDetail({ id: "x", name: "n", sku: null, unit: null, salePriceMinor: 1, costPriceMinor: 1, stockQty: 0, lowStockAt: 0, isActive: true, createdAt: base, updatedAt: base }, [], [], 10)),
     collectKeys(mapSaleDetail({ id: "x", number: 1, customerId: null, customerName: null, issueDate: base, subtotalMinor: 0, discountMinor: 0, totalMinor: 0, paidMinor: 0, status: "UNPAID", note: null, createdAt: base }, [], [])),
-    collectKeys(mapExpenseDetail({ id: "x", category: "c", amountMinor: 1, paidMinor: 0, status: "UNPAID", spentAt: base, note: null, supplierId: null, supplierName: null, createdAt: base }, [])),
+    collectKeys(mapExpenseDetail({ id: "x", category: "c", amountMinor: 1, paidMinor: 0, status: "UNPAID", spentAt: base, dueDate: null, reference: null, note: null, supplierId: null, supplierName: null, createdAt: base }, [])),
     collectKeys(mapPaymentDetail({ id: "x", direction: "IN", amountMinor: 1, method: "CASH", note: null, paidAt: base, createdAt: base }, null, null)),
   ].flat();
   for (const tok of forbidden) {

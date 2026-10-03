@@ -85,6 +85,8 @@ type ExpenseRowInput = {
   paidMinor: number;
   status: string;
   spentAt: Date;
+  dueDate: Date | null;
+  reference: string | null;
   note: string | null;
   createdAt: Date;
   supplier: { name: string } | null;
@@ -101,6 +103,8 @@ function toRow(e: ExpenseRowInput) {
     status: e.status,
     balanceMinor: e.amountMinor - e.paidMinor,
     spentAt: e.spentAt.toISOString(),
+    dueDate: e.dueDate ? e.dueDate.toISOString() : null,
+    reference: e.reference,
     note: e.note,
     createdAt: e.createdAt.toISOString(),
   };
@@ -130,6 +134,8 @@ export const POST = route(async (req: NextRequest) => {
         amountMinor: input.amountMinor,
         status: "UNPAID",
         spentAt: input.spentAt ?? new Date(),
+        dueDate: input.dueDate ?? null,
+        reference: input.reference ?? null,
         note: input.note,
       },
     });
@@ -141,7 +147,12 @@ export const POST = route(async (req: NextRequest) => {
         action: "expense.create",
         entityType: "Expense",
         entityId: created.id,
-        after: { category: created.category, amountMinor: created.amountMinor },
+        after: {
+          category: created.category,
+          amountMinor: created.amountMinor,
+          dueDate: created.dueDate ? created.dueDate.toISOString() : null,
+          reference: created.reference,
+        },
         ip: req.headers.get("x-forwarded-for"),
         userAgent: req.headers.get("user-agent"),
       },

@@ -565,6 +565,8 @@ export const POST = route(async (req: NextRequest, { params }: RouteParams) => {
           paidMinor: e.paidMinor,
           status: e.status,
           spentAt: toDate(e.spentAt) ?? new Date(),
+          dueDate: toDate(e.dueDate) ?? null,
+          reference: e.reference ?? null,
           note: e.note ?? null,
           deletedAt: toDate(e.deletedAt) ?? null,
         })),

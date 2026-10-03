@@ -81,11 +81,45 @@ export const saleCreateSchema = z.object({
   issueDate: z.string().datetime().nullish().transform((v) => (v ? new Date(v) : null)),
 });
 
+// Payables aging (§2 row 15): supplier-bill terms. dueDate is DATE-ONLY
+// ("YYYY-MM-DD") — interpreted with the sanctioned Prompt-35 §84 rule
+// (UTC midnoon) so the calendar day is identical in every display timezone.
+// Garbage calendar dates (2026-02-31) are rejected, not silently nulled.
+const dueDateStringSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.")
+  // JS Date ROLLS OVER out-of-range days (2026-02-31 → Mar 3), so the NaN
+  // check alone would silently accept garbage. Validate the calendar day
+  // explicitly (leap-year aware) BEFORE constructing the instant.
+  .refine(
+    (v) => {
+      const [y, m, d] = v.split("-").map(Number);
+      if (m < 1 || m > 12 || d < 1) return false;
+      const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      return d <= daysInMonth;
+    },
+    "Invalid calendar date.",
+  )
+  .transform((v) => new Date(`${v}T12:00:00.000Z`))
+  .refine((d) => !Number.isNaN(d.getTime()), "Invalid calendar date.");
+
 export const expenseCreateSchema = z.object({
   supplierId: z.string().trim().max(64).nullish().transform((v) => v || null),
   category: z.string().trim().min(1).max(60),
   amountMinor: z.number().int().min(1).max(9_000_000_000),
   spentAt: z.string().datetime().nullish().transform((v) => (v ? new Date(v) : null)),
+  // undefined → undefined (absent = "untouched" for PATCH), null → null
+  // (explicit clear), "YYYY-MM-DD" → UTC-midnoon Date (§84).
+  dueDate: dueDateStringSchema
+    .nullish()
+    .transform((v) => (v === undefined ? undefined : v)),
+  reference: z
+    .string()
+    .trim()
+    .max(80)
+    .nullish()
+    .transform((v) => (v === undefined ? undefined : v || null)),
   note: z.string().trim().max(1000).nullish().transform((v) => v || null),
 });
 

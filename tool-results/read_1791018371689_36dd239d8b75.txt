@@ -1,0 +1,1490 @@
+     1→"use client";
+     2→
+     3→import { useState } from "react";
+     4→import { useMutation, useQuery } from "@tanstack/react-query";
+     5→import { useLocale, useTranslations } from "next-intl";
+     6→import {
+     7→  Area,
+     8→  AreaChart,
+     9→  Bar,
+    10→  BarChart,
+    11→  CartesianGrid,
+    12→  Cell,
+    13→  ComposedChart,
+    14→  Line,
+    15→  Pie,
+    16→  PieChart,
+    17→  XAxis,
+    18→  YAxis,
+    19→} from "recharts";
+    20→import {
+    21→  AlertTriangle,
+    22→  ArrowDownRight,
+    23→  ArrowUpRight,
+    24→  Boxes,
+    25→  CalendarDays,
+    26→  ChartPie,
+    27→  ChevronRight,
+    28→  Coins,
+    29→  Download,
+    30→  HandCoins,
+    31→  Layers,
+    32→  Loader2,
+    33→  Lock,
+    34→  Minus,
+    35→  Package,
+    36→  ReceiptText,
+    37→  TrendingUp,
+    38→} from "lucide-react";
+    39→import { api, ApiClientError } from "@/lib/api-client";
+    40→import { cn } from "@/lib/utils";
+    41→import { useAppStore } from "@/store/app-store";
+    42→import { toast } from "@/hooks/use-toast";
+    43→import { useBillingErrorText } from "@/hooks/use-billing-error-text";
+    44→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+    45→import { Badge } from "@/components/ui/badge";
+    46→import { Button } from "@/components/ui/button";
+    47→import { Skeleton } from "@/components/ui/skeleton";
+    48→import {
+    49→  Select,
+    50→  SelectContent,
+    51→  SelectItem,
+    52→  SelectTrigger,
+    53→  SelectValue,
+    54→} from "@/components/ui/select";
+    55→import { DataTable, Ltr } from "@/components/shared/data-table";
+    56→import {
+    57→  ChartContainer,
+    58→  ChartTooltip,
+    59→  type ChartConfig,
+    60→} from "@/components/ui/chart";
+    61→import { EmptyState, PageHeader } from "@/components/shared/primitives";
+    62→import {
+    63→  Dialog,
+    64→  DialogContent,
+    65→  DialogDescription,
+    66→  DialogHeader,
+    67→  DialogTitle,
+    68→} from "@/components/ui/dialog";
+    69→import { fmtCount, fmtMoney } from "../finance-shared/finance-kit";
+    70→import type { BusinessSummary } from "../shell/types";
+    71→
+    72→/**
+    73→ * Phase 04 — Reports. Every figure is fetched from
+    74→ * /api/v1/reports/summary, which computes deterministic aggregates from
+    75→ * the recorded transactions (Rule 05: the UI never invents numbers).
+    76→ */
+    77→
+    78→type Summary = {
+    79→  range: { days: number; from: string; to: string; timezone: string };
+    80→  kpis: {
+    81→    revenueMinor: number;
+    82→    salesCount: number;
+    83→    avgSaleMinor: number;
+    84→    collectedMinor: number;
+    85→    expensesMinor: number;
+    86→    expensesCount: number;
+    87→    paidOutMinor: number;
+    88→    netCashMinor: number;
+    89→    netAccrualMinor: number;
+    90→  };
+    91→  timeline: Array<{
+    92→    date: string;
+    93→    revenueMinor: number;
+    94→    expenseMinor: number;
+    95→    collectedMinor: number;
+    96→    paidOutMinor: number;
+    97→  }>;
+    98→  topProducts: Array<{ name: string; qty: number; revenueMinor: number }>;
+    99→  expensesByCategory: Array<{ category: string; totalMinor: number }>;
+   100→  outstanding: {
+   101→    receivableMinor: number;
+   102→    receivableCount: number;
+   103→    payableMinor: number;
+   104→    payableCount: number;
+   105→  };
+   106→  inventory: {
+   107→    valueMinor: number;
+   108→    productCount: number;
+   109→    lowStockCount: number;
+   110→    lowStockItems: Array<{
+   111→      id: string;
+   112→      name: string;
+   113→      unit: string | null;
+   114→      stockQty: number;
+   115→      lowStockAt: number;
+   116→    }>;
+   117→  };
+   118→  // Prompt 20 — ADVANCED_REPORTS entitlement: the server OMITS `advanced`
+   119→  // when the plan is not entitled; `advancedAvailable` is always present.
+   120→  advancedAvailable: boolean;
+   121→  advanced?: AdvancedInsights;
+   122→};
+   123→
+   124→/** Mirrors src/lib/reports-advanced.ts (server-computed, deterministic). */
+   125→type AdvancedInsights = {
+   126→  previousRange: { from: string; to: string };
+   127→  growth: {
+   128→    revenueMinor: number;
+   129→    revenuePrevMinor: number;
+   130→    revenueChangePct: number | null;
+   131→    salesCount: number;
+   132→    salesCountPrev: number;
+   133→    salesChangePct: number | null;
+   134→    expensesMinor: number;
+   135→    expensesPrevMinor: number;
+   136→    expensesChangePct: number | null;
+   137→  };
+   138→  concentration: {
+   139→    topCustomers: Array<{ name: string; revenueMinor: number; sharePct: number }>;
+   140→    top5SharePct: number;
+   141→    customerCount: number;
+   142→  };
+   143→};
+   144→
+   145→const RANGES = ["7", "30", "90"] as const;
+   146→
+   147→// ---- Month-over-month --------------------------------------------------------
+   148→
+   149→type MonthlyRow = {
+   150→  month: string; // YYYY-MM
+   151→  revenueMinor: number;
+   152→  salesCount: number;
+   153→  expensesMinor: number;
+   154→  expensesCount: number;
+   155→  collectedMinor: number;
+   156→  paidOutMinor: number;
+   157→  netCashMinor: number;
+   158→  netAccrualMinor: number;
+   159→};
+   160→
+   161→type MonthlyData = { months: number; series: MonthlyRow[] };
+   162→
+   163→/** Single-month drill-down (GET /api/v1/reports/monthly/[month]). */
+   164→type MonthDetail = {
+   165→  month: string;
+   166→  timezone: string;
+   167→  totals: {
+   168→    revenueMinor: number;
+   169→    salesCount: number;
+   170→    expensesMinor: number;
+   171→    expensesCount: number;
+   172→    collectedMinor: number;
+   173→    paidOutMinor: number;
+   174→    netCashMinor: number;
+   175→    netAccrualMinor: number;
+   176→  };
+   177→  sales: Array<{
+   178→    number: number;
+   179→    issueDate: string;
+   180→    customerName: string | null;
+   181→    totalMinor: number;
+   182→    paidMinor: number;
+   183→    balanceMinor: number;
+   184→    status: string;
+   185→  }>;
+   186→  expenses: Array<{
+   187→    category: string;
+   188→    spentAt: string;
+   189→    supplierName: string | null;
+   190→    amountMinor: number;
+   191→    paidMinor: number;
+   192→    balanceMinor: number;
+   193→    status: string;
+   194→  }>;
+   195→};
+   196→
+   197→/** Percent change between two minor-unit totals; null when undefined (÷0). */
+   198→function pctChange(cur: number, prev: number): number | null {
+   199→  if (prev === 0) return null;
+   200→  return Math.round(((cur - prev) / prev) * 100);
+   201→}
+   202→
+   203→/** Category slice palette (brand hues, no blue). */
+   204→const CATEGORY_COLORS = [
+   205→  "var(--chart-1)",
+   206→  "var(--chart-4)",
+   207→  "var(--chart-3)",
+   208→  "var(--chart-2)",
+   209→  "var(--chart-5)",
+   210→  "color-mix(in oklch, var(--chart-1) 55%, var(--muted))",
+   211→];
+   212→
+   213→type TooltipEntry = { name?: string; value?: number; color?: string; dataKey?: string | number };
+   214→
+   215→function MoneyTooltip({
+   216→  active,
+   217→  payload,
+   218→  label,
+   219→  fmt,
+   220→  labelFmt,
+   221→}: {
+   222→  active?: boolean;
+   223→  payload?: TooltipEntry[];
+   224→  label?: string | number;
+   225→  fmt: (v: number) => string;
+   226→  labelFmt?: (v: string) => string;
+   227→}) {
+   228→  if (!active || !payload || payload.length === 0) return null;
+   229→  const labelText =
+   230→    labelFmt && typeof label === "string" ? labelFmt(label) : label != null ? String(label) : "";
+   231→  return (
+   232→    <div className="bg-popover text-popover-foreground rounded-lg border px-3 py-2 text-xs shadow-md">
+   233→      <p className="mb-1 font-medium" dir="auto">{labelText}</p>
+   234→      {payload.map((entry) => (
+   235→        <p key={String(entry.dataKey)} className="flex items-center gap-1.5 tabular-nums">
+   236→          <span
+   237→            className="size-2 shrink-0 rounded-[2px]"
+   238→            style={{ background: entry.color }}
+   239→            aria-hidden="true"
+   240→          />
+   241→          {entry.name}: <span dir="ltr">{fmt(entry.value ?? 0)}</span>
+   242→        </p>
+   243→      ))}
+   244→    </div>
+   245→  );
+   246→}
+   247→
+   248→export function ReportsView({ business }: { business: BusinessSummary }) {
+   249→  const t = useTranslations("reports");
+   250→  const tErrors = useTranslations("errors");
+   251→  const billingErrorText = useBillingErrorText();
+   252→  const uiLocale = useLocale();
+   253→  const navigate = useAppStore((s) => s.navigate);
+   254→  const view = useAppStore((s) => s.view);
+   255→  const activeId = useAppStore((s) => s.activeBusinessId);
+   256→  const [days, setDays] = useState<string>("30");
+   257→
+   258→  // Month drill-down state lives in the URL (store view param) — deep-linkable
+   259→  // via #/reports?month=YYYY-MM and sync'd with browser back/forward. The
+   260→  // dialog is a DERIVED view of the store: row clicks navigate({param}),
+   261→  // close navigates back to the bare module; hashchange (Back/Forward,
+   262→  // external deep links) flows through app-root's replaceView into here.
+   263→  const detailMonth =
+   264→    view.kind === "module" && view.module === "reports" ? (view.param ?? null) : null;
+   265→  const openMonth = (month: string) =>
+   266→    navigate({ kind: "module", module: "reports", param: month }, { replace: true });
+   267→  const closeMonth = () =>
+   268→    navigate({ kind: "module", module: "reports" }, { replace: true });
+   269→
+   270→  const fmt = (minor: number) => fmtMoney(business, minor);
+   271→
+   272→  const { data, isLoading, error, refetch } = useQuery<Summary>({
+   273→    queryKey: ["reports", "summary", days],
+   274→    queryFn: () => api(`/api/v1/reports/summary?days=${days}`),
+   275→    staleTime: 30_000,
+   276→  });
+   277→
+   278→  // Month-over-month series (deterministic server buckets, oldest → newest).
+   279→  const { data: monthly } = useQuery<MonthlyData>({
+   280→    queryKey: ["reports", "monthly", 6],
+   281→    queryFn: () => api("/api/v1/reports/monthly?months=6"),
+   282→    staleTime: 60_000,
+   283→  });
+   284→
+   285→  // MoM drill-down — clicking a month row navigates to that month's detail
+   286→  // (URL becomes #/reports?month=YYYY-MM, shareable + back/forward safe).
+   287→  const { data: monthDetail, isLoading: detailLoading } = useQuery<MonthDetail>({
+   288→    queryKey: ["reports", "monthDetail", detailMonth],
+   289→    queryFn: () => api(`/api/v1/reports/monthly/${detailMonth}`),
+   290→    enabled: detailMonth !== null,
+   291→    staleTime: 60_000,
+   292→  });
+   293→
+   294→  // CSV export — server-generated from the SAME aggregates (single source
+   295→  // of truth); the client only streams the blob to a file.
+   296→  const csvExport = useMutation({
+   297→    mutationFn: async () => {
+   298→      const res = await fetch(`/api/v1/reports/export?days=${days}`, {
+   299→        credentials: "same-origin",
+   300→        headers: activeId ? { "x-business-id": activeId } : undefined,
+   301→      });
+   302→      if (!res.ok) {
+   303→        let message = t("csvFailed");
+   304→        try {
+   305→          const body = (await res.json()) as { error?: { code?: string; message?: string } };
+   306→          if (body.error?.code === "RATE_LIMITED") message = t("csvRateLimited");
+   307→          else if (body.error?.message) message = body.error.message;
+   308→        } catch {
+   309→          // keep default
+   310→        }
+   311→        throw new Error(message);
+   312→      }
+   313→      const blob = await res.blob();
+   314→      const url = URL.createObjectURL(blob);
+   315→      const a = document.createElement("a");
+   316→      a.href = url;
+   317→      const dispo = res.headers.get("content-disposition") ?? "";
+   318→      const match = /filename="([^"]+)"/.exec(dispo);
+   319→      a.download = match?.[1] ?? `report-${days}d.csv`;
+   320→      document.body.appendChild(a);
+   321→      a.click();
+   322→      a.remove();
+   323→      URL.revokeObjectURL(url);
+   324→    },
+   325→    onSuccess: () => toast({ title: t("csvExportedToast") }),
+   326→    onError: (err) =>
+   327→      toast({
+   328→        title: billingErrorText(err) || (err instanceof Error ? err.message : tErrors("generic")),
+   329→        variant: "destructive",
+   330→      }),
+   331→  });
+   332→
+   333→  // Per-month CSV export (month dialog) — same server builder as the dialog.
+   334→  const monthCsvExport = useMutation({
+   335→    mutationFn: async (month: string) => {
+   336→      const res = await fetch(`/api/v1/reports/monthly/${month}/export`, {
+   337→        credentials: "same-origin",
+   338→        headers: activeId ? { "x-business-id": activeId } : undefined,
+   339→      });
+   340→      if (!res.ok) {
+   341→        let message = t("csvFailed");
+   342→        try {
+   343→          const body = (await res.json()) as { error?: { code?: string; message?: string } };
+   344→          if (body.error?.code === "RATE_LIMITED") message = t("csvRateLimited");
+   345→          else if (body.error?.message) message = body.error.message;
+   346→        } catch {
+   347→          // keep default
+   348→        }
+   349→        throw new Error(message);
+   350→      }
+   351→      const blob = await res.blob();
+   352→      const url = URL.createObjectURL(blob);
+   353→      const a = document.createElement("a");
+   354→      a.href = url;
+   355→      const dispo = res.headers.get("content-disposition") ?? "";
+   356→      const match = /filename="([^"]+)"/.exec(dispo);
+   357→      a.download = match?.[1] ?? `report-${month}.csv`;
+   358→      document.body.appendChild(a);
+   359→      a.click();
+   360→      a.remove();
+   361→      URL.revokeObjectURL(url);
+   362→    },
+   363→    onSuccess: () => toast({ title: t("csvExportedToast") }),
+   364→    onError: (err) =>
+   365→      toast({
+   366→        title: billingErrorText(err) || (err instanceof Error ? err.message : tErrors("generic")),
+   367→        variant: "destructive",
+   368→      }),
+   369→  });
+   370→
+   371→  const fmtDay = (key: string) => {
+   372→    // YYYY-MM-DD -> localized medium date for tooltips (UI locale, not
+   373→    // business locale — these are interface labels, not financial data).
+   374→    const d = new Date(`${key}T00:00:00Z`);
+   375→    return new Intl.DateTimeFormat(uiLocale === "fa" ? "fa-IR" : "en-US", {
+   376→      dateStyle: "medium",
+   377→      timeZone: "UTC",
+   378→    }).format(d);
+   379→  };
+   380→
+   381→  const fmtMonth = (key: string) => {
+   382→    // YYYY-MM -> localized short month label ("Sep 2026" / "شهریور ۱۴۰۵").
+   383→    const d = new Date(`${key}-01T00:00:00Z`);
+   384→    return new Intl.DateTimeFormat(uiLocale === "fa" ? "fa-IR" : "en-US", {
+   385→      month: "short",
+   386→      year: "numeric",
+   387→      timeZone: "UTC",
+   388→    }).format(d);
+   389→  };
+   390→
+   391→  const fmtIsoDate = (iso: string) => {
+   392→    // ISO instant -> localized medium date for drill-down lists.
+   393→    try {
+   394→      return new Intl.DateTimeFormat(uiLocale === "fa" ? "fa-IR" : "en-US", {
+   395→        dateStyle: "medium",
+   396→        timeZone: business.timezone || "UTC",
+   397→      }).format(new Date(iso));
+   398→    } catch {
+   399→      return iso.slice(0, 10);
+   400→    }
+   401→  };
+   402→
+   403→  const timelineConfig = {
+   404→    revenueMinor: { label: t("legendRevenue"), color: "var(--chart-1)" },
+   405→    expenseMinor: { label: t("legendExpenses"), color: "var(--chart-3)" },
+   406→  } satisfies ChartConfig;
+   407→
+   408→  const cashConfig = {
+   409→    collectedMinor: { label: t("legendCollected"), color: "var(--chart-2)" },
+   410→    paidOutMinor: { label: t("legendPaidOut"), color: "var(--chart-5)" },
+   411→  } satisfies ChartConfig;
+   412→
+   413→  const momConfig = {
+   414→    revenueMinor: { label: t("momRevenue"), color: "var(--chart-1)" },
+   415→    expensesMinor: { label: t("momExpenses"), color: "var(--chart-3)" },
+   416→    netCashMinor: { label: t("momNetCash"), color: "var(--chart-2)" },
+   417→  } satisfies ChartConfig;
+   418→
+   419→  // Chronological context for the MoM DataTable — delta / "new" badge /
+   420→  // current-month note key off the month itself (not the displayed row
+   421→  // order), so they stay truthful when the user client-sorts the table.
+   422→  const momPrevByMonth = new Map<string, MonthlyRow | null>();
+   423→  let momCurrentMonth: string | null = null;
+   424→  if (monthly) {
+   425→    monthly.series.forEach((row, i) => {
+   426→      momPrevByMonth.set(row.month, i > 0 ? monthly.series[i - 1] : null);
+   427→    });
+   428→    momCurrentMonth =
+   429→      monthly.series.length > 0
+   430→        ? monthly.series[monthly.series.length - 1].month
+   431→        : null;
+   432→  }
+   433→
+   434→  const hasAnyActivity =
+   435→    !!data &&
+   436→    (data.kpis.salesCount > 0 ||
+   437→      data.kpis.expensesCount > 0 ||
+   438→      data.kpis.collectedMinor > 0 ||
+   439→      data.kpis.paidOutMinor > 0);
+   440→
+   441→  const kpiCards = data
+   442→    ? [
+   443→        {
+   444→          icon: ReceiptText,
+   445→          label: t("kpiRevenue"),
+   446→          value: fmt(data.kpis.revenueMinor),
+   447→          hint: t("kpiRevenueHint", { count: fmtCount(uiLocale, data.kpis.salesCount) }),
+   448→          tone: "text-emerald-700 dark:text-emerald-400",
+   449→        },
+   450→        {
+   451→          icon: Coins,
+   452→          label: t("kpiCollected"),
+   453→          value: fmt(data.kpis.collectedMinor),
+   454→          hint: t("kpiAvgSale", { value: fmt(data.kpis.avgSaleMinor) }),
+   455→          tone: "text-teal-700 dark:text-teal-300",
+   456→        },
+   457→        {
+   458→          icon: ArrowUpRight,
+   459→          label: t("kpiExpenses"),
+   460→          value: fmt(data.kpis.expensesMinor),
+   461→          hint: t("kpiExpensesHint", { count: fmtCount(uiLocale, data.kpis.expensesCount) }),
+   462→          tone: "text-rose-700 dark:text-rose-400",
+   463→        },
+   464→        {
+   465→          icon: data.kpis.netCashMinor >= 0 ? TrendingUp : ArrowDownRight,
+   466→          label: t("kpiNetCash"),
+   467→          value: fmt(data.kpis.netCashMinor),
+   468→          hint: t("kpiNetAccrual", { value: fmt(data.kpis.netAccrualMinor) }),
+   469→          tone:
+   470→            data.kpis.netCashMinor >= 0
+   471→              ? "text-emerald-700 dark:text-emerald-400"
+   472→              : "text-rose-700 dark:text-rose-400",
+   473→        },
+   474→      ]
+   475→    : [];
+   476→
+   477→  return (
+   478→    <div className="space-y-6" data-view="module:reports">
+   479→      <PageHeader
+   480→        title={t("title")}
+   481→        subtitle={t("subtitle")}
+   482→        actions={
+   483→          <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
+   484→            <Select value={days} onValueChange={setDays}>
+   485→              <SelectTrigger className="h-9 min-w-0 flex-1 sm:w-44 sm:flex-none" aria-label={t("rangeLabel")}>
+   486→                <SelectValue />
+   487→              </SelectTrigger>
+   488→              <SelectContent>
+   489→                {RANGES.map((r) => (
+   490→                  <SelectItem key={r} value={r}>
+   491→                    {t(`range_${r}`)}
+   492→                  </SelectItem>
+   493→                ))}
+   494→              </SelectContent>
+   495→            </Select>
+   496→            <Button
+   497→              variant="outline"
+   498→              size="sm"
+   499→              className="h-9 gap-1.5"
+   500→              onClick={() => csvExport.mutate()}
+   501→              disabled={csvExport.isPending}
+   502→              title={t("exportCsv")}
+   503→            >
+   504→              {csvExport.isPending ? (
+   505→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   506→              ) : (
+   507→                <Download className="size-4" aria-hidden="true" />
+   508→              )}
+   509→              <span className="hidden sm:inline" aria-hidden="true">
+   510→                {csvExport.isPending ? t("exportingCsv") : t("exportCsv")}
+   511→              </span>
+   512→              <span className="sr-only">{csvExport.isPending ? t("exportingCsv") : t("exportCsv")}</span>
+   513→            </Button>
+   514→          </div>
+   515→        }
+   516→      />
+   517→
+   518→      {error ? (
+   519→        <div className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm">
+   520→          {t("loadFailed")}{" "}
+   521→          <button className="underline" onClick={() => void refetch()}>
+   522→            {t("retry")}
+   523→          </button>
+   524→        </div>
+   525→      ) : null}
+   526→
+   527→      {isLoading ? (
+   528→        <div className="space-y-4" aria-busy="true">
+   529→          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+   530→            {[0, 1, 2, 3].map((i) => (
+   531→              <Skeleton key={i} className="h-24 rounded-xl" />
+   532→            ))}
+   533→          </div>
+   534→          <Skeleton className="h-72 rounded-xl" />
+   535→          <div className="grid gap-4 lg:grid-cols-2">
+   536→            <Skeleton className="h-64 rounded-xl" />
+   537→            <Skeleton className="h-64 rounded-xl" />
+   538→          </div>
+   539→        </div>
+   540→      ) : !data ? null : !hasAnyActivity ? (
+   541→        <EmptyState
+   542→          icon={TrendingUp}
+   543→          title={t("emptyTitle")}
+   544→          description={t("emptyDesc")}
+   545→        />
+   546→      ) : (
+   547→        <>
+   548→          {/* KPI strip */}
+   549→          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+   550→            {kpiCards.map((kpi) => (
+   551→              <Card key={kpi.label} className="gap-3 py-4">
+   552→                <CardContent className="flex items-start gap-3 px-4">
+   553→                  <span className="bg-primary/10 text-primary mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg">
+   554→                    <kpi.icon className="size-4.5" aria-hidden="true" />
+   555→                  </span>
+   556→                  <div className="min-w-0 flex-1">
+   557→                    <p className="text-muted-foreground truncate text-xs font-medium tracking-wide uppercase">
+   558→                      {kpi.label}
+   559→                    </p>
+   560→                    <p
+   561→                      className={`mt-0.5 truncate text-xl font-semibold tabular-nums ${kpi.tone}`}
+   562→                      dir="ltr"
+   563→                    >
+   564→                      {kpi.value}
+   565→                    </p>
+   566→                    <p className="text-muted-foreground mt-0.5 truncate text-xs">{kpi.hint}</p>
+   567→                  </div>
+   568→                </CardContent>
+   569→              </Card>
+   570→            ))}
+   571→          </div>
+   572→
+   573→          {/* Prompt 20 — advanced insights: rendered ONLY from what the
+   574→              server entitled (§26). Locked teaser otherwise. */}
+   575→          {data.advancedAvailable && data.advanced ? (
+   576→            <AdvancedInsightsCard data={data.advanced} fmt={fmt} uiLocale={uiLocale} />
+   577→          ) : (
+   578→            <AdvancedLockedCard />
+   579→          )}
+   580→
+   581→          {/* Income vs spending timeline */}
+   582→          <Card>
+   583→            <CardHeader>
+   584→              <CardTitle className="text-base">{t("timelineTitle")}</CardTitle>
+   585→              <CardDescription>
+   586→                {t("timelineDesc", {
+   587→                  from: fmtDay(data.range.from),
+   588→                  to: fmtDay(data.range.to),
+   589→                })}
+   590→              </CardDescription>
+   591→            </CardHeader>
+   592→            <CardContent>
+   593→              <ChartContainer config={timelineConfig} className="h-64 w-full" dir="ltr">
+   594→                <AreaChart data={data.timeline} margin={{ left: 4, right: 12, top: 8 }}>
+   595→                  <defs>
+   596→                    <linearGradient id="fillRevenue" x1="0" y1="0" x2="0" y2="1">
+   597→                      <stop offset="5%" stopColor="var(--color-revenueMinor)" stopOpacity={0.35} />
+   598→                      <stop offset="95%" stopColor="var(--color-revenueMinor)" stopOpacity={0.02} />
+   599→                    </linearGradient>
+   600→                    <linearGradient id="fillExpense" x1="0" y1="0" x2="0" y2="1">
+   601→                      <stop offset="5%" stopColor="var(--color-expenseMinor)" stopOpacity={0.25} />
+   602→                      <stop offset="95%" stopColor="var(--color-expenseMinor)" stopOpacity={0.02} />
+   603→                    </linearGradient>
+   604→                  </defs>
+   605→                  <CartesianGrid vertical={false} strokeDasharray="3 3" />
+   606→                  <XAxis
+   607→                    dataKey="date"
+   608→                    tickLine={false}
+   609→                    axisLine={false}
+   610→                    tickMargin={8}
+   611→                    minTickGap={28}
+   612→                    tickFormatter={(v: string) => v.slice(5)}
+   613→                  />
+   614→                  <YAxis
+   615→                    width={64}
+   616→                    tickLine={false}
+   617→                    axisLine={false}
+   618→                    tickFormatter={(v: number) => fmt(v)}
+   619→                  />
+   620→                  <ChartTooltip
+   621→                    cursor={{ stroke: "var(--border)" }}
+   622→                    content={<MoneyTooltip fmt={fmt} labelFmt={fmtDay} />}
+   623→                  />
+   624→                  <Area
+   625→                    dataKey="expenseMinor"
+   626→                    type="monotone"
+   627→                    stroke="var(--color-expenseMinor)"
+   628→                    strokeWidth={2}
+   629→                    fill="url(#fillExpense)"
+   630→                    name={timelineConfig.expenseMinor.label}
+   631→                  />
+   632→                  <Area
+   633→                    dataKey="revenueMinor"
+   634→                    type="monotone"
+   635→                    stroke="var(--color-revenueMinor)"
+   636→                    strokeWidth={2}
+   637→                    fill="url(#fillRevenue)"
+   638→                    name={timelineConfig.revenueMinor.label}
+   639→                  />
+   640→                </AreaChart>
+   641→              </ChartContainer>
+   642→              {/* Legend (rendered manually so labels localize) */}
+   643→              <div className="text-muted-foreground mt-2 flex flex-wrap items-center justify-center gap-4 text-xs">
+   644→                {(["revenueMinor", "expenseMinor"] as const).map((key) => (
+   645→                  <span key={key} className="flex items-center gap-1.5">
+   646→                    <span
+   647→                      className="size-2 rounded-[2px]"
+   648→                      style={{ background: `var(--color-${key})` }}
+   649→                      aria-hidden="true"
+   650→                    />
+   651→                    {timelineConfig[key].label}
+   652→                  </span>
+   653→                ))}
+   654→              </div>
+   655→            </CardContent>
+   656→          </Card>
+   657→
+   658→          {/* Month-over-month comparison */}
+   659→          {monthly && monthly.series.length > 0 ? (
+   660→            <Card>
+   661→              <CardHeader>
+   662→                <CardTitle className="flex items-center gap-2 text-base">
+   663→                  <TrendingUp className="text-primary size-4" aria-hidden="true" />
+   664→                  {t("momTitle")}
+   665→                </CardTitle>
+   666→                <CardDescription>
+   667→                  {t("momDesc", { months: fmtCount(uiLocale, monthly.months) })}
+   668→                </CardDescription>
+   669→              </CardHeader>
+   670→              <CardContent className="min-w-0">
+   671→                {/* Companion chart — bars for revenue/expenses, line for net cash. */}
+   672→                <ChartContainer
+   673→                  config={momConfig}
+   674→                  className="mb-4 h-44 w-full sm:h-48"
+   675→                  dir="ltr"
+   676→                >
+   677→                  <ComposedChart data={monthly.series} margin={{ left: 4, right: 12, top: 8 }}>
+   678→                    <CartesianGrid vertical={false} strokeDasharray="3 3" />
+   679→                    <XAxis
+   680→                      dataKey="month"
+   681→                      tickLine={false}
+   682→                      axisLine={false}
+   683→                      tickMargin={8}
+   684→                      tickFormatter={(v: string) => fmtMonth(v).replace(/\s*\d{4}/, "")}
+   685→                    />
+   686→                    <YAxis
+   687→                      width={64}
+   688→                      tickLine={false}
+   689→                      axisLine={false}
+   690→                      tickFormatter={(v: number) => fmt(v)}
+   691→                    />
+   692→                    <ChartTooltip
+   693→                      cursor={{ fill: "var(--muted)" }}
+   694→                      content={
+   695→                        <MoneyTooltip fmt={fmt} labelFmt={(v) => fmtMonth(v)} />
+   696→                      }
+   697→                    />
+   698→                    <Bar
+   699→                      dataKey="revenueMinor"
+   700→                      fill="var(--color-revenueMinor)"
+   701→                      radius={3}
+   702→                      name={momConfig.revenueMinor.label}
+   703→                    />
+   704→                    <Bar
+   705→                      dataKey="expensesMinor"
+   706→                      fill="var(--color-expensesMinor)"
+   707→                      radius={3}
+   708→                      name={momConfig.expensesMinor.label}
+   709→                    />
+   710→                    <Line
+   711→                      dataKey="netCashMinor"
+   712→                      stroke="var(--color-netCashMinor)"
+   713→                      strokeWidth={2}
+   714→                      dot={{ r: 2.5, strokeWidth: 0, fill: "var(--color-netCashMinor)" }}
+   715→                      name={momConfig.netCashMinor.label}
+   716→                    />
+   717→                  </ComposedChart>
+   718→                </ChartContainer>
+   719→                <div className="mb-2 flex flex-wrap items-center gap-3">
+   720→                  {(Object.keys(momConfig) as Array<keyof typeof momConfig>).map((key) => (
+   721→                    <span key={key} className="text-muted-foreground flex items-center gap-1.5 text-xs">
+   722→                      <span
+   723→                        className="size-2.5 rounded-[2px]"
+   724→                        style={{ background: momConfig[key].color }}
+   725→                        aria-hidden="true"
+   726→                      />
+   727→                      {momConfig[key].label}
+   728→                    </span>
+   729→                  ))}
+   730→                </div>
+   731→                <DataTable<MonthlyRow>
+   732→                  ariaLabel={t("momTitle")}
+   733→                  sortLocale={uiLocale}
+   734→                  onRowClick={(row) => openMonth(row.month)}
+   735→                  columns={[
+   736→                    {
+   737→                      id: "month",
+   738→                      header: t("momMonth"),
+   739→                      sortValue: (row) => row.month,
+   740→                      cell: (row) => {
+   741→                        const isCurrent = row.month === momCurrentMonth;
+   742→                        return (
+   743→                          <div className="flex min-w-0 items-center">
+   744→                            <button
+   745→                              type="button"
+   746→                              className="hover:text-foreground inline-flex items-center gap-1 rounded font-medium transition-colors focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2"
+   747→                              aria-label={t("momRowOpen", {
+   748→                                month: fmtMonth(row.month),
+   749→                              })}
+   750→                            >
+   751→                              {fmtMonth(row.month)}
+   752→                              <ChevronRight
+   753→                                className="text-muted-foreground/60 size-3.5 rtl:-scale-x-100"
+   754→                                aria-hidden="true"
+   755→                              />
+   756→                            </button>
+   757→                            {isCurrent ? (
+   758→                              <span className="text-muted-foreground ms-2 hidden text-[11px] md:inline">
+   759→                                · {t("momCurrentNote")}
+   760→                              </span>
+   761→                            ) : null}
+   762→                          </div>
+   763→                        );
+   764→                      },
+   765→                    },
+   766→                    {
+   767→                      id: "revenue",
+   768→                      header: t("momRevenue"),
+   769→                      align: "end",
+   770→                      sortValue: (row) => row.revenueMinor,
+   771→                      defaultSortDir: "desc",
+   772→                      cell: (row) => (
+   773→                        <Ltr>
+   774→                          {fmt(row.revenueMinor)}
+   775→                          <span className="text-muted-foreground ms-1.5 hidden text-xs lg:inline">
+   776→                            ({fmtCount(uiLocale, row.salesCount)})
+   777→                          </span>
+   778→                        </Ltr>
+   779→                      ),
+   780→                    },
+   781→                    {
+   782→                      id: "expenses",
+   783→                      header: t("momExpenses"),
+   784→                      align: "end",
+   785→                      cell: (row) => <Ltr>{fmt(row.expensesMinor)}</Ltr>,
+   786→                    },
+   787→                    {
+   788→                      id: "netCash",
+   789→                      header: t("momNetCash"),
+   790→                      align: "end",
+   791→                      sortValue: (row) => row.netCashMinor,
+   792→                      defaultSortDir: "desc",
+   793→                      cell: (row) => (
+   794→                        <Ltr
+   795→                          className={
+   796→                            row.netCashMinor >= 0
+   797→                              ? "text-emerald-700 dark:text-emerald-400"
+   798→                              : "text-rose-700 dark:text-rose-400"
+   799→                          }
+   800→                        >
+   801→                          {fmt(row.netCashMinor)}
+   802→                        </Ltr>
+   803→                      ),
+   804→                    },
+   805→                    {
+   806→                      id: "delta",
+   807→                      header: (
+   808→                        <span title={t("momDeltaVsPrev", { prev: "" })}>
+   809→                          <span aria-hidden="true">Δ</span>
+   810→                          <span className="sr-only">{t("momTitle")}</span>
+   811→                        </span>
+   812→                      ),
+   813→                      align: "end",
+   814→                      className: "w-20",
+   815→                      cell: (row) => {
+   816→                        // Delta keys off the CHRONOLOGICAL previous month
+   817→                        // (momPrevByMonth), so it stays truthful under sorting.
+   818→                        const prev = momPrevByMonth.get(row.month) ?? null;
+   819→                        const delta = prev
+   820→                          ? pctChange(row.revenueMinor, prev.revenueMinor)
+   821→                          : null;
+   822→                        const deltaTitle = prev
+   823→                          ? t("momDeltaVsPrev", { prev: fmtMonth(prev.month) })
+   824→                          : undefined;
+   825→                        return delta === null ? (
+   826→                          prev && prev.revenueMinor === 0 && row.revenueMinor > 0 ? (
+   827→                            <Badge
+   828→                              variant="outline"
+   829→                              title={deltaTitle}
+   830→                              className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 gap-0.5 text-[11px] dark:text-emerald-400"
+   831→                            >
+   832→                              <ArrowUpRight className="size-3" aria-hidden="true" />
+   833→                              new
+   834→                            </Badge>
+   835→                          ) : (
+   836→                            <span className="text-muted-foreground/60 inline-flex items-center">
+   837→                              <Minus className="size-3" aria-hidden="true" />
+   838→                              <span className="sr-only">—</span>
+   839→                            </span>
+   840→                          )
+   841→                        ) : delta > 0 ? (
+   842→                          <Badge
+   843→                            variant="outline"
+   844→                            title={deltaTitle}
+   845→                            className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 gap-0.5 text-[11px] tabular-nums dark:text-emerald-400"
+   846→                          >
+   847→                            <ArrowUpRight className="size-3" aria-hidden="true" />
+   848→                            <Ltr>+{delta}%</Ltr>
+   849→                          </Badge>
+   850→                        ) : delta < 0 ? (
+   851→                          <Badge
+   852→                            variant="outline"
+   853→                            title={deltaTitle}
+   854→                            className="border-rose-500/30 bg-rose-500/10 text-rose-700 gap-0.5 text-[11px] tabular-nums dark:text-rose-400"
+   855→                          >
+   856→                            <ArrowDownRight className="size-3" aria-hidden="true" />
+   857→                            <Ltr>{delta}%</Ltr>
+   858→                          </Badge>
+   859→                        ) : (
+   860→                          <Badge
+   861→                            variant="outline"
+   862→                            title={deltaTitle}
+   863→                            className="text-muted-foreground gap-0.5 text-[11px] tabular-nums"
+   864→                          >
+   865→                            <Minus className="size-3" aria-hidden="true" />
+   866→                            <Ltr>0%</Ltr>
+   867→                          </Badge>
+   868→                        );
+   869→                      },
+   870→                    },
+   871→                  ]}
+   872→                  rows={monthly.series}
+   873→                  getRowId={(row) => row.month}
+   874→                />
+   875→                <p className="text-muted-foreground mt-2 text-[11px]">
+   876→                  {t("momRowHint")}
+   877→                </p>
+   878→              </CardContent>
+   879→            </Card>
+   880→          ) : null}
+   881→
+   882→          <div className="grid gap-4 lg:grid-cols-2">
+   883→            {/* Cash collected vs paid out */}
+   884→            <Card className="min-w-0">
+   885→              <CardHeader>
+   886→                <CardTitle className="flex items-center gap-2 text-base">
+   887→                  <Coins className="text-primary size-4" aria-hidden="true" />
+   888→                  {t("cashTitle")}
+   889→                </CardTitle>
+   890→                <CardDescription>{t("cashDesc")}</CardDescription>
+   891→              </CardHeader>
+   892→              <CardContent>
+   893→                <ChartContainer config={cashConfig} className="h-56 w-full" dir="ltr">
+   894→                  <BarChart data={data.timeline} margin={{ left: 4, right: 12, top: 8 }}>
+   895→                    <CartesianGrid vertical={false} strokeDasharray="3 3" />
+   896→                    <XAxis
+   897→                      dataKey="date"
+   898→                      tickLine={false}
+   899→                      axisLine={false}
+   900→                      tickMargin={8}
+   901→                      minTickGap={28}
+   902→                      tickFormatter={(v: string) => v.slice(5)}
+   903→                    />
+   904→                    <YAxis
+   905→                      width={64}
+   906→                      tickLine={false}
+   907→                      axisLine={false}
+   908→                      tickFormatter={(v: number) => fmt(v)}
+   909→                    />
+   910→                    <ChartTooltip cursor={{ fill: "var(--muted)" }} content={<MoneyTooltip fmt={fmt} labelFmt={fmtDay} />} />
+   911→                    <Bar dataKey="collectedMinor" fill="var(--color-collectedMinor)" radius={3} name={cashConfig.collectedMinor.label} />
+   912→                    <Bar dataKey="paidOutMinor" fill="var(--color-paidOutMinor)" radius={3} name={cashConfig.paidOutMinor.label} />
+   913→                  </BarChart>
+   914→                </ChartContainer>
+   915→              </CardContent>
+   916→            </Card>
+   917→
+   918→            {/* Expenses by category donut */}
+   919→            <Card className="min-w-0">
+   920→              <CardHeader>
+   921→                <CardTitle className="flex items-center gap-2 text-base">
+   922→                  <ChartPie className="text-primary size-4" aria-hidden="true" />
+   923→                  {t("categoryTitle")}
+   924→                </CardTitle>
+   925→                <CardDescription>{t("categoryDesc")}</CardDescription>
+   926→              </CardHeader>
+   927→              <CardContent>
+   928→                {data.expensesByCategory.length === 0 ? (
+   929→                  <EmptyState icon={Layers} title={t("categoryEmpty")} className="border-0 p-6" />
+   930→                ) : (
+   931→                  <div className="flex flex-col items-center gap-4 sm:flex-row">
+   932→                    <ChartContainer
+   933→                      config={{}}
+   934→                      className="aspect-square h-44 w-44 shrink-0"
+   935→                      dir="ltr"
+   936→                    >
+   937→                      <PieChart>
+   938→                        <ChartTooltip content={<MoneyTooltip fmt={fmt} />} />
+   939→                        <Pie
+   940→                          data={data.expensesByCategory}
+   941→                          dataKey="totalMinor"
+   942→                          nameKey="category"
+   943→                          innerRadius={45}
+   944→                          outerRadius={72}
+   945→                          paddingAngle={2}
+   946→                          strokeWidth={0}
+   947→                        >
+   948→                          {data.expensesByCategory.map((entry, i) => (
+   949→                            <Cell key={entry.category} fill={CATEGORY_COLORS[i % CATEGORY_COLORS.length]} />
+   950→                          ))}
+   951→                        </Pie>
+   952→                      </PieChart>
+   953→                    </ChartContainer>
+   954→                    <ul className="w-full space-y-2">
+   955→                      {data.expensesByCategory.map((cat, i) => {
+   956→                        const total = data.expensesByCategory.reduce((s, c) => s + c.totalMinor, 0);
+   957→                        const pct = total > 0 ? Math.round((cat.totalMinor / total) * 100) : 0;
+   958→                        return (
+   959→                          <li key={cat.category} className="flex items-center gap-2 text-sm">
+   960→                            <span
+   961→                              className="size-2.5 shrink-0 rounded-[3px]"
+   962→                              style={{ background: CATEGORY_COLORS[i % CATEGORY_COLORS.length] }}
+   963→                              aria-hidden="true"
+   964→                            />
+   965→                            <span className="min-w-0 flex-1 truncate" dir="auto">
+   966→                              {cat.category}
+   967→                            </span>
+   968→                            <span className="text-muted-foreground text-xs tabular-nums">{pct}%</span>
+   969→                            <span className="font-medium tabular-nums" dir="ltr">
+   970→                              {fmt(cat.totalMinor)}
+   971→                            </span>
+   972→                          </li>
+   973→                        );
+   974→                      })}
+   975→                    </ul>
+   976→                  </div>
+   977→                )}
+   978→              </CardContent>
+   979→            </Card>
+   980→
+   981→            {/* Top products */}
+   982→            <Card className="min-w-0">
+   983→              <CardHeader>
+   984→                <CardTitle className="flex items-center gap-2 text-base">
+   985→                  <Package className="text-primary size-4" aria-hidden="true" />
+   986→                  {t("topProductsTitle")}
+   987→                </CardTitle>
+   988→                <CardDescription>{t("topProductsDesc")}</CardDescription>
+   989→              </CardHeader>
+   990→              <CardContent>
+   991→                {data.topProducts.length === 0 ? (
+   992→                  <EmptyState icon={Package} title={t("topProductsEmpty")} className="border-0 p-6" />
+   993→                ) : (
+   994→                  <ChartContainer config={{}} className="h-56 w-full" dir="ltr">
+   995→                    <BarChart
+   996→                      data={data.topProducts}
+   997→                      layout="vertical"
+   998→                      margin={{ left: 8, right: 16, top: 4 }}
+   999→                    >
+  1000→                      <CartesianGrid horizontal={false} strokeDasharray="3 3" />
+  1001→                      <XAxis
+  1002→                        type="number"
+  1003→                        tickLine={false}
+  1004→                        axisLine={false}
+  1005→                        tickFormatter={(v: number) => fmt(v)}
+  1006→                      />
+  1007→                      <YAxis
+  1008→                        type="category"
+  1009→                        dataKey="name"
+  1010→                        width={110}
+  1011→                        tickLine={false}
+  1012→                        axisLine={false}
+  1013→                        tick={{ fontSize: 11 }}
+  1014→                      />
+  1015→                      <ChartTooltip
+  1016→                        cursor={{ fill: "var(--muted)" }}
+  1017→                        content={<MoneyTooltip fmt={fmt} />}
+  1018→                      />
+  1019→                      <Bar dataKey="revenueMinor" fill="var(--chart-1)" radius={4} barSize={18} />
+  1020→                    </BarChart>
+  1021→                  </ChartContainer>
+  1022→                )}
+  1023→                {data.topProducts.length > 0 ? (
+  1024→                  <p className="text-muted-foreground mt-2 text-center text-xs">
+  1025→                    {t("topProductsQtyNote", {
+  1026→                      name: data.topProducts[0].name,
+  1027→                      qty: fmtCount(uiLocale, data.topProducts[0].qty),
+  1028→                    })}
+  1029→                  </p>
+  1030→                ) : null}
+  1031→              </CardContent>
+  1032→            </Card>
+  1033→
+  1034→            {/* Inventory health + outstanding */}
+  1035→            <div className="space-y-4">
+  1036→              <Card>
+  1037→                <CardHeader>
+  1038→                  <CardTitle className="flex items-center gap-2 text-base">
+  1039→                    <Boxes className="text-primary size-4" aria-hidden="true" />
+  1040→                    {t("inventoryTitle")}
+  1041→                  </CardTitle>
+  1042→                  <CardDescription>{t("inventoryDesc")}</CardDescription>
+  1043→                </CardHeader>
+  1044→                <CardContent className="space-y-3">
+  1045→                  <div className="grid grid-cols-2 gap-3">
+  1046→                    <div className="rounded-lg border p-3">
+  1047→                      <p className="text-muted-foreground text-xs font-medium uppercase">
+  1048→                        {t("inventoryValue")}
+  1049→                      </p>
+  1050→                      <p className="mt-1 text-lg font-semibold tabular-nums" dir="ltr">
+  1051→                        {fmt(data.inventory.valueMinor)}
+  1052→                      </p>
+  1053→                      <p className="text-muted-foreground text-xs">
+  1054→                        {t("inventoryProducts", { count: fmtCount(uiLocale, data.inventory.productCount) })}
+  1055→                      </p>
+  1056→                    </div>
+  1057→                    <div className="rounded-lg border p-3">
+  1058→                      <p className="text-muted-foreground text-xs font-medium uppercase">
+  1059→                        {t("lowStock")}
+  1060→                      </p>
+  1061→                      <p
+  1062→                        className={`mt-1 text-lg font-semibold tabular-nums ${
+  1063→                          data.inventory.lowStockCount > 0
+  1064→                            ? "text-amber-700 dark:text-amber-400"
+  1065→                            : "text-emerald-700 dark:text-emerald-400"
+  1066→                        }`}
+  1067→                        dir="ltr"
+  1068→                      >
+  1069→                        {data.inventory.lowStockCount}
+  1070→                      </p>
+  1071→                      <p className="text-muted-foreground text-xs">{t("lowStockHint")}</p>
+  1072→                    </div>
+  1073→                  </div>
+  1074→                  {data.inventory.lowStockItems.length > 0 ? (
+  1075→                    <ul className="space-y-1.5">
+  1076→                      {data.inventory.lowStockItems.map((item) => (
+  1077→                        <li
+  1078→                          key={item.id}
+  1079→                          className="flex items-center justify-between gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-1.5 text-sm"
+  1080→                        >
+  1081→                          <span className="flex min-w-0 items-center gap-1.5">
+  1082→                            <AlertTriangle
+  1083→                              className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+  1084→                              aria-hidden="true"
+  1085→                            />
+  1086→                            <span className="truncate" dir="auto">{item.name}</span>
+  1087→                          </span>
+  1088→                          <Badge
+  1089→                            variant="outline"
+  1090→                            className="shrink-0 border-amber-300/60 bg-amber-500/10 text-amber-700 tabular-nums dark:text-amber-400"
+  1091→                          >
+  1092→                            {item.stockQty} {item.unit ?? ""}
+  1093→                          </Badge>
+  1094→                        </li>
+  1095→                      ))}
+  1096→                    </ul>
+  1097→                  ) : null}
+  1098→                </CardContent>
+  1099→              </Card>
+  1100→
+  1101→              <Card>
+  1102→                <CardHeader>
+  1103→                  <CardTitle className="text-base">{t("outstandingTitle")}</CardTitle>
+  1104→                  <CardDescription>{t("outstandingDesc")}</CardDescription>
+  1105→                </CardHeader>
+  1106→                <CardContent className="grid gap-3 sm:grid-cols-2">
+  1107→                  <button
+  1108→                    type="button"
+  1109→                    onClick={() => navigate({ kind: "module", module: "receivables" })}
+  1110→                    className="group rounded-lg border p-3 text-start transition-colors hover:border-emerald-500/40 hover:bg-emerald-500/5"
+  1111→                  >
+  1112→                    <p className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium uppercase">
+  1113→                      <HandCoins className="size-3.5" aria-hidden="true" />
+  1114→                      {t("outstandingReceivable")}
+  1115→                    </p>
+  1116→                    <p className="text-muted-foreground mt-1 text-lg font-semibold tabular-nums text-amber-700 group-hover:underline dark:text-amber-400" dir="ltr">
+  1117→                      {fmt(data.outstanding.receivableMinor)}
+  1118→                    </p>
+  1119→                    <p className="text-muted-foreground text-xs">
+  1120→                      {t("outstandingBills", { count: fmtCount(uiLocale, data.outstanding.receivableCount) })}
+  1121→                    </p>
+  1122→                  </button>
+  1123→                  <button
+  1124→                    type="button"
+  1125→                    onClick={() => navigate({ kind: "module", module: "payables" })}
+  1126→                    className="group rounded-lg border p-3 text-start transition-colors hover:border-rose-500/40 hover:bg-rose-500/5"
+  1127→                  >
+  1128→                    <p className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium uppercase">
+  1129→                      <ArrowUpRight className="size-3.5" aria-hidden="true" />
+  1130→                      {t("outstandingPayable")}
+  1131→                    </p>
+  1132→                    <p
+  1133→                      className="mt-1 text-lg font-semibold tabular-nums text-rose-700 group-hover:underline dark:text-rose-400"
+  1134→                      dir="ltr"
+  1135→                    >
+  1136→                      {fmt(data.outstanding.payableMinor)}
+  1137→                    </p>
+  1138→                    <p className="text-muted-foreground text-xs">
+  1139→                      {t("outstandingBills", { count: fmtCount(uiLocale, data.outstanding.payableCount) })}
+  1140→                    </p>
+  1141→                  </button>
+  1142→                </CardContent>
+  1143→              </Card>
+  1144→            </div>
+  1145→          </div>
+  1146→
+  1147→          <p className="text-muted-foreground text-center text-xs">{t("derivedNote")}</p>
+  1148→        </>
+  1149→      )}
+  1150→
+  1151→      {/* ---- Single-month drill-down (MoM row click / #?month= deep link) - */}
+  1152→      <Dialog open={detailMonth !== null} onOpenChange={(open) => !open && closeMonth()}>
+  1153→        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+  1154→          <DialogHeader>
+  1155→            <DialogTitle className="flex items-center gap-2 text-base">
+  1156→              <CalendarDays className="text-primary size-4" aria-hidden="true" />
+  1157→              {detailMonth ? t("momDetailTitle", { month: fmtMonth(detailMonth) }) : null}
+  1158→            </DialogTitle>
+  1159→            <DialogDescription className="flex flex-wrap items-center justify-between gap-2">
+  1160→              <span>{t("momDetailDesc")}</span>
+  1161→              {detailMonth ? (
+  1162→                <span className="flex flex-wrap items-center gap-1.5">
+  1163→                  {/* r12: continue from the numbers — jump into the filtered
+  1164→                      module list for this month (deep-linked, shareable). */}
+  1165→                  <Button
+  1166→                    variant="outline"
+  1167→                    size="sm"
+  1168→                    className="h-7 gap-1.5 text-xs"
+  1169→                    disabled={monthDetail?.totals.salesCount === 0}
+  1170→                    onClick={() =>
+  1171→                      navigate({ kind: "module", module: "sales", param: detailMonth })
+  1172→                    }
+  1173→                  >
+  1174→                    <ReceiptText className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+  1175→                    {t("openInSales")}
+  1176→                    <ChevronRight className="size-3 rtl:-scale-x-100" aria-hidden="true" />
+  1177→                  </Button>
+  1178→                  <Button
+  1179→                    variant="outline"
+  1180→                    size="sm"
+  1181→                    className="h-7 gap-1.5 text-xs"
+  1182→                    disabled={monthDetail?.totals.expensesCount === 0}
+  1183→                    onClick={() =>
+  1184→                      navigate({ kind: "module", module: "expenses", param: detailMonth })
+  1185→                    }
+  1186→                  >
+  1187→                    <Coins className="size-3.5 text-rose-600 dark:text-rose-400" aria-hidden="true" />
+  1188→                    {t("openInExpenses")}
+  1189→                    <ChevronRight className="size-3 rtl:-scale-x-100" aria-hidden="true" />
+  1190→                  </Button>
+  1191→                  <Button
+  1192→                    variant="outline"
+  1193→                    size="sm"
+  1194→                    className="h-7 gap-1.5 text-xs"
+  1195→                    onClick={() => monthCsvExport.mutate(detailMonth)}
+  1196→                    disabled={monthCsvExport.isPending}
+  1197→                  >
+  1198→                    {monthCsvExport.isPending ? (
+  1199→                      <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+  1200→                    ) : (
+  1201→                      <Download className="size-3.5" aria-hidden="true" />
+  1202→                    )}
+  1203→                    {t("exportMonthCsv")}
+  1204→                  </Button>
+  1205→                </span>
+  1206→              ) : null}
+  1207→            </DialogDescription>
+  1208→          </DialogHeader>
+  1209→
+  1210→          {detailLoading || !monthDetail ? (
+  1211→            <div className="space-y-2" aria-busy="true">
+  1212→              {[0, 1, 2, 3].map((i) => (
+  1213→                <Skeleton key={i} className="h-10 w-full animate-pulse" />
+  1214→              ))}
+  1215→            </div>
+  1216→          ) : (
+  1217→            <div className="space-y-5">
+  1218→              {/* Totals — mirror the MoM row figures. */}
+  1219→              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+  1220→                {[
+  1221→                  {
+  1222→                    label: t("momRevenue"),
+  1223→                    value: monthDetail.totals.revenueMinor,
+  1224→                    tone: "text-emerald-700 dark:text-emerald-400",
+  1225→                  },
+  1226→                  {
+  1227→                    label: t("momExpenses"),
+  1228→                    value: monthDetail.totals.expensesMinor,
+  1229→                    tone: "text-rose-700 dark:text-rose-400",
+  1230→                  },
+  1231→                  {
+  1232→                    label: t("momDetailCollected"),
+  1233→                    value: monthDetail.totals.collectedMinor,
+  1234→                    tone: "text-teal-700 dark:text-teal-300",
+  1235→                  },
+  1236→                  {
+  1237→                    label: t("momNetCash"),
+  1238→                    value: monthDetail.totals.netCashMinor,
+  1239→                    tone:
+  1240→                      monthDetail.totals.netCashMinor >= 0
+  1241→                        ? "text-emerald-700 dark:text-emerald-400"
+  1242→                        : "text-rose-700 dark:text-rose-400",
+  1243→                  },
+  1244→                ].map((cell) => (
+  1245→                  <div key={cell.label} className="rounded-lg border p-2.5">
+  1246→                    <p className="text-muted-foreground text-[11px] font-medium uppercase">
+  1247→                      {cell.label}
+  1248→                    </p>
+  1249→                    <p className={cn("mt-0.5 text-sm font-semibold tabular-nums", cell.tone)} dir="ltr">
+  1250→                      {fmt(cell.value)}
+  1251→                    </p>
+  1252→                  </div>
+  1253→                ))}
+  1254→              </div>
+  1255→
+  1256→              {/* Sales in month */}
+  1257→              <div>
+  1258→                <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold">
+  1259→                  <ReceiptText className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+  1260→                  {t("momDetailSales", { count: fmtCount(uiLocale, monthDetail.totals.salesCount) })}
+  1261→                </p>
+  1262→                {monthDetail.sales.length === 0 ? (
+  1263→                  <p className="text-muted-foreground rounded-md border border-dashed px-3 py-3 text-xs">
+  1264→                    {t("momDetailEmpty")}
+  1265→                  </p>
+  1266→                ) : (
+  1267→                  <ul className="max-h-56 space-y-1 overflow-y-auto pe-1">
+  1268→                    {monthDetail.sales.map((s) => (
+  1269→                      <li
+  1270→                        key={`${s.number}-${s.issueDate}`}
+  1271→                        className="flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-xs"
+  1272→                      >
+  1273→                        <span className="flex min-w-0 items-center gap-2">
+  1274→                          <span className="text-muted-foreground shrink-0 tabular-nums" dir="ltr">
+  1275→                            #{String(s.number).padStart(4, "0")}
+  1276→                          </span>
+  1277→                          <span className="truncate font-medium">
+  1278→                            {s.customerName ?? t("momDetailNoCustomer")}
+  1279→                          </span>
+  1280→                          <span className="text-muted-foreground hidden shrink-0 sm:inline">
+  1281→                            {fmtIsoDate(s.issueDate)}
+  1282→                          </span>
+  1283→                        </span>
+  1284→                        <span className="shrink-0 tabular-nums" dir="ltr">
+  1285→                          {fmt(s.totalMinor)}
+  1286→                        </span>
+  1287→                      </li>
+  1288→                    ))}
+  1289→                  </ul>
+  1290→                )}
+  1291→              </div>
+  1292→
+  1293→              {/* Expenses in month */}
+  1294→              <div>
+  1295→                <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold">
+  1296→                  <Coins className="size-3.5 text-rose-600 dark:text-rose-400" aria-hidden="true" />
+  1297→                  {t("momDetailExpensesList", {
+  1298→                    count: fmtCount(uiLocale, monthDetail.totals.expensesCount),
+  1299→                  })}
+  1300→                </p>
+  1301→                {monthDetail.expenses.length === 0 ? (
+  1302→                  <p className="text-muted-foreground rounded-md border border-dashed px-3 py-3 text-xs">
+  1303→                    {t("momDetailEmpty")}
+  1304→                  </p>
+  1305→                ) : (
+  1306→                  <ul className="max-h-56 space-y-1 overflow-y-auto pe-1">
+  1307→                    {monthDetail.expenses.map((e) => (
+  1308→                      <li
+  1309→                        key={`${e.category}-${e.spentAt}-${e.amountMinor}`}
+  1310→                        className="flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-xs"
+  1311→                      >
+  1312→                        <span className="flex min-w-0 items-center gap-2">
+  1313→                          <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+  1314→                            {e.category}
+  1315→                          </Badge>
+  1316→                          <span className="truncate">
+  1317→                            {e.supplierName ?? t("momDetailNoSupplier")}
+  1318→                          </span>
+  1319→                          <span className="text-muted-foreground hidden shrink-0 sm:inline">
+  1320→                            {fmtIsoDate(e.spentAt)}
+  1321→                          </span>
+  1322→                        </span>
+  1323→                        <span className="shrink-0 tabular-nums" dir="ltr">
+  1324→                          {fmt(e.amountMinor)}
+  1325→                        </span>
+  1326→                      </li>
+  1327→                    ))}
+  1328→                  </ul>
+  1329→                )}
+  1330→              </div>
+  1331→            </div>
+  1332→          )}
+  1333→        </DialogContent>
+  1334→      </Dialog>
+  1335→    </div>
+  1336→  );
+  1337→}
+  1338→
+  1339→// ---- Prompt 20: advanced insights (ADVANCED_REPORTS entitlement) -------------
+  1340→
+  1341→/**
+  1342→ * Deterministic "beyond the basics" analytics card. Rendered from data the
+  1343→ * SERVER included (or omitted) per entitlement — the UI never gates
+  1344→ * anything by itself (§26). When not entitled this renders a small locked
+  1345→ * teaser; the data block simply is not in the payload.
+  1346→ */
+  1347→function AdvancedInsightsCard({
+  1348→  data,
+  1349→  fmt,
+  1350→  uiLocale,
+  1351→}: {
+  1352→  data: AdvancedInsights;
+  1353→  fmt: (minor: number) => string;
+  1354→  uiLocale: string;
+  1355→}) {
+  1356→  const tAdv = useTranslations("billing.advanced");
+  1357→  const tBilling = useTranslations("billing");
+  1358→
+  1359→  const pct = (v: number | null) =>
+  1360→    v === null ? (
+  1361→      <span className="text-muted-foreground">—</span>
+  1362→    ) : (
+  1363→      <span
+  1364→        className={
+  1365→          v >= 0
+  1366→            ? "inline-flex items-center gap-0.5 text-emerald-600 dark:text-emerald-400"
+  1367→            : "inline-flex items-center gap-0.5 text-destructive"
+  1368→        }
+  1369→        dir="ltr"
+  1370→      >
+  1371→        {v >= 0 ? (
+  1372→          <ArrowUpRight className="size-3.5" aria-hidden="true" />
+  1373→        ) : (
+  1374→          <ArrowDownRight className="size-3.5" aria-hidden="true" />
+  1375→        )}
+  1376→        {Math.abs(v)}%
+  1377→      </span>
+  1378→    );
+  1379→
+  1380→  const g = data.growth;
+  1381→
+  1382→  return (
+  1383→    <Card data-testid="advanced-insights">
+  1384→      <CardHeader className="pb-3">
+  1385→        <CardTitle className="text-base">{tAdv("title")}</CardTitle>
+  1386→        <CardDescription>{tAdv("vsPrev")}</CardDescription>
+  1387→      </CardHeader>
+  1388→      <CardContent className="space-y-4">
+  1389→        <div className="grid gap-3 sm:grid-cols-3">
+  1390→          <div className="bg-muted/40 rounded-lg border p-3">
+  1391→            <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+  1392→              {tAdv("revenueChange", { days: 30 })}
+  1393→            </p>
+  1394→            <p className="mt-1 flex items-center justify-between gap-2 text-sm font-semibold tabular-nums" dir="ltr">
+  1395→              {fmt(g.revenueMinor)} {pct(g.revenueChangePct)}
+  1396→            </p>
+  1397→            <p className="text-muted-foreground mt-0.5 text-xs tabular-nums" dir="ltr">
+  1398→              {fmt(g.revenuePrevMinor)}
+  1399→            </p>
+  1400→          </div>
+  1401→          <div className="bg-muted/40 rounded-lg border p-3">
+  1402→            <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+  1403→              {tAdv("salesChange")}
+  1404→            </p>
+  1405→            <p className="mt-1 flex items-center justify-between gap-2 text-sm font-semibold tabular-nums" dir="ltr">
+  1406→              {g.salesCount} {pct(g.salesChangePct)}
+  1407→            </p>
+  1408→            <p className="text-muted-foreground mt-0.5 text-xs tabular-nums" dir="ltr">
+  1409→              {g.salesCountPrev}
+  1410→            </p>
+  1411→          </div>
+  1412→          <div className="bg-muted/40 rounded-lg border p-3">
+  1413→            <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+  1414→              {tAdv("expensesChange")}
+  1415→            </p>
+  1416→            <p className="mt-1 flex items-center justify-between gap-2 text-sm font-semibold tabular-nums" dir="ltr">
+  1417→              {fmt(g.expensesMinor)} {pct(g.expensesChangePct)}
+  1418→            </p>
+  1419→            <p className="text-muted-foreground mt-0.5 text-xs tabular-nums" dir="ltr">
+  1420→              {fmt(g.expensesPrevMinor)}
+  1421→            </p>
+  1422→          </div>
+  1423→        </div>
+  1424→
+  1425→        <div>
+  1426→          <div className="mb-2 flex items-center justify-between gap-2">
+  1427→            <p className="text-sm font-medium">{tAdv("concentration")}</p>
+  1428→            <p className="text-muted-foreground text-xs tabular-nums">
+  1429→              {tAdv("top5Share")}: <span className="font-semibold">{data.concentration.top5SharePct}%</span>
+  1430→            </p>
+  1431→          </div>
+  1432→          {data.concentration.topCustomers.length === 0 ? (
+  1433→            <p className="text-muted-foreground text-sm">{tAdv("noCustomerData")}</p>
+  1434→          ) : (
+  1435→            <ul className="space-y-1.5">
+  1436→              {data.concentration.topCustomers.map((c) => (
+  1437→                <li key={c.name} className="flex items-center gap-3 text-sm">
+  1438→                  <span className="w-28 shrink-0 truncate sm:w-40" title={c.name}>
+  1439→                    {c.name}
+  1440→                  </span>
+  1441→                  <div className="bg-muted h-1.5 flex-1 overflow-hidden rounded-full">
+  1442→                    <div
+  1443→                      className="bg-primary/60 h-full rounded-full"
+  1444→                      style={{ width: `${Math.min(100, c.sharePct)}%` }}
+  1445→                    />
+  1446→                  </div>
+  1447→                  <span className="text-muted-foreground w-10 shrink-0 text-end text-xs tabular-nums">
+  1448→                    {c.sharePct}%
+  1449→                  </span>
+  1450→                  <span
+  1451→                    className="w-24 shrink-0 text-end text-xs font-medium tabular-nums"
+  1452→                    dir="ltr"
+  1453→                  >
+  1454→                    {fmt(c.revenueMinor)}
+  1455→                  </span>
+  1456→                </li>
+  1457→              ))}
+  1458→            </ul>
+  1459→          )}
+  1460→          <p className="sr-only">
+  1461→            {tBilling("advancedReports")} — {uiLocale}
+  1462→          </p>
+  1463→        </div>
+  1464→      </CardContent>
+  1465→    </Card>
+  1466→  );
+  1467→}
+  1468→
+  1469→/** Locked teaser shown when the plan does not carry ADVANCED_REPORTS. */
+  1470→function AdvancedLockedCard() {
+  1471→  const tB = useTranslations("billing");
+  1472→  const navigate = useAppStore((s) => s.navigate);
+  1473→  return (
+  1474→    <Card
+  1475→      data-testid="advanced-locked"
+  1476→      className="border-dashed"
+  1477→    >
+  1478→      <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+  1479→        <p className="text-muted-foreground flex items-center gap-2 text-sm">
+  1480→          <Lock className="size-4 shrink-0" aria-hidden="true" />
+  1481→          {tB("advancedLocked")}
+  1482→        </p>
+  1483→        <Button size="sm" variant="outline" onClick={() => navigate({ kind: "settings:billing" })}>
+  1484→          {tB("upgrade")}
+  1485→        </Button>
+  1486→      </CardContent>
+  1487→    </Card>
+  1488→  );
+  1489→}
+  1490→

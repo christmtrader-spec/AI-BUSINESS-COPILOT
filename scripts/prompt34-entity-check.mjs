@@ -318,7 +318,7 @@ section("DTO");
   const { res, data } = await call(fA, `/api/v1/expenses/${exp2.id}`);
   check("G expense detail 200", res.status === 200);
   check("G expense exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["expense", "payments"]));
-  check("G expense sub keys", data && JSON.stringify(Object.keys(data.expense)) === JSON.stringify(["id", "category", "amountMinor", "paidMinor", "balanceMinor", "status", "spentAt", "note", "supplierId", "supplierName", "createdAt"]));
+  check("G expense sub keys", data && JSON.stringify(Object.keys(data.expense)) === JSON.stringify(["id", "category", "amountMinor", "paidMinor", "balanceMinor", "status", "spentAt", "dueDate", "reference", "note", "supplierId", "supplierName", "createdAt"]));
 }
 {
   const { res, data } = await call(fA, `/api/v1/payments/${paySale2.id}`);

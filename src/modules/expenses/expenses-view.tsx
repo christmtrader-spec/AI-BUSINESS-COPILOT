@@ -53,6 +53,8 @@ type ExpenseRow = {
   status: string;
   balanceMinor: number;
   spentAt: string;
+  dueDate: string | null;
+  reference: string | null;
   note: string | null;
 };
 
@@ -170,15 +172,17 @@ export function ExpensesView({
         ),
       );
       const csv = toCsv(
-        [t("colDate"), t("colCategory"), t("colSupplier"), t("colAmount"), t("colPaid"), t("colBalance"), t("colStatus"), t("colNote")],
+        [t("colDate"), t("colCategory"), t("colSupplier"), t("colDue"), t("colAmount"), t("colPaid"), t("colBalance"), t("colStatus"), t("reference"), t("colNote")],
         rows.map((e) => [
           fmtDate(business, e.spentAt),
           e.category,
           e.supplierName ?? "—",
+          e.dueDate ? fmtDate(business, e.dueDate) : "",
           fmtMoney(business, e.amountMinor),
           fmtMoney(business, e.paidMinor),
           fmtMoney(business, e.balanceMinor),
           e.status,
+          e.reference ?? "",
           e.note ?? "",
         ]),
       );
@@ -292,6 +296,11 @@ export function ExpensesView({
                 cell: (e) => (
                   <div>
                     <span className="font-medium">{e.category}</span>
+                    {e.reference ? (
+                      <p className="text-muted-foreground max-w-40 truncate text-xs">
+                        <Ltr>{e.reference}</Ltr>
+                      </p>
+                    ) : null}
                     {e.note ? (
                       <p className="text-muted-foreground max-w-40 truncate text-xs">
                         {e.note}
@@ -322,6 +331,20 @@ export function ExpensesView({
                     {fmtDate(business, e.spentAt)}
                   </span>
                 ),
+              },
+              {
+                id: "due",
+                header: t("colDue"),
+                hideBelow: "md",
+                sortValue: (e) => e.dueDate ?? "",
+                cell: (e) =>
+                  e.dueDate ? (
+                    <span className="text-sm tabular-nums whitespace-nowrap">
+                      {fmtDate(business, e.dueDate)}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground text-sm">—</span>
+                  ),
               },
               {
                 id: "amount",

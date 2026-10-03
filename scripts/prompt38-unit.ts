@@ -177,7 +177,8 @@ console.log("[6 catalog entry]");
     lowStockAt: 5,
     injected: "<script>",
   });
-  ok("6q. unknown keys stripped (strict)", stripped.success && !("injected" in (stripped.data ?? {})));
+  const strippedData = stripped.success && stripped.data ? (stripped.data as Record<string, unknown>) : null;
+  ok("6q. unknown keys stripped (strict)", stripped.success && strippedData != null && !("injected" in strippedData));
 
   // Noise-avoidance law: no restock/stock-out/price types exist.
   ok("6r. no BUSINESS_INVENTORY_RESTOCKED type", !isNotificationType("BUSINESS_INVENTORY_RESTOCKED"));

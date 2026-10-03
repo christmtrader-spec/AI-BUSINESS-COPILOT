@@ -43,13 +43,24 @@ const CATEGORY_SUGGESTIONS = [
 // Radix Select forbids empty-string item values — sentinel maps to "".
 const NONE = "__none__";
 
-type ExpenseForm = { supplierId: string; category: string; amount: string; note: string };
+type ExpenseForm = {
+  supplierId: string;
+  category: string;
+  amount: string;
+  /** "YYYY-MM-DD" from the native date input — empty = no due date. */
+  dueDate: string;
+  reference: string;
+  note: string;
+};
 
 export type ExpenseEditRow = {
   id: string;
   category: string;
   amountMinor: number;
   note: string | null;
+  /** ISO instant of the §84 date-only due date (or null). */
+  dueDate: string | null;
+  reference: string | null;
 };
 
 function formFrom(
@@ -58,9 +69,17 @@ function formFrom(
   presetSupplierId?: string | null,
 ): ExpenseForm {
   if (e) {
-    return { supplierId: "", category: e.category, amount: String(fromMinor(e.amountMinor, precision)), note: e.note ?? "" };
+    return {
+      supplierId: "",
+      category: e.category,
+      amount: String(fromMinor(e.amountMinor, precision)),
+      // §84 stores UTC midnoon — the calendar day IS the first 10 chars.
+      dueDate: e.dueDate ? e.dueDate.slice(0, 10) : "",
+      reference: e.reference ?? "",
+      note: e.note ?? "",
+    };
   }
-  return { supplierId: presetSupplierId ?? "", category: "", amount: "", note: "" };
+  return { supplierId: presetSupplierId ?? "", category: "", amount: "", dueDate: "", reference: "", note: "" };
 }
 
 export function ExpenseFormDialog({
@@ -132,6 +151,8 @@ export function ExpenseFormDialog({
       const body = JSON.stringify({
         category: form.category,
         amountMinor,
+        dueDate: form.dueDate || null,
+        reference: form.reference || null,
         note: form.note || null,
         ...(form.supplierId ? { supplierId: form.supplierId } : {}),
       });
@@ -222,6 +243,33 @@ export function ExpenseFormDialog({
           onChange={(v) => setForm({ ...form, amount: v })}
           invalidMsg={t("invalidAmount")}
         />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="exp-due-date">
+              {t("dueDate")} <span className="text-muted-foreground">({tCommon("optional")})</span>
+            </Label>
+            <Input
+              id="exp-due-date"
+              type="date"
+              value={form.dueDate}
+              onChange={(e2) => setForm({ ...form, dueDate: e2.target.value })}
+            />
+            <p className="text-muted-foreground text-xs">{t("dueDateHint")}</p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="exp-reference">
+              {t("reference")} <span className="text-muted-foreground">({tCommon("optional")})</span>
+            </Label>
+            <Input
+              id="exp-reference"
+              value={form.reference}
+              onChange={(e2) => setForm({ ...form, reference: e2.target.value })}
+              placeholder={t("referencePlaceholder")}
+              maxLength={80}
+            />
+            <p className="text-muted-foreground text-xs">{t("referenceHint")}</p>
+          </div>
+        </div>
         <div className="space-y-2">
           <Label htmlFor="exp-note">
             {t("note")} <span className="text-muted-foreground">({tCommon("optional")})</span>

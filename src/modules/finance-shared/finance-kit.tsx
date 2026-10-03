@@ -22,6 +22,8 @@ export const txKeys = {
   inventory: ["inventory"] as const,
   products: ["products"] as const,
   audit: ["audit"] as const,
+  /** Receivables/payables aging summary (/api/v1/reports/aging). */
+  aging: ["reports-aging"] as const,
 };
 
 /** Invalidate every transaction-derived query after a mutation. */
@@ -37,6 +39,7 @@ export function useInvalidateFinance() {
       txKeys.inventory,
       txKeys.products,
       txKeys.audit,
+      txKeys.aging,
     ]) {
       void qc.invalidateQueries({ queryKey: key });
     }

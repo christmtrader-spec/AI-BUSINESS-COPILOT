@@ -503,6 +503,12 @@ model Expense {
   paidMinor   Int       @default(0)
   status      String    @default("UNPAID")
   spentAt     DateTime  @default(now())
+  // Supplier-bill terms (payables aging): date-only semantics — parsed with
+  // the Prompt-35 §84 UTC-midnoon rule so the calendar day is stable across
+  // display timezones. Null = no stated due date (aging anchors on spentAt).
+  dueDate     DateTime?
+  // Free-text supplier bill/invoice reference (max 80, trimmed).
+  reference   String?
   note        String?
   deletedAt   DateTime?
   createdAt   DateTime  @default(now())
@@ -513,6 +519,7 @@ model Expense {
   @@index([businessId, deletedAt, createdAt])
   @@index([businessId, status])
   @@index([supplierId])
+  @@index([businessId, dueDate])
 }
 
 model Payment {

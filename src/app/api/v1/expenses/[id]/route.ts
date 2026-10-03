@@ -49,6 +49,8 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
       paidMinor: true,
       status: true,
       spentAt: true,
+      dueDate: true,
+      reference: true,
       note: true,
       supplierId: true,
       supplier: { select: { name: true } },
@@ -81,6 +83,8 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         paidMinor: expense.paidMinor,
         status: expense.status,
         spentAt: expense.spentAt,
+        dueDate: expense.dueDate,
+        reference: expense.reference,
         note: expense.note,
         supplierId: expense.supplierId,
         supplierName: expense.supplier?.name ?? null,
@@ -139,6 +143,9 @@ export const PATCH = route(async (req: NextRequest, { params }: RouteParams) => 
     // spentAt is NOT NULL in the schema — a null in the payload is ignored
     // (the zod schema funnels absent → null; only a real date is written).
     if (input.spentAt) patch.spentAt = input.spentAt;
+    // dueDate/reference are three-state: undefined = untouched, null = clear.
+    if (input.dueDate !== undefined) patch.dueDate = input.dueDate;
+    if (input.reference !== undefined) patch.reference = input.reference;
     if (input.note !== undefined) patch.note = input.note;
     const e = await tx.expense.update({
       where: { id: before.id },

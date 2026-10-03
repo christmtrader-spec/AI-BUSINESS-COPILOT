@@ -138,7 +138,7 @@ export function ExpenseDetailView({
         />
       </div>
 
-      {/* Supplier + note (§29) — supplier clickable when present */}
+      {/* Supplier + terms + note (§29) — supplier clickable when present */}
       <Card>
         <CardContent className="grid gap-4 pt-6 sm:grid-cols-2">
           <div className="flex flex-col gap-0.5">
@@ -159,6 +159,15 @@ export function ExpenseDetailView({
               <p className="text-muted-foreground text-sm">{t("noSupplier")}</p>
             )}
           </div>
+          <InfoRow
+            label={t("dueDate")}
+            value={e.dueDate ? fmtDate(business, e.dueDate) : null}
+          />
+          <InfoRow
+            label={t("reference")}
+            value={e.reference}
+            ltr={Boolean(e.reference)}
+          />
           <InfoRow label={t("note")} value={e.note} />
         </CardContent>
       </Card>
@@ -187,6 +196,8 @@ export function ExpenseDetailView({
           category: e.category,
           amountMinor: e.amountMinor,
           note: e.note,
+          dueDate: e.dueDate,
+          reference: e.reference,
         }}
         business={business}
         onSaved={() => {

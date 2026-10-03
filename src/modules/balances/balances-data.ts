@@ -21,6 +21,11 @@ export type BalanceItem = {
   paidMinor: number;
   balanceMinor: number;
   status: string;
+  /** Payables only — supplier-bill terms (aging round). */
+  dueDate?: string | null;
+  reference?: string | null;
+  /** Payables only — SERVER-derived (business tz); the UI never computes it. */
+  pastDue?: boolean;
 };
 
 export type BalancesData = {
@@ -71,6 +76,9 @@ export function fetchBalancesData(kind: "receivables" | "payables"): Promise<Bal
       category: string;
       supplierName: string | null;
       spentAt: string;
+      dueDate: string | null;
+      reference: string | null;
+      pastDue: boolean;
       amountMinor: number;
       paidMinor: number;
       balanceMinor: number;
@@ -90,6 +98,9 @@ export function fetchBalancesData(kind: "receivables" | "payables"): Promise<Bal
       paidMinor: e.paidMinor,
       balanceMinor: e.balanceMinor,
       status: e.status,
+      dueDate: e.dueDate,
+      reference: e.reference,
+      pastDue: e.pastDue,
     })),
   }));
 }

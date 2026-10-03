@@ -19,11 +19,8 @@ import {
   txKeys,
 } from "../finance-shared/finance-kit";
 import { PaymentFormDialog, type PaymentTarget } from "../payments/payment-form-dialog";
-import {
-  fetchBalancesData,
-  type BalancesData,
-  type BalanceItem,
-} from "./balances-data";
+import { fetchBalancesData, type BalancesData, type BalanceItem } from "./balances-data";
+import { AgingCard } from "./aging-card";
 import type { BusinessSummary } from "../shell/types";
 
 /**
@@ -101,6 +98,8 @@ export function BalancesView({
         />
       </div>
 
+      <AgingCard kind={kind} business={business} />
+
       {data && data.byParty.length > 1 ? (
         <Card>
           <CardContent className="pt-6">
@@ -173,6 +172,31 @@ export function BalancesView({
                       </span>
                     ),
                   },
+                  ...(kind === "payables"
+                    ? [
+                        {
+                          id: "due",
+                          header: t("colDue"),
+                          hideBelow: "md" as const,
+                          sortValue: (i: BalanceItem) => i.dueDate ?? "",
+                          cell: (i: BalanceItem) =>
+                            i.dueDate ? (
+                              <span className="flex flex-wrap items-center gap-1.5 whitespace-nowrap">
+                                <span className="text-muted-foreground text-sm tabular-nums">
+                                  {fmtDate(business, i.dueDate)}
+                                </span>
+                                {i.pastDue ? (
+                                  <Badge variant="destructive" className="px-1.5 py-0 text-[10px]">
+                                    {t("overdueBadge")}
+                                  </Badge>
+                                ) : null}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground text-sm">—</span>
+                            ),
+                        },
+                      ]
+                    : []),
                   {
                     id: "amount",
                     header: t("colAmount"),

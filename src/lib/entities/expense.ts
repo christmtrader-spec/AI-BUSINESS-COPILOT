@@ -13,6 +13,8 @@ export type ExpenseRecordRow = {
   paidMinor: number;
   status: string;
   spentAt: Date;
+  dueDate: Date | null;
+  reference: string | null;
   note: string | null;
   supplierId: string | null;
   supplierName: string | null;
@@ -54,6 +56,8 @@ export function mapExpenseDetail(
       balanceMinor: balanceOf(record.amountMinor, record.paidMinor),
       status: toStatusToken(record.status),
       spentAt: record.spentAt.toISOString(),
+      dueDate: record.dueDate ? record.dueDate.toISOString() : null,
+      reference: record.reference,
       note: record.note,
       supplierId: record.supplierId,
       supplierName: record.supplierName,

@@ -1,0 +1,677 @@
+     1→import "server-only";
+     2→import { z } from "zod";
+     3→import type {
+     4→  ActionRoute,
+     5→  ChannelPolicySet,
+     6→  NotificationCategory,
+     7→  NotificationPriority,
+     8→  NotificationSeverity,
+     9→} from "./types";
+    10→
+    11→/**
+    12→ * NOTIFICATION CATALOG — Prompt 32 §5/§36/§170.
+    13→ *
+    14→ * THE closed directory of notification types. Every value that can ever be
+    15→ * persisted in `Notification.type` is validated against this catalog; there
+    16→ * is no dynamic template registration and no client-supplied type (§36/§187).
+    17→ *
+    18→ * Catalog law (§5): only event types backed by REAL product events are
+    19→ * listed. Deliberately ABSENT (documented in docs/product/notification-matrix.md):
+    20→ *  - BILLING_TRIAL_ENDING — no scheduler/background worker exists; inventing
+    21→ *    a request-time reminder is out of scope (§85).
+    22→ *  - BILLING_PAYMENT_REQUIRES_ACTION / RECONCILIATION_REQUIRED — platform-
+    23→ *    internal states with no customer-visible product surface (§89).
+    24→ *  - AI_COST_UNKNOWN / AI_COST_GOVERNANCE_WARNING — AI COST is platform data;
+    25→ *    tenant-visible cost notifications are prohibited (§80).
+    26→ *  - SECURITY_SESSION_REVOKED (single other-device revoke) — noise avoidance
+    27→ *    is the documented policy (§97); global sign-out is covered by
+    28→ *    SECURITY_SESSIONS_SIGNED_OUT.
+    29→ */
+    30→
+    31→export const NOTIFICATION_TYPES = [
+    32→  "SECURITY_PASSWORD_CHANGED",
+    33→  "SECURITY_PASSWORD_RESET_COMPLETED",
+    34→  "SECURITY_EMAIL_VERIFIED",
+    35→  "SECURITY_MFA_ENABLED",
+    36→  "SECURITY_MFA_DISABLED",
+    37→  "SECURITY_NEW_LOGIN",
+    38→  "SECURITY_SESSIONS_SIGNED_OUT",
+    39→  "BILLING_TRIAL_STARTED",
+    40→  "BILLING_TRIAL_ENDED",
+    41→  "BILLING_SUBSCRIPTION_CHANGED",
+    42→  "BILLING_PAYMENT_SUCCEEDED",
+    43→  "BILLING_PAYMENT_FAILED",
+    44→  "AI_USAGE_LIMIT_NEAR",
+    45→  "AI_USAGE_LIMIT_REACHED",
+    46→  "BUSINESS_EXPORT_COMPLETED",
+    47→  "BUSINESS_EXPORT_FAILED",
+    48→  "BUSINESS_IMPORT_COMPLETED",
+    49→  "BUSINESS_IMPORT_FAILED",
+    50→  // Prompt 37 (§12) — CRM task notifications. Deliberately ABSENT (noise
+    51→  // avoidance, §12): BUSINESS_CRM_TASK_COMPLETED / _UPDATED / _DELETED /
+    52→  // _REOPENED would fire on every routine task interaction.
+    53→  "BUSINESS_CRM_TASK_ASSIGNED",
+    54→  "BUSINESS_CRM_TASK_DUE_SOON",
+    55→  "BUSINESS_CRM_TASK_OVERDUE",
+    56→  // Prompt 38 (§6) — inventory low-stock alerts. Completes the MVP
+    57→  // notification scope ("overdue, low stock"). Deliberately ABSENT
+    58→  // (noise avoidance): BUSINESS_INVENTORY_RESTOCKED / OUT_OF_STOCK —
+    59→  // restock is a success (no alert), and stock-out is already covered by
+    60→  // the same low-stock event (qty 0 ≤ any threshold).
+    61→  "BUSINESS_INVENTORY_LOW_STOCK",
+    62→  "SYSTEM_ANNOUNCEMENT",
+    63→] as const;
+    64→
+    65→export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
+    66→
+    67→export function isNotificationType(value: unknown): value is NotificationType {
+    68→  return (
+    69→    typeof value === "string" &&
+    70→    (NOTIFICATION_TYPES as readonly string[]).includes(value)
+    71→  );
+    72→}
+    73→
+    74→/* ------------------------------ data schemas ------------------------------ */
+    75→/* Per-type STRICT schemas (§23/§24/§172/§355). notify() validates every data
+    76→ * object against its type's schema BEFORE persistence; unknown keys are
+    77→ * stripped, oversized payloads are rejected (§231/§346). Values are safe
+    78→ * primitives only — never nested arbitrary objects (§24). */
+    79→
+    80→const isoTimestamp = z.string().datetime({ offset: true }).max(40);
+    81→const boundedText = (max: number) => z.string().max(max);
+    82→const boundedInt = (max: number) => z.number().int().min(0).max(max);
+    83→const minorAmount = z.number().int().min(0).max(1_000_000_000_000);
+    84→const currencyCode = z.string().regex(/^[A-Z]{3}$/);
+    85→
+    86→// Prompt 37 (§20) — server-selected domain ids only: bounded length + safe
+    87→// characters (same closed id policy as Prompts 34/36). Never a route URL,
+    88→// never client-fabricated content.
+    89→const domainId = z.string().regex(/^[a-zA-Z0-9_-]{6,64}$/);
+    90→const crmTaskPriority = z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]);
+    91→const crmContextType = z.enum(["CUSTOMER", "LEAD", "OPPORTUNITY"]);
+    92→const businessTimezone = z.string().min(1).max(64);
+    93→
+    94→export type NotificationCatalogEntry = {
+    95→  type: NotificationType;
+    96→  category: NotificationCategory;
+    97→  priority: NotificationPriority;
+    98→  severity: NotificationSeverity;
+    99→  /** Per-channel delivery policy (§10): ALWAYS | IF_ENABLED | NEVER. */
+   100→  channels: ChannelPolicySet;
+   101→  /**
+   102→   * MANDATORY (§11): at least one channel is ALWAYS-delivered and user
+   103→   * preferences cannot disable it. Derived invariant — validated by
+   104→   * scripts/notification-catalog-check.mjs (§171).
+   105→   */
+   106→  mandatory: boolean;
+   107→  /** Whether user preferences may control the optional channels (§61). */
+   108→  preferenceAvailable: boolean;
+   109→  titleKey: string;
+   110→  bodyKey: string;
+   111→  emailTemplateKey: string;
+   112→  dataSchema: z.ZodTypeAny;
+   113→  /** Server-generated allowlisted CTA (§102/§103) — never client-supplied. */
+   114→  actionRoute: ActionRoute | null;
+   115→  /** Ephemeral notifications auto-hide after N days (§57); null = never. */
+   116→  expiresAfterDays: number | null;
+   117→  /** Default for the OPTIONAL email channel when no user preference exists (§17/§159). */
+   118→  emailDefaultEnabled: boolean;
+   119→  /** Documented event source (§434). */
+   120→  source: string;
+   121→  /** Documented dedupe semantics (§29/§30/§434). */
+   122→  dedupe: string;
+   123→};
+   124→
+   125→const alwaysInAppEmail: ChannelPolicySet = { IN_APP: "ALWAYS", EMAIL: "ALWAYS" };
+   126→const inAppAlwaysEmailOptional: ChannelPolicySet = { IN_APP: "ALWAYS", EMAIL: "IF_ENABLED" };
+   127→
+   128→export const NOTIFICATION_CATALOG: Record<NotificationType, NotificationCatalogEntry> = {
+   129→  /* ------------------------------- SECURITY ------------------------------- */
+   130→  SECURITY_PASSWORD_CHANGED: {
+   131→    type: "SECURITY_PASSWORD_CHANGED",
+   132→    category: "SECURITY",
+   133→    priority: "HIGH",
+   134→    severity: "INFO",
+   135→    channels: alwaysInAppEmail,
+   136→    mandatory: true,
+   137→    preferenceAvailable: false,
+   138→    titleKey: "items.SECURITY_PASSWORD_CHANGED.title",
+   139→    bodyKey: "items.SECURITY_PASSWORD_CHANGED.body",
+   140→    emailTemplateKey: "items.SECURITY_PASSWORD_CHANGED.email",
+   141→    dataSchema: z.object({ changedAt: isoTimestamp }),
+   142→    actionRoute: "security",
+   143→    expiresAfterDays: null,
+   144→    emailDefaultEnabled: true,
+   145→    source: "POST /api/v1/auth/password-change (successful password change, §91)",
+   146→    dedupe: "security:<SecurityEventId>",
+   147→  },
+   148→  SECURITY_PASSWORD_RESET_COMPLETED: {
+   149→    type: "SECURITY_PASSWORD_RESET_COMPLETED",
+   150→    category: "SECURITY",
+   151→    priority: "HIGH",
+   152→    severity: "INFO",
+   153→    channels: alwaysInAppEmail,
+   154→    mandatory: true,
+   155→    preferenceAvailable: false,
+   156→    titleKey: "items.SECURITY_PASSWORD_RESET_COMPLETED.title",
+   157→    bodyKey: "items.SECURITY_PASSWORD_RESET_COMPLETED.body",
+   158→    emailTemplateKey: "items.SECURITY_PASSWORD_RESET_COMPLETED.email",
+   159→    dataSchema: z.object({ completedAt: isoTimestamp }),
+   160→    actionRoute: "security",
+   161→    expiresAfterDays: null,
+   162→    emailDefaultEnabled: true,
+   163→    source: "POST /api/v1/auth/password-reset/confirm (successful reset, §92)",
+   164→    dedupe: "security:<SecurityEventId>",
+   165→  },
+   166→  SECURITY_EMAIL_VERIFIED: {
+   167→    type: "SECURITY_EMAIL_VERIFIED",
+   168→    category: "SECURITY",
+   169→    priority: "NORMAL",
+   170→    severity: "SUCCESS",
+   171→    channels: { IN_APP: "ALWAYS", EMAIL: "NEVER" },
+   172→    mandatory: true,
+   173→    preferenceAvailable: false,
+   174→    titleKey: "items.SECURITY_EMAIL_VERIFIED.title",
+   175→    bodyKey: "items.SECURITY_EMAIL_VERIFIED.body",
+   176→    emailTemplateKey: "items.SECURITY_EMAIL_VERIFIED.email",
+   177→    dataSchema: z.object({ verifiedAt: isoTimestamp }),
+   178→    actionRoute: "security",
+   179→    expiresAfterDays: null,
+   180→    emailDefaultEnabled: false,
+   181→    source: "POST /api/v1/auth/email-verification/confirm (§95 — in-app only, no redundant email)",
+   182→    dedupe: "security:<SecurityEventId>",
+   183→  },
+   184→  SECURITY_MFA_ENABLED: {
+   185→    type: "SECURITY_MFA_ENABLED",
+   186→    category: "SECURITY",
+   187→    priority: "HIGH",
+   188→    severity: "SUCCESS",
+   189→    channels: alwaysInAppEmail,
+   190→    mandatory: true,
+   191→    preferenceAvailable: false,
+   192→    titleKey: "items.SECURITY_MFA_ENABLED.title",
+   193→    bodyKey: "items.SECURITY_MFA_ENABLED.body",
+   194→    emailTemplateKey: "items.SECURITY_MFA_ENABLED.email",
+   195→    dataSchema: z.object({ enabledAt: isoTimestamp }),
+   196→    actionRoute: "security",
+   197→    expiresAfterDays: null,
+   198→    emailDefaultEnabled: true,
+   199→    source: "POST /api/v1/me/security/mfa/setup/confirm (§93)",
+   200→    dedupe: "security:<SecurityEventId>",
+   201→  },
+   202→  SECURITY_MFA_DISABLED: {
+   203→    type: "SECURITY_MFA_DISABLED",
+   204→    category: "SECURITY",
+   205→    priority: "CRITICAL",
+   206→    severity: "WARNING",
+   207→    channels: alwaysInAppEmail,
+   208→    mandatory: true,
+   209→    preferenceAvailable: false,
+   210→    titleKey: "items.SECURITY_MFA_DISABLED.title",
+   211→    bodyKey: "items.SECURITY_MFA_DISABLED.body",
+   212→    emailTemplateKey: "items.SECURITY_MFA_DISABLED.email",
+   213→    dataSchema: z.object({ disabledAt: isoTimestamp }),
+   214→    actionRoute: "security",
+   215→    expiresAfterDays: null,
+   216→    emailDefaultEnabled: true,
+   217→    source: "POST /api/v1/me/security/mfa/disable (§94)",
+   218→    dedupe: "security:<SecurityEventId>",
+   219→  },
+   220→  SECURITY_NEW_LOGIN: {
+   221→    type: "SECURITY_NEW_LOGIN",
+   222→    category: "SECURITY",
+   223→    priority: "NORMAL",
+   224→    severity: "INFO",
+   225→    channels: inAppAlwaysEmailOptional,
+   226→    mandatory: true,
+   227→    preferenceAvailable: true,
+   228→    titleKey: "items.SECURITY_NEW_LOGIN.title",
+   229→    bodyKey: "items.SECURITY_NEW_LOGIN.body",
+   230→    emailTemplateKey: "items.SECURITY_NEW_LOGIN.email",
+   231→    dataSchema: z.object({
+   232→      loginAt: isoTimestamp,
+   233→      device: boundedText(120),
+   234→    }),
+   235→    actionRoute: "security",
+   236→    expiresAfterDays: 30,
+   237→    emailDefaultEnabled: true,
+   238→    source: "login completion (safe device label — never IP/geo/session secret, §96)",
+   239→    dedupe: "login:<UserSessionId>",
+   240→  },
+   241→  SECURITY_SESSIONS_SIGNED_OUT: {
+   242→    type: "SECURITY_SESSIONS_SIGNED_OUT",
+   243→    category: "SECURITY",
+   244→    priority: "NORMAL",
+   245→    severity: "INFO",
+   246→    channels: { IN_APP: "ALWAYS", EMAIL: "NEVER" },
+   247→    mandatory: true,
+   248→    preferenceAvailable: false,
+   249→    titleKey: "items.SECURITY_SESSIONS_SIGNED_OUT.title",
+   250→    bodyKey: "items.SECURITY_SESSIONS_SIGNED_OUT.body",
+   251→    emailTemplateKey: "items.SECURITY_SESSIONS_SIGNED_OUT.email",
+   252→    dataSchema: z.object({
+   253→      signedOutAt: isoTimestamp,
+   254→      sessionCount: boundedInt(1000),
+   255→    }),
+   256→    actionRoute: "security",
+   257→    expiresAfterDays: 30,
+   258→    emailDefaultEnabled: false,
+   259→    source: "POST /api/v1/me/security/sessions/revoke-all (§97 — in-app only, avoid noise)",
+   260→    dedupe: "security:<SecurityEventId>",
+   261→  },
+   262→
+   263→  /* ------------------------------- BILLING -------------------------------- */
+   264→  BILLING_TRIAL_STARTED: {
+   265→    type: "BILLING_TRIAL_STARTED",
+   266→    category: "BILLING",
+   267→    priority: "NORMAL",
+   268→    severity: "SUCCESS",
+   269→    channels: inAppAlwaysEmailOptional,
+   270→    mandatory: true,
+   271→    preferenceAvailable: true,
+   272→    titleKey: "items.BILLING_TRIAL_STARTED.title",
+   273→    bodyKey: "items.BILLING_TRIAL_STARTED.body",
+   274→    emailTemplateKey: "items.BILLING_TRIAL_STARTED.email",
+   275→    dataSchema: z.object({
+   276→      planName: boundedText(120),
+   277→      trialEndDate: isoTimestamp,
+   278→    }),
+   279→    actionRoute: "billing",
+   280→    expiresAfterDays: null,
+   281→    emailDefaultEnabled: true,
+   282→    source: "SubscriptionEvent TRIAL_STARTED (state transition — never a UI click, §84)",
+   283→    dedupe: "subscription:<SubscriptionEventId>",
+   284→  },
+   285→  BILLING_TRIAL_ENDED: {
+   286→    type: "BILLING_TRIAL_ENDED",
+   287→    category: "BILLING",
+   288→    priority: "NORMAL",
+   289→    severity: "INFO",
+   290→    channels: inAppAlwaysEmailOptional,
+   291→    mandatory: true,
+   292→    preferenceAvailable: true,
+   293→    titleKey: "items.BILLING_TRIAL_ENDED.title",
+   294→    bodyKey: "items.BILLING_TRIAL_ENDED.body",
+   295→    emailTemplateKey: "items.BILLING_TRIAL_ENDED.email",
+   296→    dataSchema: z.object({
+   297→      planName: boundedText(120),
+   298→      endedAt: isoTimestamp,
+   299→    }),
+   300→    actionRoute: "billing",
+   301→    expiresAfterDays: null,
+   302→    emailDefaultEnabled: true,
+   303→    source: "SubscriptionEvent TRIAL_ENDED / EXPIRED (§86)",
+   304→    dedupe: "subscription:<SubscriptionEventId>",
+   305→  },
+   306→  BILLING_SUBSCRIPTION_CHANGED: {
+   307→    type: "BILLING_SUBSCRIPTION_CHANGED",
+   308→    category: "BILLING",
+   309→    priority: "NORMAL",
+   310→    severity: "INFO",
+   311→    channels: inAppAlwaysEmailOptional,
+   312→    mandatory: true,
+   313→    preferenceAvailable: true,
+   314→    titleKey: "items.BILLING_SUBSCRIPTION_CHANGED.title",
+   315→    bodyKey: "items.BILLING_SUBSCRIPTION_CHANGED.body",
+   316→    emailTemplateKey: "items.BILLING_SUBSCRIPTION_CHANGED.email",
+   317→    dataSchema: z.object({
+   318→      planName: boundedText(120),
+   319→      change: z.enum([
+   320→        "plan_changed",
+   321→        "canceled",
+   322→        "reactivated",
+   323→        "paused",
+   324→        "resumed",
+   325→        "expired",
+   326→      ]),
+   327→      changedAt: isoTimestamp,
+   328→    }),
+   329→    actionRoute: "billing",
+   330→    expiresAfterDays: null,
+   331→    emailDefaultEnabled: true,
+   332→    source: "SubscriptionEvent PLAN_CHANGED/CANCELED/REACTIVATED/PAUSED/RESUMED/EXPIRED (§90 — no operator identity)",
+   333→    dedupe: "subscription:<SubscriptionEventId>",
+   334→  },
+   335→  BILLING_PAYMENT_SUCCEEDED: {
+   336→    type: "BILLING_PAYMENT_SUCCEEDED",
+   337→    category: "BILLING",
+   338→    priority: "NORMAL",
+   339→    severity: "SUCCESS",
+   340→    channels: inAppAlwaysEmailOptional,
+   341→    mandatory: true,
+   342→    preferenceAvailable: true,
+   343→    titleKey: "items.BILLING_PAYMENT_SUCCEEDED.title",
+   344→    bodyKey: "items.BILLING_PAYMENT_SUCCEEDED.body",
+   345→    emailTemplateKey: "items.BILLING_PAYMENT_SUCCEEDED.email",
+   346→    dataSchema: z.object({
+   347→      amountMinor: minorAmount,
+   348→      currency: currencyCode,
+   349→      paidAt: isoTimestamp,
+   350→    }),
+   351→    actionRoute: "billing",
+   352→    expiresAfterDays: null,
+   353→    emailDefaultEnabled: true,
+   354→    source: "provider-authoritative payment verification ONLY — never PENDING/RECONCILIATION (§87)",
+   355→    dedupe: "payment:<CheckoutSessionId>:SUCCEEDED",
+   356→  },
+   357→  BILLING_PAYMENT_FAILED: {
+   358→    type: "BILLING_PAYMENT_FAILED",
+   359→    category: "BILLING",
+   360→    priority: "HIGH",
+   361→    severity: "ERROR",
+   362→    channels: inAppAlwaysEmailOptional,
+   363→    mandatory: true,
+   364→    preferenceAvailable: true,
+   365→    titleKey: "items.BILLING_PAYMENT_FAILED.title",
+   366→    bodyKey: "items.BILLING_PAYMENT_FAILED.body",
+   367→    emailTemplateKey: "items.BILLING_PAYMENT_FAILED.email",
+   368→    dataSchema: z.object({
+   369→      amountMinor: minorAmount,
+   370→      currency: currencyCode,
+   371→      failedAt: isoTimestamp,
+   372→    }),
+   373→    actionRoute: "billing",
+   374→    expiresAfterDays: null,
+   375→    emailDefaultEnabled: true,
+   376→    source: "provider-reported genuine failure — reason never fabricated (§88)",
+   377→    dedupe: "payment:<CheckoutSessionId>:FAILED",
+   378→  },
+   379→
+   380→  /* --------------------------------- AI ----------------------------------- */
+   381→  AI_USAGE_LIMIT_NEAR: {
+   382→    type: "AI_USAGE_LIMIT_NEAR",
+   383→    category: "AI",
+   384→    priority: "NORMAL",
+   385→    severity: "WARNING",
+   386→    channels: inAppAlwaysEmailOptional,
+   387→    mandatory: true,
+   388→    preferenceAvailable: true,
+   389→    titleKey: "items.AI_USAGE_LIMIT_NEAR.title",
+   390→    bodyKey: "items.AI_USAGE_LIMIT_NEAR.body",
+   391→    emailTemplateKey: "items.AI_USAGE_LIMIT_NEAR.email",
+   392→    dataSchema: z.object({
+   393→      used: boundedInt(1_000_000_000),
+   394→      limit: boundedInt(1_000_000_000),
+   395→      periodEnd: isoTimestamp,
+   396→      percent: z.number().int().min(50).max(99),
+   397→    }),
+   398→    actionRoute: "usage",
+   399→    expiresAfterDays: 60,
+   400→    emailDefaultEnabled: true,
+   401→    source: "UsageService meter crossing the configured near-limit percent (§81 — no provider cost)",
+   402→    dedupe: "usage:<businessId>:<periodEnd>:AI_MESSAGES:NEAR — one per usage period (§83)",
+   403→  },
+   404→  AI_USAGE_LIMIT_REACHED: {
+   405→    type: "AI_USAGE_LIMIT_REACHED",
+   406→    category: "AI",
+   407→    priority: "HIGH",
+   408→    severity: "WARNING",
+   409→    channels: inAppAlwaysEmailOptional,
+   410→    mandatory: true,
+   411→    preferenceAvailable: true,
+   412→    titleKey: "items.AI_USAGE_LIMIT_REACHED.title",
+   413→    bodyKey: "items.AI_USAGE_LIMIT_REACHED.body",
+   414→    emailTemplateKey: "items.AI_USAGE_LIMIT_REACHED.email",
+   415→    dataSchema: z.object({
+   416→      used: boundedInt(1_000_000_000),
+   417→      limit: boundedInt(1_000_000_000),
+   418→      periodEnd: isoTimestamp,
+   419→    }),
+   420→    actionRoute: "usage",
+   421→    expiresAfterDays: 60,
+   422→    emailDefaultEnabled: true,
+   423→    source: "UsageService counter reaching the plan quota (§82 — safe usage info only)",
+   424→    dedupe: "usage:<businessId>:<periodEnd>:AI_MESSAGES:REACHED — one per usage period (§83)",
+   425→  },
+   426→
+   427→  /* ------------------------------- BUSINESS ------------------------------- */
+   428→  BUSINESS_EXPORT_COMPLETED: {
+   429→    type: "BUSINESS_EXPORT_COMPLETED",
+   430→    category: "BUSINESS",
+   431→    priority: "LOW",
+   432→    severity: "SUCCESS",
+   433→    channels: inAppAlwaysEmailOptional,
+   434→    mandatory: true,
+   435→    preferenceAvailable: true,
+   436→    titleKey: "items.BUSINESS_EXPORT_COMPLETED.title",
+   437→    bodyKey: "items.BUSINESS_EXPORT_COMPLETED.body",
+   438→    emailTemplateKey: "items.BUSINESS_EXPORT_COMPLETED.email",
+   439→    dataSchema: z.object({
+   440→      datasets: z.array(boundedText(40)).max(16),
+   441→      recordCount: boundedInt(10_000_000),
+   442→      expiresAt: isoTimestamp.nullable(),
+   443→    }),
+   444→    actionRoute: "data",
+   445→    expiresAfterDays: 30,
+   446→    emailDefaultEnabled: true,
+   447→    source: "DataExportJob COMPLETED — after file + checksum verification (§100/§328)",
+   448→    dedupe: "export:<DataExportJobId>",
+   449→  },
+   450→  BUSINESS_EXPORT_FAILED: {
+   451→    type: "BUSINESS_EXPORT_FAILED",
+   452→    category: "BUSINESS",
+   453→    priority: "NORMAL",
+   454→    severity: "ERROR",
+   455→    channels: inAppAlwaysEmailOptional,
+   456→    mandatory: true,
+   457→    preferenceAvailable: true,
+   458→    titleKey: "items.BUSINESS_EXPORT_FAILED.title",
+   459→    bodyKey: "items.BUSINESS_EXPORT_FAILED.body",
+   460→    emailTemplateKey: "items.BUSINESS_EXPORT_FAILED.email",
+   461→    dataSchema: z.object({
+   462→      reason: z.enum(["EXPORT_LIMIT_EXCEEDED", "EXPORT_GENERATION_FAILED"]),
+   463→    }),
+   464→    actionRoute: "data",
+   465→    expiresAfterDays: 30,
+   466→    emailDefaultEnabled: true,
+   467→    source: "DataExportJob FAILED (stable safe failure code only, §101/§330)",
+   468→    dedupe: "export:<DataExportJobId>",
+   469→  },
+   470→  BUSINESS_IMPORT_COMPLETED: {
+   471→    type: "BUSINESS_IMPORT_COMPLETED",
+   472→    category: "BUSINESS",
+   473→    priority: "NORMAL",
+   474→    severity: "SUCCESS",
+   475→    channels: inAppAlwaysEmailOptional,
+   476→    mandatory: true,
+   477→    preferenceAvailable: true,
+   478→    titleKey: "items.BUSINESS_IMPORT_COMPLETED.title",
+   479→    bodyKey: "items.BUSINESS_IMPORT_COMPLETED.body",
+   480→    emailTemplateKey: "items.BUSINESS_IMPORT_COMPLETED.email",
+   481→    dataSchema: z.object({
+   482→      dataset: boundedText(40),
+   483→      created: boundedInt(10_000_000),
+   484→      updated: boundedInt(10_000_000),
+   485→      skipped: boundedInt(10_000_000),
+   486→      failed: boundedInt(10_000_000),
+   487→    }),
+   488→    actionRoute: "data",
+   489→    expiresAfterDays: 30,
+   490→    emailDefaultEnabled: true,
+   491→    source: "DataImportJob COMPLETED — after DB commit (§98/§329)",
+   492→    dedupe: "import:<DataImportJobId>",
+   493→  },
+   494→  BUSINESS_IMPORT_FAILED: {
+   495→    type: "BUSINESS_IMPORT_FAILED",
+   496→    category: "BUSINESS",
+   497→    priority: "NORMAL",
+   498→    severity: "ERROR",
+   499→    channels: inAppAlwaysEmailOptional,
+   500→    mandatory: true,
+   501→    preferenceAvailable: true,
+   502→    titleKey: "items.BUSINESS_IMPORT_FAILED.title",
+   503→    bodyKey: "items.BUSINESS_IMPORT_FAILED.body",
+   504→    emailTemplateKey: "items.BUSINESS_IMPORT_FAILED.email",
+   505→    dataSchema: z.object({
+   506→      dataset: boundedText(40),
+   507→      reason: z.enum(["IMPORT_COMMIT_FAILED", "IMPORT_VALIDATION_FAILED", "IMPORT_FILE_CHANGED"]),
+   508→    }),
+   509→    actionRoute: "data",
+   510→    expiresAfterDays: 30,
+   511→    emailDefaultEnabled: true,
+   512→    source: "DataImportJob FAILED (safe failure summary, §99/§330)",
+   513→    dedupe: "import:<DataImportJobId>",
+   514→  },
+   515→
+   516→  /* --------------------- BUSINESS — CRM TASK (P37) ------------------------ */
+   517→  /*
+   518→   * Prompt 37 (§12–§20/§24/§47): CRM task notifications carry a STRICT
+   519→   * data schema — task title + context title + due instant + business
+   520→   * timezone + priority. NEVER task description, contact details,
+   521→   * financial values, AI data or security data (§17/§18/§19). The
+   522→   * business NAME itself is not part of the data (§47) — the Notification
+   523→   * row carries businessId and the Notification Center resolves the name.
+   524→   * Dedupe reuses the platform (userId, type, sourceEventId) unique index
+   525→   * (§25) — no separate reminder state, no reminder-history model (§174).
+   526→   */
+   527→  BUSINESS_CRM_TASK_ASSIGNED: {
+   528→    type: "BUSINESS_CRM_TASK_ASSIGNED",
+   529→    category: "BUSINESS",
+   530→    priority: "NORMAL",
+   531→    severity: "INFO",
+   532→    channels: inAppAlwaysEmailOptional,
+   533→    mandatory: true,
+   534→    preferenceAvailable: true,
+   535→    titleKey: "items.BUSINESS_CRM_TASK_ASSIGNED.title",
+   536→    bodyKey: "items.BUSINESS_CRM_TASK_ASSIGNED.body",
+   537→    emailTemplateKey: "items.BUSINESS_CRM_TASK_ASSIGNED.email",
+   538→    dataSchema: z.object({
+   539→      taskId: domainId,
+   540→      taskTitle: boundedText(160),
+   541→      priority: crmTaskPriority,
+   542→      contextType: crmContextType,
+   543→      contextTitle: boundedText(160),
+   544→      dueAt: isoTimestamp.nullable(),
+   545→      businessTimezone,
+   546→    }),
+   547→    actionRoute: "crmTasks",
+   548→    expiresAfterDays: 30,
+   549→    emailDefaultEnabled: true,
+   550→    source:
+   551→      "CrmTask create/update commit with a NEW assignee ≠ actor (§34/§35) — event-driven, immediate; self-assignment and unchanged assignments never notify (§33)",
+   552→    dedupe:
+   553→      "crm-task-assigned:<taskId>:<assigneeUserId>:<updatedAt ISO> (§179) — stable per assignment event; update retries after further edits are a NEW logical event",
+   554→  },
+   555→  BUSINESS_CRM_TASK_DUE_SOON: {
+   556→    type: "BUSINESS_CRM_TASK_DUE_SOON",
+   557→    category: "BUSINESS",
+   558→    priority: "HIGH",
+   559→    severity: "WARNING",
+   560→    channels: inAppAlwaysEmailOptional,
+   561→    mandatory: true,
+   562→    preferenceAvailable: true,
+   563→    titleKey: "items.BUSINESS_CRM_TASK_DUE_SOON.title",
+   564→    bodyKey: "items.BUSINESS_CRM_TASK_DUE_SOON.body",
+   565→    emailTemplateKey: "items.BUSINESS_CRM_TASK_DUE_SOON.email",
+   566→    dataSchema: z.object({
+   567→      taskId: domainId,
+   568→      taskTitle: boundedText(160),
+   569→      priority: crmTaskPriority,
+   570→      contextType: crmContextType,
+   571→      contextTitle: boundedText(160),
+   572→      dueAt: isoTimestamp,
+   573→      reminderMinutesBefore: z.number().int().min(5).max(10080),
+   574→      businessTimezone,
+   575→    }),
+   576→    actionRoute: "crmTasks",
+   577→    expiresAfterDays: 7,
+   578→    emailDefaultEnabled: true,
+   579→    source:
+   580→      "crm-task-reminders processor (operator-scheduled external cron/systemd, §37/§70) — ONE due-soon notification per (task, dueAt, assignee) while OPEN/IN_PROGRESS (§6/§9)",
+   581→    dedupe:
+   582→      "crm-task-due-soon:<taskId>:<dueAt ISO>:<assigneeUserId> (§25/§27/§180) — no run timestamp; repeated processor runs dedupe via the Notification unique index",
+   583→  },
+   584→  BUSINESS_CRM_TASK_OVERDUE: {
+   585→    type: "BUSINESS_CRM_TASK_OVERDUE",
+   586→    category: "BUSINESS",
+   587→    priority: "HIGH",
+   588→    severity: "WARNING",
+   589→    channels: inAppAlwaysEmailOptional,
+   590→    mandatory: true,
+   591→    preferenceAvailable: true,
+   592→    titleKey: "items.BUSINESS_CRM_TASK_OVERDUE.title",
+   593→    bodyKey: "items.BUSINESS_CRM_TASK_OVERDUE.body",
+   594→    emailTemplateKey: "items.BUSINESS_CRM_TASK_OVERDUE.email",
+   595→    dataSchema: z.object({
+   596→      taskId: domainId,
+   597→      taskTitle: boundedText(160),
+   598→      priority: crmTaskPriority,
+   599→      contextType: crmContextType,
+   600→      contextTitle: boundedText(160),
+   601→      dueAt: isoTimestamp,
+   602→      businessTimezone,
+   603→    }),
+   604→    actionRoute: "crmTasks",
+   605→    expiresAfterDays: 14,
+   606→    emailDefaultEnabled: true,
+   607→    source:
+   608→      "crm-task-reminders processor (operator-scheduled external cron/systemd, §37/§70) — ONE overdue notification per (task, dueAt, assignee) while OPEN/IN_PROGRESS (§6/§9)",
+   609→    dedupe:
+   610→      "crm-task-overdue:<taskId>:<dueAt ISO>:<assigneeUserId> (§25/§28/§181) — no run timestamp; repeated processor runs dedupe via the Notification unique index",
+   611→  },
+   612→
+   613→  /* ------------------- BUSINESS — INVENTORY (Prompt 38) ------------------- */
+   614→  /*
+   615→   * Prompt 38 (§5–§11): low-stock alerts carry a STRICT data schema —
+   616→   * product name + optional SKU/unit + stock quantity + threshold. NEVER
+   617→   * cost prices, supplier terms, margin data or AI data (§14/§18 of P37
+   618→   * apply by analogy). The business NAME is not part of the data — the
+   619→   * Notification row carries businessId and the Notification Center
+   620→   * resolves the name. Dedupe reuses the platform (userId, type,
+   621→   * sourceEventId) unique index — no separate alert-state model.
+   622→   */
+   623→  BUSINESS_INVENTORY_LOW_STOCK: {
+   624→    type: "BUSINESS_INVENTORY_LOW_STOCK",
+   625→    category: "BUSINESS",
+   626→    priority: "NORMAL",
+   627→    severity: "WARNING",
+   628→    channels: inAppAlwaysEmailOptional,
+   629→    mandatory: true,
+   630→    preferenceAvailable: true,
+   631→    titleKey: "items.BUSINESS_INVENTORY_LOW_STOCK.title",
+   632→    bodyKey: "items.BUSINESS_INVENTORY_LOW_STOCK.body",
+   633→    emailTemplateKey: "items.BUSINESS_INVENTORY_LOW_STOCK.email",
+   634→    dataSchema: z.object({
+   635→      productId: domainId,
+   636→      productName: boundedText(160),
+   637→      sku: boundedText(64).nullable(),
+   638→      unit: boundedText(24).nullable(),
+   639→      stockQty: z.number().int().min(0).max(1_000_000_000),
+   640→      lowStockAt: z.number().int().min(0).max(1_000_000_000),
+   641→    }),
+   642→    actionRoute: "products",
+   643→    expiresAfterDays: 30,
+   644→    emailDefaultEnabled: true,
+   645→    source:
+   646→      "inventory-low-stock processor (operator-scheduled external cron/systemd) — ONE alert per (product, stockQty, recipient) while the product is active (§38-a identity law)",
+   647→    dedupe:
+   648→      "inventory-low-stock:<productId>:<stockQty>:<recipientUserId> — no run timestamp; repeated runs at the same qty dedupe via the Notification unique index; a different qty is a NEW logical event (restock → fresh drop re-alerts)",
+   649→  },
+   650→
+   651→  /* -------------------------------- SYSTEM -------------------------------- */
+   652→  SYSTEM_ANNOUNCEMENT: {
+   653→    type: "SYSTEM_ANNOUNCEMENT",
+   654→    category: "SYSTEM",
+   655→    priority: "LOW",
+   656→    severity: "INFO",
+   657→    channels: { IN_APP: "ALWAYS", EMAIL: "IF_ENABLED" },
+   658→    mandatory: true,
+   659→    preferenceAvailable: true,
+   660→    titleKey: "items.SYSTEM_ANNOUNCEMENT.title",
+   661→    bodyKey: "items.SYSTEM_ANNOUNCEMENT.body",
+   662→    emailTemplateKey: "items.SYSTEM_ANNOUNCEMENT.email",
+   663→    dataSchema: z.object({
+   664→      message: boundedText(500),
+   665→    }),
+   666→    actionRoute: "dashboard",
+   667→    expiresAfterDays: 90,
+   668→    emailDefaultEnabled: false,
+   669→    source: "authorized platform operator service ONLY — no customer-controlled creation (§154/§155)",
+   670→    dedupe: "announcement:<operatorMessageId>",
+   671→  },
+   672→};
+   673→
+   674→/** The typed list, in catalog order (stable for UI + tests). */
+   675→export const NOTIFICATION_TYPE_LIST: readonly NotificationCatalogEntry[] =
+   676→  NOTIFICATION_TYPES.map((type) => NOTIFICATION_CATALOG[type]);
+   677→

@@ -163,6 +163,8 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
       paidMinor: e.paidMinor,
       status: e.status,
       spentAt: e.spentAt,
+      dueDate: e.dueDate,
+      reference: e.reference,
       note: e.note,
       deletedAt: e.deletedAt,
     })),

@@ -253,6 +253,10 @@ export type ExpenseDetail = {
     balanceMinor: number;
     status: PaymentStatusToken;
     spentAt: string;
+    /** Supplier-bill due date (§84 date-only) — null when no terms stated. */
+    dueDate: string | null;
+    /** Free-text supplier bill/invoice reference (≤ 80). */
+    reference: string | null;
     note: string | null;
     supplierId: string | null;
     supplierName: string | null;

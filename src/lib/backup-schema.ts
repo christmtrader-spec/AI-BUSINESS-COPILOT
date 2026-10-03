@@ -159,6 +159,10 @@ export const expenseRowSchema = z.object({
   paidMinor: moneyInt,
   status: z.enum(["UNPAID", "PARTIAL", "PAID"]),
   spentAt: isoDate,
+  // Supplier-bill terms (payables-aging round) — must round-trip so backups
+  // never silently drop recorded data.
+  dueDate: isoDate,
+  reference: nullableText(80),
   note: nullableText(1000),
   deletedAt: isoDate,
 })
