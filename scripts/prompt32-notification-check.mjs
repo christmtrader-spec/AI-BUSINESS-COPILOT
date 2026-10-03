@@ -314,7 +314,7 @@ section("PREFERENCES");
 const prefs = await apiJson(fA2, "/api/v1/me/notification-preferences");
 check("PREFS: effective map returned (§60)", prefs.res.status === 200 && Array.isArray(prefs.body?.data?.preferences));
 // Prompt 37 catalog extension: 19 → 22 types (BUSINESS_CRM_TASK_*).
-check("PREFS: all 22 catalog types present (§36)", new Set((prefs.body?.data?.preferences ?? []).map((p) => p.notificationType)).size === 22, `types=${new Set((prefs.body?.data?.preferences ?? []).map((p) => p.notificationType)).size}`);
+check("PREFS: all 23 catalog types present (§36; 38-F: +BUSINESS_INVENTORY_LOW_STOCK)", new Set((prefs.body?.data?.preferences ?? []).map((p) => p.notificationType)).size === 23, `types=${new Set((prefs.body?.data?.preferences ?? []).map((p) => p.notificationType)).size}`);
 check("PREFS: mandatory channels not overridable (§64)", (prefs.body?.data?.preferences ?? []).every((p) => (p.mandatory ? !p.overridable && p.enabled === true : true)));
 check("PREFS: IN_APP always mandatory across catalog (§10)", (prefs.body?.data?.preferences ?? []).filter((p) => p.channel === "IN_APP").every((p) => p.mandatory));
 

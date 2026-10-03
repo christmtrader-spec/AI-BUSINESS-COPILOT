@@ -26,6 +26,20 @@
  *   --business-id=<bad> → exit 1 (INVALID_BUSINESS_ID)
  * Duplicate value flags: LAST occurrence wins (deterministic, documented).
  *
+ * 38-F SEMANTICS:
+ *   --max caps NEW notifications CREATED per run (default 100, hard
+ *   10–500) — NOT the products scanned. Duplicates never consume the
+ *   budget; when the cap is hit the result reports truncated=true and the
+ *   remaining eligible combinations are reached on the NEXT run (no
+ *   starvation). Product rows are read in bounded cursor pages of
+ *   INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE (default 250, 50–500) — never one
+ *   unbounded query. In DRY RUN the reported `created` means wouldCreate.
+ *
+ * SINGLE-NODE SCHEDULER (§65): this is an operator-managed single-node
+ * job — idempotency (Notification userId+type+sourceEventId uniqueness)
+ * protects against overlapping/duplicate EXECUTION; it is NOT distributed
+ * scheduling and does not coordinate multiple scheduler hosts.
+ *
  * Output: safe operational fields only (mode/counts/runId/timestamps) —
  * NEVER product names, SKUs, prices, quantities, per-product ids, business
  * ids or notification bodies (P37 §66/§69/§11 safe-log law applies).
@@ -33,8 +47,10 @@
  * Exit codes: 0 = run completed (dry or apply) · 1 = invalid CLI usage OR
  * systemic failure. A single bad candidate never aborts the run.
  *
- * Scheduling examples (DOCUMENTATION ONLY — never auto-installed):
- *   Linux cron :  0 */6 * * *  app  cd /srv/my-project && bun scripts/process-inventory-low-stock.mjs --apply >> /var/log/aibc-inventory-alerts.log 2>&1
+ * Scheduling examples (DOCUMENTATION ONLY — never auto-installed; NOTE: the
+ * cron hour spec below is written as 0,6,12,18 — an "asterisk-slash-6"
+ * literal here would terminate this block comment and break the script):
+ *   Linux cron :  0 0,6,12,18 * * *  app  cd /srv/my-project && bun scripts/process-inventory-low-stock.mjs --apply >> /var/log/aibc-inventory-alerts.log 2>&1
  *   systemd    :  aibc-inventory-alerts.timer (OnCalendar=*-*-* 0/6:00:00) → aibc-inventory-alerts.service
  *   Windows    :  Task Scheduler every 6 hours — program bun.exe, arguments
  *                 "scripts/process-inventory-low-stock.mjs --apply", working

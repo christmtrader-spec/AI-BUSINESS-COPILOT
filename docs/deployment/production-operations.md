@@ -437,6 +437,104 @@ simply do not fire and the app stays healthy (§191).
   against the database (§158/§171). Scheduler availability must never affect
   `/api/health` or `/api/ready` (§190/§191).
 
+## 11e. Inventory low-stock alert scheduler (Prompt 38 / 38-F)
+
+Inventory low-stock notifications (Prompt 38) are driven by an **EXTERNAL,
+operator-managed scheduler** — the same doctrine as §11d. The application
+contains NO in-process scheduler; if the schedule below is not installed,
+low-stock alerts simply do not fire and the app stays healthy.
+
+**Processor command:**
+
+```bash
+bun scripts/process-inventory-low-stock.mjs --apply
+```
+
+The default (no flags) is **DRY RUN** — candidates and would-create counters
+only, zero writes. `--apply` creates the notifications.
+
+**EXAMPLES ONLY — OPERATOR-MANAGED — NOT AUTO-INSTALLED (recommended
+cadence: every 6 hours, Prompt 38-F §61):**
+
+- **Linux cron:**
+
+  ```
+  # /etc/crontab — EXAMPLE, operator-managed (Prompt 38-F §61)
+  0 0,6,12,18 * * * app cd /srv/my-project && bun scripts/process-inventory-low-stock.mjs --apply >> /var/log/aibc-inventory-alerts.log 2>&1
+  ```
+
+- **systemd timer** — `aibc-inventory-alerts.service`:
+
+  ```ini
+  [Unit]
+  Description=AI Business Copilot inventory low-stock alerts (Prompt 38)
+
+  [Service]
+  Type=oneshot
+  User=app
+  WorkingDirectory=/srv/my-project
+  ExecStart=/usr/local/bin/bun scripts/process-inventory-low-stock.mjs --apply
+  ```
+
+  and `aibc-inventory-alerts.timer` with `OnCalendar=*-*-* 00/6:00:00`
+  (or six-hourly `OnUnitInactiveSec=6h`); systemd prevents overlapping runs
+  of the same unit.
+
+- **Windows Task Scheduler**: trigger every 6 hours; program `bun.exe`;
+  arguments `scripts/process-inventory-low-stock.mjs --apply`; working
+  directory = project root; "Do not start a new instance".
+
+- **Overlap protection** is the scheduler's job (`flock`, systemd unit
+  concurrency, Task Scheduler instance policy). The processor itself is
+  IDEMPOTENT: notification identity `inventory-low-stock:<productId>:
+  <stockQty>:<recipientUserId>` plus the Notification
+  `(userId, type, sourceEventId)` unique index dedupe repeated runs at the
+  same stock level. This is a SINGLE-NODE scheduler — duplicate-safe, NOT
+  distributed coordination; keep ONE scheduling owner per database
+  (Prompt 38-F §65, ADR 0038).
+
+- **Semantics (Prompt 38-F)**: `max` (default 100, hard 10–500) caps NEW
+  notifications CREATED per run — duplicates and failures never consume the
+  budget, `created` never exceeds `max`, and a run that stops at the cap
+  reports `truncated: true` with remaining combinations reached on the next
+  run (no starvation). Products are scanned in bounded cursor pages of
+  `INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE` (default 250, 50–500) — never one
+  unbounded query. Deleted/deactivated/restocked products and revoked
+  OWNER/ADMIN memberships between scan and notify are skipped via fresh
+  re-checks; product rows are never mutated.
+
+- **CLI usage contract** — identical to the Prompt 37-F parser (validated
+  BEFORE the processor import; zero database access on rejection, exit 1):
+  `--apply` + `--dry-run` conflict → exit 1; unknown flags → exit 1;
+  `--business-id=<id>` must match `^[a-zA-Z0-9_-]{6,64}$`; `--max=<n>` strict
+  10–500 (no silent clamping); duplicate value flags take the last
+  occurrence. Exit codes: 0 = run completed (dry or apply) · 1 = invalid
+  usage OR systemic failure (connection/pool-class database errors
+  propagate — never misreported as a "successful" run).
+
+- **Troubleshooting**: *Exit 1 with `CLI_USAGE_INVALID`* — fix the flags,
+  nothing was written. *Exit 1 with an error name and no result* — systemic
+  (usually the database). *`failed` > 0* — per-candidate errors, the run
+  continued; investigate with the dry-run counters. *Alerts not firing* —
+  the schedule is not installed; they resume (and dedupe) on the next
+  successful run.
+
+- **Limits & env**: `INVENTORY_LOW_STOCK_MAX_PER_RUN` (default 100, 10–500)
+  and `INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE` (default 250, 50–500) — both
+  clamped, never unbounded; `INVENTORY_LOW_STOCK_DEBUG=1` emits ONE safe
+  aggregate line (§52 key vocabulary). See
+  `docs/product/inventory-low-stock.md`,
+  `docs/security/inventory-low-stock-security.md` and
+  `docs/adr/0038-inventory-low-stock-alerts.md`.
+
+- **Log hygiene**: counts/mode/runId/timestamps only — no product ids,
+  business ids, names, SKUs, quantities, recipient ids or bodies (Prompt
+  38-F §51/§52; enforced by `scripts/inventory-low-stock-static-scan.mjs`).
+
+- **No scheduler HTTP endpoint, no CRON_SECRET**: the CLI runs locally
+  against the database; scheduler availability never affects `/api/health`
+  or `/api/ready` (E2E-verified §112).
+
 ## 12. Related procedures
 
 - Rollback: `docs/deployment/release-rollback.md` (§118/§119) — forward-only

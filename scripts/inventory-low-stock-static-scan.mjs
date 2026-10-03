@@ -1,10 +1,16 @@
 /**
- * scripts/inventory-low-stock-static-scan.mjs — Prompt 38 (§38-a §20).
+ * scripts/inventory-low-stock-static-scan.mjs — Prompt 38 (§38-a §20,
+ * REPAIRED by 38-F §76–§84).
  *
  * Deterministic, dependency-free source scan over the low-stock alert
  * surface. Every rule reports ✓/✗ with the offending file:line. Exit 0
  * only when ALL rules pass. Mirrors the Prompt 37 §97/§12 scan discipline
  * for the inventory surface.
+ *
+ * 38-F rule repair: the OLD rule 7 demanded `lowRows.slice(0, max)` — the
+ * exact fake-boundedness pattern 38-F bans. The corrected rules verify a
+ * REAL bounded page query (`take:` + cursor pagination state), the
+ * creation-budget semantics of `max`, and the truncated lookahead.
  *
  * Rules (1:1):
  *   1  no setInterval in inventory alert code (app runtime)
@@ -13,21 +19,30 @@
  *   4  no direct nodemailer/SMTP from inventory alert code
  *   5  no client-controlled recipient (userId from request) in the processor
  *   6  no client-controlled businessId (tenant scope is server-derived)
- *   7  no unbounded product query (a `take:` cap must exist)
+ *   7  (§76/§78) REAL bounded page query: product read carries a hard
+ *      `take: pageSize` bound — slice()-only capping is NOT accepted
+ *   7b (§78) no unbounded product findMany — exactly one product.findMany
+ *      call and it MUST contain the take bound
+ *   7c (§79) pagination state exists: server-derived cursor + skip: 1
+ *   7d (§80) a real global created-notification budget exists — the old
+ *      `lowRows.slice(0, max)` cap must be GONE
+ *   7e (§19) truncated lookahead is wired (hasRemainingLowStockWork)
  *   8  no per-product ids in console logging
  *   9  no business ids in console logging
  *  10  no product names/SKUs/quantities in console logging
  *  11  no recipient user ids in console logging
- *  12  no debug-mode bypass of the logging policy (INVENTORY_LOW_STOCK_DEBUG
- *      emits ONLY the safe aggregate metadata shape)
+ *  12  (§52) debug mode emits ONLY the §52 aggregate key vocabulary
+ *      (exported INVENTORY_LOW_STOCK_DEBUG_KEYS constant, consumed)
  *  13  no product mutation during alert processing (notification-only)
  *  14  no sourceEventId generated from raw user input (names/SKUs)
  *  15  no run timestamp in the sourceEventId identity (determinism)
  *  16  no arbitrary actionRoute (closed catalog key only)
  *  17  no eval / Function() / dynamic exec in the alert surface
  *  18  no public HTTP scheduler endpoint (CLI talks to the DB directly)
- *  19  no fake distributed locking
+ *  19  no fake distributed locking / queue / worker vocabulary
  *  20  recipients resolved from the closed OWNER/ADMIN vocabulary only
+ *  21  (§17) deterministic recipient order (userId ASC)
+ *  22  (§50) systemic DB error classification exists (propagate, not swallow)
  */
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -93,10 +108,35 @@ check("5 no request object in processor", src.processor, "NextRequest", false);
 check("5 no request object in types", src.types, "NextRequest", false);
 check("6 processor scope is a validated option, not a request param", src.processor, "options.businessId?.trim()", true);
 
-/* ------------------------------- boundedness ------------------------------ */
+/* ----------------- bounded scan (38-F §76–§80 — REPAIRED) ----------------- */
 section0("bounds");
-check("7 processor caps candidates (slice(0, max))", src.processor, "lowRows.slice(0, max)", true);
-check("7 processor exposes max in result", src.processor, "max,", true);
+check("7 page query carries a REAL take bound (take: pageSize)", src.processor, "take: pageSize", true);
+check("7 page size comes from the bounded helper", src.processor, "lowStockScanPageSize()", true);
+check("7 the fake slice(0, max) cap is GONE", src.processor, "slice(0, max)", false);
+{
+  // §78 — no unbounded product load: every db.product.findMany occurrence
+  // must sit before a take: bound within the same call. There is exactly
+  // ONE product.findMany in the processor and it contains `take: pageSize`.
+  const p = src.processor ?? "";
+  const callSites = p.split("db.product.findMany").length - 1;
+  record("7b exactly one db.product.findMany call site", callSites === 1, `${callSites} sites`);
+  record("7b that call carries the take bound", p.includes("take: pageSize"));
+}
+check("7c pagination cursor state exists (server-derived)", src.processor, "cursor: { id: cursor }", true);
+check("7c pagination advances past the cursor row (skip: 1)", src.processor, "skip: 1", true);
+check("7c scan loop terminates on page exhaustion", src.processor, "rows.length === 0", true);
+check(
+  "7d max is the creation budget (budget check on the created path)",
+  src.processor,
+  "result.created >= max",
+  true,
+);
+check("7d result reports truncated", src.processor, "truncated: false", true);
+check("7e truncated uses the pure lookahead helper", src.processor, "hasRemainingLowStockWork(", true);
+check("7e page size vocabulary exported + bounded (default 250)", src.types, "INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE_DEFAULT = 250", true);
+check("7e page size min 50", src.types, "INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE_MIN = 50", true);
+check("7e page size max 500", src.types, "INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE_MAX = 500", true);
+check("7e invalid page-size env can never become unlimited (clamped)", src.types, "INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE_MAX,\n    Math.max(INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE_MIN, base)", true);
 
 /* ------------------------------ safe logging ------------------------------ */
 section0("logging");
@@ -107,25 +147,26 @@ section0("logging");
   const consoleUses = p.split("\n").filter((l) => l.includes("console."));
   record("8-11 console usage limited to the safe debug block", consoleUses.length === 1, `${consoleUses.length} uses`);
   record(
-    "12 safe debug block emits the exact aggregate shape",
-    p.includes('debug: "inventory-low-stock"') &&
-      p.includes('phase: "candidate-scan"') &&
-      p.includes("scanned: rows.length") &&
-      p.includes("lowStockScanned: lowRows.length") &&
-      p.includes("max,") &&
-      p.includes("mode,"),
+    "12 debug block consumes the exported §52 key vocabulary",
+    p.includes("INVENTORY_LOW_STOCK_DEBUG_KEYS") && (src.types ?? "").includes("INVENTORY_LOW_STOCK_DEBUG_KEYS = ["),
   );
-  const debugBlockIdx = p.indexOf('process.env.INVENTORY_LOW_STOCK_DEBUG === "1"');
   record(
-    "12 debug switch gates ONLY the aggregate block (no per-product payload after it)",
-    debugBlockIdx >= 0 && !p.slice(debugBlockIdx, p.indexOf("const result:")).includes("productId"),
+    "12 debug emits exactly the §52 keys (satisfies the exported constant)",
+    p.includes("satisfies Record<(typeof INVENTORY_LOW_STOCK_DEBUG_KEYS)[number], unknown>"),
+  );
+  const dbgStart = p.indexOf('debug: "inventory-low-stock"');
+  record(
+    "12 no per-row fields in the debug block (no ids/names/skus/qties)",
+    dbgStart >= 0 &&
+      !/(productId|productName|businessId|recipientUserId|stockQty:|\bsku:)/.test(p.slice(dbgStart)),
   );
 }
+check("12 debug switch is the only env-gated output", src.processor, 'process.env.INVENTORY_LOW_STOCK_DEBUG === "1"', true);
 
 /* --------------------------- notification-only law ------------------------ */
 section0("mutation");
 check(
-  "13 processor never mutates products (no product.update/create/delete)",
+  "13 processor never mutates products (no product.update/deleteMany)",
   src.processor,
   ".product.update",
   false,
@@ -133,13 +174,14 @@ check(
 check("13 no product.create", src.processor, ".product.create", false);
 check("13 no product.delete", src.processor, ".product.delete", false);
 check("13 no product.upsert", src.processor, ".product.upsert", false);
+check("13 no product.deleteMany", src.processor, ".product.deleteMany", false);
 
 /* -------------------------------- identity -------------------------------- */
 section0("identity");
 check(
-  "14 sourceEventId composes from ids + qty only (no name/sku)",
+  "14 identity composed via the SHARED helper (dry-run + apply, no drift)",
   src.processor,
-  "`inventory-low-stock:${fresh.id}:${fresh.stockQty}:${userId}`",
+  "lowStockSourceEventId(fresh.id, fresh.stockQty, userId)",
   true,
 );
 check(
@@ -174,6 +216,8 @@ check("17 CLI has no Function()", src.cli ?? "", "new Function", false);
 }
 check("19 CLI declares no distributed lock", src.cli ?? "", "redis", false);
 check("19 CLI declares no lock table", src.cli ?? "", "lease", false);
+check("19 CLI declares no queue/worker", src.cli ?? "", "BullMQ", false);
+check("19 CLI documents the single-node scheduler honestly", src.cli ?? "", "SINGLE-NODE SCHEDULER", true);
 
 /* -------------------------------- recipients ------------------------------ */
 section0("recipients");
@@ -186,9 +230,16 @@ check(
 check(
   "20 processor queries memberships with the role filter",
   src.processor,
-  'role: { in: ["OWNER", "ADMIN"] }',
+  "role: { in: [...LOW_STOCK_RECIPIENT_ROLES] }",
   true,
 );
+check("21 recipient resolution is deterministically ordered (userId ASC)", src.processor, 'orderBy: { userId: "asc" }', true);
+check("21 recipient list re-sorted defensively", src.processor, ".sort()", true);
+
+/* ----------------------------- systemic failures --------------------------- */
+section0("systemic");
+check("22 systemic Prisma class codes enumerated (propagate, §50)", src.processor, "SYSTEMIC_PRISMA_CODES", true);
+check("22 per-candidate errors stay contained (failed++, §49)", src.processor, "result.failed += 1", true);
 
 /* --------------------------------- report --------------------------------- */
 console.log("");

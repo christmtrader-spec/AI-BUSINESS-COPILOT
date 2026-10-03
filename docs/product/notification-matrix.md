@@ -35,6 +35,7 @@
 | `BUSINESS_EXPORT_FAILED` | BUSINESS | NORMAL | ERROR | ALWAYS | IF_ENABLED (default on) | yes | yes | `DataExportJob` FAILED (stable safe failure code only, §101/§330) | `export:<DataExportJobId>` | Dataset names and summary counts — no file paths or raw rows |
 | `BUSINESS_IMPORT_COMPLETED` | BUSINESS | NORMAL | SUCCESS | ALWAYS | IF_ENABLED (default on) | yes | yes | `DataImportJob` COMPLETED — after DB commit (§98/§329) | `import:<DataImportJobId>` | Dataset names and summary counts — no file paths or raw rows |
 | `BUSINESS_IMPORT_FAILED` | BUSINESS | NORMAL | ERROR | ALWAYS | IF_ENABLED (default on) | yes | yes | `DataImportJob` FAILED (safe failure summary, §99/§330) | `import:<DataImportJobId>` | Dataset names and summary counts — no file paths or raw rows |
+| `BUSINESS_INVENTORY_LOW_STOCK` | BUSINESS | NORMAL | WARNING | ALWAYS | IF_ENABLED (default on) | yes | yes | Operator-scheduled low-stock processor ONLY (`scripts/process-inventory-low-stock.mjs`); one logical alert per (product, stockQty, recipient) — dedupe via the identity below (Prompt 38/38-F) | `inventory-low-stock:<productId>:<stockQty>:<recipientUserId>` — no run timestamp | productId / productName (≤160) / sku (≤64, nullable) / unit (≤24, nullable) / stockQty / lowStockAt — never prices, business or recipient data |
 | `SYSTEM_ANNOUNCEMENT` | SYSTEM | LOW | INFO | ALWAYS | IF_ENABLED (default off) | yes | yes | Authorized platform operator service ONLY — no customer-controlled creation (§154/§155) | `announcement:<operatorMessageId>` | Operator-authored announcement text (plain text, ≤500 chars) |
 
 Notes:
@@ -50,6 +51,7 @@ Notes:
   SECURITY_SESSIONS_SIGNED_OUT 30 days; AI alerts 60 days; BUSINESS job
   outcomes 30 days; BUSINESS_CRM_TASK_DUE_SOON 7 days;
   BUSINESS_CRM_TASK_OVERDUE 14 days; BUSINESS_CRM_TASK_ASSIGNED 30 days;
+  BUSINESS_INVENTORY_LOW_STOCK 30 days;
   SYSTEM_ANNOUNCEMENT 90 days; all other SECURITY and
   BILLING types never expire (null).
 
@@ -69,6 +71,21 @@ processor `scripts/process-crm-task-reminders.mjs`):
 All three: category BUSINESS, IN_APP ALWAYS, EMAIL IF_ENABLED,
 preferenceAvailable, actionRoute `crmTasks` → `#/crm?tab=tasks`. Full
 semantics: `docs/product/crm-task-reminders.md`.
+
+## Inventory low-stock notification (Prompt 38 / 38-F)
+
+`BUSINESS_INVENTORY_LOW_STOCK` (NORMAL/WARNING, expiry 30d) completes the MVP
+notification scope's second scheduled half: products at or below their
+`lowStockAt` threshold (inclusive) alert the business's active OWNER + ADMIN
+members via the operator-scheduled processor
+`scripts/process-inventory-low-stock.mjs` (external cron/systemd, 6-hour
+cadence recommended). Bounded cursor-paginated scanning (page 50–500, default
+250); per-run creation budget (`max`, 10–500, default 100) where duplicates
+never consume the budget and truncated runs leave no starvation; fresh
+product + membership re-checks before every notify; product rows never
+mutated; single notification type (no OUT_OF_STOCK/RESTOCKED noise); CTA
+`products` → `#/products`. Full semantics:
+`docs/product/inventory-low-stock.md`; identity row above.
 
 ## Unmapped events
 

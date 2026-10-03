@@ -25,6 +25,11 @@ const actionRoutePathMap: Record<string, string> = {
   dashboard: "#/dashboard",
   // Prompt 37 (§23/§88) — the only CRM task CTA: opens the Tasks workspace.
   crmTasks: "#/crm?tab=tasks",
+  // Prompt 38 (38-F fix) — inventory low-stock CTA: opens the Products
+  // workspace. This entry was MISSING from this map when Prompt 38 landed
+  // (drift vs. the catalog's ACTION_ROUTES), which silently stripped the
+  // low-stock notification's CTA in the center API — caught by the 38-F E2E.
+  products: "#/products",
 };
 
 export type NotificationDTO = {

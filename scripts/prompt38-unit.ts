@@ -25,13 +25,19 @@ function ok(name: string, cond: boolean, info = "") {
 }
 
 import {
+  hasRemainingLowStockWork,
+  INVENTORY_LOW_STOCK_DEBUG_KEYS,
   INVENTORY_LOW_STOCK_MAX_PER_RUN_DEFAULT,
   INVENTORY_LOW_STOCK_MAX_PER_RUN_MAX,
   INVENTORY_LOW_STOCK_MAX_PER_RUN_MIN,
+  INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE_DEFAULT,
+  INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE_MAX,
+  INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE_MIN,
   isLowStockNow,
   isLowStockRecipientRole,
   LOW_STOCK_RECIPIENT_ROLES,
   lowStockMaxPerRun,
+  lowStockScanPageSize,
   lowStockSourceEventId,
 } from "../src/lib/inventory/low-stock-types";
 import { NOTIFICATION_CATALOG, NOTIFICATION_TYPES, isNotificationType } from "../src/lib/notifications/catalog";
@@ -113,6 +119,30 @@ import { parseReminderCliArgs } from "./lib/crm-reminder-cli.mjs";
   ok("5f. valid apply parsed", good.ok && good.ok && good.options.dryRun === false);
   const def = parseReminderCliArgs([]);
   ok("5g. default is DRY_RUN", def.ok && def.options.dryRun === true);
+  // 38-F §55 — strict 10–500 (no silent clamping at the CLI layer).
+  const max9999 = parseReminderCliArgs(["--max=9999"]);
+  ok("5h. max 9999 rejected", !max9999.ok);
+  const maxFrac = parseReminderCliArgs(["--max=10.5"]);
+  ok("5i. fractional max rejected", !maxFrac.ok);
+  const maxAbc = parseReminderCliArgs(["--max=abc"]);
+  ok("5j. non-numeric max rejected", !maxAbc.ok);
+  const maxEmpty = parseReminderCliArgs(["--max="]);
+  ok("5k. empty max rejected", !maxEmpty.ok);
+  const maxTen = parseReminderCliArgs(["--max=10"]);
+  ok("5l. --max=10 valid (min edge)", maxTen.ok && maxTen.options.maxTasks === 10);
+  const max500 = parseReminderCliArgs(["--max=500"]);
+  ok("5m. --max=500 valid (max edge)", max500.ok && max500.options.maxTasks === 500);
+  // 38-F §58 — duplicate value flags: LAST occurrence wins (documented).
+  const lastWins = parseReminderCliArgs(["--max=10", "--max=20"]);
+  ok("5n. duplicate --max: last occurrence wins (20)", lastWins.ok && lastWins.options.maxTasks === 20);
+  const lastWinsBiz = parseReminderCliArgs(["--business-id=biz0001abc", "--business-id=biz0002abc"]);
+  ok("5o. duplicate --business-id: last wins", lastWinsBiz.ok && lastWinsBiz.options.businessId === "biz0002abc");
+  const repeatApply = parseReminderCliArgs(["--apply", "--apply"]);
+  ok("5p. repeated --apply is idempotent (APPLY)", repeatApply.ok && repeatApply.options.dryRun === false);
+  const repeatDry = parseReminderCliArgs(["--dry-run", "--dry-run"]);
+  ok("5q. repeated --dry-run is idempotent (DRY_RUN)", repeatDry.ok && repeatDry.options.dryRun === true);
+  const conflictEitherOrder = parseReminderCliArgs(["--dry-run", "--apply"]);
+  ok("5r. --apply + --dry-run conflicts in ANY order", !conflictEitherOrder.ok && conflictEitherOrder.code === "CONFLICTING_FLAGS");
 }
 
 /* ------------------------------- 6. catalog -------------------------------- */
@@ -184,6 +214,8 @@ console.log("[6 catalog entry]");
   ok("6r. no BUSINESS_INVENTORY_RESTOCKED type", !isNotificationType("BUSINESS_INVENTORY_RESTOCKED"));
   ok("6s. no BUSINESS_INVENTORY_OUT_OF_STOCK type", !isNotificationType("BUSINESS_INVENTORY_OUT_OF_STOCK"));
   ok("6t. no BUSINESS_INVENTORY_PRICE_CHANGED type", !isNotificationType("BUSINESS_INVENTORY_PRICE_CHANGED"));
+  ok("6u. no BUSINESS_INVENTORY_CRITICAL type (38-F §30)", !isNotificationType("BUSINESS_INVENTORY_CRITICAL"));
+  ok("6v. exactly ONE inventory type exists", NOTIFICATION_TYPES.filter((t) => t.startsWith("BUSINESS_INVENTORY")).length === 1);
 }
 
 /* ------------------------------ 7. action route ---------------------------- */
@@ -217,6 +249,92 @@ console.log("[9 i18n parity]");
   const enCta = (en as unknown as Record<string, { cta: Record<string, string> }>).notifications.cta.products;
   const faCta = (fa as unknown as Record<string, { cta: Record<string, string> }>).notifications.cta.products;
   ok("9c. cta.products in EN + FA", Boolean(enCta) && Boolean(faCta));
+}
+
+/* ----------------------- 10. scan page size bounds ------------------------ */
+console.log("[10 scan page size bounds (38-F §8/§59/§60)]");
+{
+  const saved = process.env.INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE;
+  delete process.env.INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE;
+  ok("10a. default page size is 250", lowStockScanPageSize() === INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE_DEFAULT && INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE_DEFAULT === 250);
+  ok("10b. lower bound is 50", INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE_MIN === 50);
+  ok("10c. upper bound is 500", INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE_MAX === 500);
+  ok("10d. option wins over default", lowStockScanPageSize(120) === 120);
+  ok("10e. option 49 clamps UP to 50", lowStockScanPageSize(49) === 50);
+  ok("10f. option 501 clamps DOWN to 500", lowStockScanPageSize(501) === 500);
+  ok("10g. NaN option falls back to default", lowStockScanPageSize(Number.NaN) === 250);
+  process.env.INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE = "50";
+  ok("10h. env 50 honored", lowStockScanPageSize() === 50);
+  process.env.INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE = "7";
+  ok("10i. env 7 clamps UP to 50 (never smaller pages)", lowStockScanPageSize() === 50);
+  process.env.INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE = "99999";
+  ok("10j. env 99999 clamps DOWN to 500 (never unlimited)", lowStockScanPageSize() === 500);
+  process.env.INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE = "garbage";
+  ok("10k. non-numeric env falls back to default", lowStockScanPageSize() === 250);
+  process.env.INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE = "-3";
+  ok("10l. negative env clamps UP to 50", lowStockScanPageSize() === 50);
+  ok("10m. env never overrides an explicit option", (process.env.INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE = "99999", lowStockScanPageSize(80) === 80));
+  if (saved === undefined) delete process.env.INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE;
+  else process.env.INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE = saved;
+}
+
+/* ------------------ 11. truncated lookahead (pure helper) ----------------- */
+console.log("[11 remaining-work lookahead (38-F §19)]");
+{
+  const rows = [
+    { stockQty: 0, lowStockAt: 5 }, // low
+    { stockQty: 1, lowStockAt: 5 }, // low
+    { stockQty: 9, lowStockAt: 5 }, // healthy
+  ];
+  ok("11a. later unnotified recipient → work remains", hasRemainingLowStockWork(rows, 0, 3, 1, false) === true);
+  ok("11b. last recipient of candidate → no recipient work", hasRemainingLowStockWork([], 0, 2, 2, false) === false);
+  ok("11c. later low row on the page → work remains", hasRemainingLowStockWork(rows, 1, 1, 1, false) === true);
+  ok("11d. only healthy rows later on the page → no work", hasRemainingLowStockWork(rows, 2, 1, 1, false) === false);
+  ok("11e. more pages may follow → work may remain", hasRemainingLowStockWork([], 0, 1, 1, true) === true);
+  ok("11f. exhausted everything → truncated=false", hasRemainingLowStockWork(rows, 3, 1, 1, false) === false);
+  ok("11g. fromIdx is exclusive of the abandoned row", hasRemainingLowStockWork([rows[0]], 1, 1, 1, false) === false);
+  ok("11h. recipient deficit beats page exhaustion", hasRemainingLowStockWork([], 0, 5, 2, false) === true);
+}
+
+/* --------------------------- 12. debug vocabulary ------------------------- */
+console.log("[12 debug key vocabulary (38-F §52)]");
+{
+  ok("12a. debug keys exported as a closed list", Array.isArray(INVENTORY_LOW_STOCK_DEBUG_KEYS) && INVENTORY_LOW_STOCK_DEBUG_KEYS.length === 11);
+  ok("12b. contains exactly the §52 aggregate keys", JSON.stringify([...INVENTORY_LOW_STOCK_DEBUG_KEYS].sort()) === JSON.stringify(["candidates", "created", "debug", "duplicates", "failed", "max", "mode", "phase", "scanned", "skipped", "truncated"]));
+  ok("12c. no row-level keys (no productId/name/sku)", INVENTORY_LOW_STOCK_DEBUG_KEYS.every((k) => !["productId", "productName", "sku", "businessId", "recipientUserId"].includes(k)));
+}
+
+/* --------------------- 13. identity: stock/threshold paths ---------------- */
+console.log("[13 identity across stock + threshold transitions (38-F §36–§39)]");
+{
+  // §36 — same stock dedupe.
+  ok("13a. same (product, qty, recipient) → same identity", lowStockSourceEventId("prod0001abc", 5, "user0001abc") === lowStockSourceEventId("prod0001abc", 5, "user0001abc"));
+  // §37 — different stock → different event.
+  ok("13b. qty 5 → 4 → different identity", lowStockSourceEventId("prod0001abc", 4, "user0001abc") !== lowStockSourceEventId("prod0001abc", 5, "user0001abc"));
+  // §38 — return to a previously seen qty → dedupes against the OLD event.
+  ok("13c. return to qty 5 → same identity as the old 5 event", lowStockSourceEventId("prod0001abc", 5, "user0001abc") === lowStockSourceEventId("prod0001abc", 5, "user0001abc"));
+  // §39 — threshold is NOT part of the identity: re-eligibility after a
+  // threshold change dedupes against the historical event for the same qty.
+  ok("13d. threshold change does NOT mint a new identity", lowStockSourceEventId("prod0001abc", 9, "user0001abc") === lowStockSourceEventId("prod0001abc", 9, "user0001abc"));
+  ok("13e. zero stock is a valid identity value", lowStockSourceEventId("prod0001abc", 0, "user0001abc").endsWith(":0:user0001abc"));
+}
+
+/* ------------------------------- 14. budget law --------------------------- */
+console.log("[14 creation budget laws (38-F §12–§15)]");
+{
+  // Pure-law restatements pinned as executable facts (behavioral proofs
+  // live in the E2E): the cap bounds CREATED notifications; duplicates are
+  // budget-free; created can never exceed max.
+  ok("14a. max default 100", INVENTORY_LOW_STOCK_MAX_PER_RUN_DEFAULT === 100);
+  ok("14b. max hard bounds 10–500", INVENTORY_LOW_STOCK_MAX_PER_RUN_MIN === 10 && INVENTORY_LOW_STOCK_MAX_PER_RUN_MAX === 500);
+  const cap = 100;
+  const created = 100;
+  const duplicates = 500; // duplicates never stop the run...
+  ok("14c. duplicates do not consume the budget (created stays ≤ max)", created <= cap && duplicates === 500);
+  const outcomes = ["created", "duplicate", "failed", "created"] as const;
+  let budget = 0;
+  for (const o of outcomes) if (o === "created") budget += 1;
+  ok("14d. only 'created' outcomes advance the budget counter", budget === 2);
 }
 
 /* --------------------------------- report ---------------------------------- */

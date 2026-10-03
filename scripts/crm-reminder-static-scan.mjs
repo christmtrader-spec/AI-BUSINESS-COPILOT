@@ -302,13 +302,33 @@ rule("16 no arbitrary actionRoute", (bad) => {
   const catalog = read("src/lib/notifications/catalog.ts") ?? "";
   const idx = catalog.indexOf("BUSINESS_CRM_TASK_ASSIGNED: {");
   const slice = catalog.slice(idx, catalog.indexOf("SYSTEM_ANNOUNCEMENT: {", idx));
-  const routes = [...slice.matchAll(/actionRoute:\s*([^,\n]+)/g)].map((m) => m[1].trim());
-  if (routes.length === 0) {
+  if (idx < 0 || !slice) {
     bad("src/lib/notifications/catalog.ts", 1, "CRM entries lack actionRoute");
+    return;
   }
-  for (const r of routes) {
-    if (r !== '"crmTasks"') {
-      bad("src/lib/notifications/catalog.ts", 1, `unexpected actionRoute ${r}`);
+  // Split the slice into per-type blocks and pin each type's route to the
+  // closed vocabulary: CRM task types → "crmTasks" (Prompt 37 law), the
+  // Prompt 38 inventory type → "products" (its own documented catalog key).
+  // Any FUTURE BUSINESS type must extend this rule deliberately.
+  const blocks = slice.split(/\n(?=\s{2}[A-Z_]+: \{)/);
+  for (const block of blocks) {
+    const typeMatch = block.match(/^\s{2}([A-Z_]+): \{/);
+    if (!typeMatch) continue;
+    const type = typeMatch[1];
+    const routes = [...block.matchAll(/actionRoute:\s*([^,\n]+)/g)].map((m) => m[1].trim());
+    if (routes.length === 0) {
+      bad("src/lib/notifications/catalog.ts", 1, `${type} lacks actionRoute`);
+      continue;
+    }
+    const allowed = type.startsWith("BUSINESS_CRM_") ? ['"crmTasks"'] : type === "BUSINESS_INVENTORY_LOW_STOCK" ? ['"products"'] : null;
+    if (allowed === null) {
+      bad("src/lib/notifications/catalog.ts", 1, `unpinned BUSINESS type ${type} — extend rule 16 deliberately`);
+      continue;
+    }
+    for (const r of routes) {
+      if (!allowed.includes(r)) {
+        bad("src/lib/notifications/catalog.ts", 1, `unexpected actionRoute ${r} on ${type}`);
+      }
     }
   }
   // The task payload never determines the route.

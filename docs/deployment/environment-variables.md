@@ -215,6 +215,21 @@ operator-managed cron/systemd/Task Scheduler (see
 `docs/deployment/production-operations.md` §11d,
 `docs/adr/0037-crm-task-reminders-and-scheduler.md`).
 
+## Inventory low-stock processor (Prompt 38-F §59/§60/§149)
+
+| Variable | Required | Secret? | Purpose |
+|---|---|---|---|
+| `INVENTORY_LOW_STOCK_MAX_PER_RUN` | Optional (default 100) | No | Maximum NEW notifications CREATED per processor run (bounded 10–500; invalid/NaN/negative values are clamped into the documented bounds — never unbounded). This caps CREATED notifications only: duplicates and failures do NOT consume the budget, `created` can never exceed `max`, and combinations beyond the cap stay eligible for the next run (Prompt 38-F §12–§18). The CLI's `--max=` flag is additionally STRICT (Prompt 38-F §55): non-numeric or outside 10–500 exits 1 before any run. |
+| `INVENTORY_LOW_STOCK_SCAN_PAGE_SIZE` | Optional (default 250) | No | Number of Product rows loaded PER DATABASE QUERY (bounded 50–500; invalid values clamp into the bounds — an invalid value can never become "unlimited", Prompt 38-F §60). This is the scan pagination size, NOT the notification cap. Product scanning is cursor-paginated with this hard `take:` bound on every query (Prompt 38-F §7–§11). |
+| `INVENTORY_LOW_STOCK_DEBUG` | Optional (unset = off) | No | When set to `1`, the processor emits ONE aggregate JSON debug line with exactly the exported §52 key vocabulary (`debug, phase, scanned, candidates, created, duplicates, skipped, failed, max, mode, truncated`) — never row-level data (no ids, names, SKUs, quantities, recipients). |
+
+All three are optional, operator-tunable, and contain no secret values. As with
+the CRM reminders there is deliberately NO `CRON_SECRET` and NO scheduler HTTP
+endpoint: the processor is the local CLI `scripts/process-inventory-low-stock.mjs`
+invoked by an operator-managed cron/systemd/Task Scheduler (see
+`docs/deployment/production-operations.md` §11e,
+`docs/adr/0038-inventory-low-stock-alerts.md`).
+
 ## `NODE_ENV` — the database guard flag (not in `.env.example` on purpose)
 
 `NODE_ENV` is a runtime flag, not a configured secret, but it is load-bearing for database safety:
