@@ -12,6 +12,7 @@ import { useTranslations } from "next-intl";
 import {
   ArrowUpRight,
   CreditCard,
+  FileText,
   Pencil,
   ReceiptText,
   Trash2,
@@ -51,10 +52,12 @@ export function SupplierDetailView({
 }) {
   const t = useTranslations("entityDetail");
   const tCommon = useTranslations("common");
+  const tStatements = useTranslations("statements");
   const tSearch = useTranslations("search");
   const tErrors = useTranslations("errors");
   const queryClient = useQueryClient();
   const businessId = useAppStore((s) => s.activeBusinessId);
+  const navigate = useAppStore((s) => s.navigate);
 
   const writable = can(role, "data:write");
   const s = data.supplier;
@@ -93,28 +96,40 @@ export function SupplierDetailView({
           backLabel={t("backTo", { list: t("suppliers") })}
           onBack={() => navigateToEntityList("supplier")}
           actions={
-            writable ? (
-              <>
-                <Button variant="outline" size="sm" onClick={() => setNewExpenseOpen(true)}>
-                  <Wallet className="size-4" aria-hidden="true" />
-                  {t("newExpense")}
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
-                  <Pencil className="size-4" aria-hidden="true" />
-                  {tCommon("edit")}
-                </Button>
-                <EntityDeleteDialog
-                  triggerLabel={tCommon("delete")}
-                  triggerIcon={Trash2}
-                  title={t("deleteTitle", { type: t("supplier") })}
-                  description={t("deleteDesc")}
-                  confirmLabel={tCommon("delete")}
-                  cancelLabel={tCommon("cancel")}
-                  pending={deleteMutation.isPending}
-                  onConfirm={() => deleteMutation.mutate()}
-                />
-              </>
-            ) : null
+            <>
+              {/* Prompt 39 (§55/§145) — Statement CTA: read-only (data:read),
+                  available to every role. */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate({ kind: "statements", statementType: "supplier", id: s.id })}
+              >
+                <FileText className="size-4" aria-hidden="true" />
+                {tStatements("statement")}
+              </Button>
+              {writable ? (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => setNewExpenseOpen(true)}>
+                    <Wallet className="size-4" aria-hidden="true" />
+                    {t("newExpense")}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+                    <Pencil className="size-4" aria-hidden="true" />
+                    {tCommon("edit")}
+                  </Button>
+                  <EntityDeleteDialog
+                    triggerLabel={tCommon("delete")}
+                    triggerIcon={Trash2}
+                    title={t("deleteTitle", { type: t("supplier") })}
+                    description={t("deleteDesc")}
+                    confirmLabel={tCommon("delete")}
+                    cancelLabel={tCommon("cancel")}
+                    pending={deleteMutation.isPending}
+                    onConfirm={() => deleteMutation.mutate()}
+                  />
+                </>
+              ) : null}
+            </>
           }
         />
       </div>

@@ -12,6 +12,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import {
   CreditCard,
+  FileText,
   HandCoins,
   Pencil,
   ReceiptText,
@@ -56,6 +57,7 @@ export function CustomerDetailView({
 }) {
   const t = useTranslations("entityDetail");
   const tCommon = useTranslations("common");
+  const tStatements = useTranslations("statements");
   const tSearch = useTranslations("search");
   const tErrors = useTranslations("errors");
   const queryClient = useQueryClient();
@@ -100,28 +102,40 @@ export function CustomerDetailView({
           backLabel={t("backTo", { list: t("customers") })}
           onBack={() => navigateToEntityList("customer")}
           actions={
-            writable ? (
-              <>
-                <Button variant="outline" size="sm" onClick={() => setNewInvoiceOpen(true)}>
-                  <ShoppingCart className="size-4" aria-hidden="true" />
-                  {t("newInvoice")}
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
-                  <Pencil className="size-4" aria-hidden="true" />
-                  {tCommon("edit")}
-                </Button>
-                <EntityDeleteDialog
-                  triggerLabel={tCommon("delete")}
-                  triggerIcon={Trash2}
-                  title={t("deleteTitle", { type: t("customer") })}
-                  description={t("deleteDesc")}
-                  confirmLabel={tCommon("delete")}
-                  cancelLabel={tCommon("cancel")}
-                  pending={deleteMutation.isPending}
-                  onConfirm={() => deleteMutation.mutate()}
-                />
-              </>
-            ) : null
+            <>
+              {/* Prompt 39 (§54/§144) — Statement CTA: read-only (data:read),
+                  available to every role, placed with the financial actions. */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate({ kind: "statements", statementType: "customer", id: c.id })}
+              >
+                <FileText className="size-4" aria-hidden="true" />
+                {tStatements("statement")}
+              </Button>
+              {writable ? (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => setNewInvoiceOpen(true)}>
+                    <ShoppingCart className="size-4" aria-hidden="true" />
+                    {t("newInvoice")}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+                    <Pencil className="size-4" aria-hidden="true" />
+                    {tCommon("edit")}
+                  </Button>
+                  <EntityDeleteDialog
+                    triggerLabel={tCommon("delete")}
+                    triggerIcon={Trash2}
+                    title={t("deleteTitle", { type: t("customer") })}
+                    description={t("deleteDesc")}
+                    confirmLabel={tCommon("delete")}
+                    cancelLabel={tCommon("cancel")}
+                    pending={deleteMutation.isPending}
+                    onConfirm={() => deleteMutation.mutate()}
+                  />
+                </>
+              ) : null}
+            </>
           }
         />
       </div>

@@ -34,6 +34,7 @@ import { SearchCenterView } from "../search/search-view";
 import { EntityDetailView } from "../entities/entity-detail-view";
 import { ENTITY_ROUTES } from "@/lib/entity-routes";
 import { CrmView } from "../crm/crm-view";
+import { StatementsView } from "../statements/statements-view";
 import { SubscriptionView } from "../billing/subscription-view";
 import { PaymentReturnView } from "../billing/payment-return-view";
 import { AuditView } from "../audit/audit-view";
@@ -69,6 +70,9 @@ function labelKeyOf(view: AppView): string {
     // Prompt 34 — entity detail titles reuse the owning module's nav label.
     case "entity":
       return ENTITY_ROUTES[view.entity].labelKey;
+    // Prompt 39 — party statement document title (§57).
+    case "statements":
+      return "statements";
     case "profile":
       return "profile";
     case "module": {
@@ -219,6 +223,23 @@ export function AppShell({
                     id={view.id}
                     business={membership!.business}
                     role={role}
+                  />
+                </ModuleBoundary>
+              ) : null}
+              {view.kind === "statements" ? (
+                <ModuleBoundary
+                  moduleKey={viewKey}
+                  title={tBoundary("title")}
+                  description={tBoundary("description")}
+                  retry={tCommon("retry")}
+                  dashboardLabel={tNav("dashboard")}
+                  onDashboard={() => navigate({ kind: "dashboard" })}
+                >
+                  <StatementsView
+                    business={membership!.business}
+                    role={role}
+                    statementType={view.statementType}
+                    partyId={view.id}
                   />
                 </ModuleBoundary>
               ) : null}

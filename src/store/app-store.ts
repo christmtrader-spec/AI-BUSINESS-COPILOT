@@ -6,9 +6,14 @@ import { registerBusinessIdProvider } from "@/lib/api-client";
 import { DEFAULT_LOCALE, isLocale, type Locale } from "@/i18n/config";
 import {
   entityToHash,
+  isValidEntityId,
   parseEntityRoute,
   type EntityType,
 } from "@/lib/entity-routes";
+import {
+  isStatementTypeToken,
+  type StatementTypeToken,
+} from "@/lib/statements/types";
 
 /**
  * Global client state (Zustand). Server data lives in TanStack Query;
@@ -47,6 +52,14 @@ export type AppView =
    * arbitrary string — and the id is validated by `parseEntityRoute`.
    */
   | { kind: "entity"; entity: EntityType; id: string }
+  /**
+   * Prompt 39 — Party statements (#/statements?type=customer|supplier&id=<id>,
+   * §54–§59). The type is a CLOSED two-token vocabulary; the id must pass
+   * the same safe-ID validation as entity routes. Unknown types and missing
+   * or unsafe ids NEVER become state — they fall back to the dashboard like
+   * every other unknown hash (§58).
+   */
+  | { kind: "statements"; statementType: StatementTypeToken; id: string }
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
@@ -134,6 +147,10 @@ export function viewKeyOf(view: AppView): string {
     // remounts the detail view so no stale record can ever be shown (§36).
     : view.kind === "entity"
       ? `entity:${view.entity}:${view.id}`
+    // Prompt 39 — type + id both matter: opening another party's statement
+    // remounts the view so no stale statement can ever be shown (§159).
+    : view.kind === "statements"
+      ? `statements:${view.statementType}:${view.id}`
       : view.kind === "join"
       ? `join:${view.token}`
       : view.kind === "reset-password"
@@ -169,6 +186,11 @@ export function sameView(a: AppView, b: AppView): boolean {
   // remounting the module boundary shell; the tab drives the inner view.
   if (a.kind === "crm" && b.kind === "crm") {
     return a.tab === b.tab;
+  }
+  // Prompt 39 — statement views compare type + id (viewKey already carries
+  // both; explicit for parity with entity views).
+  if (a.kind === "statements" && b.kind === "statements") {
+    return a.statementType === b.statementType && a.id === b.id;
   }
   // Prompt 33 — hash query changes re-enter the store (back/forward must
   // update the Search Center) without remounting the view (§13/§33).
@@ -216,6 +238,12 @@ export function viewToHash(view: AppView): string | null {
       // safe-charset id, encodeURIComponent. Returns null (never a hash)
       // for anything that could not survive parseEntityRoute.
       return entityToHash(view.entity, view.id);
+    case "statements":
+      // Prompt 39 (§57/§139) — closed type + validated id only; anything
+      // else produces no hash at all (never an arbitrary statement URL).
+      if (!isStatementTypeToken(view.statementType)) return null;
+      if (!isValidEntityId(view.id)) return null;
+      return `#/statements?type=${view.statementType}&id=${encodeURIComponent(view.id)}`;
     case "platform":
       // #/platform itself resolves to the overview section (§15).
       return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
@@ -296,6 +324,23 @@ export function hashToView(hash: string): AppView {
     if (token.length > 0 && token.length <= 200) return { kind: "reset-password", token };
     // Malformed reset link → the forgot form so a fresh link can be requested.
     return { kind: "forgot-password" };
+  }
+  // Prompt 39 (§57/§58/§139) — statement deep links: #/statements with a
+  // closed `type` token and a safe `id`. Unknown type / missing or unsafe
+  // id → the existing unknown-hash fallback (dashboard); the query string
+  // is never interpreted as arbitrary state.
+  if (path === "statements") {
+    const type = query.get("type") ?? "";
+    const rawId = query.get("id") ?? "";
+    if (!isStatementTypeToken(type)) return { kind: "dashboard" };
+    let id = rawId;
+    try {
+      id = decodeURIComponent(rawId);
+    } catch {
+      return { kind: "dashboard" };
+    }
+    if (!isValidEntityId(id)) return { kind: "dashboard" };
+    return { kind: "statements", statementType: type, id };
   }
   // Prompt 34 — entity detail deep links (#/customers/<id>, §5/§6) are
   // attempted BEFORE the bare-module match: "customers" alone stays the

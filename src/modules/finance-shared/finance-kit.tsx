@@ -24,6 +24,9 @@ export const txKeys = {
   audit: ["audit"] as const,
   /** Receivables/payables aging summary (/api/v1/reports/aging). */
   aging: ["reports-aging"] as const,
+  /** Prompt 39 — party statements (§160): derived from sales/expenses/
+   *  payments, so every transaction mutation invalidates this family. */
+  statements: ["statements"] as const,
 };
 
 /** Invalidate every transaction-derived query after a mutation. */
@@ -40,6 +43,7 @@ export function useInvalidateFinance() {
       txKeys.products,
       txKeys.audit,
       txKeys.aging,
+      txKeys.statements,
     ]) {
       void qc.invalidateQueries({ queryKey: key });
     }

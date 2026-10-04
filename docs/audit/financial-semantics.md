@@ -130,6 +130,27 @@ The app computes **two clearly-labeled figures** (`reports.ts:222-223`):
 | **No multi-currency conversion** — one currency per business; no FX rates, no cross-currency totals | `Business.currencyCode/Symbol/decimalPrecision` (`schema.prisma:43-45`); A04 "MVP UX supports one primary currency per business" (`docs/PROJECT-CONSTITUTION.md:153-160`) |
 | **Not an accounting system of record** — product claims are "AI-powered business management and financial insight", never "accounting software" | Vision wording `docs/PROJECT-CONSTITUTION.md:16-28`; positioning guardrail of this audit |
 
+### 4.1 Party Statements (Prompt 39)
+
+Party Statements (customer/supplier, `src/lib/statements/`,
+`docs/product/party-statements.md`) are a **historical derived movement view**
+per party — they add NO new financial semantics to the product:
+
+| Term | Meaning (exact) |
+|---|---|
+| **Customer Statement** | chronological view of one customer's sales and received payments; balance = Σsales − Σpayments (receivable semantics) |
+| **Supplier Statement** | chronological view of one supplier's bills and made payments; balance = Σbills − Σpayments (payable semantics) |
+| **Opening balance** | the party balance immediately before the period start, from recorded history only (never invented) |
+| **Increase / Decrease** | movement columns; deliberately NOT "Debit/Credit" and NOT P&L — a sale row is not "profit", a bill row is not "loss" |
+| **Running balance** | server-computed exact integer `balanceAfterMinor` per row |
+| **Closing balance** | opening + increases − decreases; reconciles EXACTLY with the party receivable/payable when the range covers full recorded history |
+
+Statements do not modify revenue, expenses, net cash flow, receivables,
+payables, aging or inventory figures — they are an additional read-only lens
+over the same recorded rows. They are **not** a ledger, **not** an accounting
+system, and the FA wording uses صورت‌حساب (statement) — never دفتر کل
+(general ledger).
+
 ---
 
 ## 5. Consistency of the wording (i18n check)
