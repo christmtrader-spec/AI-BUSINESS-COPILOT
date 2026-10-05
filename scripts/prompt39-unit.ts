@@ -684,6 +684,21 @@ console.log("[46 DTO contract]");
 }
 
 // ===========================================================================
+// [47] §157/§159 — statement query-key cache laws (locale in key)
+// ===========================================================================
+{
+  section("[47] statement query-key cache laws (§157/§159)");
+  const mod = await import("../src/modules/statements/statements-api");
+  const ck = mod.statementKeys.customer("biz1", "cus1", "2026-10-01", "2026-10-31", null, "en");
+  const ckFa = mod.statementKeys.customer("biz1", "cus1", "2026-10-01", "2026-10-31", null, "fa");
+  const sk = mod.statementKeys.supplier("biz1", "sup1", "2026-10-01", "2026-10-31", "cur1", "en");
+  ok("47a. customer key carries businessId+partyId+from+to+cursor (§157)", ck.includes("biz1") && ck.includes("cus1") && ck.includes("2026-10-01") && ck.includes("2026-10-31") && ck.includes(null));
+  ok("47b. locale is part of the key (language switch cannot serve stale rows)", ck[ck.length - 1] === "en" && ckFa[ckFa.length - 1] === "fa" && JSON.stringify(ck) !== JSON.stringify(ckFa));
+  ok("47c. statement type token in key (customer ≠ supplier, §159)", ck[1] === "customer" && sk[1] === "supplier" && JSON.stringify(ck) !== JSON.stringify(sk));
+  ok("47d. keysFor routes type + locale through single source (§133)", JSON.stringify(mod.statementKeysFor("supplier", "biz1", "sup1", "2026-10-01", "2026-10-31", "cur1", "fa")) === JSON.stringify(mod.statementKeys.supplier("biz1", "sup1", "2026-10-01", "2026-10-31", "cur1", "fa")));
+}
+
+// ===========================================================================
 console.log(`PROMPT 39 UNIT: ${passed}/${passed + failed} ${failed === 0 ? "PASS" : "FAIL"}`);
 if (failed > 0) {
   console.error("FAILURES:");

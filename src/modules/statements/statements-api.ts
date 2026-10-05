@@ -5,6 +5,8 @@
  *
  * CACHE LAWS:
  *   §157 — every key carries businessId + partyId + from + to + cursor;
+ *          locale is ALSO part of the key: descriptions are server-localized,
+ *          so a language switch must never serve stale old-locale rows;
  *   §159 — the statement TYPE is part of the key: a Customer A statement is
  *          never reused for Supplier B;
  *   §158 — business switches invalidate everything (header-level), and a
@@ -29,14 +31,16 @@ export const statementKeys = {
     from: string,
     to: string,
     cursor: string | null,
-  ) => ["statements", "customer", businessId, partyId, from, to, cursor ?? null] as const,
+    locale: string,
+  ) => ["statements", "customer", businessId, partyId, from, to, cursor ?? null, locale] as const,
   supplier: (
     businessId: string,
     partyId: string,
     from: string,
     to: string,
     cursor: string | null,
-  ) => ["statements", "supplier", businessId, partyId, from, to, cursor ?? null] as const,
+    locale: string,
+  ) => ["statements", "supplier", businessId, partyId, from, to, cursor ?? null, locale] as const,
 };
 
 export function statementKeysFor(
@@ -46,10 +50,11 @@ export function statementKeysFor(
   from: string,
   to: string,
   cursor: string | null,
+  locale: string,
 ) {
   return statementType === "customer"
-    ? statementKeys.customer(businessId, partyId, from, to, cursor)
-    : statementKeys.supplier(businessId, partyId, from, to, cursor);
+    ? statementKeys.customer(businessId, partyId, from, to, cursor, locale)
+    : statementKeys.supplier(businessId, partyId, from, to, cursor, locale);
 }
 
 export function statementApiPath(statementType: StatementTypeToken, partyId: string): string {

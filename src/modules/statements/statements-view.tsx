@@ -88,7 +88,7 @@ export function StatementsView({
 
   // ---- query (§157/§159 — key carries type + business + party + range) ---
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<StatementPage>({
-    queryKey: statementKeysFor(statementType, business.id, partyId, range.from, range.to, cursor),
+    queryKey: statementKeysFor(statementType, business.id, partyId, range.from, range.to, cursor, locale),
     queryFn: () => fetchStatementPage(statementType, partyId, { from: range.from, to: range.to, cursor, locale }),
     staleTime: 15_000,
     retry: (failureCount, err) =>
