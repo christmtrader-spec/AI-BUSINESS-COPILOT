@@ -10,12 +10,14 @@
  * amount (never color-only, A-rule on accessible status).
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { AlarmClock, CalendarClock } from "lucide-react";
+import { AlarmClock, CalendarClock, Download, Loader2 } from "lucide-react";
+import { toast } from "@/hooks/use-toast";
 import { api } from "@/lib/api-client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Ltr } from "@/components/shared/data-table";
 import { fmtMoney, txKeys } from "../finance-shared/finance-kit";
@@ -73,6 +75,44 @@ export function AgingCard({
 
   const side = data ? data[kind] : null;
 
+  // CSV export — the server renders the SAME buildAgingReport() engine the
+  // card shows (A11 single source); this button only downloads the file.
+  const exportCsv = useMutation({
+    mutationFn: async () => {
+      const locale = business.locale === "fa" ? "fa" : "en";
+      const res = await fetch(
+        `/api/v1/reports/aging/export?side=${kind}&locale=${locale}`,
+        {
+          credentials: "same-origin",
+          headers: business.id ? { "x-business-id": business.id } : undefined,
+        },
+      );
+      if (!res.ok) {
+        let message = t("exportFailed");
+        try {
+          const body = (await res.json()) as { error?: { code?: string } } | null;
+          if (body?.error?.code === "RATE_LIMITED") message = t("exportRateLimited");
+        } catch {
+          /* non-JSON error body — keep the generic message */
+        }
+        throw new Error(message);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const dispo = res.headers.get("content-disposition") ?? "";
+      a.download = /filename="([^"]+)"/.exec(dispo)?.[1] ?? `aging-${kind}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+    onSuccess: () => toast({ title: t("exportToast") }),
+    onError: (err) =>
+      toast({ title: err instanceof Error ? err.message : t("exportFailed"), variant: "destructive" }),
+  });
+
   return (
     <Card data-testid={`aging-card-${kind}`}>
       <CardContent className="pt-6">
@@ -87,9 +127,28 @@ export function AgingCard({
             ) : null}
           </div>
           {side ? (
-            <Badge variant="secondary" className="tabular-nums">
-              {t("openItems", { count: side.openCount })}
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => exportCsv.mutate()}
+                disabled={exportCsv.isPending}
+                data-testid={`aging-export-${kind}`}
+                aria-label={`${t("export")}: ${t("title")}`}
+                className="min-h-8"
+              >
+                {exportCsv.isPending ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Download className="size-4" aria-hidden="true" />
+                )}
+                <span className="hidden sm:inline">{exportCsv.isPending ? t("exporting") : t("export")}</span>
+              </Button>
+              <Badge variant="secondary" className="tabular-nums">
+                {t("openItems", { count: side.openCount })}
+              </Badge>
+            </div>
           ) : null}
         </div>
 

@@ -3514,3 +3514,51 @@ Stage Summary — FINAL STATE (§249/§250):
 - PROMPT 17–40 = ALL CLOSED; BOTH remaining P40 honesty gaps now CLOSED with live evidence. New tooling: scripts/env-repair.mjs (one-command revert repair), scripts/p40-linecap-live-check.mjs (12 checks), scripts/keep-dev-up.cjs watchdog re-activated.
 - Files ADDED (2): scripts/env-repair.mjs, scripts/p40-linecap-live-check.mjs. Files MODIFIED (0 product) — zero product-code changes this round; all fixes were environment/test-harness class.
 - NEXT: STOP. Await the next explicit task (P41 remains NOT STARTED per §252 scope law).
+
+---
+Task ID: p40-exports-round
+Agent: Z.ai Code
+Task: Continue-building round — closed the 3 export/completeness gaps surfaced by the feature-surface scan (stocktake CSV export · aging CSV export · adjustments feed upgrade), with the full house test discipline (standing directive: "ادامه ساخت رو انجام بده با ریز جزئیات دقیق و کامل . تست عمیق و دقیق کل پروژه همراه با شناسایی تمام باگها و ارورها و رفع آن ها.")
+
+ENVIRONMENT (5th check — NO revert this round):
+- env-repair.mjs idempotent run: ALL GREEN in 3.0s (ledger complete, .env present, seeds OK, fixtures OK, 20/20 migrations, integrity ok/fk=0, health 200). Watchdog + cron keep the server up.
+
+FEATURES SHIPPED (all following the statement-CSV conventions §76–§83):
+1. Stocktake CSV export — GET /api/v1/inventory/stocktakes/[id]/export?locale=en|fa + src/lib/inventory/stocktake/export.ts. Covers ALL lines (never one page — bounded by the stocktake line cap with a cap+1 completeness fetch), maps through the SAME stocktakeLineDto as the detail API (historical snapshots; uncounted lines export BLANK counted/variance — honest absence, not fake zeros), NO monetary values (§82), BOM + OWASP csvCell guard, filename stocktake-<ref-slug>-<stamp>.csv (slug: lowercase [a-z0-9_-], 40-char cap, fallback "stocktake"), CSV_EXPORT gate + 10/5min rate limit + data.export audit. UI: Export button in the detail PageHeader with pending spinner.
+2. Aging CSV export — GET /api/v1/reports/aging/export?side=receivables|payables&locale=en|fa + NEW shared engine src/lib/aging-report.ts (buildAgingReport) — the JSON aging route was refactored onto it (A11 single source; the route no longer inlines its own queries). CSV shape: one table (section,label,items,oldest_days,balance) = total row + exactly 4 bucket rows + payables past_due row + top-party rows; money via fromMinor at business precision (A08). UI: Export button on BOTH aging cards.
+3. Adjustments feed upgrade — GET /api/v1/inventory/adjustments rewritten: DTO allowlist (was: raw Prisma rows!), server-side filters (direction=INCREASE|DECREASE, productId, q product-name/sku, from/to STRICT calendar dates in the BUSINESS timezone via resolveStatementWindow), pagination page/pageSize (cap 100, listParams law) + honest total, legacy take=1..200 kept as a page-1 alias (smoke contract preserved). ?format=csv exports ALL matching rows ≤1000 (mirrors AGING_SCAN_CAP/stocktake cap) with truncated recorded in the audit. UI: history card gained search input + direction Select + shared Pagination + Export button (filters = CSV filters).
+- i18n: 46 new keys in BOTH en/fa (inventory root export/history-filter/csv-* · inventory.stocktakes export/csv-* · finance.aging export/csv-*) — FA CSV headers fully Persian.
+- Docs: docs/data/data-export.md gained a "Report-level CSV exports" section.
+
+BUGS FOUND & FIXED THIS ROUND (all in test harnesses, product code was correct):
+1. [E2E harness] pA/pB/pC chosen by createMany array position → fillers first → counted the wrong products (variance checks +2/+0 failed as +12/+5, injection rows "missing"). Fixed: resolve by SKU (createMany order is not a contract).
+2. [E2E harness] res.text()/TextDecoder strips the UTF-8 BOM → F4 false-failed. Fixed: Buffer arrayBuffer decode (keeps BOM) + raw-byte EF BB BF assertion.
+3. [E2E harness] Expected 404 for foreign stocktake export, but the CSV_EXPORT gate fires FIRST (intruder's plan) → made the fixture plan start WITH CSV_EXPORT (isolation probe reaches 404), then flipped the entitlement row to false for the live gate checks (entitlements read FRESH §111 — flip verified end-to-end).
+4. [E2E harness] productId="zz" passes ENTITY_ID_PATTERN ([A-Za-z0-9_-]{1,64}) → 200, not 422. Fixed test (pattern-violating "zz%21" → 422; added valid-format-unknown → 200/total-0).
+5. [E2E harness] FA direction labels are "افزایش موجودی/کاهش موجودی" (stocktakes namespace), not the statements words — test expectation corrected (product behavior kept: inventory-precise wording).
+6. [Browser fixture] products API silently strips unknown initialQty (p40qa script has the same latent flaw) → fixture creates plainly then adjusts via /stock.
+
+TESTS (all EXECUTED this round, exact counts, exit 0):
+- NEW scripts/exports-round-unit.ts (bun + server-only shim): 20/20 — slug law, BOM/CRLF/OWASP/numeric cells, EN⇄FA deep parity (3 namespaces, all 46 keys).
+- NEW scripts/exports-round-static-scan.mjs: 40/40 — R1–R5 convention set per producer (gate/rate-limit/audit/no-store/attachment/toCsv), R6 DTO allowlist, R7 strict-calendar + tz window, R8–R9 single-source aging, R10 cap+1 bounded + money-free stocktake, R11 i18n parity, R12–R14 UI wiring + no absolute fetch URLs, R15 honest-truncation constants.
+- NEW scripts/exports-round-check.mjs (E2E vs live server): 65/65 — 401s, 422 family, foreign 404 (no leak), LIVE 403 ENTITLEMENT_NOT_AVAILABLE via real plan flip, 55-line stocktake (beyond the 50-line page) full-coverage CSV w/ variance math + honest blanks + injection guards + EN/FA headers, rate limit 11th → 429, aging CSV exact rows vs engine math (1600.00/1000.00/400.00/200.00/650.00 past-due/party aggregates), adjustments DTO keys + all filters + legacy alias + CSV EN/FA; teardown to ZERO (incl. crashed-run recovery patterns).
+- NEW scripts/exports-browser-fixture.mjs (+--teardown): browser-QA dataset.
+- Regression: e2e-smoke 90/90 · prompt40-stocktake-check 133/133 · prompt40-unit 209/209 · payables-aging 39/39 (bun) · aging-unit 39/39 · statement-static 41/41 · i18n-audit CLEAN (122 files, 0 missing, 0 parity) · tsc --noEmit 0 · lint 0 · health 200 / migrations 20/20.
+- NOTE: payables-aging-check.mjs hits Node-24 ERR_AMBIGUOUS_MODULE_SYNTAX (require + top-level await) — pre-existing, runs green under bun (recorded for future rounds; not touched this round).
+
+BROWSER QA (agent-browser, REAL journeys, EXPQA fixture torn down to ZERO afterwards — 3 businesses/3 users incl. 2 crashed-run partials):
+- Sign-in via real form → Inventory: history card shows "Recent adjustments" + Export CSV + search "Search product name or SKU…" + direction combobox; Radix select → "Decreases only" → network PROOF `?direction=DECREASE` 200 + only the damage row remains; q=Gamma + DECREASE → empty state (server-side combined filters verified; earlier rg match was the stock table). Export click → toast "Adjustments CSV downloaded" + network `?format=csv&locale=en` 200.
+- Stocktake detail deep link: Export CSV button with reference in aria-label → toast "Stocktake CSV downloaded" + `export?locale=en` 200.
+- Receivables: Aging card Export → toast + `side=receivables&locale=en` 200 (1 open item, 0–30 bucket). Payables: Export → toast + `side=payables` 200; past-due badge "$250.00" renders.
+- 390×844: scrollWidth 390 == clientWidth 390 (ZERO overflow). FA switch via Interface language menu → dir=rtl lang=fa, "آخرین تغییرات/خروجی CSV/همه جهتها", FA toast "فایل CSV تغییرات دریافت شد". Dark (media=dark): readable, variance arrows+signs not color-only. Console across the WHOLE session: 0 errors, 0 warnings (only HMR/info). Screenshots: qa-exports-mobile-inventory.png, qa-exports-fa-dark-inventory.png.
+
+NOT EXECUTED / HONESTY (§242/§251):
+- The adjustments CSV >1000-row truncation path is code+static-scan verified (cap constant + truncated-in-audit), NOT live-triggered (would need >1000 fixture adjustments; same honesty class as the 1000-line stocktake cap).
+- EMAIL delivery still NOT verified end-to-end (no SMTP in sandbox; unchanged).
+- No performance claims (single-session browser QA + functional E2E only).
+
+Stage Summary — FINAL STATE (§249/§250):
+- PROMPT 17–40 = ALL CLOSED (unchanged). This round ADDED product capability inside closed scope: 3 export surfaces + adjustments feed upgrade + shared aging engine. NO §252-forbidden scope touched (no purchase orders/warehouses/barcodes/valuation/double-entry).
+- Files ADDED (8): src/lib/aging-report.ts · src/lib/inventory/stocktake/export.ts · src/app/api/v1/inventory/stocktakes/[id]/export/route.ts · src/app/api/v1/reports/aging/export/route.ts · scripts/exports-round-{check.mjs,unit.ts,static-scan.mjs} · scripts/exports-browser-fixture.mjs.
+- Files MODIFIED (8): src/app/api/v1/reports/aging/route.ts · src/app/api/v1/inventory/adjustments/route.ts · src/modules/inventory/inventory-view.tsx · src/modules/inventory/stocktakes/stocktake-detail-view.tsx · src/modules/balances/aging-card.tsx · src/i18n/messages/{en,fa}.ts · docs/data/data-export.md.
+- NEXT: STOP. Await the next explicit task (P41 remains NOT STARTED per §252 scope law).

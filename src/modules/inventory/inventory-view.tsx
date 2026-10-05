@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Boxes, ClipboardList, Package } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { ArrowDown, ArrowUp, Boxes, ClipboardList, Download, Loader2, Package } from "lucide-react";
+import { toast } from "@/hooks/use-toast";
 import { api } from "@/lib/api-client";
 import { can, type Role } from "@/lib/rbac";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { DataTable, Ltr } from "@/components/shared/data-table";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StockDialog } from "../products/stock-dialog";
 import { useAppStore } from "@/store/app-store";
 import type { Product } from "../products/products-view";
@@ -25,9 +27,19 @@ type AdjustmentItem = {
   delta: number;
   reason: string;
   createdAt: string;
+  productId: string;
   product: { name: string; unit: string | null; sku: string | null };
   actor: { name: string | null; email: string } | null;
 };
+
+type AdjustmentPage = {
+  items: AdjustmentItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+const HISTORY_PAGE_SIZE = 20;
 
 export function InventoryView({
   business,
@@ -47,14 +59,65 @@ export function InventoryView({
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [stockTarget, setStockTarget] = useState<Product | null>(null);
+  // History card state — server-side filters/pagination (never client-sliced:
+  // the feed is business-wide and must stay honest about totals).
+  const [adjDirection, setAdjDirection] = useState<"ALL" | "INCREASE" | "DECREASE">("ALL");
+  const [adjQ, setAdjQ] = useState("");
+  const [adjPage, setAdjPage] = useState(1);
   const products = useQuery<ProductPage>({
     queryKey: ["products", q, page],
     queryFn: () => api(`/api/v1/products?q=${encodeURIComponent(q)}&page=${page}&pageSize=10`),
   });
 
-  const adjustments = useQuery<{ items: AdjustmentItem[] }>({
-    queryKey: ["adjustments"],
-    queryFn: () => api("/api/v1/inventory/adjustments?take=20"),
+  const adjustments = useQuery<AdjustmentPage>({
+    queryKey: ["adjustments", activeBusinessId, adjDirection, adjQ, adjPage],
+    queryFn: () => {
+      const p = new URLSearchParams({
+        page: String(adjPage),
+        pageSize: String(HISTORY_PAGE_SIZE),
+      });
+      if (adjDirection !== "ALL") p.set("direction", adjDirection);
+      if (adjQ.trim()) p.set("q", adjQ.trim());
+      return api(`/api/v1/inventory/adjustments?${p.toString()}`);
+    },
+  });
+
+  // History CSV export (§76–§83 conventions) — same filters the card shows;
+  // the server pages through ALL matching rows (cap 1,000, honestly audited).
+  const exportHistory = useMutation({
+    mutationFn: async () => {
+      const locale = business.locale === "fa" ? "fa" : "en";
+      const p = new URLSearchParams({ format: "csv", locale });
+      if (adjDirection !== "ALL") p.set("direction", adjDirection);
+      if (adjQ.trim()) p.set("q", adjQ.trim());
+      const res = await fetch(`/api/v1/inventory/adjustments?${p.toString()}`, {
+        credentials: "same-origin",
+        headers: activeBusinessId ? { "x-business-id": activeBusinessId } : undefined,
+      });
+      if (!res.ok) {
+        let message = t("exportFailed");
+        try {
+          const body = (await res.json()) as { error?: { code?: string } } | null;
+          if (body?.error?.code === "RATE_LIMITED") message = t("exportRateLimited");
+        } catch {
+          /* non-JSON error body — keep the generic message */
+        }
+        throw new Error(message);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const dispo = res.headers.get("content-disposition") ?? "";
+      a.download = /filename="([^"]+)"/.exec(dispo)?.[1] ?? "inventory-adjustments.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+    onSuccess: () => toast({ title: t("exportToast") }),
+    onError: (err) =>
+      toast({ title: err instanceof Error ? err.message : t("exportFailed"), variant: "destructive" }),
   });
 
   // Prompt 40 (§91) — "Open stocktakes" operational metric. Deliberately
@@ -231,7 +294,52 @@ export function InventoryView({
 
       <Card>
         <CardContent className="pt-6">
-          <h2 className="mb-4 text-base font-semibold">{t("history")}</h2>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-base font-semibold">{t("history")}</h2>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-h-8"
+              onClick={() => exportHistory.mutate()}
+              disabled={exportHistory.isPending}
+              data-testid="adjustments-export"
+              aria-label={t("export")}
+            >
+              {exportHistory.isPending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Download className="size-4" aria-hidden="true" />
+              )}
+              {exportHistory.isPending ? t("exporting") : t("export")}
+            </Button>
+          </div>
+          <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_11rem]">
+            <SearchInput
+              value={adjQ}
+              onChange={(v) => {
+                setAdjQ(v);
+                setAdjPage(1);
+              }}
+              placeholder={t("historySearchPlaceholder")}
+            />
+            <Select
+              value={adjDirection}
+              onValueChange={(v) => {
+                setAdjDirection(v as typeof adjDirection);
+                setAdjPage(1);
+              }}
+            >
+              <SelectTrigger id="adjustment-direction" className="w-full" aria-label={t("historyFilterAll")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">{t("historyFilterAll")}</SelectItem>
+                <SelectItem value="INCREASE">{t("historyFilterIncrease")}</SelectItem>
+                <SelectItem value="DECREASE">{t("historyFilterDecrease")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <DataTable<AdjustmentItem>
             ariaLabel={t("history")}
             sortLocale={business.locale}
@@ -308,6 +416,17 @@ export function InventoryView({
               />
             }
           />
+          {(adjustments.data?.total ?? 0) > HISTORY_PAGE_SIZE ? (
+            <div className="mt-4">
+              <Pagination
+                page={adjPage}
+                pageSize={HISTORY_PAGE_SIZE}
+                total={adjustments.data?.total ?? 0}
+                onPage={(p) => setAdjPage(p)}
+                labels={{ prev: tCommon("previous"), next: tCommon("next") }}
+              />
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

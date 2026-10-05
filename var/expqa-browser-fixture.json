@@ -1,0 +1,24 @@
+{
+  "email": "expqa-owner-muvggnxg@expqa.test",
+  "password": "testpass123",
+  "businessId": "cmuvggolj019cmgi9f11tsjmf",
+  "businessName": "EXPQA-BROWSE-BIZ",
+  "stocktakeId": "cmuvggp0w01b5mgi9i090lmbt",
+  "products": [
+    {
+      "id": "cmuvggoma019pmgi9v5gwxu7w",
+      "name": "Widget Alpha",
+      "stockQty": 0
+    },
+    {
+      "id": "cmuvggoor019xmgi9oum0nmus",
+      "name": "Widget Beta",
+      "stockQty": 0
+    },
+    {
+      "id": "cmuvggori01a5mgi940ragzls",
+      "name": "Widget Gamma",
+      "stockQty": 0
+    }
+  ]
+}

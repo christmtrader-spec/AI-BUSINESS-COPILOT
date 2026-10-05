@@ -16,12 +16,13 @@
  */
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import {
   AlertTriangle,
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  Download,
   Loader2,
   Minus,
   PackageSearch,
@@ -58,6 +59,7 @@ export function StocktakeDetailView({ id, role }: { id: string; role: Role }) {
   const t = useTranslations("inventory.stocktakes");
   const tCommon = useTranslations("common");
   const tErrors = useTranslations("errors");
+  const locale = useLocale();
   const queryClient = useQueryClient();
   const businessId = useAppStore((s) => s.activeBusinessId) ?? "";
   const navigate = useAppStore((s) => s.navigate);
@@ -106,6 +108,43 @@ export function StocktakeDetailView({ id, role }: { id: string; role: Role }) {
       await queryClient.invalidateQueries({ queryKey: inventoryKeys.all });
     },
     onError: () => toast({ title: tErrors("generic"), variant: "destructive" }),
+  });
+
+  // CSV export (§76–§83 conventions): server builds the FULL line set from
+  // the SAME store the detail API reads — the browser only downloads it.
+  const exportCsv = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(
+        `/api/v1/inventory/stocktakes/${id}/export?locale=${locale}`,
+        {
+          credentials: "same-origin",
+          headers: businessId ? { "x-business-id": businessId } : undefined,
+        },
+      );
+      if (!res.ok) {
+        let message = t("exportFailed");
+        try {
+          const body = (await res.json()) as { error?: { code?: string } } | null;
+          if (body?.error?.code === "RATE_LIMITED") message = t("exportRateLimited");
+        } catch {
+          /* non-JSON error body — keep the generic message */
+        }
+        throw new Error(message);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const dispo = res.headers.get("content-disposition") ?? "";
+      a.download = /filename="([^"]+)"/.exec(dispo)?.[1] ?? `stocktake-${id}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+    onSuccess: () => toast({ title: t("exportToast") }),
+    onError: (err) =>
+      toast({ title: err instanceof Error ? err.message : t("exportFailed"), variant: "destructive" }),
   });
 
   const openCount = (line: StocktakeLineDto) =>
@@ -323,7 +362,27 @@ export function StocktakeDetailView({ id, role }: { id: string; role: Role }) {
       <PageHeader
         title={data.reference}
         subtitle={t("detailSubtitle", { countType: t("countTypeSelected") })}
-        actions={statusBadge(status)}
+        actions={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => exportCsv.mutate()}
+              disabled={exportCsv.isPending}
+              data-testid="stocktake-export"
+              aria-label={`${t("export")}: ${data.reference}`}
+            >
+              {exportCsv.isPending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <Download className="size-4" aria-hidden />
+              )}
+              {exportCsv.isPending ? t("exporting") : t("export")}
+            </Button>
+            {statusBadge(status)}
+          </>
+        }
       />
 
       <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">

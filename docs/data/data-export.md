@@ -88,3 +88,27 @@ with record counts, the format, and an integrity block.
 | `EXPORT_NOT_FOUND` | Unknown job id, or a job that belongs to another business. |
 | `EXPORT_UNAUTHORIZED` | Only owners/admins may export. |
 | `RATE_LIMITED` | Too many requests — wait a few minutes. |
+
+## Report-level CSV exports (report surface)
+
+Beyond the job-based portability exports above, three report surfaces serve
+accountant-friendly CSVs directly from the SAME engines that render their
+UI (single source of calculation — never a second one). All of them share
+one convention set: authentication + `data:read`, the `CSV_EXPORT` billing
+entitlement gate (server-side reject — UI hiding is never the enforcement),
+a rate limit of 10 exports / 5 min / user, a `data.export` audit record,
+UTF-8 with BOM (Persian text survives Excel), OWASP formula-injection
+guards on every cell, and `no-store` attachments.
+
+| Export | Endpoint | Coverage |
+| --- | --- | --- |
+| Stocktake lines | `GET /api/v1/inventory/stocktakes/[id]/export?locale=en\|fa` | ALL lines of the stocktake (never one page — bounded by the stocktake line cap, provably complete). Columns: reference, status, product, sku, unit, system_qty, counted_qty, variance, counted_at, counted_by. Uncounted (draft preparation) lines export BLANK counted/variance — honest absence, never a fake zero. No monetary values. |
+| Aging (receivables / payables) | `GET /api/v1/reports/aging/export?side=receivables\|payables&locale=en\|fa` | Rows rendered from `buildAgingReport()` — the exact engine the UI JSON uses. One table: `total` row, always 4 `bucket` rows, the payables `past_due` row when present, and the top-party rows (≤ 8, balance desc). Money = exact decimal strings at the business precision. |
+| Inventory adjustments | `GET /api/v1/inventory/adjustments?format=csv&locale=en\|fa` (+ optional `direction`, `productId`, `q`, `from`/`to` filters) | ALL matching rows up to 1,000 (mirrors `AGING_SCAN_CAP` / the stocktake line cap); truncation is recorded honestly in the audit record. Columns: created_at, product, sku, unit, direction, quantity, reason, by. The JSON feed itself is DTO-allowlisted with server-side pagination (`page`/`pageSize`, cap 100) — legacy `take` stays supported as a page-1 alias. |
+
+`locale` switches the CSV header row (and, for adjustments, the direction
+labels) between English (`reference,status,…`) and Persian
+(`شناسه,وضعیت,…`) — the same law as the statement CSV. The UI exposes each
+export next to the data it mirrors: the stocktake detail header, both aging
+cards, and the inventory adjustment-history card (whose filters are exactly
+the CSV filters).
