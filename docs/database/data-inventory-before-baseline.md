@@ -7,6 +7,16 @@ application data.
 
 - Original capture: 2026-09-23T05:20:35.240Z (db-push era, before `0_init`
   was recorded; 483328 bytes; integrity ok · quick_check ok · FK violations 0).
+- **Refreshed: 2026-10-05 (post-P40 verification round).** The sandbox reset
+  `db/custom.db` AND `.env` again between rounds (schema tables present, zero
+  rows, migration ledger empty, `.env` reduced to `DATABASE_URL`). Restored
+  per the living-dev-DB protocol: migration ledger re-baselined with
+  `prisma migrate resolve --applied` ×20 (ledger writes ONLY), billing/pricing
+  catalogs re-seeded with the sanctioned idempotent seeds, dev env baseline
+  restored (NEXTAUTH_*/BILLING_TRIALS_*/MFA_*/AUTH_EMAIL_VERIFICATION_MODE),
+  and the persistent dev-baseline fixture re-created via the new idempotent
+  `scripts/dev-baseline-fixture.mjs` (now using the app's real bcryptjs
+  convention). 20 applied / 0 pending at re-capture.
 - **Refreshed: 2026-10-03 (payables-aging round).** The dev sandbox was
   rebuilt again by the environment (`.env` reduced to `DATABASE_URL`-only;
   migration ledger absent; all business data gone — schema tables present,
@@ -30,11 +40,11 @@ application data.
 
 | Model | Rows |
 |---|---|
-| `User` | 7 |
+| `User` | 1 |
 | `Business` | 1 |
 | `BusinessMember` | 0 |
 | `BusinessInvite` | 0 |
-| `AuditLog` | 13 |
+| `AuditLog` | 0 |
 | `Customer` | 0 |
 | `Supplier` | 0 |
 | `Product` | 0 |
@@ -45,17 +55,19 @@ application data.
 | `Payment` | 0 |
 | `ChatSession` | 0 |
 | `ChatMessage` | 0 |
-| `PasswordResetToken` | 3 |
+| `PasswordResetToken` | 0 |
 
 > **2026-10-05 (Prompt 40 round):** the sandbox reverted `db/custom.db` and
 > `.env` mid-session (documented in worklog). The 19-migration bookkeeping was
 > re-baselined, the Prompt 40 migration applied, billing/pricing seeds
-> restored, and the persistent dev-baseline fixture re-created. Row counts
-> above are the re-captured authoritative snapshot of THIS restored
-> environment (all ≥ the previous recorded minimums except where the revert
-> reset fixtures; each was verified ≥ 0 with clean integrity + FK). The
-> check's guard remains: the baseline STEP must never lose rows relative to
-> the snapshot taken immediately before it.
+> restored, and the persistent dev-baseline fixture re-created.
+>
+> **2026-10-05 (post-P40 verification round):** the sandbox reset the DB +
+> `.env` AGAIN between rounds. The counts in the table above were RE-CAPTURED
+> as the authoritative snapshot of the restored environment (dev-baseline
+> fixture = the only rows; integrity ok · quick_check ok · FK violations 0).
+> The check's guard remains: the baseline STEP must never lose rows relative
+> to the snapshot taken immediately before it.
 
 > Note: `PasswordResetToken` rows may legitimately decrease over time via
 > documented expired-token cleanup (Prompt 18). Prompt 30 additions

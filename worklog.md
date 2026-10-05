@@ -3429,3 +3429,55 @@ Stage Summary — FINAL STATE (§249/§250/§252):
 - Files ADDED (30): prisma/migrations/20261005080000_prompt40_inventory_stocktake/ (1) · src/lib/inventory/stocktake/ (5) · src/app/api/v1/inventory/stocktakes/** (12) · src/modules/inventory/stocktakes/ (7) · scripts/prompt40-unit.ts + prompt40-stocktake-check.mjs + inventory-stocktake-static-scan.mjs + p40qa-browser-fixture.mjs (4) · docs ×3.
 - Files MODIFIED (15): prisma/schema.prisma · src/store/app-store.ts · src/modules/shell/app-shell.tsx · src/modules/inventory/inventory-view.tsx · src/modules/entities/product-detail-view.tsx · src/lib/entities/{types,product}.ts · src/app/api/v1/products/[id]/route.ts · src/lib/data-portability/export-catalog.ts · scripts/restore-drill.mjs · src/i18n/messages/{en,fa}.ts · docs/{ARCHITECTURE,audit/financial-semantics,data/data-export,data/data-import,deployment/backup-restore-plan,legal/data-deletion-matrix,database/data-inventory-before-baseline}.md (+ worklog).
 - NEXT: STOP. Await the next explicit task.
+
+---
+Task ID: p40-verification
+Agent: Z.ai Code
+Task: Post-P40 deep verification round — full-project regression, environment repair, bug identification & fixes, browser QA (standing directive: "ادامه ساخت رو انجام بده با ریز جزئیات دقیق و کامل . تست عمیق و دقیق کل پروژه همراه با شناسایی تمام باگها و ارورها و رفع آن ها.")
+
+ENVIRONMENT REPAIR (sandbox reverted DB + .env again between rounds):
+- db/custom.db reset: schema tables present, ZERO rows, migration ledger empty (all 20 migrations "pending"), .env reduced to DATABASE_URL-only. Dev server had also died mid-round.
+- Repaired per the living-dev-DB protocol: migration ledger re-baselined `prisma migrate resolve --applied` ×20 (20 applied / 0 pending; /api/health confirms); .env restored (NEXTAUTH_SECRET/NEXTAUTH_URL/APP_BASE_URL/BILLING_TRIALS_*/MFA_ENABLED/MFA_ENCRYPTION_KEY — real openssl secrets); billing+pricing seeds re-run (5 plans / 9 entitlements / 45 planEntitlements / 6 prices); dev server restarted via ensure-dev.sh.
+- scripts/dev-baseline-fixture.mjs (NEW, idempotent): re-creates the persistent dev-baseline fixture (dev-baseline@fixture.local + Dev Baseline Business, bcryptjs convention). CRITICAL lesson encoded: after creating the business it ensures a Subscription exists (running the sanctioned seed if not) — otherwise the next seed-billing run backfills one and p20 check A5 ("seed is a no-op") FAILS (this exact failure was hit and fixed this round).
+- scripts/e2e-smoke-fixture.mjs (NEW, idempotent): restores e2e-smoke.ts's full persistent fixture contract lost in the revert: sara@copilot.dev (OWNER of EXACTLY ONE business, FREE-plan limit), eve@outsider.dev (VIEWER member), ali@copilot.dev (ADMIN member), rep16007@t.dev (OWNER of an empty business for the export/import round-trip) + OWNER membership rows for direct-Prisma-created businesses (the /businesses list resolves through memberships). It also REPAIRS stub passwordHash rows (p26's fixture creates sara with passwordHash "x" → credentials login 302-to-error that login() cannot detect, making every API call 401) by re-hashing to testpass123.
+- docs/database/data-inventory-before-baseline.md re-captured (dated note): authoritative post-rebuild counts (User=1, Business=1, all else 0) so p19 check 5b has an honest comparison floor.
+
+BUGS FOUND & FIXED THIS ROUND:
+1. [p20 A5] dev-baseline business without a subscription made seed re-run non-idempotent → fixture script now guarantees the subscription (see above). p20 re-run: 56/56.
+2. [e2e-smoke] After the revert the smoke failed 2/6 → 82/88 → 87/88 as fixture gaps were closed one by one (sara password "x" stub, missing ali/rep16007, missing membership rows). Final: e2e-smoke 90/90 ALL GREEN. Root causes were environment/fixture-loss, but each is now PERMANENTLY repairable via the idempotent fixture scripts (future reverts = one command each).
+3. [housekeeping] 5 smkowner throwaway users leaked by crashed smoke runs deleted (only rows with 0 businesses + 0 memberships touched; fixture-owned patterns respected).
+
+VERIFICATION (every suite EXECUTED this round, exact counts, all exit 0):
+- p17 30/30 · p18 28/28 · p19 24/24 (after baseline re-capture) · p20-billing 56/56 · p20-state-machine 38/38 · p21 76/76 · p22 72/72 · p23-contract 45/45 · p23-api 34/34 · p24 67/67 · p25 68/68 · p26 108/108 · p27 65/65 · p28 86/86 · p29 105/105 · p30 93/93 · p31 106/106 · p32 102/102 · p33 76/76 · p34 111/111 · p35 148/148 · p36 161/161 · p37 149/149 · p38 124/124 · p39 117/117 · p40 133/133 · e2e-smoke 90/90.
+- Unit suites: p29-unit 91/91 · p30-unit 54/54 · p31-unit 71/71 · p33-unit 64/64 · p34-unit 139/139 · p35-unit 104/104 · p36-unit 95/95 · p37-unit 181/181 · p38-unit 116/116 · p39-unit 164/164 · p40-unit 209/209 · aging-unit 39/39 (server-only-importing suites run via `bun --preload ./scripts/lib/register-server-only-shim.ts`).
+- Static scans: statement 41/41 · inventory-stocktake 44/44 · crm 20/20 · crm-activity-task 21/21 · crm-reminder 26/26 · identity-security 20/20 · inventory-low-stock GREEN · notification GREEN · search 67/67 · entity-detail 20/20 · notification-catalog 473/473 · ai-context-secret CLEAN · p26-rate-literal CLEAN · payables-aging 39/39 · privacy-deletion 32/32.
+- lint 0 errors · tsc --noEmit 0 errors · migrations 20 applied / 0 pending · DB quick_check ok · FK violations 0.
+
+BROWSER QA (agent-browser, REAL journeys, P40QA-BROWSE fixture torn down to ZERO afterwards):
+- Sign-in via real form → Dashboard → Inventory → Stocktakes tab → New stocktake dialog (reference QA-VERIFY-001 + notes) → deep link #/inventory/stocktakes/<id> → added Widget A/B/C (DRAFT line names render — last round's fix holds) → Start counting → count dialog shows product, system quantity, "Whole units, 0 to 1000000000", live variance preview → counted A=12 (+12 Increase), B=16 (+16 Increase), C=0 (0 No variance) → Send to review → Finalize dialog states honest scope ("no sale, expense, payment, or customer/supplier balance will be created") → Finalized.
+- Post-finalize: status Finalized + zero mutation buttons (immutability); Product.stockQty A=12/B=16/C=0; EXACTLY 2 InventoryAdjustments (+12, +16) with reason "Stocktake QA-VERIFY-001: physical count reconciliation"; zero-variance line correctly suppressed.
+- Customers empty state + AI Copilot render. Viewport 390×844: scrollWidth==clientWidth (ZERO overflow). FA/RTL: dir=rtl lang=fa, professional Persian, LTR islands for numbers. Dark mode readable. Console across the WHOLE session: 0 errors, 0 warnings.
+- Residue check: 0 P40QA businesses/users/products/stocktakes; the 1 remaining InventoryAdjustment belongs to the by-design persistent P31 harness business (reason "initial stock").
+
+NOT EXECUTED / HONESTY (§242/§251):
+- EMAIL delivery still NOT verified end-to-end (no SMTP in sandbox; dev console transport level only).
+- Live line-cap trigger via custom INVENTORY_STOCKTAKE_MAX_LINES env still not exercised against the shared dev server (code + static scan verified).
+- No performance claims this round (single smoke of /api/health only).
+
+Stage Summary — FINAL STATE (§249/§250):
+- PROMPT 17–40 = ALL CLOSED. This round added NO product features by design (verification round): 2 new idempotent fixture-repair scripts + 1 doc refresh; 2 environment-class bugs fixed with permanent repairs; entire test estate re-proven green after the third sandbox revert.
+- Files ADDED (2): scripts/dev-baseline-fixture.mjs, scripts/e2e-smoke-fixture.mjs. Files MODIFIED (1): docs/database/data-inventory-before-baseline.md.
+- NEXT: STOP. Await the next explicit task (P41 remains NOT STARTED per §252 scope law).
+
+---
+Task ID: p40-verification-followup
+Agent: Z.ai Code
+Task: Post-round server liveness check (sandbox recycled the dev server again after the round completed).
+
+Work Log:
+- Port 3000 stopped listening right after round completion (sandbox recycling, same class as the mid-round death).
+- ensure-dev.sh restart → READY(new):200 after 2s; /api/health {reachable:true, applied:20, pending:0}; GET / 200.
+- DB state intact (users/businesses counts preserved; no data loss).
+
+Stage Summary:
+- Environment-only incident; no product change. The 15-min webDevReview cron (job 437655) will keep liveness + regression under continuous watch.

@@ -1,21 +1,21 @@
 {
-  "email": "p40qa-browser-owner-muv27ap3@p40.test",
+  "email": "p40qa-browser-owner-muv93ox3@p40.test",
   "password": "testpass123",
-  "businessId": "cmuv27bbw00ado6ydhid39jip",
+  "businessId": "cmuv93plh024ulnscbjza9pbi",
   "businessName": "P40QA-BROWSE-BIZ",
   "products": [
     {
-      "id": "cmuv27bcp00aqo6yd2zvaj1w8",
+      "id": "cmuv93pme0257lnscat2ddv16",
       "name": "Widget A",
       "stockQty": 0
     },
     {
-      "id": "cmuv27bd800auo6ydyg81ywuy",
+      "id": "cmuv93pn2025blnscdtxf12ie",
       "name": "Widget B",
       "stockQty": 0
     },
     {
-      "id": "cmuv27bdr00ayo6ydwdotoyix",
+      "id": "cmuv93pnl025flnscjs4tcu66",
       "name": "Widget C",
       "stockQty": 0
     }
