@@ -161,3 +161,15 @@ future prompt may implement CRM import with explicit reference mapping.
   processor would then trust. Re-enable reminders per task in the UI after
   any future import; notification history itself is not business data and
   stays outside the export/import catalog.
+
+## Inventory Stocktake datasets (Prompt 40)
+
+**Finalized stocktake import: NOT IMPLEMENTED** — deliberately. Importing a
+physical count reconciliation would replay stock mutations
+(`InventoryAdjustment` rows + `stockQty` overwrites) outside the stocktake's
+server-side snapshot/stale-check/finalization state machine, fabricating
+quantity history no one actually counted. The stocktake datasets
+(`inventory_stocktakes`, `inventory_stocktake_lines`) are therefore
+**export-only**; the importer's allowlist (customers / suppliers / products)
+already rejects them. Backup/restore remains the system-level recovery
+mechanism for count sessions and every other dataset.

@@ -203,7 +203,7 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
     [{ saleId: "sa1", qty: 1, lineTotalMinor: 500, number: 3, issueDate: base }],
     10,
   );
-  eq(Object.keys(prod), ["product", "inventory", "recentAdjustments", "recentSales"], "v14 ProductDetail top-level keys");
+  eq(Object.keys(prod), ["product", "inventory", "recentAdjustments", "recentSales", "recentStocktakes"], "v14 ProductDetail top-level keys");
   eq(Object.keys(prod.product), ["id", "name", "sku", "unit", "salePriceMinor", "costPriceMinor", "isActive", "createdAt", "updatedAt"], "v14 product sub-object keys");
 
   const sale = mapSaleDetail(

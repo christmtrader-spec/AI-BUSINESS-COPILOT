@@ -35,6 +35,8 @@ import { EntityDetailView } from "../entities/entity-detail-view";
 import { ENTITY_ROUTES } from "@/lib/entity-routes";
 import { CrmView } from "../crm/crm-view";
 import { StatementsView } from "../statements/statements-view";
+import { StocktakesView } from "../inventory/stocktakes/stocktakes-view";
+import { StocktakeDetailView } from "../inventory/stocktakes/stocktake-detail-view";
 import { SubscriptionView } from "../billing/subscription-view";
 import { PaymentReturnView } from "../billing/payment-return-view";
 import { AuditView } from "../audit/audit-view";
@@ -241,6 +243,30 @@ export function AppShell({
                     statementType={view.statementType}
                     partyId={view.id}
                   />
+                </ModuleBoundary>
+              ) : null}
+              {view.kind === "inventory-stocktakes" ? (
+                <ModuleBoundary
+                  moduleKey={viewKey}
+                  title={tBoundary("title")}
+                  description={tBoundary("description")}
+                  retry={tCommon("retry")}
+                  dashboardLabel={tNav("dashboard")}
+                  onDashboard={() => navigate({ kind: "dashboard" })}
+                >
+                  <StocktakesView role={role} />
+                </ModuleBoundary>
+              ) : null}
+              {view.kind === "inventory-stocktake" ? (
+                <ModuleBoundary
+                  moduleKey={viewKey}
+                  title={tBoundary("title")}
+                  description={tBoundary("description")}
+                  retry={tCommon("retry")}
+                  dashboardLabel={tNav("dashboard")}
+                  onDashboard={() => navigate({ kind: "dashboard" })}
+                >
+                  <StocktakeDetailView id={view.id} role={role} />
                 </ModuleBoundary>
               ) : null}
               {view.kind === "profile" ? <ProfileView /> : null}

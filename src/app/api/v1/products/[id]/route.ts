@@ -47,7 +47,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   const product = await loadProduct(ctx.businessId, id);
 
   // §42 — parallel bounded queries, deterministic ordering, explicit select.
-  const [recentAdjustments, recentSaleItems] = await Promise.all([
+  const [recentAdjustments, recentSaleItems, recentStocktakeLines] = await Promise.all([
     db.inventoryAdjustment.findMany({
       where: { businessId: ctx.businessId, productId: id },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -68,6 +68,22 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         sale: { select: { number: true, issueDate: true } },
       },
     }),
+    // Prompt 40 (§90) — ≤10 recent physical-count lines for this product,
+    // joined to their (tenant-scoped) stocktake for reference/status.
+    db.inventoryStocktakeLine.findMany({
+      where: {
+        productId: id,
+        stocktake: { businessId: ctx.businessId },
+      },
+      orderBy: [{ countedAt: "desc" }, { id: "desc" }],
+      take: 10,
+      select: {
+        stocktakeId: true,
+        varianceQty: true,
+        countedAt: true,
+        stocktake: { select: { reference: true, status: true } },
+      },
+    }),
   ]);
 
   // Flatten SaleItem → Sale into the mapper's input shape (no N+1: the
@@ -81,7 +97,19 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   }));
 
   return ok(
-    mapProductDetail(product, recentAdjustments, recentSalesInput, RECENT_SALES_TAKE),
+    mapProductDetail(
+      product,
+      recentAdjustments,
+      recentSalesInput,
+      RECENT_SALES_TAKE,
+      recentStocktakeLines.map((l) => ({
+        stocktakeId: l.stocktakeId,
+        reference: l.stocktake.reference,
+        status: l.stocktake.status,
+        varianceQty: l.varianceQty,
+        countedAt: l.countedAt,
+      })),
+    ),
   );
 });
 

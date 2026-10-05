@@ -1,0 +1,23 @@
+{
+  "email": "p40qa-browser-owner-muv27ap3@p40.test",
+  "password": "testpass123",
+  "businessId": "cmuv27bbw00ado6ydhid39jip",
+  "businessName": "P40QA-BROWSE-BIZ",
+  "products": [
+    {
+      "id": "cmuv27bcp00aqo6yd2zvaj1w8",
+      "name": "Widget A",
+      "stockQty": 0
+    },
+    {
+      "id": "cmuv27bd800auo6ydyg81ywuy",
+      "name": "Widget B",
+      "stockQty": 0
+    },
+    {
+      "id": "cmuv27bdr00ayo6ydwdotoyix",
+      "name": "Widget C",
+      "stockQty": 0
+    }
+  ]
+}

@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { ArrowDown, ArrowUp, Boxes, Package } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { ArrowDown, ArrowUp, Boxes, ClipboardList, Package } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { can, type Role } from "@/lib/rbac";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import { DataTable, Ltr } from "@/components/shared/data-table";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
 import { StockDialog } from "../products/stock-dialog";
+import { useAppStore } from "@/store/app-store";
 import type { Product } from "../products/products-view";
 import type { BusinessSummary } from "../shell/types";
 
@@ -36,8 +37,11 @@ export function InventoryView({
   role: Role;
 }) {
   const t = useTranslations("inventory");
+  const tStocktakes = useTranslations("inventory.stocktakes");
   const tErrors = useTranslations("errors");
   const tCommon = useTranslations("common");
+  const navigate = useAppStore((s) => s.navigate);
+  const activeBusinessId = useAppStore((s) => s.activeBusinessId);
 
   const writable = can(role, "data:write");
   const [q, setQ] = useState("");
@@ -53,6 +57,30 @@ export function InventoryView({
     queryFn: () => api("/api/v1/inventory/adjustments?take=20"),
   });
 
+  // Prompt 40 (§91) — "Open stocktakes" operational metric. Deliberately
+  // NOT beside Revenue/Profit/Cash figures: it is a count of active count
+  // sessions, never a financial KPI.
+  const openStocktakes = useQuery<{ items: Array<{ id: string }>; total: number }>({
+    queryKey: ["inventory", "stocktakes-open", activeBusinessId],
+    queryFn: async () => {
+      const first = await api<{ items: Array<{ id: string }>; total: number; page: number; pageSize: number }>(
+        `/api/v1/inventory/stocktakes?status=DRAFT&page=1&pageSize=1`,
+      );
+      const counting = await api<{ items: Array<{ id: string }>; total: number; page: number; pageSize: number }>(
+        `/api/v1/inventory/stocktakes?status=COUNTING&page=1&pageSize=1`,
+      );
+      const review = await api<{ items: Array<{ id: string }>; total: number; page: number; pageSize: number }>(
+        `/api/v1/inventory/stocktakes?status=REVIEW&page=1&pageSize=1`,
+      );
+      return {
+        items: [...first.items, ...counting.items, ...review.items],
+        total: first.total + counting.total + review.total,
+      };
+    },
+    staleTime: 15_000,
+    enabled: Boolean(activeBusinessId),
+  });
+
   // Mutations invalidate their own caches from within StockDialog.
 
   const dateFmt = new Intl.DateTimeFormat(business.locale === "fa" ? "fa-IR" : "en-US", {
@@ -65,6 +93,33 @@ export function InventoryView({
   return (
     <div className="space-y-6" data-view="module:inventory">
       <PageHeader title={t("title")} subtitle={t("subtitle")} />
+
+      {/* Prompt 40 (§75/§91) — Stocktakes tab card: open-session metric + CTA. */}
+      <Card>
+        <CardContent className="flex flex-col gap-4 pt-6 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            <div className="bg-primary/10 flex size-10 shrink-0 items-center justify-center rounded-lg">
+              <ClipboardList className="text-primary size-5" aria-hidden="true" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold">{tStocktakes("stocktakes")}</p>
+              <p className="text-xs text-muted-foreground">{tStocktakes("listSubtitle")}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg border px-3 py-1.5 text-center" aria-live="polite">
+              <p className="text-xs text-muted-foreground">{tStocktakes("openStocktakes")}</p>
+              <p className="text-lg font-semibold tabular-nums" dir="ltr">
+                {openStocktakes.isLoading ? "—" : (openStocktakes.data?.total ?? 0)}
+              </p>
+            </div>
+            <Button variant="outline" onClick={() => navigate({ kind: "inventory-stocktakes" })}>
+              <ClipboardList className="size-4" aria-hidden />
+              {tStocktakes("stocktakes")}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardContent className="pt-6">

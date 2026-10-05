@@ -32,6 +32,14 @@ run (e.g. scripting environment unavailable).
 
 Honest state (unchanged by the automation):
 
+- **Prompt 40 note — stocktake coverage:** `InventoryStocktake` +
+  `InventoryStocktakeLine` live in the same SQLite file, so they are included
+  in every backup (`backup-db.mjs`) and every file-wide verification
+  (`verify-backup.mjs`: checksum/integrity/quick/FK checks) by construction.
+  The restore-drill read-only smoke entity list now probes **13 entities**
+  (the 11 listed above + the two stocktake models); backups that predate the
+  models are reported honestly for those probes, never a drill failure.
+
 - **Offsite copies remain a MANUAL operator duty** — no script ships backups
   off-host; same-box backups do not survive disk loss. Verify the copy's
   checksum at the destination.

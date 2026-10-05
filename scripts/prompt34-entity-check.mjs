@@ -299,7 +299,7 @@ section("DTO");
 {
   const { res, data } = await call(fA, `/api/v1/products/${productId}`);
   check("E product detail 200", res.status === 200);
-  check("E product exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["product", "inventory", "recentAdjustments", "recentSales"]));
+  check("E product exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["product", "inventory", "recentAdjustments", "recentSales", "recentStocktakes"]));
   check("E inventory keys", data && JSON.stringify(Object.keys(data.inventory)) === JSON.stringify(["stockQty", "lowStockAt", "state"]));
   check("E inventory.state closed token", ["OUT_OF_STOCK", "LOW_STOCK", "HEALTHY"].includes(data?.inventory?.state), String(data?.inventory?.state));
   const ps = data?.recentSales?.[0];

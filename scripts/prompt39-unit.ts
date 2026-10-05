@@ -687,7 +687,7 @@ console.log("[46 DTO contract]");
 // [47] §157/§159 — statement query-key cache laws (locale in key)
 // ===========================================================================
 {
-  section("[47] statement query-key cache laws (§157/§159)");
+  console.log("-- [47] statement query-key cache laws (§157/§159)");
   const mod = await import("../src/modules/statements/statements-api");
   const ck = mod.statementKeys.customer("biz1", "cus1", "2026-10-01", "2026-10-31", null, "en");
   const ckFa = mod.statementKeys.customer("biz1", "cus1", "2026-10-01", "2026-10-31", null, "fa");

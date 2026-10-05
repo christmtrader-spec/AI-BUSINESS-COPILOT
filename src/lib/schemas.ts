@@ -18,7 +18,31 @@ export const partyCreateSchema = z.object({
   note: z.string().trim().max(1000).nullish().transform((v) => v || null),
 });
 
-export const partyUpdateSchema = partyCreateSchema.partial();
+/**
+ * Three-state PATCH text: ABSENT key → undefined (untouched), explicit
+ * null/"" → null (cleared), a real value → trimmed value.
+ *
+ * NEVER build update schemas with `<create>Schema.partial()` (zod v4):
+ * `.partial()` does NOT suppress `.default()` — an absent `stockQty` still
+ * fires its default 0 — and `.nullish().transform()` pipelines still RUN
+ * for absent keys, funneling untouched nullable fields to null. Caught live
+ * by prompt40-stocktake-check (Q4): PATCH {isActive:false} zeroed
+ * Product.stockQty; the same idiom cleared sku/unit on product PATCH,
+ * phone/email/address/note on party PATCH and supplierId/note on expense
+ * PATCH. Absent = untouched; only explicit values (null = clear) are written.
+ */
+const threeStateText = (v: string | null | undefined) => (v === undefined ? undefined : v || null);
+
+export const partyUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  phone: z.string().trim().max(40).nullish().transform(threeStateText),
+  email: z
+    .union([z.email(), z.literal("")])
+    .nullish()
+    .transform(threeStateText),
+  address: z.string().trim().max(300).nullish().transform(threeStateText),
+  note: z.string().trim().max(1000).nullish().transform(threeStateText),
+});
 
 export const productCreateSchema = z.object({
   name: z.string().trim().min(1).max(160),
@@ -30,7 +54,17 @@ export const productCreateSchema = z.object({
   lowStockAt: z.number().int().min(0).max(1_000_000).default(5),
 });
 
-export const productUpdateSchema = productCreateSchema.partial().extend({
+/** PATCH semantics — absent = untouched, null/"" = clear (see threeStateText). */
+export const productUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(160).optional(),
+  sku: z.string().trim().max(60).nullish().transform(threeStateText),
+  unit: z.string().trim().max(20).nullish().transform(threeStateText),
+  salePriceMinor: z.number().int().min(0).max(9_000_000_000).optional(),
+  costPriceMinor: z.number().int().min(0).max(9_000_000_000).optional(),
+  // NO defaults on the update schema: a PATCH omitting stockQty must never
+  // zero the stock, and one omitting lowStockAt must never reset it to 5.
+  stockQty: z.number().int().min(0).optional(),
+  lowStockAt: z.number().int().min(0).max(1_000_000).optional(),
   isActive: z.boolean().optional(),
 });
 
@@ -123,7 +157,22 @@ export const expenseCreateSchema = z.object({
   note: z.string().trim().max(1000).nullish().transform((v) => v || null),
 });
 
-export const expenseUpdateSchema = expenseCreateSchema.partial();
+/** PATCH semantics — absent = untouched, null = clear (see threeStateText). */
+export const expenseUpdateSchema = z.object({
+  supplierId: z.string().trim().max(64).nullish().transform(threeStateText),
+  category: z.string().trim().min(1).max(60).optional(),
+  amountMinor: z.number().int().min(1).max(9_000_000_000).optional(),
+  spentAt: z
+    .string()
+    .datetime()
+    .nullish()
+    .transform((v) => (v === undefined ? undefined : v ? new Date(v) : null)),
+  // undefined → undefined (absent = "untouched" for PATCH), null → null
+  // (explicit clear), "YYYY-MM-DD" → UTC-midnoon Date (§84).
+  dueDate: dueDateStringSchema.nullish().transform((v) => (v === undefined ? undefined : v)),
+  reference: z.string().trim().max(80).nullish().transform(threeStateText),
+  note: z.string().trim().max(1000).nullish().transform(threeStateText),
+});
 
 export const paymentCreateSchema = z
   .object({

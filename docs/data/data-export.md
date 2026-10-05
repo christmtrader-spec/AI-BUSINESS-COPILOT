@@ -41,6 +41,8 @@ so they stay plain text.
 | `crm_opportunities` | CRM opportunities (Prompt 35 §86): stage, probabilityPct, expectedValue (minor), currency, links, lost/won metadata, deletedAt | Confidential |
 | `crm_activities` | CRM activities (Prompt 36 §62): type, title, description, occurredAt, durationMinutes, context ids, createdBy, deletedAt | Confidential |
 | `crm_tasks` | CRM tasks (Prompt 36 §62): status, priority, dueAt, completedAt, reminder configuration (reminderEnabled, reminderMinutesBefore, overdueAlertEnabled — Prompt 37 §151), context ids, assignee, createdBy, deletedAt | Confidential |
+| `inventory_stocktakes` | stocktake sessions (Prompt 40): id, reference, status, countType, notes, createdByUserId, startedAt/reviewedAt/finalizedAt/canceledAt, timestamps | Confidential |
+| `inventory_stocktake_lines` | count lines (Prompt 40): stocktake + product references, count-time snapshot metadata (productNameAtCount, skuAtCount, unitAtCount), systemQtyAtCount, countedQty, varianceQty, countedAt, countedByUserId, timestamps — **auto-included with inventory_stocktakes** | Confidential |
 | `subscription_summary` | plan code/name, status, billing period, trial, cancel flags — customer-visible state only | Confidential |
 | `usage_summary` | current-period usage facts (metric, used, limit, remaining) — the same numbers the Usage page shows | Confidential |
 

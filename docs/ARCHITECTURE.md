@@ -153,6 +153,7 @@ deletions are soft (`deletedAt`) for financial records.
 | Settings          | 01    | Business settings, user preferences                    |
 | Global Search     | 33    | Tenant-safe universal search: /api/v1/search + command palette results + #/search center (read-only discovery layer — see docs/product/global-search.md) |
 | Party Statements  | 39    | Derived customer/supplier transaction statements: opening/increase/decrease/running/closing balance, signed-cursor pagination, CSV export (see docs/product/party-statements.md — a DERIVED reporting capability over Sale/Expense/Payment, NOT double-entry accounting) |
+| Inventory Stocktake | 40  | Operational inventory control (physical count sessions, variance reconciliation via InventoryAdjustment); NOT a financial posting system / NOT double-entry (see docs/product/inventory-stocktake.md) |
 | Billing           | —     | Boundary placeholder only (A16)                        |
 
 ### 5.2 Future Modules (NOT in MVP — direction only)

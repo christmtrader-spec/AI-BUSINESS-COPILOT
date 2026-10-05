@@ -188,6 +188,10 @@ try {
   const ENTITIES = [
     "User", "Business", "Subscription", "Customer", "Product", "Sale",
     "Expense", "AuditLog", "UsageEvent", "AiCostRecord", "PlatformAuditLog",
+    // Prompt 40 (§187) — physical count sessions + lines are part of the
+    // restore verification surface. Older backups may predate the models —
+    // reported honestly, never a drill failure.
+    "InventoryStocktake", "InventoryStocktakeLine",
   ];
   const counts = {};
   for (const entity of ENTITIES) {

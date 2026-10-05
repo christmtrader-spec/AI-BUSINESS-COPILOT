@@ -8,6 +8,7 @@ import type {
   ProductDetail,
   ProductRecentAdjustment,
   ProductRecentSale,
+  ProductRecentStocktake,
 } from "./types";
 
 export type ProductRecordRow = {
@@ -31,6 +32,14 @@ export type ProductAdjustmentRow = {
   createdAt: Date;
 };
 
+export type ProductStocktakeLineRow = {
+  stocktakeId: string;
+  reference: string;
+  status: string;
+  varianceQty: number;
+  countedAt: Date;
+};
+
 export type ProductSaleItemRow = {
   saleId: string;
   qty: number;
@@ -47,6 +56,18 @@ export function mapRecentAdjustments(
     delta: row.delta,
     reason: row.reason,
     createdAt: row.createdAt.toISOString(),
+  }));
+}
+
+export function mapRecentStocktakes(
+  rows: ProductStocktakeLineRow[],
+): ProductRecentStocktake[] {
+  return rows.map((row) => ({
+    stocktakeId: row.stocktakeId,
+    reference: row.reference,
+    status: row.status,
+    varianceQty: row.varianceQty,
+    countedAt: row.countedAt.toISOString(),
   }));
 }
 
@@ -72,6 +93,7 @@ export function mapProductDetail(
   recentAdjustments: ProductAdjustmentRow[],
   recentSaleItems: ProductSaleItemRow[],
   recentSaleCap: number,
+  recentStocktakeLines: ProductStocktakeLineRow[] = [],
 ): ProductDetail {
   return {
     product: {
@@ -92,5 +114,6 @@ export function mapProductDetail(
     },
     recentAdjustments: mapRecentAdjustments(recentAdjustments),
     recentSales: mapProductRecentSales(recentSaleItems, recentSaleCap),
+    recentStocktakes: mapRecentStocktakes(recentStocktakeLines),
   };
 }

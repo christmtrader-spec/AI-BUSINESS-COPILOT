@@ -69,6 +69,7 @@ operations. Status vocabulary as in the banner.
 | Notification (Prompt 32) | **DELETED** (cascade via `userId`) | Business-scoped notifications **DELETED** (cascade via `businessId`); user-level security notifications survive the business | Inactive rows (read/archived/expired) removed by operational cleanup `scripts/prune-expired-notifications.mjs` (non-security 90d / security 365d defaults) — documented in Prompt 32 (§200/§201/§455/§456) | DEPENDENT + operational cleanup |
 | NotificationPreference (Prompt 32) | **DELETED** (cascade via `userId`) | NOT AFFECTED (user-level) | Exists while the account exists | DEPENDENT |
 | NotificationDelivery (Prompt 32) | **DELETED** (cascade via the parent Notification) | **DELETED** with the parent Notification | Shares the notification's lifetime (cascade) — no independent retention | DEPENDENT |
+| InventoryStocktake (+ InventoryStocktakeLine) (Prompt 40) | NOT AFFECTED (business-owned); creator/counter links are `onDelete: Restrict` — see the Prompt 40 section below | **DELETED** (cascade; lines cascade with their session) | — | DEPENDENT |
 
 ## 3. Dependency walk-through (documentation-only "dry run")
 
@@ -182,3 +183,12 @@ dangling id strings. Nothing rewrites or anonymizes them — NOT CURRENTLY AUTOM
 | Account deletion | `CrmTask.assignedToUserId` SET NULL. Creator links (`createdByUserId`) are `onDelete: Restrict` — the same project-specific policy as other creator-linked records: account deletion is gated by the existing rules and the tenant rows are not silently rewritten; documented here BEFORE the migration (§61 honesty rule). |
 | Customer/Lead/Opportunity deletion (soft) | Rows remain (tenant data per retention policy) but disappear from ACTIVE timelines (queries filter `deletedAt: null` on the context side, §104). No automatic cross-context reassignment (§126). |
 | Context deletion (hard cascade path) | Context column SET NULL (schema `onDelete: SetNull`); the history row itself is not destroyed by the context going away. |
+
+### Inventory Stocktake (Prompt 40)
+
+| Event | Effect |
+|---|---|
+| Business deletion | `InventoryStocktake` / `InventoryStocktakeLine` **DELETED** (cascade; lines cascade with their session) — count sessions never outlive the tenant. |
+| Account deletion | `createdByUserId` (session creator) and `countedByUserId` (line counter) are `onDelete: Restrict` — the same creator-linked policy as CRM creator-linked records: account deletion is gated by the existing rules and the tenant rows are not silently rewritten; documented here BEFORE the migration. |
+| User-facing hard delete | **NONE.** No DELETE endpoint exists for stocktake records; a session that should not reconcile ends via **Cancel** (terminal, immutable) — cancellation removes no data and changes no stock. |
+| Notes field | Optional free text (≤ 2000 chars) may contain user-entered content; it is **never logged, never audited, never sent to AI**, and survives exactly as long as its session. |

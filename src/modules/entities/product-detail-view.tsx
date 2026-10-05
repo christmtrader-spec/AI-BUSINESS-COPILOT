@@ -71,6 +71,8 @@ export function ProductDetailView({
   const tErrors = useTranslations("errors");
   const queryClient = useQueryClient();
   const businessId = useAppStore((s) => s.activeBusinessId);
+  const navigate = useAppStore((s) => s.navigate);
+  const tStock = useTranslations("inventory.stocktakes");
 
   const writable = can(role, "data:write");
   const p = data.product;
@@ -210,6 +212,57 @@ export function ProductDetailView({
           trailing: fmtMoney(business, s.lineTotalMinor),
         }))}
       />
+
+      {/* Prompt 40 (§90) — bounded stocktake history (≤10). Stocktakes are
+          NOT entity-router records; navigation uses the dedicated deep link
+          (§136) — never the Global Search entity vocabulary (§95). */}
+      <Card>
+        <CardContent className="pt-6">
+          <h2 className="mb-3 text-base font-semibold">{tStock("stocktakeHistory")}</h2>
+          {data.recentStocktakes.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{tStock("noStocktakeHistory")}</p>
+          ) : (
+            <ul className="divide-y">
+              {data.recentStocktakes.map((st) => (
+                <li key={st.stocktakeId}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40"
+                    onClick={() => navigate({ kind: "inventory-stocktake", id: st.stocktakeId })}
+                    aria-label={`${tStock("stocktakeHistory")}: ${st.reference}`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium" dir="auto">{st.reference}</span>
+                      <span className="block text-xs text-muted-foreground" dir="ltr">
+                        {fmtDate(business, st.countedAt)}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <Badge variant="outline" className="text-xs">
+                        {st.status === "DRAFT" ? tStock("status_DRAFT")
+                          : st.status === "COUNTING" ? tStock("status_COUNTING")
+                          : st.status === "REVIEW" ? tStock("status_REVIEW")
+                          : st.status === "FINALIZED" ? tStock("status_FINALIZED")
+                          : tStock("status_CANCELLED")}
+                      </Badge>
+                      <span
+                        className={cn(
+                          "text-sm font-semibold tabular-nums",
+                          st.varianceQty > 0 && "text-emerald-600 dark:text-emerald-400",
+                          st.varianceQty < 0 && "text-amber-600 dark:text-amber-400",
+                        )}
+                        dir="ltr"
+                      >
+                        {st.varianceQty > 0 ? `+${st.varianceQty}` : st.varianceQty}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
 
       <ProductFormDialog
         open={editOpen}

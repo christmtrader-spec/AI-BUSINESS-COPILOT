@@ -46,6 +46,8 @@ export type ExportDatasetKey =
   | "crm_opportunities"
   | "crm_activities"
   | "crm_tasks"
+  | "inventory_stocktakes"
+  | "inventory_stocktake_lines"
   | "subscription_summary"
   | "usage_summary";
 
@@ -64,6 +66,8 @@ export const EXPORT_DATASET_KEYS = [
   "crm_opportunities",
   "crm_activities",
   "crm_tasks",
+  "inventory_stocktakes",
+  "inventory_stocktake_lines",
   "subscription_summary",
   "usage_summary",
 ] as const satisfies readonly ExportDatasetKey[];
@@ -71,6 +75,8 @@ export const EXPORT_DATASET_KEYS = [
 /** `sales` always carries its line items (§46 — never flatten relationships). */
 export const DATASET_IMPLICATIONS: Partial<Record<ExportDatasetKey, ExportDatasetKey[]>> = {
   sales: ["sale_items"],
+  // Prompt 40 (§107) — stocktakes always carry their count lines.
+  inventory_stocktakes: ["inventory_stocktake_lines"],
 };
 
 export type DatasetMeta = {
@@ -103,6 +109,12 @@ export const EXPORT_CATALOG: Record<ExportDatasetKey, DatasetMeta> = {
   // as stable ids; no platform/AI-cost/notification internals.
   crm_activities: { key: "crm_activities", sensitivity: "CONFIDENTIAL", csvFile: "crm_activities.csv", labelKey: "crmActivities" },
   crm_tasks: { key: "crm_tasks", sensitivity: "CONFIDENTIAL", csvFile: "crm_tasks.csv", labelKey: "crmTasks" },
+  // Prompt 40 (§107/§109) — physical count sessions: CONFIDENTIAL BUSINESS
+  // DATA. Count lines always accompany their stocktake (implication above);
+  // snapshots (productName/SKU/unit) are exported as recorded — never any
+  // platform/AI-cost/security data.
+  inventory_stocktakes: { key: "inventory_stocktakes", sensitivity: "CONFIDENTIAL", csvFile: "inventory_stocktakes.csv", labelKey: "stocktakes" },
+  inventory_stocktake_lines: { key: "inventory_stocktake_lines", sensitivity: "CONFIDENTIAL", csvFile: "inventory_stocktake_lines.csv", labelKey: "stocktakeLines" },
   subscription_summary: { key: "subscription_summary", sensitivity: "CONFIDENTIAL", csvFile: "subscription.csv", labelKey: "subscriptionSummary" },
   usage_summary: { key: "usage_summary", sensitivity: "CONFIDENTIAL", csvFile: "usage.csv", labelKey: "usageSummary" },
 };
@@ -756,7 +768,107 @@ export const DATASET_FETCHERS: Record<ExportDatasetKey, DatasetFetcher> = {
     };
   },
 
-  subscription_summary: async (ctx) => {
+    // Prompt 40 (§107/§108) — physical count sessions + lines. Explicit
+  // selects (§67); ascending deterministic order; tenant-scoped fetch only.
+  inventory_stocktakes: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.inventoryStocktake.findMany({
+        where: { businessId: ctx.businessId },
+        orderBy: { createdAt: "asc" },
+        take,
+        select: {
+          id: true,
+          reference: true,
+          status: true,
+          countType: true,
+          notes: true,
+          createdByUserId: true,
+          startedAt: true,
+          reviewedAt: true,
+          finalizedAt: true,
+          canceledAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((st) => ({
+        json: {
+          id: st.id,
+          reference: st.reference,
+          status: st.status,
+          countType: st.countType,
+          notes: st.notes,
+          createdByUserId: st.createdByUserId,
+          startedAt: iso(st.startedAt),
+          reviewedAt: iso(st.reviewedAt),
+          finalizedAt: iso(st.finalizedAt),
+          canceledAt: iso(st.canceledAt),
+          createdAt: st.createdAt.toISOString(),
+          updatedAt: st.updatedAt.toISOString(),
+        },
+        csv: [
+          st.id, st.reference, st.status, st.countType, st.notes, st.createdByUserId,
+          iso(st.startedAt), iso(st.reviewedAt), iso(st.finalizedAt), iso(st.canceledAt),
+          st.createdAt.toISOString(), st.updatedAt.toISOString(),
+        ],
+      })),
+      truncated,
+    };
+  },
+
+  inventory_stocktake_lines: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.inventoryStocktakeLine.findMany({
+        where: { stocktake: { businessId: ctx.businessId } },
+        orderBy: [{ countedAt: "asc" }, { id: "asc" }],
+        take,
+        select: {
+          id: true,
+          stocktakeId: true,
+          productId: true,
+          productNameAtCount: true,
+          skuAtCount: true,
+          unitAtCount: true,
+          systemQtyAtCount: true,
+          countedQty: true,
+          varianceQty: true,
+          countedAt: true,
+          countedByUserId: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((l) => ({
+        json: {
+          id: l.id,
+          stocktakeId: l.stocktakeId,
+          productId: l.productId,
+          productNameAtCount: l.productNameAtCount,
+          skuAtCount: l.skuAtCount,
+          unitAtCount: l.unitAtCount,
+          systemQtyAtCount: l.systemQtyAtCount,
+          countedQty: l.countedQty,
+          varianceQty: l.varianceQty,
+          countedAt: l.countedAt.toISOString(),
+          countedByUserId: l.countedByUserId,
+          createdAt: l.createdAt.toISOString(),
+          updatedAt: l.updatedAt.toISOString(),
+        },
+        csv: [
+          l.id, l.stocktakeId, l.productId, l.productNameAtCount, l.skuAtCount, l.unitAtCount,
+          l.systemQtyAtCount, l.countedQty, l.varianceQty, l.countedAt.toISOString(),
+          l.countedByUserId, l.createdAt.toISOString(), l.updatedAt.toISOString(),
+        ],
+      })),
+      truncated,
+    };
+  },
+
+subscription_summary: async (ctx) => {
     // §51 — customer-visible subscription state ONLY. Provider verification
     // internals, webhook signatures and merchant credentials do not exist here.
     const sub = await db.subscription.findUnique({
@@ -850,6 +962,8 @@ export const DATASET_CSV_COLUMNS: Record<ExportDatasetKey, string[]> = {
   crm_opportunities: ["id", "title", "description", "lead_id", "customer_id", "stage", "probability_pct", "expected_value", "currency_code", "expected_close_date", "assigned_to_user_id", "lost_reason", "won_at", "lost_at", "deleted_at", "created_at", "updated_at"],
   crm_activities: ["id", "type", "title", "description", "occurred_at", "duration_minutes", "customer_id", "lead_id", "opportunity_id", "created_by_user_id", "deleted_at", "created_at", "updated_at"],
   crm_tasks: ["id", "title", "description", "status", "priority", "due_at", "completed_at", "reminder_enabled", "reminder_minutes_before", "overdue_alert_enabled", "customer_id", "lead_id", "opportunity_id", "assigned_to_user_id", "created_by_user_id", "deleted_at", "created_at", "updated_at"],
+  inventory_stocktakes: ["id", "reference", "status", "count_type", "notes", "created_by_user_id", "started_at", "reviewed_at", "finalized_at", "canceled_at", "created_at", "updated_at"],
+  inventory_stocktake_lines: ["id", "stocktake_id", "product_id", "product_name_at_count", "sku_at_count", "unit_at_count", "system_qty_at_count", "counted_qty", "variance_qty", "counted_at", "counted_by_user_id", "created_at", "updated_at"],
   subscription_summary: ["plan_code", "plan_name", "status", "billing_period", "current_period_start", "current_period_end", "trial_start", "trial_end", "cancel_at_period_end", "canceled_at", "ended_at", "created_at"],
   usage_summary: ["metric", "used", "limit", "remaining", "percentage_used", "period_start", "period_end"],
 };

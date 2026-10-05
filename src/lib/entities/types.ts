@@ -159,6 +159,14 @@ export type ProductRecentAdjustment = {
   createdAt: string;
 };
 
+export type ProductRecentStocktake = {
+  stocktakeId: string;
+  reference: string;
+  status: string;
+  varianceQty: number;
+  countedAt: string;
+};
+
 export type ProductRecentSale = {
   saleId: string;
   number: number;
@@ -186,6 +194,8 @@ export type ProductDetail = {
   recentAdjustments: ProductRecentAdjustment[];
   /** Bounded: ≤ 10 unique sale records (§15/§42/§85). */
   recentSales: ProductRecentSale[];
+  /** Prompt 40 (§90) — ≤ 10 recent physical-count lines for this product. */
+  recentStocktakes: ProductRecentStocktake[];
 };
 
 /* ------------------------------------------------------------------ */

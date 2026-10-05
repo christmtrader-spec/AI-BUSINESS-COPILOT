@@ -72,6 +72,13 @@ model User {
   crmActivityCreations    CrmActivity[]        @relation("CrmActivityCreator")
   crmTaskCreations        CrmTask[]            @relation("CrmTaskCreator")
   crmTaskAssignments      CrmTask[]            @relation("CrmTaskAssignee")
+
+  // Prompt 40 — Inventory Stocktake (§11/§13): explicit relation names for
+  // the two User references (stocktake creator, line counter). Both are
+  // Restrict — the same creator-linked policy as CRM (documented in
+  // docs/legal/data-deletion-matrix.md BEFORE the migration).
+  inventoryStocktakeCreations InventoryStocktake[]      @relation("InventoryStocktakeCreator")
+  inventoryStocktakeCounts    InventoryStocktakeLine[]  @relation("InventoryStocktakeCounter")
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +285,8 @@ model Business {
   // Prompt 36 — CRM Activities + Tasks (§4): tenant-scoped, cascade.
   crmActivities        CrmActivity[]
   crmTasks             CrmTask[]
+  // Prompt 40 — physical stock-count sessions (tenant-scoped, cascade).
+  inventoryStocktakes  InventoryStocktake[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -418,6 +427,8 @@ model Product {
 
   adjustments InventoryAdjustment[]
   saleItems   SaleItem[]
+  // Prompt 40 — physical count lines that snapshotted this product.
+  inventoryStocktakeLines InventoryStocktakeLine[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -437,6 +448,86 @@ model InventoryAdjustment {
 
   @@index([businessId, createdAt])
   @@index([productId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 40 — Inventory Stocktake (§10-§14): controlled physical counting.
+// InventoryStocktake = one physical count session (per business).
+// InventoryStocktakeLine = one product physically counted within a session
+// (unique stocktakeId+productId, DB-enforced §14/§28/§48).
+// The stocktake is NOT an accounting construct (§3): finalization only
+// reconciles Product.stockQty through the EXISTING InventoryAdjustment
+// semantics (§43) — never Sale/Expense/Payment/Statement/CRM.
+// ---------------------------------------------------------------------------
+model InventoryStocktake {
+  id         String   @id @default(cuid())
+
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  // §22 — required, 2..80 chars, unique per business (DB-enforced).
+  reference  String
+  // §8 — closed lifecycle: DRAFT | COUNTING | REVIEW | FINALIZED | CANCELLED
+  // (transitions are server-authoritative, §9).
+  status     String   @default("DRAFT")
+  // §7 — closed vocabulary; only SELECTED exists in Prompt 40.
+  countType  String   @default("SELECTED")
+  // §23 — optional free text (≤2000 chars); never logged, never sent to AI.
+  notes      String?
+
+  createdByUserId String
+  createdByUser   User @relation("InventoryStocktakeCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  startedAt   DateTime?
+  reviewedAt  DateTime?
+  finalizedAt DateTime?
+  canceledAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines InventoryStocktakeLine[]
+
+  @@unique([businessId, reference])
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+  @@index([businessId, createdByUserId])
+}
+
+model InventoryStocktakeLine {
+  id          String             @id @default(cuid())
+
+  stocktakeId String
+  stocktake   InventoryStocktake @relation(fields: [stocktakeId], references: [id], onDelete: Cascade)
+
+  productId   String
+  product     Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  // §15 — server-side snapshot of Product.stockQty AT COUNT TIME (never
+  // client-supplied). Finalization stale-check compares this against the
+  // CURRENT stockQty (§39/§40) — never rebased (§41).
+  systemQtyAtCount Int
+  // §16 — client supplies ONLY countedQty; variance is server-derived.
+  countedQty       Int
+  varianceQty      Int // countedQty - systemQtyAtCount (sign is meaningful, §18)
+
+  countedAt       DateTime
+  countedByUserId String
+  countedByUser   User @relation("InventoryStocktakeCounter", fields: [countedByUserId], references: [id], onDelete: Restrict)
+
+  // §19 — product metadata snapshot for historical understandability
+  // (NOT sale/cost prices).
+  productNameAtCount String
+  skuAtCount         String?
+  unitAtCount        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([stocktakeId, productId])
+  @@index([stocktakeId])
+  @@index([productId])
+  @@index([countedAt])
 }
 
 // ---------------------------------------------------------------------------

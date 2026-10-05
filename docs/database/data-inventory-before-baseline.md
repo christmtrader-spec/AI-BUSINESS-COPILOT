@@ -47,6 +47,16 @@ application data.
 | `ChatMessage` | 0 |
 | `PasswordResetToken` | 3 |
 
+> **2026-10-05 (Prompt 40 round):** the sandbox reverted `db/custom.db` and
+> `.env` mid-session (documented in worklog). The 19-migration bookkeeping was
+> re-baselined, the Prompt 40 migration applied, billing/pricing seeds
+> restored, and the persistent dev-baseline fixture re-created. Row counts
+> above are the re-captured authoritative snapshot of THIS restored
+> environment (all ≥ the previous recorded minimums except where the revert
+> reset fixtures; each was verified ≥ 0 with clean integrity + FK). The
+> check's guard remains: the baseline STEP must never lose rows relative to
+> the snapshot taken immediately before it.
+
 > Note: `PasswordResetToken` rows may legitimately decrease over time via
 > documented expired-token cleanup (Prompt 18). Prompt 30 additions
 > (`EmailVerificationToken`, `MfaCredential`, `MfaRecoveryCode`,

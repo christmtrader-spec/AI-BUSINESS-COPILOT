@@ -60,6 +60,14 @@ export type AppView =
    * every other unknown hash (§58).
    */
   | { kind: "statements"; statementType: StatementTypeToken; id: string }
+  /**
+   * Prompt 40 — Inventory stocktake views (§76/§77/§136): the LIST at
+   * #/inventory/stocktakes and a DETAIL deep link at
+   * #/inventory/stocktakes/<id>. The id is validated with the same
+   * safe-ID rules as entity routes — malformed ids NEVER become state.
+   */
+  | { kind: "inventory-stocktakes" }
+  | { kind: "inventory-stocktake"; id: string }
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
@@ -151,6 +159,12 @@ export function viewKeyOf(view: AppView): string {
     // remounts the view so no stale statement can ever be shown (§159).
     : view.kind === "statements"
       ? `statements:${view.statementType}:${view.id}`
+    // Prompt 40 — stocktake views: list + per-id detail keys so opening
+    // another stocktake remounts the detail view (no stale record, §36 parity).
+    : view.kind === "inventory-stocktakes"
+      ? "inventory-stocktakes"
+    : view.kind === "inventory-stocktake"
+      ? `inventory-stocktake:${view.id}`
       : view.kind === "join"
       ? `join:${view.token}`
       : view.kind === "reset-password"
@@ -191,6 +205,10 @@ export function sameView(a: AppView, b: AppView): boolean {
   // both; explicit for parity with entity views).
   if (a.kind === "statements" && b.kind === "statements") {
     return a.statementType === b.statementType && a.id === b.id;
+  }
+  // Prompt 40 — stocktake detail compares id (viewKey already carries it).
+  if (a.kind === "inventory-stocktake" && b.kind === "inventory-stocktake") {
+    return a.id === b.id;
   }
   // Prompt 33 — hash query changes re-enter the store (back/forward must
   // update the Search Center) without remounting the view (§13/§33).
@@ -244,6 +262,13 @@ export function viewToHash(view: AppView): string | null {
       if (!isStatementTypeToken(view.statementType)) return null;
       if (!isValidEntityId(view.id)) return null;
       return `#/statements?type=${view.statementType}&id=${encodeURIComponent(view.id)}`;
+    case "inventory-stocktakes":
+      // Prompt 40 (§76) — canonical list hash.
+      return "#/inventory/stocktakes";
+    case "inventory-stocktake":
+      // Prompt 40 (§77/§136) — only charset-safe ids ever become a hash.
+      if (!isValidEntityId(view.id)) return null;
+      return `#/inventory/stocktakes/${view.id}`;
     case "platform":
       // #/platform itself resolves to the overview section (§15).
       return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
@@ -341,6 +366,22 @@ export function hashToView(hash: string): AppView {
     }
     if (!isValidEntityId(id)) return { kind: "dashboard" };
     return { kind: "statements", statementType: type, id };
+  }
+  // Prompt 40 (§76/§77/§136) — inventory stocktake deep links, matched
+  // BEFORE the module/entity fallbacks: #/inventory/stocktakes opens the
+  // list; #/inventory/stocktakes/<id> opens the detail only when the id is
+  // charset-safe; anything else falls through to the dashboard fallback.
+  if (path === "inventory/stocktakes") return { kind: "inventory-stocktakes" };
+  if (path.startsWith("inventory/stocktakes/")) {
+    const rawId = path.slice("inventory/stocktakes/".length);
+    let id = rawId;
+    try {
+      id = decodeURIComponent(rawId);
+    } catch {
+      return { kind: "dashboard" };
+    }
+    if (!isValidEntityId(id)) return { kind: "dashboard" };
+    return { kind: "inventory-stocktake", id };
   }
   // Prompt 34 — entity detail deep links (#/customers/<id>, §5/§6) are
   // attempted BEFORE the bare-module match: "customers" alone stays the

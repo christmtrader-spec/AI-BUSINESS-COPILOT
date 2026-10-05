@@ -151,6 +151,25 @@ over the same recorded rows. They are **not** a ledger, **not** an accounting
 system, and the FA wording uses صورت‌حساب (statement) — never دفتر کل
 (general ledger).
 
+### 4.2 Inventory Stocktake (Prompt 40)
+
+Stocktake sessions (`src/lib/inventory/stocktake/`,
+`docs/product/inventory-stocktake.md`) are an **operational inventory
+control** workflow. Their finalization touches physical inventory quantities
+ONLY through the existing adjustment semantics:
+
+| Aspect | Meaning (exact) |
+|---|---|
+| Quantity effect | `Product.stockQty` set to the counted value + one `InventoryAdjustment` row per non-zero-variance line (`delta = variance`, reason `Stocktake <reference>: physical count reconciliation`) |
+| Financial transaction | **NONE.** Finalization creates NO `Sale`, `Expense`, `Payment` or `Statement` row — revenue, expenses, net cash flow, receivables, payables and party statements are untouched |
+| Inventory value | May change ONLY because `stockQty` changes, under the existing `stockQty × costPriceMinor` convention (§2.4). The variance itself is **not booked** as expense, revenue, loss or profit — there is no shrinkage account to debit |
+| Ledger | **NO ledger.** No journal entry, no double-entry, no chart of accounts, no COGS, no valuation layer or cost history is created by a stocktake |
+
+The count line snapshots `systemQtyAtCount` server-side at count time and
+derives `variance = counted − system` (sign meaningful); finalization is
+atomic, rejects stale counts (409) instead of rebasing them, and zero
+variances produce no adjustment row at all.
+
 ---
 
 ## 5. Consistency of the wording (i18n check)
