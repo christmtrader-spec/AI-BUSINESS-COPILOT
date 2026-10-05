@@ -3481,3 +3481,36 @@ Work Log:
 
 Stage Summary:
 - Environment-only incident; no product change. The 15-min webDevReview cron (job 437655) will keep liveness + regression under continuous watch.
+
+---
+Task ID: p40-gap-closure
+Agent: Z.ai Code
+Task: Continue-building round — 4th sandbox revert repair (now scripted), plus closure of BOTH documented P40 honesty gaps (live line-cap trigger + product-selector stress test) with deep testing throughout.
+
+ENVIRONMENT (4th revert; now permanently scripted):
+- Sandbox reset db/custom.db AND .env AGAIN between rounds (0 rows, ledger empty, .env DATABASE_URL-only, health "degraded"/unreachable).
+- NEW scripts/env-repair.mjs — ONE COMMAND performs the entire documented repair sequence idempotently: (1) re-baseline 20 migrations (skipped if ledger complete), (2) append the .env baseline with REAL generated secrets (existing vars preserved; skipped if present), (3) seed-billing + seed-pricing, (4) dev-baseline fixture (with p20-A5 subscription guard), (5) e2e-smoke fixture contract (sara/eve/ali/rep16007 + memberships), (6) verify: migrate status + row floors + PRAGMA quick_check/FK + auto-restart via ensure-dev.sh when .env changed + /api/health contract. First run: ALL GREEN in 21.5s; second run (idempotence proof): ALL GREEN in 2.6s with steps 1-2 skipped. Future reverts are now a single command.
+- Dev server liveness: sandbox kept reaping the server between tool calls; started the existing double-fork watchdog `node scripts/keep-dev-up.cjs` (PID-locked, boot-aware per r19 hardening) to hold it up across sessions.
+
+P40 HONESTY GAP A — LIVE LINE-CAP TRIGGER (CLOSED, was "NOT EXECUTED" in P40 + verification rounds):
+- NEW scripts/p40-linecap-live-check.mjs: restarts nothing itself; expects the dev server started with INVENTORY_STOCKTAKE_MAX_LINES=100 (recipe in header), creates a direct-Prisma fixture (user + business + OWNER membership + 105 products, TAG P40CAP-), does a REAL NextAuth credentials login, creates a stocktake via API, then adds lines.
+- RESULTS (12/12 PASS): exactly 100 lines added (all 201); line 101 → 422 with EXACT code STOCKTAKE_LINE_LIMIT_REACHED; message surfaces the LIVE env value "Stocktake line limit reached (100)"; detail lineCount=100; capped product absent from lines; teardown to ZERO residue (prefix-pattern sweep recovers crashed runs of ANY stamp).
+- Test-side bugs fixed while building it: Product field isActive (not `active`), AuditLog filter actorId (not `userId`), credentials callback needs explicit form-urlencoded content-type (JSON default caused a 500 in the harness only), plus a wait-for-server poll because the sandbox reaps the server between tool calls.
+- Server restored to normal env afterwards (cap back to default 1000; unit suite pins the parser).
+
+P40 HONESTY GAP B — PRODUCT-SELECTOR STRESS BEYOND PAGE-SIZE 10 (CLOSED, was "NOT stress-tested" §246):
+- Browser QA via agent-browser with a 25-product fixture (TAG P40PICK-): picker page 1 = exactly 10 items (Alpha→Kappa) + counter "1–10 · 25" + Previous/Next; Next → "11–20 · 25" (Lambda→Upsilon, alphabetical); added "Lambda Gauge" FROM PAGE 2 → line appears in the DRAFT table; server-side search "Omega" → exactly 1 result; NETWORK PROOF via performance entries + network log: every products request is `?q=…&page=N&pageSize=10` — NO full product download, §62/§63/§246 bounded-query law verified end-to-end. Teardown to ZERO (0 users/biz/products/stocktakes).
+
+POST-REPAIR REGRESSION SPOT CHECK (all EXECUTED, exit 0):
+- p40-unit 209/209 · prompt40-stocktake-check 133/133 · inventory-stocktake-static-scan 44/44 · e2e-smoke 90/90 · p19 24/24 (baseline floors intact) · p20-billing 56/56 (fixture subscription guard holding) · lint 0 · tsc --noEmit 0.
+- Residue final: 0 P40CAP-*, 0 P40PICK-*, 0 stocktakes; only by-design persistent fixtures remain.
+
+NOT EXECUTED / HONESTY (§242/§251):
+- EMAIL delivery still NOT verified end-to-end (no SMTP; unchanged).
+- The line-cap live check runs against a server started with the custom env; the DEFAULT (1000) cap path remains covered by the unit parser suite + P40 E2E (which adds far fewer than 1000 lines), not by a live 1000-line trigger (impractical against the shared server; documented).
+- No performance claims beyond network-request bounding evidence above.
+
+Stage Summary — FINAL STATE (§249/§250):
+- PROMPT 17–40 = ALL CLOSED; BOTH remaining P40 honesty gaps now CLOSED with live evidence. New tooling: scripts/env-repair.mjs (one-command revert repair), scripts/p40-linecap-live-check.mjs (12 checks), scripts/keep-dev-up.cjs watchdog re-activated.
+- Files ADDED (2): scripts/env-repair.mjs, scripts/p40-linecap-live-check.mjs. Files MODIFIED (0 product) — zero product-code changes this round; all fixes were environment/test-harness class.
+- NEXT: STOP. Await the next explicit task (P41 remains NOT STARTED per §252 scope law).
