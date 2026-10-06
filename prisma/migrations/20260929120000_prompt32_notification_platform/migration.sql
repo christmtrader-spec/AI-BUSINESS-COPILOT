@@ -69,12 +69,9 @@ CREATE INDEX "NotificationDelivery_status_createdAt_idx" ON "NotificationDeliver
 CREATE UNIQUE INDEX "NotificationPreference_userId_notificationType_channel_key" ON "NotificationPreference"("userId", "notificationType", "channel");
 CREATE INDEX "NotificationPreference_userId_notificationType_idx" ON "NotificationPreference"("userId", "notificationType");
 
--- AddForeignKey
-ALTER TABLE "Notification" ADD CONSTRAINT "Notification_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "Notification" ADD CONSTRAINT "Notification_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business" ("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "NotificationDelivery" ADD CONSTRAINT "NotificationDelivery_notificationId_fkey" FOREIGN KEY ("notificationId") REFERENCES "Notification" ("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "NotificationPreference" ADD CONSTRAINT "NotificationPreference_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- NOTE: all foreign keys (Notification→User/Business, NotificationDelivery→Notification,
+-- NotificationPreference→User) are declared INLINE in the CREATE TABLE statements
+-- above — the only valid form on SQLite. A previous draft of this file also had
+-- `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY` statements here; that syntax is
+-- rejected by SQLite ("near CONSTRAINT: syntax error") and duplicated the inline
+-- constraints, so the clean deploy chain failed with P3009. Removed.

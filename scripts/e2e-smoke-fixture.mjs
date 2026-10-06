@@ -17,8 +17,12 @@
  */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { execSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const prisma = new PrismaClient();
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function hashPassword(password) {
   return bcrypt.hashSync(password, 10); // matches src/lib/auth.ts (bcryptjs)
@@ -158,6 +162,23 @@ async function main() {
     console.log("[smoke-fixture] rep OWNER membership created");
   } else {
     console.log("[smoke-fixture] rep OWNER membership exists");
+  }
+
+  // CRITICAL (p20 A5 lesson, same guard as dev-baseline-fixture.mjs): every
+  // fixture business MUST own a subscription before this script exits —
+  // otherwise the next `seed-billing.ts` run backfills FREE subscriptions for
+  // them and the "re-running the seed is a no-op" regression check fails.
+  // The sanctioned idempotent seed performs the backfill (with proper
+  // SubscriptionEvent + audit rows) exactly once, for ALL sub-less businesses.
+  const fixtureBusinessIds = [business.id, repBusiness.id];
+  const withSub = await prisma.subscription.count({
+    where: { businessId: { in: fixtureBusinessIds } },
+  });
+  if (withSub < fixtureBusinessIds.length) {
+    console.log(
+      `[smoke-fixture] ${fixtureBusinessIds.length - withSub} fixture business(es) lack a subscription — running sanctioned seed…`,
+    );
+    execSync("bun scripts/seed-billing.ts", { cwd: ROOT, stdio: "inherit" });
   }
 
   // sara must own exactly ONE business (FREE-plan limit contract).
