@@ -16,6 +16,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { SEARCH_PER_ENTITY_TAKE } from "./schema";
+import { purchaseOrderLineCap } from "@/lib/purchase-orders/types";
 import {
   customerCandidate,
   expenseCandidate,
@@ -320,8 +321,14 @@ async function searchPurchaseOrders(
       orderedAt: true,
       createdAt: true,
       supplier: { select: { name: true } },
-      // No totals/prices selected — procurement amounts are out of the
-      // search DTO by design (§67).
+      // §57 — line SNAPSHOT TEXT (name/SKU) feeds the ranker's match fields;
+      // bounded by the SAME P41 line-cap law (never unbounded). No totals/
+      // prices selected — procurement amounts are out of the search DTO
+      // by design (§67).
+      lines: {
+        select: { productNameAtOrder: true, skuAtOrder: true },
+        take: purchaseOrderLineCap(process.env.PURCHASE_ORDER_MAX_LINES),
+      },
     },
     orderBy: { createdAt: "desc" as const },
     take: SEARCH_PER_ENTITY_TAKE,

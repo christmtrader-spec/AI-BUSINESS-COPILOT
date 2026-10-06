@@ -341,6 +341,8 @@ export type PurchaseOrderSearchRow = {
   orderedAt: Date;
   createdAt: Date;
   supplier: { name: string } | null;
+  /** §57 — line snapshot TEXT (never money) that feeds the ranker norms. */
+  lines?: ReadonlyArray<{ productNameAtOrder: string; skuAtOrder: string | null }>;
 };
 
 /** Closed-token guard for the PO lifecycle (§4.1 — nothing raw leaves). */
@@ -356,6 +358,17 @@ function purchaseOrderStatusToken(status: string): SearchItemStatus | null {
 
 export function purchaseOrderCandidate(row: PurchaseOrderSearchRow): SearchCandidate {
   const subtitle = row.supplierNameAtOrder || row.supplier?.name || null;
+  // §57 — product snapshot names + SKUs are REAL match fields. They feed the
+  // ranker norms ONLY — they are never rendered (subtitle stays the supplier
+  // snapshot) and no amounts ever enter the candidate (§67).
+  const productNorms = (row.lines ?? [])
+    .flatMap((l) => [l.productNameAtOrder, l.skuAtOrder])
+    .filter((v): v is string => Boolean(v))
+    .map(normalizeSearchText);
+  const skuNorms = (row.lines ?? [])
+    .map((l) => l.skuAtOrder)
+    .filter((v): v is string => Boolean(v))
+    .map(normalizeSearchText);
   return {
     id: row.id,
     type: "PURCHASE_ORDER",
@@ -363,9 +376,9 @@ export function purchaseOrderCandidate(row: PurchaseOrderSearchRow): SearchCandi
     titleNorm: normalizeSearchText(row.reference),
     subtitle,
     identifierNorm: normalizeSearchText(row.reference),
-    identifierExtras: [],
+    identifierExtras: skuNorms,
     numericIdentifier: null,
-    secondaryNorms: [row.supplierNameAtOrder, row.supplier?.name]
+    secondaryNorms: [row.supplierNameAtOrder, row.supplier?.name, ...productNorms]
       .filter((v): v is string => Boolean(v))
       .map(normalizeSearchText),
     createdAt: row.createdAt,

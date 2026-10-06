@@ -4,6 +4,7 @@
  */
 
 import { dedupeProductSaleLines, stockStateOf } from "./summary";
+import { parsePurchaseOrderStatus } from "@/lib/purchase-orders/types";
 import type {
   ProductDetail,
   ProductRecentAdjustment,
@@ -135,14 +136,17 @@ export function mapProductDetail(
   };
 }
 
-/** Prompt 41 (§66/§155) — ≤10 rows; snapshots carried verbatim (§236). */
+/** Prompt 41 (§66/§155) — ≤10 rows; snapshots carried verbatim (§236).
+ * §13 — status passes the centralized parser: corrupt persisted status is
+ * a controlled integrity error, never a silently faked lifecycle token.
+ */
 export function mapRecentPurchaseOrders(
   rows: ProductPurchaseOrderLineRow[],
 ): ProductRecentPurchaseOrder[] {
   return rows.map((row) => ({
     purchaseOrderId: row.purchaseOrderId,
     reference: row.reference,
-    status: row.status,
+    status: parsePurchaseOrderStatus(row.status),
     supplierNameAtOrder: row.supplierNameAtOrder,
     orderedAt: row.orderedAt.toISOString(),
     orderedQty: row.orderedQty,

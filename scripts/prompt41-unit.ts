@@ -49,6 +49,14 @@ import {
 import { purchaseOrderReferenceSlug } from "../src/lib/purchase-orders/export";
 import { purchaseOrderCandidate } from "../src/lib/search/dto";
 import { SEARCH_ENTITY_TYPES, SEARCH_DESTINATIONS, ENTITY_DESTINATION } from "../src/lib/search/types";
+import {
+  PURCHASE_ORDER_INVALID_PERSISTED_STATUS,
+  PurchaseOrderStatusIntegrityError,
+  parsePurchaseOrderStatus,
+} from "../src/lib/purchase-orders/types";
+import { mapSupplierPurchaseOrders } from "../src/lib/entities/supplier";
+import { mapRecentPurchaseOrders } from "../src/lib/entities/product";
+import { messagesFor } from "../src/i18n/messages";
 
 let passed = 0;
 let failed = 0;
@@ -158,11 +166,11 @@ ok("6.8 string rejected", !isValidOrderedQty("5" as unknown));
 ok("6.9 over-max rejected", !isValidOrderedQty(1_000_001));
 ok("6.10 null rejected", !isValidOrderedQty(null));
 ok("6.11 zero price ALLOWED (§195)", isValidUnitPriceMinor(0));
-ok("6.12 max price 9e9 valid", isValidUnitPriceMinor(UNIT_PRICE_MINOR_MAX) && UNIT_PRICE_MINOR_MAX === 9_000_000_000);
+ok("6.12 max price 1e9 valid (Int32-storage-realistic §29)", isValidUnitPriceMinor(UNIT_PRICE_MINOR_MAX) && UNIT_PRICE_MINOR_MAX === 1_000_000_000);
 ok("6.13 negative price rejected (§196)", !isValidUnitPriceMinor(-1));
 ok("6.14 float price rejected", !isValidUnitPriceMinor(10.5));
 ok("6.15 NaN price rejected", !isValidUnitPriceMinor(Number.NaN));
-ok("6.16 over-max price rejected", !isValidUnitPriceMinor(9_000_000_001));
+ok("6.16 over-max price rejected (1e9+1 → 422)", !isValidUnitPriceMinor(1_000_000_001));
 ok("6.17 string price rejected", !isValidUnitPriceMinor("100" as unknown));
 
 /* --------------------------- §30/§32 total math ---------------------------- */
@@ -178,14 +186,14 @@ const many = computePurchaseOrderTotal([
   { orderedQty: 1, unitPriceMinor: 0 },
 ]);
 ok("7.3 multi-line sum exact", many.totalMinor === 10 * 125_000 + 2 * 999_999_999 && many.totalQty === 13);
-const big = computePurchaseOrderTotal([{ orderedQty: 1_000_000, unitPriceMinor: 9_000_000_000 }]);
-ok("7.4 §194 max-value line exact (1e6 × 9e9 = 9e15)", big.totalMinor === 9_000_000_000_000_000);
+const big = computePurchaseOrderTotal([{ orderedQty: 1_000_000, unitPriceMinor: 1_000_000_000 }]);
+ok("7.4 §194 max-value line exact (1e6 × 1e9 = 1e15)", big.totalMinor === 1_000_000_000_000_000);
 ok("7.5 §194 max total still a safe integer", Number.isSafeInteger(big.totalMinor));
 ok("7.6 line total helper exact", computeLineTotalMinor(7, 12_345) === 86_415);
 ok("7.7 zero-price line total is zero", computeLineTotalMinor(500, 0) === 0);
 ok("7.8 overflow throws (not silently rounded)", throwsWith(() => computeLineTotalMinor(1, 9_007_199_254_740_992), "PURCHASE_ORDER_TOTAL_OVERFLOW"));
 ok("7.9 multi-line overflow throws", throwsWith(
-  () => computePurchaseOrderTotal(new Array(500).fill({ orderedQty: 1_000_000, unitPriceMinor: 9_000_000_000 })),
+  () => computePurchaseOrderTotal(new Array(10).fill({ orderedQty: 1_000_000, unitPriceMinor: 1_000_000_000 })),
   "PURCHASE_ORDER_TOTAL_OVERFLOW",
 ));
 
@@ -362,7 +370,49 @@ ok("15.8 §117 currency snapshot kept", detailDto.currency.codeAtOrder === "USD"
 ok("15.9 summary derived server-side", detailDto.summary.totalMinor === 1_000_000 && detailDto.summary.totalQty === 4 && detailDto.summary.lineCount === 1);
 ok("15.10 no raw Prisma leakage keys", !("supplierId" in detailDto) && !("createdByUserId" in detailDto));
 ok("15.11 lifecycle timestamps exposed", detailDto.lifecycle.sentAt !== null && detailDto.lifecycle.confirmedAt === null);
-ok("15.12 status coerced from unknown DB string", purchaseOrderDetailDto({ ...headerRow, status: "GARBAGE" }, []).status === "DRAFT");
+ok(
+  "15.12 §13 unknown persisted status THROWS (never coerced to DRAFT)",
+  throwsWith(() => purchaseOrderDetailDto({ ...headerRow, status: "GARBAGE" }, []), "PURCHASE_ORDER_INVALID_PERSISTED_STATUS"),
+);
+ok(
+  "15.12b §13 RECEIVED-like corrupt status THROWS in detail DTO",
+  throwsWith(() => purchaseOrderDetailDto({ ...headerRow, status: "RECEIVED" }, []), "PURCHASE_ORDER_INVALID_PERSISTED_STATUS"),
+);
+ok(
+  "15.12c §13 corrupt status THROWS in list DTO",
+  throwsWith(
+    () =>
+      purchaseOrderListItemDto({
+        ...headerRow,
+        status: "HACKED",
+        lineCount: 1,
+        lines: [{ orderedQty: 1, unitPriceMinor: 1 }],
+      }),
+    "PURCHASE_ORDER_INVALID_PERSISTED_STATUS",
+  ),
+);
+ok(
+  "15.12d §17 unsafe list total THROWS (never silently rounded)",
+  throwsWith(
+    () =>
+      purchaseOrderListItemDto({
+        ...headerRow,
+        lineCount: 1,
+        lines: [{ orderedQty: 1_000_000, unitPriceMinor: 9_007_199_254_740_995 }],
+      }),
+    "PURCHASE_ORDER_TOTAL_OVERFLOW",
+  ),
+);
+ok(
+  "15.12e §18 unsafe detail total THROWS (same canonical law)",
+  throwsWith(
+    () =>
+      purchaseOrderDetailDto(headerRow, [
+        { ...lineRow, orderedQty: 5_000_000, unitPriceMinor: 9_000_000_000 },
+      ]),
+    "PURCHASE_ORDER_TOTAL_OVERFLOW",
+  ),
+);
 ok("15.13 deleted supplier → stillExists false", purchaseOrderDetailDto({ ...headerRow, supplierName: null }, []).supplier.stillExists === false);
 
 const listDto = purchaseOrderListItemDto({
@@ -392,6 +442,15 @@ ok("16.3 subtitle is the supplier snapshot", poCandidate.subtitle === "Acme");
 ok("16.4 status token in closed set", poCandidate.status === "SENT");
 ok("16.5 NO amounts in the candidate (§67)", !("totalMinor" in poCandidate) && !("amountMinor" in poCandidate));
 ok("16.6 unknown DB status → null token", purchaseOrderCandidate({ ...{ id: "x", reference: "R", status: "WEIRD", supplierNameAtOrder: "S", orderedAt: new Date(), createdAt: new Date(), supplier: null } }).status === null);
+const poCandidateLines = purchaseOrderCandidate({
+  id: "poL", reference: "PO-L", status: "SENT", supplierNameAtOrder: "Acme",
+  orderedAt: new Date(), createdAt: new Date(), supplier: null,
+  lines: [{ productNameAtOrder: "Steel Bolt", skuAtOrder: "SKU-77" }],
+});
+ok("16.9 §57 SKU snapshot feeds identifierExtras (searchable)", poCandidateLines.identifierExtras.includes("sku-77"));
+ok("16.10 §57 product snapshot feeds secondaryNorms (searchable)", poCandidateLines.secondaryNorms.some((s) => s.includes("steel bolt")));
+ok("16.11 §57 snapshot text NEVER rendered in subtitle", poCandidateLines.subtitle === "Acme");
+ok("16.12 §67 lines text only — no money keys on the candidate", !("totalMinor" in poCandidateLines) && !("lineTotalMinor" in poCandidateLines));
 ok("16.7 search type registered in closed vocab", SEARCH_ENTITY_TYPES.includes("PURCHASE_ORDER"));
 ok("16.8 destination registered", SEARCH_DESTINATIONS.includes("purchase-orders") && ENTITY_DESTINATION.PURCHASE_ORDER === "purchase-orders");
 
@@ -403,6 +462,140 @@ ok("17.2 safe fallback", purchaseOrderReferenceSlug("///") === "purchase-order")
 ok("17.3 capped at 40 chars", purchaseOrderReferenceSlug("A".repeat(100)).length <= 40);
 ok("17.4 no path separators", !purchaseOrderReferenceSlug("../../etc/passwd").includes("/"));
 ok("17.5 Persian slug falls back safely", purchaseOrderReferenceSlug("سفارش") .length >= 0 && !/[^\w-]/.test(purchaseOrderReferenceSlug("سفارش").replace(/-/g, "")) );
+
+/* ------------------------- §13 persisted-status policy --------------------- */
+
+section("19. persisted-status integrity policy (§11-§13 — corrupt ≠ DRAFT)");
+ok("19.1 parse DRAFT", parsePurchaseOrderStatus("DRAFT") === "DRAFT");
+ok("19.2 parse SENT", parsePurchaseOrderStatus("SENT") === "SENT");
+ok("19.3 parse CONFIRMED", parsePurchaseOrderStatus("CONFIRMED") === "CONFIRMED");
+ok("19.4 parse CLOSED", parsePurchaseOrderStatus("CLOSED") === "CLOSED");
+ok("19.5 parse CANCELLED", parsePurchaseOrderStatus("CANCELLED") === "CANCELLED");
+ok("19.6 RECEIVED-like corrupt value THROWS", throwsWith(() => parsePurchaseOrderStatus("RECEIVED"), "PURCHASE_ORDER_INVALID_PERSISTED_STATUS"));
+ok("19.7 HACKED-like corrupt value THROWS", throwsWith(() => parsePurchaseOrderStatus("HACKED"), "PURCHASE_ORDER_INVALID_PERSISTED_STATUS"));
+ok("19.8 empty-string status THROWS", throwsWith(() => parsePurchaseOrderStatus(""), "PURCHASE_ORDER_INVALID_PERSISTED_STATUS"));
+ok("19.9 lowercase 'draft' THROWS (exact vocabulary only)", throwsWith(() => parsePurchaseOrderStatus("draft"), "PURCHASE_ORDER_INVALID_PERSISTED_STATUS"));
+ok("19.10 numeric-ish status THROWS", throwsWith(() => parsePurchaseOrderStatus("1"), "PURCHASE_ORDER_INVALID_PERSISTED_STATUS"));
+let integrityError: unknown;
+try {
+  parsePurchaseOrderStatus("WEIRD");
+} catch (e) {
+  integrityError = e;
+}
+ok("19.11 throws the dedicated integrity error class", integrityError instanceof PurchaseOrderStatusIntegrityError);
+ok("19.12 error carries the stable code", integrityError instanceof PurchaseOrderStatusIntegrityError && (integrityError as PurchaseOrderStatusIntegrityError).code === "PURCHASE_ORDER_INVALID_PERSISTED_STATUS");
+ok("19.13 error preserves the offending value for server diagnostics", integrityError instanceof PurchaseOrderStatusIntegrityError && (integrityError as PurchaseOrderStatusIntegrityError).value === "WEIRD");
+ok("19.14 stable code constant exported unchanged", PURCHASE_ORDER_INVALID_PERSISTED_STATUS === "PURCHASE_ORDER_INVALID_PERSISTED_STATUS");
+ok("19.15 no DRAFT fallback anywhere in dto.ts source semantics: corrupt LIST status throws before mapping", throwsWith(
+  () => purchaseOrderListItemDto({ ...headerRow, status: "NULL-LIKE", lineCount: 0, lines: [] }),
+  "PURCHASE_ORDER_INVALID_PERSISTED_STATUS",
+));
+
+/* --------------------- §18 canonical total in entity maps ------------------ */
+
+section("20. canonical totals + status in Supplier 360 / Product history (§13/§18/§20)");
+const supPo = mapSupplierPurchaseOrders([
+  {
+    id: "po1",
+    reference: "PO-1",
+    status: "CONFIRMED",
+    orderedAt: new Date("2026-01-05T12:00:00Z"),
+    currencyCodeAtOrder: "USD",
+    currencySymbolAtOrder: "$",
+    decimalPrecisionAtOrder: 2,
+    lines: [{ orderedQty: 3, unitPriceMinor: 250_000 }],
+  },
+]);
+ok("20.1 supplier 360 total exact", supPo[0].totalMinor === 750_000 && supPo[0].totalQty === 3);
+ok("20.2 supplier 360 status token valid", supPo[0].status === "CONFIRMED");
+ok("20.3 §18 supplier 360 overflow throws (canonical law, no silent rounding)", throwsWith(
+  () => mapSupplierPurchaseOrders([
+    {
+      id: "po2",
+      reference: "PO-2",
+      status: "SENT",
+      orderedAt: new Date(),
+      currencyCodeAtOrder: "USD",
+      currencySymbolAtOrder: "$",
+      decimalPrecisionAtOrder: 2,
+      lines: [{ orderedQty: 1_000_000, unitPriceMinor: 9_007_199_254_740_995 }],
+    },
+  ]),
+  "PURCHASE_ORDER_TOTAL_OVERFLOW",
+));
+ok("20.4 §13 supplier 360 corrupt status THROWS", throwsWith(
+  () =>
+    mapSupplierPurchaseOrders([
+      {
+        id: "po3",
+        reference: "PO-3",
+        status: "CORRUPTED",
+        orderedAt: new Date(),
+        currencyCodeAtOrder: "USD",
+        currencySymbolAtOrder: "$",
+        decimalPrecisionAtOrder: 2,
+        lines: [],
+      },
+    ]),
+  "PURCHASE_ORDER_INVALID_PERSISTED_STATUS",
+));
+const prodPo = mapRecentPurchaseOrders([
+  {
+    purchaseOrderId: "po9",
+    reference: "PO-9",
+    status: "DRAFT",
+    supplierNameAtOrder: "Acme",
+    orderedAt: new Date("2026-01-05T12:00:00Z"),
+    orderedQty: 4,
+    unitPriceMinor: 1_000,
+    currencyCodeAtOrder: "USD",
+    currencySymbolAtOrder: "$",
+    decimalPrecisionAtOrder: 2,
+  },
+]);
+ok("20.5 product history row carried verbatim", prodPo[0].orderedQty === 4 && prodPo[0].supplierNameAtOrder === "Acme");
+ok("20.6 product history status token valid", prodPo[0].status === "DRAFT");
+ok("20.7 §13 product history corrupt status THROWS", throwsWith(
+  () =>
+    mapRecentPurchaseOrders([
+      {
+        purchaseOrderId: "po10",
+        reference: "PO-10",
+        status: "GARBAGE",
+        supplierNameAtOrder: "Acme",
+        orderedAt: new Date(),
+        orderedQty: 1,
+        unitPriceMinor: 1,
+        currencyCodeAtOrder: "USD",
+        currencySymbolAtOrder: "$",
+        decimalPrecisionAtOrder: 2,
+      },
+    ]),
+  "PURCHASE_ORDER_INVALID_PERSISTED_STATUS",
+));
+
+/* ------------------------- §55/§81 i18n content laws ----------------------- */
+
+section("21. FA CSV headers are Persian + no mistranslations (§55/§81)");
+const faPo = messagesFor("fa").purchaseOrders;
+const enPo = messagesFor("en").purchaseOrders;
+const csvKeys = [
+  "csvReference", "csvStatus", "csvSupplier", "csvProduct", "csvSku", "csvUnit",
+  "csvOrderedQty", "csvUnitPriceMinor", "csvLineTotalMinor", "csvOrderTotalMinor",
+  "csvCurrency", "csvOrderedAt", "csvExpectedDate",
+] as const;
+for (const k of csvKeys) {
+  ok(
+    `21.${k} FA header is Persian (no English fallback §55)`,
+    /[\u0600-\u06FF]/.test(faPo[k]) && faPo[k] !== enPo[k],
+    faPo[k],
+  );
+}
+ok("21.EN headers stay English", enPo.csvReference === "reference" && enPo.csvOrderTotalMinor === "order_total_minor");
+ok("21.§81 sendDesc no longer says سواحل (coasts)", !faPo.sendDesc.includes("سواحل") && faPo.sendDesc.includes("سوابق"));
+ok("21.§81 FA sendDesc is a professional sentence", faPo.sendDesc.includes("از پیش‌نویس به ارسال‌شده"));
+ok("21.EN/FA key parity: same csv key set", JSON.stringify(csvKeys.every((k) => k in faPo && k in enPo)) === "true");
+ok("21.status labels localize", faPo.status_DRAFT === "پیش‌نویس" && enPo.status_DRAFT === "Draft");
 
 /* ------------------------------- error codes ------------------------------- */
 

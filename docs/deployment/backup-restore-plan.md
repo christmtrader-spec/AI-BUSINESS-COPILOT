@@ -36,9 +36,15 @@ Honest state (unchanged by the automation):
   `InventoryStocktakeLine` live in the same SQLite file, so they are included
   in every backup (`backup-db.mjs`) and every file-wide verification
   (`verify-backup.mjs`: checksum/integrity/quick/FK checks) by construction.
-  The restore-drill read-only smoke entity list now probes **13 entities**
-  (the 11 listed above + the two stocktake models); backups that predate the
-  models are reported honestly for those probes, never a drill failure.
+- **Prompt 41 note — purchase order coverage:** `PurchaseOrder` +
+  `PurchaseOrderLine` are likewise same-file, same-by-construction coverage:
+  included in every backup and in every file-wide verification; the
+  restore-drill read-only smoke probe list includes both models, so a restore
+  is only declared healthy when procurement rows are readable again.
+  The restore-drill read-only smoke entity list now probes **15 entities**
+  (the 11 listed above + the two stocktake models + the two purchase-order
+  models); backups that predate the models are reported honestly for those
+  probes, never a drill failure.
 
 - **Offsite copies remain a MANUAL operator duty** — no script ships backups
   off-host; same-box backups do not survive disk loss. Verify the copy's

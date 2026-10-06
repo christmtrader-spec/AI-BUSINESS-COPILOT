@@ -184,6 +184,17 @@ dangling id strings. Nothing rewrites or anonymizes them — NOT CURRENTLY AUTOM
 | Customer/Lead/Opportunity deletion (soft) | Rows remain (tenant data per retention policy) but disappear from ACTIVE timelines (queries filter `deletedAt: null` on the context side, §104). No automatic cross-context reassignment (§126). |
 | Context deletion (hard cascade path) | Context column SET NULL (schema `onDelete: SetNull`); the history row itself is not destroyed by the context going away. |
 
+## Purchase Orders (Prompt 41)
+
+| Event | Purchase order effect |
+|---|---|
+| Business deletion | `PurchaseOrder` + `PurchaseOrderLine` DELETED (cascade via the tenant FK). The supplier/product FKs are `Restrict`, but business deletion removes the tenant rows first, so procurement history never outlives the tenant. |
+| Document deletion (user action) | **NO user-facing delete exists** for purchase orders — terminal documents (CLOSED/CANCELLED) are immutable records; CANCELLED is the only "discard" path and it is a lifecycle state, not a deletion. No destructive user-facing delete of terminal documents is introduced. |
+| Supplier soft-delete | Documents remain fully readable (snapshot identity); `DRAFT → SENT` is blocked while the supplier is deleted. Nothing is destroyed. |
+| Product soft-delete | Lines and their snapshots remain; document stays readable. |
+| Account deletion | `createdByUserId` is `onDelete: Restrict` (creator-linked policy): account deletion is gated by the existing rules; tenant rows are not silently rewritten. The audit trail keeps `actorId` history per the audit retention rules. |
+| Audit retention | `purchase_order.*` audit rows (create/update/line_add/line_update/line_remove/send/confirm/close/cancel) follow the standard AuditLog retention — business-scoped, deleted with the business; bodies carry metadata only (never notes content, never secrets). |
+
 ### Inventory Stocktake (Prompt 40)
 
 | Event | Effect |

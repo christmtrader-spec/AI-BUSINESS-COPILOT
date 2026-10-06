@@ -13,6 +13,8 @@ import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { partyUpdateSchema } from "@/lib/schemas";
+import { purchaseOrderLineCap } from "@/lib/purchase-orders/types";
+import { mapPurePurchaseOrderDomainError } from "@/lib/purchase-orders/service";
 import {
   computeSupplierSummary,
   mapSupplierDetail,
@@ -93,8 +95,12 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         currencyCodeAtOrder: true,
         currencySymbolAtOrder: true,
         decimalPrecisionAtOrder: true,
-        // Bounded line slice feeds the document total (line cap is the bound).
-        lines: { select: { orderedQty: true, unitPriceMinor: true } },
+        // §20 — the line slice feeding each document total is EXPLICITLY
+        // bounded by the same P41 line-cap law (never unbounded relation load).
+        lines: {
+          select: { orderedQty: true, unitPriceMinor: true },
+          take: purchaseOrderLineCap(process.env.PURCHASE_ORDER_MAX_LINES),
+        },
       },
     }),
   ]);
@@ -108,15 +114,22 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
     })),
   );
 
-  return ok(
-    mapSupplierDetail(
+  let detail;
+  try {
+    detail = mapSupplierDetail(
       supplier,
       summary,
       recentExpenses,
       recentPayments,
       recentPurchaseOrders,
-    ),
-  );
+    );
+  } catch (error) {
+    // §12/§13 — corrupted PO status → the SAME stable integrity code as the
+    // P41 domain routes; never a fake lifecycle token, never a generic 500.
+    mapPurePurchaseOrderDomainError(error);
+  }
+
+  return ok(detail);
 });
 
 export const PATCH = route(async (req: NextRequest, { params }: RouteParams) => {

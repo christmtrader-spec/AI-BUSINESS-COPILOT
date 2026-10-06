@@ -170,6 +170,30 @@ derives `variance = counted − system` (sign meaningful); finalization is
 atomic, rejects stale counts (409) instead of rebasing them, and zero
 variances produce no adjustment row at all.
 
+### 4.3 Purchase Orders (Prompt 41)
+
+Purchase orders (`src/lib/purchase-orders/`,
+`docs/product/purchase-orders.md`) are a **procurement commitment document**
+— the business's intent to buy. The document is explicitly NOT a financial
+term, and the definitions in §2 above intentionally have NO purchase-order
+case:
+
+| Purchase order is NOT | Enforcement |
+|---|---|
+| An **Expense** | No lifecycle transition (create/send/confirm/close/cancel) creates, updates or reverses any `Expense` row; expenses and payables aging never read purchase orders |
+| A **Payment** | No `Payment` row, no supplier paid/balance change, no statement entry |
+| An **InventoryReceipt** | No `InventoryAdjustment`, no `Product.stockQty` change on ANY transition — confirmed live by before/after snapshots over the full lifecycle (E2E group 22) |
+| A **PayableBalance** | Supplier statements / payables aging are built ONLY from Expenses + Payments (`src/lib/statements/engine.ts`, `src/lib/aging-report.ts`); purchase orders are structurally absent |
+| An **AccountingEntry** | No journal, no double entry, no COGS, no valuation — closing or cancelling a PO reverses nothing because nothing was ever posted |
+
+The document total (`Σ orderedQty × unitPriceMinor`, exact BigInt) is a
+procurement document figure ONLY: it appears on the document, its CSV and
+supplier/product history views, and never enters revenue, expense, cash,
+receivable or payable figures. UI labels are audited to never say
+expense/payable/owed (`docs/audit/financial-semantics.md` §5 wording check +
+static scan rule 72). Cancelling a PO performs no reversal of any kind
+(§63): there is nothing to reverse.
+
 ---
 
 ## 5. Consistency of the wording (i18n check)

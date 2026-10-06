@@ -173,3 +173,18 @@ quantity history no one actually counted. The stocktake datasets
 **export-only**; the importer's allowlist (customers / suppliers / products)
 already rejects them. Backup/restore remains the system-level recovery
 mechanism for count sessions and every other dataset.
+
+## Purchase Order datasets (Prompt 41)
+
+**Purchase order import: NOT IMPLEMENTED** — deliberately, and unchanged by
+Prompt 41-F. Procurement documents are commitment records with server-frozen
+historical snapshots (supplier/product identity, currency), a DB-unique
+reference per business, and a lifecycle state machine. Importing them would
+either bypass snapshot freezing (fabricating false history) or duplicate the
+entire write path (supplier validation, reference generation, line-cap and
+overflow laws) outside the API — with no user story that needs it. The
+`purchase_orders` / `purchase_order_lines` datasets are therefore
+**export-only**; the importer's allowlist (customers / suppliers / products)
+rejects both (negative test: an import attempt naming a purchase-order
+dataset is rejected as unsupported and creates nothing). Restore from backup
+is the sanctioned recovery path for procurement documents.

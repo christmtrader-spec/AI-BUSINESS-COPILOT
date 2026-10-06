@@ -1,0 +1,30 @@
+{
+  "email": "p41qa-owner-muwkhqya@p41qa.test",
+  "password": "testpass123",
+  "businessId": "cmuwkhro900vbniqbcnlk2i48",
+  "businessName": "P41QA-BROWSE-BIZ",
+  "supplierPage2": "P41QA-BROWSE-SUP-11",
+  "productPage2": "P41QA-SKU-11",
+  "purchaseOrders": {
+    "DRAFT": {
+      "id": "cmuwkhsac00ykniqb8r46zngp",
+      "reference": "P41PO-BROWSER-001"
+    },
+    "SENT": {
+      "id": "cmuwkhsje00ywniqbb6ubawc8",
+      "reference": "P41PO-BROWSER-002"
+    },
+    "CONFIRMED": {
+      "id": "cmuwkhsoq00z6niqbdi58zksn",
+      "reference": "P41PO-BROWSER-003"
+    },
+    "CLOSED": {
+      "id": "cmuwkhsw100ziniqbjyl72pnb",
+      "reference": "P41PO-BROWSER-004"
+    },
+    "CANCELLED": {
+      "id": "cmuwkht6y00zwniqbbbva86go",
+      "reference": "P41PO-BROWSER-005"
+    }
+  }
+}

@@ -15,6 +15,7 @@ import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { productUpdateSchema } from "@/lib/schemas";
+import { mapPurePurchaseOrderDomainError } from "@/lib/purchase-orders/service";
 import { mapProductDetail } from "@/lib/entities";
 
 export const dynamic = "force-dynamic";
@@ -127,8 +128,9 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
     issueDate: item.sale.issueDate,
   }));
 
-  return ok(
-    mapProductDetail(
+  let detail;
+  try {
+    detail = mapProductDetail(
       product,
       recentAdjustments,
       recentSalesInput,
@@ -152,8 +154,14 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         currencySymbolAtOrder: l.purchaseOrder.currencySymbolAtOrder,
         decimalPrecisionAtOrder: l.purchaseOrder.decimalPrecisionAtOrder,
       })),
-    ),
-  );
+    );
+  } catch (error) {
+    // §12/§13 — corrupted PO status → the SAME stable integrity code as the
+    // P41 domain routes; never a fake lifecycle token, never a generic 500.
+    mapPurePurchaseOrderDomainError(error);
+  }
+
+  return ok(detail);
 });
 
 export const PATCH = route(async (req: NextRequest, { params }: RouteParams) => {

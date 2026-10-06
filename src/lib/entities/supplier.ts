@@ -4,6 +4,11 @@
  */
 
 import { balanceOf, toMethodToken, toStatusToken } from "./summary";
+import {
+  computePurchaseOrderTotal,
+  parsePurchaseOrderStatus,
+} from "@/lib/purchase-orders/types";
+import type { PurchaseOrderStatus } from "@/lib/purchase-orders/types";
 import type {
   RecentPaymentRow,
   SupplierDetail,
@@ -101,27 +106,28 @@ export function mapSupplierDetail(
   };
 }
 
-/** Prompt 41 (§65/§154) — ≤10 rows; totals derived with exact BigInt math. */
+/**
+ * Prompt 41 (§65/§154) — ≤10 rows; totals derived with the ONE canonical
+ * BigInt function (§18 — no second math, no silent rounding); status goes
+ * through the centralized parser (§13 — corrupt status never renders as a
+ * fake lifecycle token).
+ */
 export function mapSupplierPurchaseOrders(
   rows: SupplierPurchaseOrderRow[],
 ): SupplierRecentPurchaseOrder[] {
   return rows.map((row) => {
-    let totalQty = 0;
-    let total = 0n;
-    for (const line of row.lines) {
-      totalQty += line.orderedQty;
-      total += BigInt(line.orderedQty) * BigInt(line.unitPriceMinor);
-    }
+    const totals = computePurchaseOrderTotal(row.lines);
+    const status: PurchaseOrderStatus = parsePurchaseOrderStatus(row.status);
     return {
       id: row.id,
       reference: row.reference,
-      status: row.status,
+      status,
       orderedAt: row.orderedAt.toISOString(),
       currencyCodeAtOrder: row.currencyCodeAtOrder,
       currencySymbolAtOrder: row.currencySymbolAtOrder,
       decimalPrecisionAtOrder: row.decimalPrecisionAtOrder,
-      totalQty,
-      totalMinor: Number(total),
+      totalQty: totals.totalQty,
+      totalMinor: totals.totalMinor,
     };
   });
 }

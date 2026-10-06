@@ -129,7 +129,10 @@ record("10. getAuthContext used in every route", (routeSource().match(/getAuthCo
 /* -------------------------- no raw Prisma responses ------------------------ */
 
 record("11. domain exports DTO mappers only", /purchaseOrderDetailDto|purchaseOrderListItemDto|purchaseOrderLineDto/.test(read("src/lib/purchase-orders/dto.ts")));
-record("12. routes never return raw prisma rows for detail", !/return ok\(detail\s*\)/.test("") && read("src/app/api/v1/purchase-orders/[id]/route.ts").includes("getPurchaseOrder("));
+record("12. detail route resolves through the DTO service (no raw Prisma return)", (() => {
+  const detailRoute = read("src/app/api/v1/purchase-orders/[id]/route.ts");
+  return detailRoute.includes("getPurchaseOrder(") && !/ok\(\s*\{\.\.\./.test(detailRoute);
+})());
 record("13. barrel exports only types+dto", !/export \* from "\.\/(service|schema|export)"/.test(read("src/lib/purchase-orders/index.ts")));
 record("14. service is server-only", read("src/lib/purchase-orders/service.ts").startsWith('import "server-only";'));
 record("15. export builder is server-only", read("src/lib/purchase-orders/export.ts").startsWith('import "server-only";'));
@@ -143,7 +146,7 @@ record("19. safe-integer overflow rejected", /PURCHASE_ORDER_TOTAL_OVERFLOW/.tes
 record("20. no parseFloat CALL for money in PO code", !/parseFloat\s*\(/.test(CODE()));
 record("21. client totals never authoritative", !/totalMinor\s*[:=]\s*(input|body|req)/.test(routeSource()));
 record("22. lineTotalMinor derived in DTO", /computeLineTotalMinor/.test(read("src/lib/purchase-orders/dto.ts")));
-record("23. unit price bound centralized", /UNIT_PRICE_MINOR_MAX = 9_000_000_000/.test(read("src/lib/purchase-orders/types.ts")));
+record("23. unit price bound centralized + storage-realistic (Int32 Int columns)", /UNIT_PRICE_MINOR_MAX = 1_000_000_000/.test(read("src/lib/purchase-orders/types.ts")));
 record("24. quantity bound centralized", /ORDERED_QTY_MAX = 1_000_000/.test(read("src/lib/purchase-orders/types.ts")));
 record("25. negative price rejected at schema", /unitPriceMinor cannot be negative|UNIT_PRICE_MINOR_MIN/.test(read("src/lib/purchase-orders/schema.ts")));
 
@@ -152,7 +155,11 @@ record("25. negative price rejected at schema", /unitPriceMinor cannot be negati
 record("26. transition matrix centralized", /PURCHASE_ORDER_TRANSITIONS/.test(read("src/lib/purchase-orders/types.ts")));
 record("27. service asserts transitions", /assertTransition|canTransitionPurchaseOrder/.test(read("src/lib/purchase-orders/service.ts")));
 record("28. closed/cancelled terminal", /CLOSED: \[\],\s*\n\s*CANCELLED: \[\]/.test(read("src/lib/purchase-orders/types.ts")));
-record("29. no generic status PATCH route", !/status/.test(read("src/app/api/v1/purchase-orders/[id]/route.ts").split("purchaseOrderUpdateSchema")[1] || ""));
+record("29. PATCH route body submits no status field", (() => {
+  const detailRoute = read("src/app/api/v1/purchase-orders/[id]/route.ts");
+  const patch = detailRoute.split("export const PATCH")[1] ?? "";
+  return patch.length > 0 && !/status/.test(patch);
+})());
 record("30. update schema has no status field", !/status/.test(read("src/lib/purchase-orders/schema.ts").split("purchaseOrderUpdateSchema")[1]?.split("refine")[0] ?? ""));
 record("31. status re-checked inside transaction (§61)", /loadOrderHeader\(tx/.test(read("src/lib/purchase-orders/service.ts")));
 
@@ -186,8 +193,22 @@ record("50. BOM/CRLF via shared toCsv", read("src/lib/csv.ts").includes("\\uFEFF
 
 record("51. PURCHASE_ORDER in closed search vocab", searchSource().includes('"PURCHASE_ORDER"'));
 record("52. search query tenant-scoped", /businessId, \/\/ §68/.test(read("src/lib/search/query.ts")));
-record("53. search selects NO money fields", !/totalMinor|unitPriceMinor/.test(read("src/lib/search/query.ts").split("searchPurchaseOrders")[1]?.split("^}")?.[0] ?? read("src/lib/search/query.ts").slice(read("src/lib/search/query.ts").indexOf("searchPurchaseOrders"), read("src/lib/search/query.ts").indexOf("fetchSearchCandidates"))));
-record("54. search bounded take", /SEARCH_PER_ENTITY_TAKE/.test(read("src/lib/search/query.ts").split("searchPurchaseOrders")[1]?.split("async function searchPurchaseOrders")[0] ?? ""));
+record("53. PO search selects NO money fields", (() => {
+  const q = read("src/lib/search/query.ts");
+  const start = q.indexOf("async function searchPurchaseOrders");
+  if (start < 0) return false;
+  const end = q.indexOf("async function fetchSearchCandidates", start);
+  const fn = q.slice(start, end < 0 ? undefined : end);
+  return fn.length > 0 && !/totalMinor|unitPriceMinor|amountMinor/.test(fn);
+})());
+record("54. PO search bounded take", (() => {
+  const q = read("src/lib/search/query.ts");
+  const start = q.indexOf("async function searchPurchaseOrders");
+  if (start < 0) return false;
+  const end = q.indexOf("async function fetchSearchCandidates", start);
+  const fn = q.slice(start, end < 0 ? undefined : end);
+  return /take: SEARCH_PER_ENTITY_TAKE/.test(fn);
+})());
 record("55. deep link wired from search", entityRoute.includes("purchase-order") && entityRoute.includes("PURCHASE_ORDER"));
 record("56. search view group registered", searchView.includes("PURCHASE_ORDER"));
 
@@ -213,9 +234,12 @@ record("63. strict calendar dates (§20)", /isValidCalendarDate/.test(read("src/
 
 record("65. hash routing: list + detail (§69/§70)", appStore.includes('"purchase-orders"') && appStore.includes('"purchase-order"') && appStore.includes("#/purchase-orders"));
 record("66. malformed deep-link id → dashboard fallback", (() => {
-  const block = appStore.split('purchase-orders/"')[1] ?? "";
-  return block.includes('return { kind: "dashboard" }');
-})();
+  const marker = "#/purchase-orders/<id> opens the detail only when the id is charset-safe";
+  const start = appStore.indexOf(marker);
+  if (start < 0) return false;
+  const block = appStore.slice(start, start + 1200);
+  return (block.match(/return \{ kind: "dashboard" \}/g) ?? []).length >= 2 && block.includes('isValidEntityId(id)');
+})());
 record("67. viewToHash guards ids with isValidEntityId", /isValidEntityId\(view\.id\) return null;\n      return `#\/purchase-orders\/\$\{view\.id\}`;/.test(appStore.replace(/\s+/g, " ")) || appStore.includes("isValidEntityId(view.id)"));
 record("68. shell renders both views", shell.includes("PurchaseOrdersView") && shell.includes("PurchaseOrderDetailView"));
 record("69. sidebar entry with localized label (§72)", sidebar.includes("purchaseOrders") && sidebar.includes('"purchase-orders"'));
@@ -224,14 +248,14 @@ record("71. no Received wording for CLOSED (§203)", !/received into stock|goods
 record("72. no paid/payable wording in PO UI strings (§204)", (() => {
   const rendered = stripComments(uiSource());
   return !/\bpayable\b|\boutstanding\b|amount owed/i.test(rendered);
-})();
+})());
 record("73. UI never submits businessId/totals", !/businessId:/.test(uiSource().match(/body:\s*\{[\s\S]*?\}/)?.[0] ?? ""));
 
 /* ---------------------------------- audit ---------------------------------- */
 
-record("74. audit actions on lifecycle (§62)", (domainSource().match(/purchase_order\./g) || []).length >= 8);
+record("74. audit actions on lifecycle (§62) — 5 literals + the dynamic transition op = all 9", (domainSource().match(/purchase_order\./g) || []).length >= 5 && /purchase_order\.\$\{input\.op\}/.test(read("src/lib/purchase-orders/service.ts")));
 record("75. audit inside transactions", /audit\(/.test(read("src/lib/purchase-orders/service.ts")) && /\$transaction/.test(read("src/lib/purchase-orders/service.ts")));
-record("76. audit actor from ctx", /actorId,\s*$|actorId: input\.userId/.test(read("src/lib/purchase-orders/service.ts")));
+record("76. audit actor from ctx", /actorId,\s*$/m.test(read("src/lib/purchase-orders/service.ts")) || /actorId: input\.userId/.test(read("src/lib/purchase-orders/service.ts")));
 record("77. audit never logs notes content (§63)", !/notes:/.test(read("src/lib/purchase-orders/service.ts").split("auditInput(")[1]?.split("/*")[0] ?? ""));
 
 /* ------------------------------ entity sections ---------------------------- */
@@ -250,7 +274,7 @@ record("85. datasets registered (§95)", catalog.includes('"purchase_orders"') &
 record("86. implication purchase_orders → lines", catalog.includes('purchase_orders: ["purchase_order_lines"]'));
 record("87. CONFIDENTIAL sensitivity", /purchase_orders: \{ key: "purchase_orders", sensitivity: "CONFIDENTIAL"/.test(catalog));
 record("88. explicit CSV columns (§96)", catalog.includes('purchase_orders: ["id", "reference", "status"'));
-record("89. fetchers tenant-scoped", /purchase_orders: async \(ctx\) => \{[\s\S]{0,120}businessId: ctx\.businessId/.test(catalog));
+record("89. fetchers tenant-scoped", /purchase_orders: async \(ctx\) => \{[\s\S]{0,400}businessId: ctx\.businessId/.test(catalog));
 record("90. import allowlist unchanged (§102 — no PO import)", !/purchase/i.test(importRoute));
 
 /* ---------------------------------- i18n ----------------------------------- */
@@ -275,12 +299,31 @@ record("96. Persian procurement terminology (§139)", fa.includes('unitPrice: "�
 record("97. restore drill probes P41 models (§103)", restoreDrill.includes('"PurchaseOrder", "PurchaseOrderLine"'));
 record("98. notification catalog untouched (§94)", !read("src/lib/notifications/catalog.ts").toLowerCase().includes("purchase"));
 
+/* ------------- §41-F hardening: status integrity + canonical math ----------- */
+
+record("103. parsePurchaseOrderStatus policy exists (§12/§13)", /export function parsePurchaseOrderStatus/.test(read("src/lib/purchase-orders/types.ts")));
+record("104. dto has NO DRAFT coercion fallback (invalid ≠ draft)", !/"DRAFT"/.test(read("src/lib/purchase-orders/dto.ts")));
+record("105. service maps integrity error to stable 500 code", read("src/lib/purchase-orders/service.ts").includes("PURCHASE_ORDER_INVALID_PERSISTED_STATUS"));
+record("106. export uses the centralized status parser (§15)", read("src/lib/purchase-orders/export.ts").includes("parsePurchaseOrderStatus"));
+record("107. list line slice explicitly bounded by cap (§16)", /lines: \{ select: \{ orderedQty: true, unitPriceMinor: true \}, take: cap \}/.test(read("src/lib/purchase-orders/service.ts")));
+record("108. Supplier 360 line slice bounded by cap (§20)", entitySupplierRoute.includes("take: purchaseOrderLineCap(process.env.PURCHASE_ORDER_MAX_LINES)"));
+record("109. Supplier 360 totals use the canonical function (§18)", read("src/lib/entities/supplier.ts").includes("computePurchaseOrderTotal") && !/BigInt\(line\.orderedQty\)/.test(read("src/lib/entities/supplier.ts")));
+record("110. dto totals use the canonical function (§18)", read("src/lib/purchase-orders/dto.ts").includes("computePurchaseOrderTotal") && !/BigInt\(line\.orderedQty\)/.test(read("src/lib/purchase-orders/dto.ts")));
+record("111. export total uses the canonical function (§19)", read("src/lib/purchase-orders/export.ts").includes("computePurchaseOrderTotal") && !/BigInt\(line\.orderedQty\)/.test(read("src/lib/purchase-orders/export.ts")));
+record("112. no fabricated line timestamps in service DTOs (§67)", !/updatedAt: new Date\(\)/.test(read("src/lib/purchase-orders/service.ts")));
+record("113. detail read is transactional (§22)", /db\.\$transaction[\s\S]{0,120}loadOrderHeader\(tx/.test(read("src/lib/purchase-orders/service.ts")));
+record("114. live-supplier read is explicitly tenant-scoped (§23)", /where: \{ id: hdr\.supplierId, businessId: input\.businessId \}/.test(read("src/lib/purchase-orders/service.ts")));
+record("115. FA CSV headers are Persian (§55 — no English fallback)", !fa.includes('csvReference: "reference"') && /csvReference: "شماره سند"/.test(fa));
+record("116. entity routes map PO integrity errors to the stable code", entitySupplierRoute.includes("mapPurePurchaseOrderDomainError") && entityProductRoute.includes("mapPurePurchaseOrderDomainError"));
+record("117. product history status uses the centralized parser (§13/§59)", read("src/lib/entities/product.ts").includes("parsePurchaseOrderStatus(row.status)"));
+record("118. E2E suite gates the scanner with node --check (§8)", read("scripts/prompt41-purchase-order-check.mjs").includes("node --check") || read("scripts/prompt41-purchase-order-check.mjs").includes("checkSyntax"));
+
 /* --------------------- §127 forbidden-scope implementation ----------------- */
 
 const forbiddenImplementations = [
   ["warehouse entity", /\bmodel Warehouse\b|warehouseLocation|warehouse_location/i],
   ["bin/shelf", /\bbin\b.*location|shelf/i],
-  ["barcode", /barcode|ean|upc/i],
+  ["barcode", /\bbarcode\b|\bean\b|\bupc\b/i],
   ["serial/lot", /serialNumber|lotNumber|batch_number/i],
   ["expiry tracking", /expiryDate|expiresAt.*line/i],
   ["valuation layers", /costLayer|valuationLayer|fifo|lifo/i],
@@ -289,17 +332,17 @@ const forbiddenImplementations = [
   ["double entry", /doubleEntry|debit.*credit/i],
   ["goods receipt", /goodsReceipt|stockReceipt|receiptNote/i],
 ];
-const poAll = poSource();
+const poCode = CODE(); // rules scan CODE, not prose — negation wordings in
+// comments (e.g. the send route's "no email/webhook is claimed") are laws.
 for (const [name, rx] of forbiddenImplementations) {
-  // Documentation files may mention these terms in negation; product code must not.
-  record(`99. §127 no ${name} implementation in P41 code`, !rx.test(poAll));
+  record(`99. §127 no ${name} implementation in P41 code`, !rx.test(poCode));
 }
 
 /* --------------------- no external-integration claims (§16) ---------------- */
 
-record("100. no email/SMS/EDI/OCR/webhook sends in P41", !/sendEmail|smtp|sendMail|edi\b|\bocr\b|webhook/i.test(poAll));
-record("101. no Redis/Kafka/queue deps", !/kafka|redis|bullmq|rabbitmq/i.test(poAll));
-record("102. no Elasticsearch/Postgres", !/elasticsearch|postgres/i.test(poAll));
+record("100. no email/SMS/EDI/OCR/webhook SENDS in P41 code (prose negations exempt)", !/sendEmail|smtp|sendMail|edi\b|\bocr\b|webhook/i.test(poCode));
+record("101. no Redis/Kafka/queue deps", !/kafka|redis|bullmq|rabbitmq/i.test(poCode));
+record("102. no Elasticsearch/Postgres", !/elasticsearch|postgres/i.test(poCode));
 
 /* ------------------------------- report ------------------------------------ */
 

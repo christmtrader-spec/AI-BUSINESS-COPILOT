@@ -12,7 +12,8 @@
  */
 import {
   computeLineTotalMinor,
-  isPurchaseOrderStatus,
+  computePurchaseOrderTotal,
+  parsePurchaseOrderStatus,
   type PurchaseOrderStatus,
   type PurchaseOrderTotal,
 } from "./types";
@@ -96,8 +97,13 @@ function isoOrNull(value: DateLike | null): string | null {
   return iso(value);
 }
 
+/**
+ * §13 — DTO mappers REQUIRE an already-valid status: an unknown persisted
+ * value throws the controlled integrity error instead of silently becoming
+ * DRAFT. INVALID PERSISTED STATUS ≠ DRAFT.
+ */
 function statusOf(value: string): PurchaseOrderStatus {
-  return isPurchaseOrderStatus(value) ? value : "DRAFT";
+  return parsePurchaseOrderStatus(value);
 }
 
 export type PurchaseOrderLineRow = {
@@ -137,19 +143,18 @@ export type PurchaseOrderHeaderRow = {
 
 /* -------------------------------- mappers --------------------------------- */
 
-/** §51 — list row mapper. Lines arrive as a bounded scalar slice. */
+/**
+ * §51 — list row mapper. Lines arrive as a bounded scalar slice.
+ * §17/§18 — the total comes from the ONE canonical BigInt function; an
+ * unsafe total throws PURCHASE_ORDER_TOTAL_OVERFLOW (never a rounded number).
+ */
 export function purchaseOrderListItemDto(
   row: PurchaseOrderHeaderRow & {
     lineCount: number;
     lines: ReadonlyArray<{ orderedQty: number; unitPriceMinor: number }>;
   },
 ): PurchaseOrderListItemDto {
-  let totalQty = 0;
-  let total = 0n;
-  for (const line of row.lines) {
-    totalQty += line.orderedQty;
-    total += BigInt(line.orderedQty) * BigInt(line.unitPriceMinor);
-  }
+  const totals: PurchaseOrderTotal = computePurchaseOrderTotal(row.lines);
   return {
     id: row.id,
     reference: row.reference,
@@ -162,8 +167,8 @@ export function purchaseOrderListItemDto(
     orderedAt: iso(row.orderedAt),
     expectedDate: isoOrNull(row.expectedDate),
     lineCount: row.lineCount,
-    totalQty,
-    totalMinor: Number(total),
+    totalQty: totals.totalQty,
+    totalMinor: totals.totalMinor,
     createdAt: iso(row.createdAt),
   };
 }
@@ -184,17 +189,15 @@ export function purchaseOrderLineDto(row: PurchaseOrderLineRow): PurchaseOrderLi
   };
 }
 
-/** §50 — detail mapper (header + summary + all lines, cap-bounded). */
+/**
+ * §50 — detail mapper (header + summary + all lines, cap-bounded).
+ * §18 — SAME canonical total law as list/create/export — no second math.
+ */
 export function purchaseOrderDetailDto(
   row: PurchaseOrderHeaderRow,
   lines: ReadonlyArray<PurchaseOrderLineRow>,
 ): PurchaseOrderDetailDto {
-  let totalQty = 0;
-  let total = 0n;
-  for (const line of lines) {
-    totalQty += line.orderedQty;
-    total += BigInt(line.orderedQty) * BigInt(line.unitPriceMinor);
-  }
+  const totals: PurchaseOrderTotal = computePurchaseOrderTotal(lines);
   return {
     id: row.id,
     reference: row.reference,
@@ -224,11 +227,7 @@ export function purchaseOrderDetailDto(
       : null,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
-    summary: {
-      lineCount: lines.length,
-      totalQty,
-      totalMinor: Number(total),
-    },
+    summary: totals,
     lines: lines.map(purchaseOrderLineDto),
   };
 }

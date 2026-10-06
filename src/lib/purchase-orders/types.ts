@@ -27,6 +27,39 @@ export function isPurchaseOrderStatus(value: string): value is PurchaseOrderStat
   return (PURCHASE_ORDER_STATUSES as readonly string[]).includes(value);
 }
 
+/* -------------------- §11-§13 persisted-status integrity ------------------- */
+
+export const PURCHASE_ORDER_INVALID_PERSISTED_STATUS = "PURCHASE_ORDER_INVALID_PERSISTED_STATUS";
+
+/**
+ * §12 — a corrupted persisted status (e.g. "RECEIVED", "HACKED", "") is an
+ * internal-data-integrity error, NOT a draft. A fabricated DRAFT would expose
+ * edit/send behavior on an unknown document state, so this pure error class
+ * is thrown instead and mapped to a controlled 500 by the server layer.
+ * INVALID PERSISTED STATUS ≠ DRAFT (§13).
+ */
+export class PurchaseOrderStatusIntegrityError extends Error {
+  readonly code = PURCHASE_ORDER_INVALID_PERSISTED_STATUS;
+  readonly value: string;
+  constructor(value: unknown) {
+    // Server-side diagnostic detail only — the HTTP body carries the stable
+    // code and a fixed, value-free message (§12).
+    super(`${PURCHASE_ORDER_INVALID_PERSISTED_STATUS}: ${String(value ?? "")}`);
+    this.name = "PurchaseOrderStatusIntegrityError";
+    this.value = typeof value === "string" ? value : String(value ?? "");
+  }
+}
+
+/**
+ * §13 — parse a PERSISTED status value. Known → the exact valid status;
+ * unknown → throws. Callers that cannot tolerate a throw must not use this —
+ * there is deliberately no `→ DRAFT` fallback anywhere in the domain.
+ */
+export function parsePurchaseOrderStatus(value: string): PurchaseOrderStatus {
+  if (isPurchaseOrderStatus(value)) return value;
+  throw new PurchaseOrderStatusIntegrityError(value);
+}
+
 /* --------------------------- §15 state machine ---------------------------- */
 
 /**
@@ -79,14 +112,20 @@ export function isValidOrderedQty(value: unknown): value is number {
 /* ------------------------------- §29 money -------------------------------- */
 
 /**
- * §29 — unitPriceMinor: integer 0..9_000_000_000 minor units. The upper
- * bound follows the EXISTING money-validation convention (z.amountMinor /
- * z.unitPriceMinor max 9_000_000_000 in src/lib/schemas.ts). Zero is ALLOWED
+ * §29 — unitPriceMinor: integer 0..1_000_000_000 minor units. Zero is ALLOWED
  * (free/promotional line items §29/§195). Negative values are always
  * rejected (§196 — a negative line must never act as a discount).
+ *
+ * STORAGE LAW (§41-F hardening): the bound is 1_000_000_000 — the original
+ * P41 spec value AND the maximum representable by this project's Int money
+ * columns (Prisma Int = 4-byte signed, max 2_147_483_647). The legacy 9e9
+ * zod bound found elsewhere is UNSTORABLE on every Int money column; P41 is
+ * honest about storage instead of accepting values it cannot persist.
+ * Totals stay exact via the BigInt law below (up to 200 lines × 1e6 qty ×
+ * 1e9 price remains inside the safe-integer range check).
  */
 export const UNIT_PRICE_MINOR_MIN = 0;
-export const UNIT_PRICE_MINOR_MAX = 9_000_000_000;
+export const UNIT_PRICE_MINOR_MAX = 1_000_000_000;
 
 export function isValidUnitPriceMinor(value: unknown): value is number {
   return (

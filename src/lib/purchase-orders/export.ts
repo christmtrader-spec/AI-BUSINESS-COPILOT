@@ -22,7 +22,13 @@ import { db } from "@/lib/db";
 import { ApiError } from "@/lib/api-helpers";
 import { toCsv } from "@/lib/csv";
 import { messagesFor } from "@/i18n/messages";
-import { isPurchaseOrderStatus, purchaseOrderLineCap } from "./types";
+import {
+  PURCHASE_ORDER_ERROR_CODES,
+  PURCHASE_ORDER_INVALID_PERSISTED_STATUS,
+  computePurchaseOrderTotal,
+  parsePurchaseOrderStatus,
+  purchaseOrderLineCap,
+} from "./types";
 import { purchaseOrderLineDto } from "./dto";
 
 export type PurchaseOrderCsvResult = {
@@ -64,6 +70,20 @@ export async function buildPurchaseOrderCsv(input: {
   });
   if (!header) throw new ApiError(404, "NOT_FOUND", "Purchase order not found.");
 
+  // §15 — the export uses the ONE centralized status parser: a corrupted
+  // persisted status is a controlled 500 integrity error — the CSV NEVER
+  // labels unknown DB state as "Draft".
+  let status;
+  try {
+    status = parsePurchaseOrderStatus(header.status);
+  } catch {
+    throw new ApiError(
+      500,
+      PURCHASE_ORDER_INVALID_PERSISTED_STATUS,
+      "Purchase order data is in an invalid state. Please contact support.",
+    );
+  }
+
   const cap = purchaseOrderLineCap(process.env.PURCHASE_ORDER_MAX_LINES);
   // take: cap + 1 proves completeness — cap+1 rows would mean the order
   // exceeded its own line cap (impossible by §33), and the export would
@@ -88,15 +108,25 @@ export async function buildPurchaseOrderCsv(input: {
   const truncated = lineRows.length > cap;
   const lines = lineRows.slice(0, cap).map(purchaseOrderLineDto);
 
-  let total = 0n;
-  for (const line of lines) {
-    total += BigInt(line.orderedQty) * BigInt(line.unitPriceMinor);
+  // §19 — the SAME canonical BigInt total function as create/list/detail —
+  // no second overflow policy. An unsafe total fails honestly (422) instead
+  // of emitting a silently rounded number.
+  let totalMinor: number;
+  try {
+    totalMinor = computePurchaseOrderTotal(lines).totalMinor;
+  } catch (error) {
+    if (error instanceof Error && error.message === "PURCHASE_ORDER_TOTAL_OVERFLOW") {
+      throw new ApiError(
+        422,
+        PURCHASE_ORDER_ERROR_CODES.TOTAL_OVERFLOW,
+        "This purchase order total exceeds the safe numeric range.",
+      );
+    }
+    throw error;
   }
-  const totalMinor = Number(total);
 
   const m = messagesFor(input.locale).purchaseOrders;
-  const statusKey = `status_${isPurchaseOrderStatus(header.status) ? header.status : "DRAFT"}` as const;
-  const statusLabel = m[statusKey];
+  const statusLabel = m[`status_${status}`];
 
   // Flat extract: one row per line; order-level fields denormalized on each
   // row (machine-readable; the document total is a constant column — it is
