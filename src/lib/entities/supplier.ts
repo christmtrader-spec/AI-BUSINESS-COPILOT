@@ -8,6 +8,7 @@ import type {
   RecentPaymentRow,
   SupplierDetail,
   SupplierRecentExpense,
+  SupplierRecentPurchaseOrder,
   SupplierSummary,
 } from "./types";
 
@@ -36,6 +37,18 @@ export type SupplierPaymentRecordRow = {
   method: string;
   paidAt: Date;
   note: string | null;
+};
+
+/** Prompt 41 (§65) — bounded PO row for Supplier 360. */
+export type SupplierPurchaseOrderRow = {
+  id: string;
+  reference: string;
+  status: string;
+  orderedAt: Date;
+  currencyCodeAtOrder: string;
+  currencySymbolAtOrder: string;
+  decimalPrecisionAtOrder: number;
+  lines: Array<{ orderedQty: number; unitPriceMinor: number }>;
 };
 
 export function mapRecentExpenses(
@@ -69,6 +82,7 @@ export function mapSupplierDetail(
   summary: SupplierSummary,
   recentExpenses: SupplierExpenseRow[],
   recentPayments: SupplierPaymentRecordRow[],
+  recentPurchaseOrders: SupplierPurchaseOrderRow[] = [],
 ): SupplierDetail {
   return {
     supplier: {
@@ -83,5 +97,31 @@ export function mapSupplierDetail(
     summary,
     recentExpenses: mapRecentExpenses(recentExpenses),
     recentPayments: mapSupplierPayments(recentPayments),
+    recentPurchaseOrders: mapSupplierPurchaseOrders(recentPurchaseOrders),
   };
+}
+
+/** Prompt 41 (§65/§154) — ≤10 rows; totals derived with exact BigInt math. */
+export function mapSupplierPurchaseOrders(
+  rows: SupplierPurchaseOrderRow[],
+): SupplierRecentPurchaseOrder[] {
+  return rows.map((row) => {
+    let totalQty = 0;
+    let total = 0n;
+    for (const line of row.lines) {
+      totalQty += line.orderedQty;
+      total += BigInt(line.orderedQty) * BigInt(line.unitPriceMinor);
+    }
+    return {
+      id: row.id,
+      reference: row.reference,
+      status: row.status,
+      orderedAt: row.orderedAt.toISOString(),
+      currencyCodeAtOrder: row.currencyCodeAtOrder,
+      currencySymbolAtOrder: row.currencySymbolAtOrder,
+      decimalPrecisionAtOrder: row.decimalPrecisionAtOrder,
+      totalQty,
+      totalMinor: Number(total),
+    };
+  });
 }

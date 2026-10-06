@@ -6,6 +6,7 @@
  * the Search Results Center so the two surfaces stay visually consistent.
  */
 import {
+  ClipboardList,
   CreditCard,
   Package,
   ShoppingCart,
@@ -27,6 +28,8 @@ export const SEARCH_TYPE_ICONS: Record<SearchEntityType, LucideIcon> = {
   PAYMENT: CreditCard,
   LEAD: Target,
   OPPORTUNITY: TrendingUp,
+  // Prompt 41 (§152) — procurement documents in search results.
+  PURCHASE_ORDER: ClipboardList,
 };
 
 /** Medium localized date for result rows (never raw ISO in the UI). */

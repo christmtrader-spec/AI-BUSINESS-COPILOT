@@ -7,6 +7,7 @@ import { dedupeProductSaleLines, stockStateOf } from "./summary";
 import type {
   ProductDetail,
   ProductRecentAdjustment,
+  ProductRecentPurchaseOrder,
   ProductRecentSale,
   ProductRecentStocktake,
 } from "./types";
@@ -46,6 +47,20 @@ export type ProductSaleItemRow = {
   lineTotalMinor: number;
   number: number;
   issueDate: Date;
+};
+
+/** Prompt 41 (§66) — bounded PO line row for Product detail. */
+export type ProductPurchaseOrderLineRow = {
+  purchaseOrderId: string;
+  reference: string;
+  status: string;
+  supplierNameAtOrder: string;
+  orderedAt: Date;
+  orderedQty: number;
+  unitPriceMinor: number;
+  currencyCodeAtOrder: string;
+  currencySymbolAtOrder: string;
+  decimalPrecisionAtOrder: number;
 };
 
 export function mapRecentAdjustments(
@@ -94,6 +109,7 @@ export function mapProductDetail(
   recentSaleItems: ProductSaleItemRow[],
   recentSaleCap: number,
   recentStocktakeLines: ProductStocktakeLineRow[] = [],
+  recentPurchaseOrderLines: ProductPurchaseOrderLineRow[] = [],
 ): ProductDetail {
   return {
     product: {
@@ -115,5 +131,24 @@ export function mapProductDetail(
     recentAdjustments: mapRecentAdjustments(recentAdjustments),
     recentSales: mapProductRecentSales(recentSaleItems, recentSaleCap),
     recentStocktakes: mapRecentStocktakes(recentStocktakeLines),
+    recentPurchaseOrders: mapRecentPurchaseOrders(recentPurchaseOrderLines),
   };
+}
+
+/** Prompt 41 (§66/§155) — ≤10 rows; snapshots carried verbatim (§236). */
+export function mapRecentPurchaseOrders(
+  rows: ProductPurchaseOrderLineRow[],
+): ProductRecentPurchaseOrder[] {
+  return rows.map((row) => ({
+    purchaseOrderId: row.purchaseOrderId,
+    reference: row.reference,
+    status: row.status,
+    supplierNameAtOrder: row.supplierNameAtOrder,
+    orderedAt: row.orderedAt.toISOString(),
+    orderedQty: row.orderedQty,
+    unitPriceMinor: row.unitPriceMinor,
+    currencyCodeAtOrder: row.currencyCodeAtOrder,
+    currencySymbolAtOrder: row.currencySymbolAtOrder,
+    decimalPrecisionAtOrder: row.decimalPrecisionAtOrder,
+  }));
 }

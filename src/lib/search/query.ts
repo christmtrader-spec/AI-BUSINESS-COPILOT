@@ -23,11 +23,13 @@ import {
   opportunityCandidate,
   paymentCandidate,
   productCandidate,
+  purchaseOrderCandidate,
   saleCandidate,
   supplierCandidate,
   type ExpenseRow,
   type OpportunityRow,
   type PaymentRow,
+  type PurchaseOrderSearchRow,
   type SaleRow,
 } from "./dto";
 import type { SearchCandidate, SearchEntityType } from "./types";
@@ -281,6 +283,53 @@ async function searchOpportunities(
 }
 
 /**
+ * Prompt 41 (§67/§68) — purchase-order prefilter: reference, supplier
+ * snapshot AND live supplier name, product snapshot names/SKUs. Tenant
+ * scope is absolute (§68 — businessId in every WHERE). NO money fields are
+ * selected (§67) — search is discovery, never a financial surface.
+ * Cancelled/closed orders stay searchable (documents, not state).
+ */
+async function searchPurchaseOrders(
+  businessId: string,
+  variants: string[],
+): Promise<SearchCandidate[]> {
+  const rows = await db.purchaseOrder.findMany({
+    where: {
+      businessId, // §68 — server-derived tenant scope, never client input
+      OR: [
+        ...variants.map((v) => ({ reference: { contains: v } })),
+        ...variants.map((v) => ({ supplierNameAtOrder: { contains: v } })),
+        ...variants.map((v) => ({ supplier: { is: { name: { contains: v } } } })),
+        ...variants.map((v) => ({
+          lines: {
+            some: {
+              OR: [
+                { productNameAtOrder: { contains: v } },
+                { skuAtOrder: { contains: v } },
+              ],
+            },
+          },
+        })),
+      ],
+    },
+    select: {
+      id: true,
+      reference: true,
+      status: true,
+      supplierNameAtOrder: true,
+      orderedAt: true,
+      createdAt: true,
+      supplier: { select: { name: true } },
+      // No totals/prices selected — procurement amounts are out of the
+      // search DTO by design (§67).
+    },
+    orderBy: { createdAt: "desc" as const },
+    take: SEARCH_PER_ENTITY_TAKE,
+  });
+  return rows.map((r) => purchaseOrderCandidate(r as PurchaseOrderSearchRow));
+}
+
+/**
  * Run all requested entity searches concurrently (§6) and return the
  * combined candidate pool (pre-dedup, pre-rank). Bounded to
  * types.length × SEARCH_PER_ENTITY_TAKE rows.
@@ -319,6 +368,9 @@ export async function fetchSearchCandidates(options: {
         break;
       case "OPPORTUNITY":
         tasks.push(searchOpportunities(businessId, variants));
+        break;
+      case "PURCHASE_ORDER":
+        tasks.push(searchPurchaseOrders(businessId, variants));
         break;
     }
   }

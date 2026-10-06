@@ -125,6 +125,20 @@ export type SupplierRecentExpense = {
   status: PaymentStatusToken;
 };
 
+/** Prompt 41 (§65) — bounded procurement history for Supplier 360. */
+export type SupplierRecentPurchaseOrder = {
+  id: string;
+  reference: string;
+  status: string;
+  orderedAt: string;
+  currencyCodeAtOrder: string;
+  currencySymbolAtOrder: string;
+  decimalPrecisionAtOrder: number;
+  totalQty: number;
+  /** Procurement document total (§151) — never a payable/expense value. */
+  totalMinor: number;
+};
+
 export type SupplierDetail = {
   supplier: {
     id: string;
@@ -140,6 +154,8 @@ export type SupplierDetail = {
   recentExpenses: SupplierRecentExpense[];
   /** Bounded: ≤ 10 (§41/§85). */
   recentPayments: RecentPaymentRow[];
+  /** Prompt 41 (§65) — bounded: ≤ 10 procurement documents. */
+  recentPurchaseOrders: SupplierRecentPurchaseOrder[];
 };
 
 /* ------------------------------------------------------------------ */
@@ -165,6 +181,20 @@ export type ProductRecentStocktake = {
   status: string;
   varianceQty: number;
   countedAt: string;
+};
+
+/** Prompt 41 (§66) — bounded procurement history for Product detail. */
+export type ProductRecentPurchaseOrder = {
+  purchaseOrderId: string;
+  reference: string;
+  status: string;
+  supplierNameAtOrder: string;
+  orderedAt: string;
+  orderedQty: number;
+  unitPriceMinor: number;
+  currencyCodeAtOrder: string;
+  currencySymbolAtOrder: string;
+  decimalPrecisionAtOrder: number;
 };
 
 export type ProductRecentSale = {
@@ -196,6 +226,8 @@ export type ProductDetail = {
   recentSales: ProductRecentSale[];
   /** Prompt 40 (§90) — ≤ 10 recent physical-count lines for this product. */
   recentStocktakes: ProductRecentStocktake[];
+  /** Prompt 41 (§66) — ≤ 10 recent procurement lines for this product. */
+  recentPurchaseOrders: ProductRecentPurchaseOrder[];
 };
 
 /* ------------------------------------------------------------------ */

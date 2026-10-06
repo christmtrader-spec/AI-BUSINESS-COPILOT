@@ -325,3 +325,53 @@ export function opportunityCandidate(row: OpportunityRow): SearchCandidate {
     method: null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Prompt 41 (§67) — purchase-order candidate. Search fields: reference,
+// supplier snapshot/live name, product snapshot names/SKUs. NO amounts are
+// selected or carried (§67/§5.5 analog) — the total is procurement data the
+// search UX never displays.
+// ---------------------------------------------------------------------------
+
+export type PurchaseOrderSearchRow = {
+  id: string;
+  reference: string;
+  status: string;
+  supplierNameAtOrder: string;
+  orderedAt: Date;
+  createdAt: Date;
+  supplier: { name: string } | null;
+};
+
+/** Closed-token guard for the PO lifecycle (§4.1 — nothing raw leaves). */
+function purchaseOrderStatusToken(status: string): SearchItemStatus | null {
+  return status === "DRAFT" ||
+    status === "SENT" ||
+    status === "CONFIRMED" ||
+    status === "CLOSED" ||
+    status === "CANCELLED"
+    ? status
+    : null;
+}
+
+export function purchaseOrderCandidate(row: PurchaseOrderSearchRow): SearchCandidate {
+  const subtitle = row.supplierNameAtOrder || row.supplier?.name || null;
+  return {
+    id: row.id,
+    type: "PURCHASE_ORDER",
+    title: row.reference,
+    titleNorm: normalizeSearchText(row.reference),
+    subtitle,
+    identifierNorm: normalizeSearchText(row.reference),
+    identifierExtras: [],
+    numericIdentifier: null,
+    secondaryNorms: [row.supplierNameAtOrder, row.supplier?.name]
+      .filter((v): v is string => Boolean(v))
+      .map(normalizeSearchText),
+    createdAt: row.createdAt,
+    status: purchaseOrderStatusToken(row.status),
+    date: row.orderedAt.toISOString(),
+    direction: null,
+    method: null,
+  };
+}

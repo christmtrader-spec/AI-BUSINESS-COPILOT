@@ -68,6 +68,14 @@ export type AppView =
    */
   | { kind: "inventory-stocktakes" }
   | { kind: "inventory-stocktake"; id: string }
+  /**
+   * Prompt 41 — Purchase order views (§69/§70): the LIST at
+   * #/purchase-orders and a DETAIL deep link at #/purchase-orders/<id>.
+   * The id is validated with the same safe-ID rules as entity routes —
+   * malformed ids NEVER become state (dashboard fallback).
+   */
+  | { kind: "purchase-orders" }
+  | { kind: "purchase-order"; id: string }
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
@@ -165,6 +173,12 @@ export function viewKeyOf(view: AppView): string {
       ? "inventory-stocktakes"
     : view.kind === "inventory-stocktake"
       ? `inventory-stocktake:${view.id}`
+    // Prompt 41 — purchase-order views: list + per-id detail keys so opening
+    // another order remounts the detail view (no stale record, §36 parity).
+    : view.kind === "purchase-orders"
+      ? "purchase-orders"
+    : view.kind === "purchase-order"
+      ? `purchase-order:${view.id}`
       : view.kind === "join"
       ? `join:${view.token}`
       : view.kind === "reset-password"
@@ -208,6 +222,10 @@ export function sameView(a: AppView, b: AppView): boolean {
   }
   // Prompt 40 — stocktake detail compares id (viewKey already carries it).
   if (a.kind === "inventory-stocktake" && b.kind === "inventory-stocktake") {
+    return a.id === b.id;
+  }
+  // Prompt 41 — purchase-order detail compares id (viewKey already carries it).
+  if (a.kind === "purchase-order" && b.kind === "purchase-order") {
     return a.id === b.id;
   }
   // Prompt 33 — hash query changes re-enter the store (back/forward must
@@ -269,6 +287,13 @@ export function viewToHash(view: AppView): string | null {
       // Prompt 40 (§77/§136) — only charset-safe ids ever become a hash.
       if (!isValidEntityId(view.id)) return null;
       return `#/inventory/stocktakes/${view.id}`;
+    case "purchase-orders":
+      // Prompt 41 (§70) — canonical list hash.
+      return "#/purchase-orders";
+    case "purchase-order":
+      // Prompt 41 (§70) — only charset-safe ids ever become a hash.
+      if (!isValidEntityId(view.id)) return null;
+      return `#/purchase-orders/${view.id}`;
     case "platform":
       // #/platform itself resolves to the overview section (§15).
       return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
@@ -382,6 +407,22 @@ export function hashToView(hash: string): AppView {
     }
     if (!isValidEntityId(id)) return { kind: "dashboard" };
     return { kind: "inventory-stocktake", id };
+  }
+  // Prompt 41 (§69/§70) — purchase-order deep links, matched BEFORE the
+  // module/entity fallbacks: #/purchase-orders opens the list;
+  // #/purchase-orders/<id> opens the detail only when the id is charset-safe;
+  // anything else falls through to the dashboard fallback.
+  if (path === "purchase-orders") return { kind: "purchase-orders" };
+  if (path.startsWith("purchase-orders/")) {
+    const rawId = path.slice("purchase-orders/".length);
+    let id = rawId;
+    try {
+      id = decodeURIComponent(rawId);
+    } catch {
+      return { kind: "dashboard" };
+    }
+    if (!isValidEntityId(id)) return { kind: "dashboard" };
+    return { kind: "purchase-order", id };
   }
   // Prompt 34 — entity detail deep links (#/customers/<id>, §5/§6) are
   // attempted BEFORE the bare-module match: "customers" alone stays the

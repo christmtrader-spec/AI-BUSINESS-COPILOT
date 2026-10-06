@@ -79,6 +79,9 @@ model User {
   // docs/legal/data-deletion-matrix.md BEFORE the migration).
   inventoryStocktakeCreations InventoryStocktake[]      @relation("InventoryStocktakeCreator")
   inventoryStocktakeCounts    InventoryStocktakeLine[]  @relation("InventoryStocktakeCounter")
+  // Prompt 41 — Purchase Orders (§6): creator link is Restrict — the same
+  // creator-linked policy as CRM/P40 (documented in the deletion matrix).
+  purchaseOrderCreations      PurchaseOrder[]           @relation("PurchaseOrderCreator")
 }
 
 // ---------------------------------------------------------------------------
@@ -287,6 +290,8 @@ model Business {
   crmTasks             CrmTask[]
   // Prompt 40 — physical stock-count sessions (tenant-scoped, cascade).
   inventoryStocktakes  InventoryStocktake[]
+  // Prompt 41 — procurement commitment documents (tenant-scoped, cascade).
+  purchaseOrders       PurchaseOrder[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -402,6 +407,11 @@ model Supplier {
   updatedAt  DateTime  @updatedAt
 
   expenses Expense[]
+  // Prompt 41 — procurement documents issued to this supplier (cascade on
+  // tenant; the supplier FK itself is Restrict so hard-deleting a supplier
+  // with documents can never silently destroy procurement history §234 —
+  // the API only ever soft-deletes suppliers).
+  purchaseOrders PurchaseOrder[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -429,6 +439,9 @@ model Product {
   saleItems   SaleItem[]
   // Prompt 40 — physical count lines that snapshotted this product.
   inventoryStocktakeLines InventoryStocktakeLine[]
+  // Prompt 41 — procurement lines that snapshotted this product (the line
+  // keeps its own historical snapshot; §26/§27).
+  purchaseOrderLines PurchaseOrderLine[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -1817,4 +1830,107 @@ model CrmTask {
   @@index([customerId, dueAt])
   @@index([leadId, dueAt])
   @@index([opportunityId, dueAt])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 41 — Supplier Purchase Orders / Procurement Commitments (§2/§6).
+// PurchaseOrder = ONE procurement document per business: "the business
+// intends/commits to purchase these products from this supplier under these
+// commercial terms" (§4). It is a DOCUMENT, not money movement:
+//   - creating/sending/confirming/closing/cancelling NEVER creates Expense,
+//     Payment, Sale, InventoryAdjustment, stockQty change, statement row,
+//     payable or aging balance (§110-§113 negative tests pin this).
+//   - totals are procurement document totals ONLY (§31/§151) — never
+//     labelled expense/payable/amount-owed/paid anywhere (§202-§204).
+// Lifecycle §14/§15: DRAFT → SENT → CONFIRMED → CLOSED; DRAFT/SENT/CONFIRMED
+// → CANCELLED; CLOSED/CANCELLED terminal. Server-authoritative via dedicated
+// transition endpoints only — there is NO generic status PATCH (§42).
+// Snapshots §11/§22/§27: supplier name, product name/sku/unit and the
+// business currency are frozen at write time; history stays intelligible
+// after any later rename/soft-delete/precision change.
+// ---------------------------------------------------------------------------
+model PurchaseOrder {
+  id String @id @default(cuid())
+
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  // §10 — tenant-local supplier; foreign-tenant supplier ids → 404 (§48).
+  // Restrict (§234): the supplier row must outlive its documents; the
+  // product-facing delete path is soft-delete so Restrict never blocks it.
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  // §12 — business-local unique reference, DB-enforced (concurrency-safe).
+  reference String
+  // §14 — closed vocabulary DRAFT|SENT|CONFIRMED|CLOSED|CANCELLED.
+  status    String   @default("DRAFT")
+
+  // §22 — currency snapshot from the business at creation (never client input).
+  currencyCodeAtOrder     String
+  currencySymbolAtOrder   String
+  decimalPrecisionAtOrder Int
+
+  // §20 — orderedAt is an instant; expectedDate is calendar-date semantics
+  // normalized to the project's UTC-midnoon rule (never local midnight).
+  orderedAt    DateTime
+  expectedDate DateTime?
+
+  // §21 — optional free text (≤2000 chars); never logged in audit bodies.
+  notes String?
+
+  // §11 — historical supplier identity (survives rename/soft-delete).
+  supplierNameAtOrder String
+
+  createdByUserId String
+  createdByUser   User @relation("PurchaseOrderCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  sentAt      DateTime?
+  confirmedAt DateTime?
+  closedAt    DateTime?
+  cancelledAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines PurchaseOrderLine[]
+
+  @@unique([businessId, reference])
+  @@index([businessId, status])
+  @@index([businessId, orderedAt])
+  @@index([businessId, createdAt])
+  @@index([supplierId, createdAt])
+}
+
+// PurchaseOrderLine = one product commitment within a document (§24).
+// A product appears AT MOST ONCE per order (§25 — DB-enforced). Money is
+// integer minor units (§23/§29); totals are ALWAYS server-derived (§30),
+// never client-submitted. Line snapshots (§27) are historical.
+model PurchaseOrderLine {
+  id String @id @default(cuid())
+
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  // Restrict (§234): product soft-delete keeps history; hard product delete
+  // must not silently destroy procurement lines.
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  // §28 — integer 1..1_000_000 whole units. §29 — integer 0..9_000_000_000
+  // minor units (zero allowed: free/promotional items). No floats, ever.
+  orderedQty     Int
+  unitPriceMinor Int
+
+  // §27 — historical product identity (never overwritten from live data).
+  productNameAtOrder String
+  skuAtOrder         String?
+  unitAtOrder        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([purchaseOrderId, productId])
+  @@index([purchaseOrderId])
+  @@index([productId])
 }

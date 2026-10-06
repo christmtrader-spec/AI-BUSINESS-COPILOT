@@ -280,7 +280,8 @@ eq(SEARCH_TYPE_TO_ENTITY.OPPORTUNITY, "opportunity", "u25 search OPPORTUNITY map
 ok(SEARCH_ENTITY_TYPES.includes("LEAD") && SEARCH_ENTITY_TYPES.includes("OPPORTUNITY"), "u25 search types include CRM");
 eq(ENTITY_DESTINATION.LEAD, "leads", "u25 LEAD destination closed");
 eq(ENTITY_DESTINATION.OPPORTUNITY, "opportunities", "u25 OPPORTUNITY destination closed");
-ok(SEARCH_DESTINATIONS.length === 8, "u25 destinations cover 8 entities");
+// Prompt 41 (§67) — PURCHASE_ORDER joins the closed destination set.
+ok(SEARCH_DESTINATIONS.length === 9, "u25 destinations cover 9 entities (P41 adds purchase-orders)");
 
 /* 26 — CRM tab vocabulary + default (§37) */
 // Prompt 36 (§43/§115) added the closed `tasks` tab — vocabulary extended.

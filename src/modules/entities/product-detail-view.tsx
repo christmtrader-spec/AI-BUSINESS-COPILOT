@@ -73,6 +73,7 @@ export function ProductDetailView({
   const businessId = useAppStore((s) => s.activeBusinessId);
   const navigate = useAppStore((s) => s.navigate);
   const tStock = useTranslations("inventory.stocktakes");
+  const tPo = useTranslations("purchaseOrders");
 
   const writable = can(role, "data:write");
   const p = data.product;
@@ -254,6 +255,50 @@ export function ProductDetailView({
                         dir="ltr"
                       >
                         {st.varianceQty > 0 ? `+${st.varianceQty}` : st.varianceQty}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Prompt 41 (§66) — bounded purchase-order history (≤10). Orders are
+          NOT entity-router records; navigation uses the dedicated deep link
+          #/purchase-orders/<id>. Line snapshots are historical (§27/§236). */}
+      <Card>
+        <CardContent className="pt-6">
+          <h2 className="mb-3 text-base font-semibold">{tPo("purchaseOrderHistory")}</h2>
+          {data.recentPurchaseOrders.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{tPo("noPurchaseOrderHistory")}</p>
+          ) : (
+            <ul className="divide-y">
+              {data.recentPurchaseOrders.map((po) => (
+                <li key={po.purchaseOrderId}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40"
+                    onClick={() => navigate({ kind: "purchase-order", id: po.purchaseOrderId })}
+                    aria-label={`${tPo("purchaseOrderHistory")}: ${po.reference}`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium" dir="auto">{po.reference}</span>
+                      <span className="block truncate text-xs text-muted-foreground" dir="auto">
+                        {po.supplierNameAtOrder} · {tPo("orderedQty")}: {po.orderedQty}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <Badge variant="outline" className="text-xs">
+                        {po.status === "DRAFT" ? tPo("status_DRAFT")
+                          : po.status === "SENT" ? tPo("status_SENT")
+                          : po.status === "CONFIRMED" ? tPo("status_CONFIRMED")
+                          : po.status === "CLOSED" ? tPo("status_CLOSED")
+                          : tPo("status_CANCELLED")}
+                      </Badge>
+                      <span className="text-sm font-semibold tabular-nums" dir="ltr">
+                        {po.unitPriceMinor / 10 ** po.decimalPrecisionAtOrder} {po.currencySymbolAtOrder}
                       </span>
                     </span>
                   </button>

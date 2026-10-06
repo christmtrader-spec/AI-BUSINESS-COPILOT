@@ -21,11 +21,16 @@ export function entityView(entity: EntityType, id: string): AppView {
 }
 
 /**
- * Search result → entity view (§33/§64): the item's closed type token maps
- * through SEARCH_TYPE_TO_ENTITY; the id passes through unchanged (it is
- * re-validated by entityToHash when the hash is built).
+ * Search result → view (§33/§64): the item's closed type token maps through
+ * SEARCH_TYPE_TO_ENTITY; the id passes through unchanged (it is re-validated
+ * by entityToHash when the hash is built).
+ * Prompt 41 (§67/§152) — PURCHASE_ORDER is NOT an entity-router record: its
+ * result deep-links to the dedicated #/purchase-orders/<id> view.
  */
 export function entityViewFromSearchItem(item: SearchResultItem): AppView {
+  if (item.type === "PURCHASE_ORDER") {
+    return { kind: "purchase-order", id: item.id };
+  }
   const entity = SEARCH_TYPE_TO_ENTITY[item.type];
   return { kind: "entity", entity, id: item.id };
 }

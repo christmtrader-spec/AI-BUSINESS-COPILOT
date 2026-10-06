@@ -32,12 +32,19 @@ export function RelatedRecordList({
   emptyText,
   onOpen,
   className,
+  /**
+   * Prompt 41 — optional non-entity deep-link handler. When provided, rows
+   * open through THIS callback (e.g. #/purchase-orders/<id>) even though the
+   * rows are not entity-router records. `onOpen` stays the entity path.
+   */
+  onOpenRow,
 }: {
   title: string;
   /**
    * Closed entity type every row opens (the list is per-relation).
    * `null` renders STATIC rows (history entries that open nothing — §31:
-   * never render non-interactive content as clickable).
+   * never render non-interactive content as clickable) UNLESS `onOpenRow`
+   * is provided, which makes each row a button with a dedicated handler.
    */
   entity: EntityType | null;
   items: RelatedRecordItem[];
@@ -45,6 +52,7 @@ export function RelatedRecordList({
   /** (entity, id) — the caller maps to the centralized navigation helper. */
   onOpen: (entity: EntityType, id: string) => void;
   className?: string;
+  onOpenRow?: (id: string) => void;
 }) {
   return (
     <section
@@ -92,14 +100,15 @@ export function RelatedRecordList({
             );
             const rowClass =
               "flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-start";
+            const clickable = entity !== null || onOpenRow !== undefined;
             return (
               <li key={`${entity ?? "static"}-${item.id}`}>
-                {entity === null ? (
-                  <div className={rowClass}>{rowInner}</div>
-                ) : (
+                {clickable ? (
                   <button
                     type="button"
-                    onClick={() => onOpen(entity, item.id)}
+                    onClick={() =>
+                      entity !== null ? onOpen(entity, item.id) : onOpenRow?.(item.id)
+                    }
                     className={cn(
                       rowClass,
                       "hover:bg-accent focus-visible:bg-accent cursor-pointer outline-none",
@@ -107,6 +116,8 @@ export function RelatedRecordList({
                   >
                     {rowInner}
                   </button>
+                ) : (
+                  <div className={rowClass}>{rowInner}</div>
                 )}
               </li>
             );

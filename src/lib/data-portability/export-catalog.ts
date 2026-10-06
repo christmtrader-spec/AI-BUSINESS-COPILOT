@@ -48,6 +48,8 @@ export type ExportDatasetKey =
   | "crm_tasks"
   | "inventory_stocktakes"
   | "inventory_stocktake_lines"
+  | "purchase_orders"
+  | "purchase_order_lines"
   | "subscription_summary"
   | "usage_summary";
 
@@ -68,6 +70,8 @@ export const EXPORT_DATASET_KEYS = [
   "crm_tasks",
   "inventory_stocktakes",
   "inventory_stocktake_lines",
+  "purchase_orders",
+  "purchase_order_lines",
   "subscription_summary",
   "usage_summary",
 ] as const satisfies readonly ExportDatasetKey[];
@@ -77,6 +81,8 @@ export const DATASET_IMPLICATIONS: Partial<Record<ExportDatasetKey, ExportDatase
   sales: ["sale_items"],
   // Prompt 40 (§107) — stocktakes always carry their count lines.
   inventory_stocktakes: ["inventory_stocktake_lines"],
+  // Prompt 41 (§95) — purchase orders always carry their lines.
+  purchase_orders: ["purchase_order_lines"],
 };
 
 export type DatasetMeta = {
@@ -115,6 +121,10 @@ export const EXPORT_CATALOG: Record<ExportDatasetKey, DatasetMeta> = {
   // platform/AI-cost/security data.
   inventory_stocktakes: { key: "inventory_stocktakes", sensitivity: "CONFIDENTIAL", csvFile: "inventory_stocktakes.csv", labelKey: "stocktakes" },
   inventory_stocktake_lines: { key: "inventory_stocktake_lines", sensitivity: "CONFIDENTIAL", csvFile: "inventory_stocktake_lines.csv", labelKey: "stocktakeLines" },
+  // Prompt 41 (§95) — procurement documents are business operational data
+  // (CONFIDENTIAL): snapshots + document totals, never provider/secret data.
+  purchase_orders: { key: "purchase_orders", sensitivity: "CONFIDENTIAL", csvFile: "purchase_orders.csv", labelKey: "purchaseOrders" },
+  purchase_order_lines: { key: "purchase_order_lines", sensitivity: "CONFIDENTIAL", csvFile: "purchase_order_lines.csv", labelKey: "purchaseOrderLines" },
   subscription_summary: { key: "subscription_summary", sensitivity: "CONFIDENTIAL", csvFile: "subscription.csv", labelKey: "subscriptionSummary" },
   usage_summary: { key: "usage_summary", sensitivity: "CONFIDENTIAL", csvFile: "usage.csv", labelKey: "usageSummary" },
 };
@@ -868,6 +878,115 @@ export const DATASET_FETCHERS: Record<ExportDatasetKey, DatasetFetcher> = {
     };
   },
 
+  // Prompt 41 (§95/§96) — procurement documents + lines. Explicit selects
+  // (§207); ascending deterministic order; tenant-scoped; snapshots verbatim
+  // (§236 — never replaced with live supplier/product data). Money stays
+  // integer minor units.
+  purchase_orders: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.purchaseOrder.findMany({
+        where: { businessId: ctx.businessId },
+        orderBy: [{ orderedAt: "asc" }, { id: "asc" }],
+        take,
+        select: {
+          id: true,
+          reference: true,
+          status: true,
+          supplierId: true,
+          supplierNameAtOrder: true,
+          currencyCodeAtOrder: true,
+          currencySymbolAtOrder: true,
+          decimalPrecisionAtOrder: true,
+          orderedAt: true,
+          expectedDate: true,
+          notes: true,
+          createdByUserId: true,
+          sentAt: true,
+          confirmedAt: true,
+          closedAt: true,
+          cancelledAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((po) => ({
+        json: {
+          id: po.id,
+          reference: po.reference,
+          status: po.status,
+          supplierId: po.supplierId,
+          supplierNameAtOrder: po.supplierNameAtOrder,
+          currencyCodeAtOrder: po.currencyCodeAtOrder,
+          currencySymbolAtOrder: po.currencySymbolAtOrder,
+          decimalPrecisionAtOrder: po.decimalPrecisionAtOrder,
+          orderedAt: po.orderedAt.toISOString(),
+          expectedDate: iso(po.expectedDate),
+          notes: po.notes,
+          createdByUserId: po.createdByUserId,
+          sentAt: iso(po.sentAt),
+          confirmedAt: iso(po.confirmedAt),
+          closedAt: iso(po.closedAt),
+          cancelledAt: iso(po.cancelledAt),
+          createdAt: po.createdAt.toISOString(),
+          updatedAt: po.updatedAt.toISOString(),
+        },
+        csv: [
+          po.id, po.reference, po.status, po.supplierId, po.supplierNameAtOrder,
+          po.currencyCodeAtOrder, po.currencySymbolAtOrder, po.decimalPrecisionAtOrder,
+          po.orderedAt.toISOString(), iso(po.expectedDate), po.notes, po.createdByUserId,
+          iso(po.sentAt), iso(po.confirmedAt), iso(po.closedAt), iso(po.cancelledAt),
+          po.createdAt.toISOString(), po.updatedAt.toISOString(),
+        ],
+      })),
+      truncated,
+    };
+  },
+
+  purchase_order_lines: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.purchaseOrderLine.findMany({
+        where: { purchaseOrder: { businessId: ctx.businessId } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take,
+        select: {
+          id: true,
+          purchaseOrderId: true,
+          productId: true,
+          productNameAtOrder: true,
+          skuAtOrder: true,
+          unitAtOrder: true,
+          orderedQty: true,
+          unitPriceMinor: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((l) => ({
+        json: {
+          id: l.id,
+          purchaseOrderId: l.purchaseOrderId,
+          productId: l.productId,
+          productNameAtOrder: l.productNameAtOrder,
+          skuAtOrder: l.skuAtOrder,
+          unitAtOrder: l.unitAtOrder,
+          orderedQty: l.orderedQty,
+          unitPriceMinor: l.unitPriceMinor,
+          createdAt: l.createdAt.toISOString(),
+          updatedAt: l.updatedAt.toISOString(),
+        },
+        csv: [
+          l.id, l.purchaseOrderId, l.productId, l.productNameAtOrder, l.skuAtOrder, l.unitAtOrder,
+          l.orderedQty, l.unitPriceMinor, l.createdAt.toISOString(), l.updatedAt.toISOString(),
+        ],
+      })),
+      truncated,
+    };
+  },
+
 subscription_summary: async (ctx) => {
     // §51 — customer-visible subscription state ONLY. Provider verification
     // internals, webhook signatures and merchant credentials do not exist here.
@@ -964,6 +1083,9 @@ export const DATASET_CSV_COLUMNS: Record<ExportDatasetKey, string[]> = {
   crm_tasks: ["id", "title", "description", "status", "priority", "due_at", "completed_at", "reminder_enabled", "reminder_minutes_before", "overdue_alert_enabled", "customer_id", "lead_id", "opportunity_id", "assigned_to_user_id", "created_by_user_id", "deleted_at", "created_at", "updated_at"],
   inventory_stocktakes: ["id", "reference", "status", "count_type", "notes", "created_by_user_id", "started_at", "reviewed_at", "finalized_at", "canceled_at", "created_at", "updated_at"],
   inventory_stocktake_lines: ["id", "stocktake_id", "product_id", "product_name_at_count", "sku_at_count", "unit_at_count", "system_qty_at_count", "counted_qty", "variance_qty", "counted_at", "counted_by_user_id", "created_at", "updated_at"],
+  // Prompt 41 (§96) — procurement document fields (snapshots verbatim §236).
+  purchase_orders: ["id", "reference", "status", "supplier_id", "supplier_name_at_order", "currency_code_at_order", "currency_symbol_at_order", "decimal_precision_at_order", "ordered_at", "expected_date", "notes", "created_by_user_id", "sent_at", "confirmed_at", "closed_at", "cancelled_at", "created_at", "updated_at"],
+  purchase_order_lines: ["id", "purchase_order_id", "product_id", "product_name_at_order", "sku_at_order", "unit_at_order", "ordered_qty", "unit_price_minor", "created_at", "updated_at"],
   subscription_summary: ["plan_code", "plan_name", "status", "billing_period", "current_period_start", "current_period_end", "trial_start", "trial_end", "cancel_at_period_end", "canceled_at", "ended_at", "created_at"],
   usage_summary: ["metric", "used", "limit", "remaining", "percentage_used", "period_start", "period_end"],
 };

@@ -24,6 +24,8 @@ type RouteParams = { params: Promise<{ id: string }> };
 /** Bounded recent-record caps (§15/§42/§85). */
 const RECENT_ADJUSTMENTS_TAKE = 10;
 const RECENT_SALES_TAKE = 10;
+/** Prompt 41 (§66/§155) — bounded procurement history cap. */
+const RECENT_PURCHASE_ORDER_LINES_TAKE = 10;
 /**
  * §15/§42 — pre-dedupe fetch bound (≤ 3× RECENT_SALES_TAKE + 5, hard max
  * 40): enough SaleItem rows to survive a few same-product lines per sale.
@@ -47,7 +49,10 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   const product = await loadProduct(ctx.businessId, id);
 
   // §42 — parallel bounded queries, deterministic ordering, explicit select.
-  const [recentAdjustments, recentSaleItems, recentStocktakeLines] = await Promise.all([
+  // Prompt 41 (§66) — Product detail gains a bounded purchase-order history:
+  // READ-ONLY (§201), historical line snapshots (§236), never stock-related.
+  const [recentAdjustments, recentSaleItems, recentStocktakeLines, recentPurchaseOrderLines] =
+    await Promise.all([
     db.inventoryAdjustment.findMany({
       where: { businessId: ctx.businessId, productId: id },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -84,6 +89,32 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         stocktake: { select: { reference: true, status: true } },
       },
     }),
+    // Prompt 41 (§66) — ≤10 recent procurement lines, joined to their
+    // (tenant-scoped) order for reference/supplier/status/date.
+    db.purchaseOrderLine.findMany({
+      where: {
+        productId: id,
+        purchaseOrder: { businessId: ctx.businessId },
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: RECENT_PURCHASE_ORDER_LINES_TAKE,
+      select: {
+        orderedQty: true,
+        unitPriceMinor: true,
+        purchaseOrder: {
+          select: {
+            id: true,
+            reference: true,
+            status: true,
+            supplierNameAtOrder: true,
+            orderedAt: true,
+            currencyCodeAtOrder: true,
+            currencySymbolAtOrder: true,
+            decimalPrecisionAtOrder: true,
+          },
+        },
+      },
+    }),
   ]);
 
   // Flatten SaleItem → Sale into the mapper's input shape (no N+1: the
@@ -108,6 +139,18 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         status: l.stocktake.status,
         varianceQty: l.varianceQty,
         countedAt: l.countedAt,
+      })),
+      recentPurchaseOrderLines.map((l) => ({
+        purchaseOrderId: l.purchaseOrder.id,
+        reference: l.purchaseOrder.reference,
+        status: l.purchaseOrder.status,
+        supplierNameAtOrder: l.purchaseOrder.supplierNameAtOrder,
+        orderedAt: l.purchaseOrder.orderedAt,
+        orderedQty: l.orderedQty,
+        unitPriceMinor: l.unitPriceMinor,
+        currencyCodeAtOrder: l.purchaseOrder.currencyCodeAtOrder,
+        currencySymbolAtOrder: l.purchaseOrder.currencySymbolAtOrder,
+        decimalPrecisionAtOrder: l.purchaseOrder.decimalPrecisionAtOrder,
       })),
     ),
   );

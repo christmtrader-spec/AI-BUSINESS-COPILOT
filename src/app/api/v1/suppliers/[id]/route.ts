@@ -26,6 +26,8 @@ type RouteParams = { params: Promise<{ id: string }> };
 /** Bounded recent-record caps (§13/§41/§85). */
 const RECENT_EXPENSES_TAKE = 10;
 const RECENT_PAYMENTS_TAKE = 10;
+/** Prompt 41 (§65/§154) — bounded procurement history cap. */
+const RECENT_PURCHASE_ORDERS_TAKE = 10;
 
 async function loadSupplier(businessId: string, id: string) {
   const supplier = await db.supplier.findFirst({
@@ -44,7 +46,10 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   const supplier = await loadSupplier(ctx.businessId, id);
 
   // §41 — parallel bounded queries; groupBy aggregate; deterministic order.
-  const [statusBuckets, recentExpenses, recentPayments] = await Promise.all([
+  // Prompt 41 (§65) — the Supplier 360 gains a bounded procurement section:
+  // PurchaseOrder rows are READ-ONLY here (§201) and never feed the payable
+  // summary below — a PO is a commitment document, not a payable (§150).
+  const [statusBuckets, recentExpenses, recentPayments, recentPurchaseOrders] = await Promise.all([
     db.expense.groupBy({
       by: ["status"],
       where: { businessId: ctx.businessId, supplierId: id, deletedAt: null },
@@ -76,6 +81,22 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         note: true,
       },
     }),
+    db.purchaseOrder.findMany({
+      where: { businessId: ctx.businessId, supplierId: id },
+      orderBy: [{ orderedAt: "desc" }, { id: "desc" }],
+      take: RECENT_PURCHASE_ORDERS_TAKE,
+      select: {
+        id: true,
+        reference: true,
+        status: true,
+        orderedAt: true,
+        currencyCodeAtOrder: true,
+        currencySymbolAtOrder: true,
+        decimalPrecisionAtOrder: true,
+        // Bounded line slice feeds the document total (line cap is the bound).
+        lines: { select: { orderedQty: true, unitPriceMinor: true } },
+      },
+    }),
   ]);
 
   const summary = computeSupplierSummary(
@@ -87,7 +108,15 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
     })),
   );
 
-  return ok(mapSupplierDetail(supplier, summary, recentExpenses, recentPayments));
+  return ok(
+    mapSupplierDetail(
+      supplier,
+      summary,
+      recentExpenses,
+      recentPayments,
+      recentPurchaseOrders,
+    ),
+  );
 });
 
 export const PATCH = route(async (req: NextRequest, { params }: RouteParams) => {

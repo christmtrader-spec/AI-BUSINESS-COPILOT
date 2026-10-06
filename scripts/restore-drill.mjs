@@ -192,6 +192,10 @@ try {
     // restore verification surface. Older backups may predate the models —
     // reported honestly, never a drill failure.
     "InventoryStocktake", "InventoryStocktakeLine",
+    // Prompt 41 (§103) — procurement documents + lines join the restore
+    // verification surface (same honest-absent rule as P40: older backups
+    // may predate the models — reported, never a drill failure).
+    "PurchaseOrder", "PurchaseOrderLine",
   ];
   const counts = {};
   for (const entity of ENTITIES) {

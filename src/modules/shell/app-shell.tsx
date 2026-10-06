@@ -37,6 +37,8 @@ import { CrmView } from "../crm/crm-view";
 import { StatementsView } from "../statements/statements-view";
 import { StocktakesView } from "../inventory/stocktakes/stocktakes-view";
 import { StocktakeDetailView } from "../inventory/stocktakes/stocktake-detail-view";
+import { PurchaseOrdersView } from "../purchase-orders/purchase-orders-view";
+import { PurchaseOrderDetailView } from "../purchase-orders/purchase-order-detail-view";
 import { SubscriptionView } from "../billing/subscription-view";
 import { PaymentReturnView } from "../billing/payment-return-view";
 import { AuditView } from "../audit/audit-view";
@@ -75,6 +77,11 @@ function labelKeyOf(view: AppView): string {
     // Prompt 39 — party statement document title (§57).
     case "statements":
       return "statements";
+    // Prompt 41 — purchase-order document titles (§71).
+    case "purchase-orders":
+      return "purchaseOrders";
+    case "purchase-order":
+      return "purchaseOrders";
     case "profile":
       return "profile";
     case "module": {
@@ -267,6 +274,30 @@ export function AppShell({
                   onDashboard={() => navigate({ kind: "dashboard" })}
                 >
                   <StocktakeDetailView id={view.id} role={role} />
+                </ModuleBoundary>
+              ) : null}
+              {view.kind === "purchase-orders" ? (
+                <ModuleBoundary
+                  moduleKey={viewKey}
+                  title={tBoundary("title")}
+                  description={tBoundary("description")}
+                  retry={tCommon("retry")}
+                  dashboardLabel={tNav("dashboard")}
+                  onDashboard={() => navigate({ kind: "dashboard" })}
+                >
+                  <PurchaseOrdersView role={role} />
+                </ModuleBoundary>
+              ) : null}
+              {view.kind === "purchase-order" ? (
+                <ModuleBoundary
+                  moduleKey={viewKey}
+                  title={tBoundary("title")}
+                  description={tBoundary("description")}
+                  retry={tCommon("retry")}
+                  dashboardLabel={tNav("dashboard")}
+                  onDashboard={() => navigate({ kind: "dashboard" })}
+                >
+                  <PurchaseOrderDetailView id={view.id} role={role} />
                 </ModuleBoundary>
               ) : null}
               {view.kind === "profile" ? <ProfileView /> : null}

@@ -29,6 +29,8 @@ const FILTER_TYPES: FilterValue[] = [
   "SALE",
   "EXPENSE",
   "PAYMENT",
+  // Prompt 41 (§152) — purchase-order results group + filter chip.
+  "PURCHASE_ORDER",
 ];
 
 /**

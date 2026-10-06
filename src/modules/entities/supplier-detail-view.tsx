@@ -11,6 +11,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import {
   ArrowUpRight,
+  ClipboardList,
   CreditCard,
   FileText,
   Pencil,
@@ -24,6 +25,7 @@ import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
 import { can, type Role } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { FinanceStatusBadge, fmtCount, fmtDate, fmtMoney } from "../finance-shared/finance-kit";
@@ -55,6 +57,7 @@ export function SupplierDetailView({
   const tStatements = useTranslations("statements");
   const tSearch = useTranslations("search");
   const tErrors = useTranslations("errors");
+  const tPo = useTranslations("purchaseOrders");
   const queryClient = useQueryClient();
   const businessId = useAppStore((s) => s.activeBusinessId);
   const navigate = useAppStore((s) => s.navigate);
@@ -203,6 +206,34 @@ export function SupplierDetailView({
           trailing: fmtMoney(business, p.amountMinor),
           trailingMuted: fmtDate(business, p.paidAt),
         }))}
+      />
+
+      {/* Prompt 41 (§65/§154) — bounded purchase-order history (≤10). Orders
+          are NOT entity-router records; navigation uses the dedicated deep
+          link #/purchase-orders/<id>. Read-only (§201); the totals shown are
+          procurement document totals — never payables (§150/§151). */}
+      <RelatedRecordList
+        title={tPo("purchaseOrderHistory")}
+        entity={null}
+        emptyText={tPo("noPurchaseOrderHistory")}
+        onOpen={() => undefined}
+        items={data.recentPurchaseOrders.map((po) => ({
+          id: po.id,
+          icon: ClipboardList,
+          primary: po.reference,
+          secondary: `${fmtDate(business, po.orderedAt)} · ${tPo("totalQty")}: ${po.totalQty}`,
+          trailing: `${(po.totalMinor / 10 ** po.decimalPrecisionAtOrder).toString()} ${po.currencySymbolAtOrder}`,
+          badge: (
+            <Badge variant="outline" className="text-xs">
+              {po.status === "DRAFT" ? tPo("status_DRAFT")
+                : po.status === "SENT" ? tPo("status_SENT")
+                : po.status === "CONFIRMED" ? tPo("status_CONFIRMED")
+                : po.status === "CLOSED" ? tPo("status_CLOSED")
+                : tPo("status_CANCELLED")}
+            </Badge>
+          ),
+        }))}
+        onOpenRow={(id) => navigate({ kind: "purchase-order", id })}
       />
 
       <PartyFormDialog

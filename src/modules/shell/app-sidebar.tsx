@@ -3,6 +3,7 @@
 import {
   BarChart3,
   Bot,
+  ClipboardList,
   CreditCard,
   FolderSync,
   HandCoins,
@@ -55,6 +56,7 @@ type NavItem = {
     | "crm"
     | "customers"
     | "suppliers"
+    | "purchaseOrders"
     | "products"
     | "inventory"
     | "sales"
@@ -83,6 +85,8 @@ const OPERATIONS: NavItem[] = [
   { view: { kind: "crm", tab: "pipeline" }, labelKey: "crm", icon: KanbanSquare },
   { view: { kind: "module", module: "customers" }, labelKey: "customers", icon: Users },
   { view: { kind: "module", module: "suppliers" }, labelKey: "suppliers", icon: Truck },
+  // Prompt 41 (§72) — procurement documents get their own navigation entry.
+  { view: { kind: "purchase-orders" }, labelKey: "purchaseOrders", icon: ClipboardList },
   { view: { kind: "module", module: "products" }, labelKey: "products", icon: Package },
   { view: { kind: "module", module: "inventory" }, labelKey: "inventory", icon: Warehouse },
   { view: { kind: "module", module: "sales" }, labelKey: "sales", icon: ShoppingCart },

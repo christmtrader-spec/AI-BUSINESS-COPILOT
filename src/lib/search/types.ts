@@ -11,7 +11,9 @@
  */
 
 /** Tenant-scoped entity types that participate in global search (§2).
- *  Prompt 35 (§46): LEAD + OPPORTUNITY join the six Prompt 33 types. */
+ *  Prompt 35 (§46): LEAD + OPPORTUNITY join the six Prompt 33 types.
+ *  Prompt 41 (§67): PURCHASE_ORDER joins — discovery over procurement
+ *  documents (reference + supplier + product snapshots; NO amounts §67). */
 export const SEARCH_ENTITY_TYPES = [
   "CUSTOMER",
   "SUPPLIER",
@@ -21,6 +23,7 @@ export const SEARCH_ENTITY_TYPES = [
   "PAYMENT",
   "LEAD",
   "OPPORTUNITY",
+  "PURCHASE_ORDER",
 ] as const;
 
 export type SearchEntityType = (typeof SEARCH_ENTITY_TYPES)[number];
@@ -35,6 +38,7 @@ export const SEARCH_DESTINATIONS = [
   "payments",
   "leads",
   "opportunities",
+  "purchase-orders",
 ] as const;
 
 export type SearchDestination = (typeof SEARCH_DESTINATIONS)[number];
@@ -49,10 +53,12 @@ export const ENTITY_DESTINATION: Record<SearchEntityType, SearchDestination> = {
   PAYMENT: "payments",
   LEAD: "leads",
   OPPORTUNITY: "opportunities",
+  PURCHASE_ORDER: "purchase-orders",
 };
 
 /** Closed status tokens (client localizes; server never renders HTML).
- *  Prompt 35 (§46): CRM lead statuses + opportunity stages join. */
+ *  Prompt 35 (§46): CRM lead statuses + opportunity stages join.
+ *  Prompt 41 (§67): the purchase-order lifecycle vocabulary joins. */
 export type SearchItemStatus =
   | "ACTIVE"
   | "INACTIVE"
@@ -68,7 +74,12 @@ export type SearchItemStatus =
   | "PROPOSAL"
   | "NEGOTIATION"
   | "WON"
-  | "LOST";
+  | "LOST"
+  | "DRAFT"
+  | "SENT"
+  | "CONFIRMED"
+  | "CLOSED"
+  | "CANCELLED";
 
 /** Closed payment direction tokens (tenant Payment domain only — §42). */
 export type SearchItemDirection = "IN" | "OUT";
