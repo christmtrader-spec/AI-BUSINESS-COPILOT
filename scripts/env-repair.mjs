@@ -9,7 +9,7 @@
  * docs/database/data-inventory-before-baseline.md) in the exact sanctioned
  * order, idempotently:
  *
- *   1. Re-baseline the migration ledger (prisma migrate resolve --applied ×20;
+ *   1. Re-baseline the migration ledger (prisma migrate resolve --applied ×22;
  *      ledger writes ONLY — never touches application tables).
  *   2. Restore the dev .env baseline (real secrets via node:crypto).
  *   3. Re-seed billing plans + pricing books (sanctioned idempotent seeds).
@@ -17,7 +17,7 @@
  *      subscription guard).
  *   5. Re-create the e2e-smoke persistent fixture contract
  *      (sara/eve/ali/rep16007 + memberships).
- *   6. Verify: migrations 20/0, health endpoint, DB integrity, row floors.
+ *   6. Verify: migrations 22/0, health endpoint, DB integrity, row floors.
  *
  * Safe to run repeatedly; every step detects existing state first.
  */
@@ -52,11 +52,14 @@ const MIGRATIONS = [
   "20261002113000_prompt37_crm_task_reminders",
   "20261003093000_payables_aging_expense_terms",
   "20261005080000_prompt40_inventory_stocktake",
-  // Prompt 41 — must stay in the baseline list: sandbox reverts recreate the
-  // ledger only when every ALREADY-APPLIED migration is resolved. The P42
-  // migration must NEVER appear here — it is always genuinely deployed
-  // (its tables do not exist until `migrate deploy` runs for real).
   "20261006090000_prompt41_purchase_orders",
+  // Prompt 42 (P42-F §107) — the P42 migration IS now genuinely applied
+  // (22 applied / 0 pending; its tables exist in every real environment).
+  // Maintenance law: EVERY applied migration must stay in this baseline
+  // list, otherwise a sandbox revert re-baselines the ledger WITHOUT it and
+  // leaves that migration falsely pending (a later `migrate deploy` would
+  // then try to re-create existing tables and break the environment).
+  "20261007090000_prompt42_goods_receipts",
 ];
 
 function log(step, msg) {

@@ -1,0 +1,535 @@
+     1→/**
+     2→ * Prompt 42 — pure unit suite (§227/§228).
+     3→ *
+     4→ * Pure laws are tested WITHOUT Prisma/db (§228 — no live database). Server
+     5→ * transactional behavior is covered by scripts/prompt42-goods-receipt-check.mjs.
+     6→ * Run: bun scripts/prompt42-unit.ts
+     7→ */
+     8→import {
+     9→  GOODS_RECEIPT_LINE_CAP_DEFAULT,
+    10→  GOODS_RECEIPT_LINE_CAP_MAX,
+    11→  GOODS_RECEIPT_LINE_CAP_MIN,
+    12→  GOODS_RECEIPT_QTY_MAX,
+    13→  GOODS_RECEIPT_STATUSES,
+    14→  GOODS_RECEIPT_TRANSITIONS,
+    15→  GoodsReceiptIntegrityError,
+    16→  GOODS_RECEIPT_INVALID_PERSISTED_STATUS,
+    17→  GoodsReceiptStatusIntegrityError,
+    18→  PRODUCT_STOCK_INT32_MAX,
+    19→  RECEIVED_QTY_MIN,
+    20→  canTransitionGoodsReceipt,
+    21→  computeReceivedQty,
+    22→  computeRemainingQty,
+    23→  exceedsRemaining,
+    24→  generateGoodsReceiptReference,
+    25→  goodsReceiptIsReadOnly,
+    26→  goodsReceiptLinesEditable,
+    27→  goodsReceiptLineCap,
+    28→  isFullyReceived,
+    29→  isGoodsReceiptStatus,
+    30→  isValidReceivedQty,
+    31→  normalizeGoodsReceiptReference,
+    32→  parseGoodsReceiptStatus,
+    33→  purchaseOrderIsReceivable,
+    34→  stockOverflowsInt32,
+    35→} from "../src/lib/inventory/goods-receipt/types";
+    36→import {
+    37→  goodsReceiptDetailDto,
+    38→  goodsReceiptLineDto,
+    39→  goodsReceiptListItemDto,
+    40→} from "../src/lib/inventory/goods-receipt/dto";
+    41→import {
+    42→  goodsReceiptCreateSchema,
+    43→  goodsReceiptLineCreateSchema,
+    44→  goodsReceiptLineUpdateSchema,
+    45→  goodsReceiptListQuerySchema,
+    46→  goodsReceiptUpdateSchema,
+    47→  isValidCalendarDate,
+    48→} from "../src/lib/inventory/goods-receipt/schema";
+    49→import { goodsReceiptReferenceSlug } from "../src/lib/inventory/goods-receipt/export";
+    50→import { withWriteTransaction } from "../src/lib/db/write-transaction";
+    51→
+    52→let pass = 0;
+    53→let fail = 0;
+    54→const failures: string[] = [];
+    55→
+    56→function ok(cond: boolean, label: string) {
+    57→  if (cond) {
+    58→    pass += 1;
+    59→  } else {
+    60→    fail += 1;
+    61→    failures.push(label);
+    62→  }
+    63→}
+    64→function eq(a: unknown, b: unknown, label: string) {
+    65→  ok(JSON.stringify(a) === JSON.stringify(b), `${label} (got ${JSON.stringify(a)})`);
+    66→}
+    67→function throws(fn: () => void, name: string, label: string) {
+    68→  try {
+    69→    fn();
+    70→    fail += 1;
+    71→    failures.push(`${label} (did not throw)`);
+    72→  } catch (error) {
+    73→    ok(error instanceof Error && error.name === name, `${label} (threw ${String(error)})`);
+    74→  }
+    75→}
+    76→
+    77→/* ============================== 1. status laws ============================== */
+    78→
+    79→eq([...GOODS_RECEIPT_STATUSES], ["DRAFT", "POSTED", "CANCELLED"], "u1 status vocabulary closed");
+    80→ok(isGoodsReceiptStatus("DRAFT") && isGoodsReceiptStatus("POSTED") && isGoodsReceiptStatus("CANCELLED"), "u2 all statuses recognized");
+    81→ok(!isGoodsReceiptStatus("RECEIVED") && !isGoodsReceiptStatus("draft") && !isGoodsReceiptStatus("") && !isGoodsReceiptStatus("BROKEN"), "u3 unknown/lowercase statuses rejected");
+    82→
+    83→// §173 — parse: known → exact; unknown → GoodsReceiptStatusIntegrityError (NEVER DRAFT).
+    84→eq(parseGoodsReceiptStatus("POSTED"), "POSTED", "u4 parse known status");
+    85→eq(parseGoodsReceiptStatus("DRAFT"), "DRAFT", "u5 parse draft");
+    86→throws(() => parseGoodsReceiptStatus("BROKEN"), "GoodsReceiptStatusIntegrityError", "u6 corrupt status throws integrity error");
+    87→throws(() => parseGoodsReceiptStatus(""), "GoodsReceiptStatusIntegrityError", "u7 empty status throws");
+    88→throws(() => parseGoodsReceiptStatus("draft"), "GoodsReceiptStatusIntegrityError", "u8 lowercase throws (case-sensitive)");
+    89→throws(() => parseGoodsReceiptStatus("INVALID"), "GoodsReceiptStatusIntegrityError", "u284 INVALID ≠ DRAFT");
+    90→
+    91→// §96-analog — the integrity error carries the stable code + value.
+    92→let integrityCode = "";
+    93→try {
+    94→  parseGoodsReceiptStatus("WEIRD");
+    95→} catch (e) {
+    96→  integrityCode = (e as GoodsReceiptStatusIntegrityError).code;
+    97→}
+    98→eq(integrityCode, GOODS_RECEIPT_INVALID_PERSISTED_STATUS, "u9 integrity error stable code");
+    99→try {
+   100→  parseGoodsReceiptStatus("WEIRD");
+   101→} catch (e) {
+   102→  eq((e as GoodsReceiptStatusIntegrityError).value, "WEIRD", "u10 integrity error carries offending value");
+   103→}
+   104→
+   105→/* =========================== 2. transition matrix =========================== */
+   106→
+   107→eq([...GOODS_RECEIPT_TRANSITIONS.DRAFT], ["POSTED", "CANCELLED"], "u11 DRAFT → POSTED|CANCELLED");
+   108→eq(GOODS_RECEIPT_TRANSITIONS.POSTED.length, 0, "u12 POSTED is terminal (no reversal §7/§8)");
+   109→eq(GOODS_RECEIPT_TRANSITIONS.CANCELLED.length, 0, "u13 CANCELLED is terminal (§10)");
+   110→ok(canTransitionGoodsReceipt("DRAFT", "POSTED"), "u14 DRAFT→POSTED allowed");
+   111→ok(canTransitionGoodsReceipt("DRAFT", "CANCELLED"), "u15 DRAFT→CANCELLED allowed");
+   112→ok(!canTransitionGoodsReceipt("POSTED", "CANCELLED"), "u16 POSTED→CANCELLED forbidden (§7)");
+   113→ok(!canTransitionGoodsReceipt("POSTED", "DRAFT"), "u17 POSTED→DRAFT forbidden");
+   114→ok(!canTransitionGoodsReceipt("CANCELLED", "POSTED"), "u18 CANCELLED→POSTED forbidden");
+   115→ok(!canTransitionGoodsReceipt("CANCELLED", "DRAFT"), "u19 CANCELLED→DRAFT forbidden");
+   116→ok(!canTransitionGoodsReceipt("DRAFT", "DRAFT"), "u20 self-transition forbidden");
+   117→
+   118→/* ============================ 3. quantity laws ============================== */
+   119→
+   120→ok(isValidReceivedQty(1) && isValidReceivedQty(42) && isValidReceivedQty(GOODS_RECEIPT_QTY_MAX), "u21 qty 1..max valid (§17/§19)");
+   121→ok(!isValidReceivedQty(0), "u22 zero qty rejected (§17)");
+   122→ok(!isValidReceivedQty(-1) && !isValidReceivedQty(-100), "u23 negative qty rejected");
+   123→ok(!isValidReceivedQty(1.5) && !isValidReceivedQty(2.25), "u24 fractional qty rejected (§18)");
+   124→ok(!isValidReceivedQty(Number.NaN), "u25 NaN rejected");
+   125→ok(!isValidReceivedQty(Number.POSITIVE_INFINITY) && !isValidReceivedQty(Number.NEGATIVE_INFINITY), "u26 Infinity rejected");
+   126→ok(!isValidReceivedQty(GOODS_RECEIPT_QTY_MAX + 1), "u27 above max rejected");
+   127→ok(!isValidReceivedQty("5") && !isValidReceivedQty(null), "u28 non-number types rejected");
+   128→eq(RECEIVED_QTY_MIN, 1, "u29 RECEIVED_QTY_MIN is 1");
+   129→eq(GOODS_RECEIPT_QTY_MAX, 1_000_000, "u30 GOODS_RECEIPT_QTY_MAX centralized (§19)");
+   130→
+   131→/* ======================= 4. canonical receiving math ======================= */
+   132→
+   133→eq(computeReceivedQty([]), 0, "u31 empty sum is 0");
+   134→eq(computeReceivedQty([1, 2, 3]), 6, "u32 exact integer sum (§171)");
+   135→eq(computeReceivedQty([30, 20, 50]), 100, "u33 partial receipts sum (§14)");
+   136→eq(computeReceivedQty([1_000_000, 1_000_000]), 2_000_000, "u34 large exact sum");
+   137→throws(() => computeReceivedQty([-5]), "Error", "u35 negative history is corruption (§283)");
+   138→throws(() => computeReceivedQty([1.5]), "Error", "u36 fractional history is corruption");
+   139→
+   140→eq(computeRemainingQty(100, 0), 100, "u37 remaining = ordered (§100)");
+   141→eq(computeRemainingQty(100, 40), 60, "u38 remaining exact");
+   142→eq(computeRemainingQty(100, 100), 0, "u39 fully received → 0 (§101)");
+   143→throws(() => computeRemainingQty(100, 120), "GoodsReceiptIntegrityError", "u40 over-received history throws (never clamp §100)");
+   144→throws(() => computeRemainingQty(100, -1), "GoodsReceiptIntegrityError", "u41 negative received throws");
+   145→throws(() => computeRemainingQty(-10, 0), "GoodsReceiptIntegrityError", "u42 negative ordered throws");
+   146→throws(() => computeRemainingQty(1.5, 0), "GoodsReceiptIntegrityError", "u43 fractional ordered throws");
+   147→try {
+   148→  computeRemainingQty(10, 20);
+   149→} catch (e) {
+   150→  ok((e as GoodsReceiptIntegrityError).code === "GOODS_RECEIPT_CORRUPT_RECEIVED", "u44 integrity error stable code");
+   151→}
+   152→ok(isFullyReceived(100, 100), "u45 fullyReceived true at equality (§101)");
+   153→ok(!isFullyReceived(100, 99) && !isFullyReceived(100, 0), "u46 fullyReceived false otherwise");
+   154→
+   155→/* ======================= 5. over-receipt law (§15) ========================= */
+   156→
+   157→ok(!exceedsRemaining(100, 0, 100), "u47 receive full order ok");
+   158→ok(!exceedsRemaining(100, 60, 40), "u48 sum == ordered ok");
+   159→ok(exceedsRemaining(100, 60, 41), "u49 sum > ordered rejected");
+   160→ok(exceedsRemaining(10, 10, 1), "u50 one unit over fully-received rejected (§203)");
+   161→ok(exceedsRemaining(100, 50, 60), "u51 stale draft 60 vs remaining 50 rejected (§67/§204)");
+   162→ok(!exceedsRemaining(100, 50, 50), "u52 exact remaining allowed");
+   163→ok(exceedsRemaining(100, 0, 1_000_001), "u53 law is pure comparison (1_000_001 > 100 → rejected)");
+   164→ok(exceedsRemaining(1, 0, 2), "u54 tiny ordered rejected above 1");
+   165→
+   166→/* ============================ 6. line cap (§20) ============================ */
+   167→
+   168→eq(GOODS_RECEIPT_LINE_CAP_DEFAULT, 200, "u55 cap default 200");
+   169→eq(GOODS_RECEIPT_LINE_CAP_MIN, 20, "u56 cap min 20");
+   170→eq(GOODS_RECEIPT_LINE_CAP_MAX, 500, "u57 cap max 500");
+   171→eq(goodsReceiptLineCap(undefined), 200, "u58 missing env → default");
+   172→eq(goodsReceiptLineCap(null), 200, "u59 null env → default");
+   173→eq(goodsReceiptLineCap(""), 200, "u60 empty env → default");
+   174→eq(goodsReceiptLineCap("abc"), 200, "u61 malformed env → default");
+   175→eq(goodsReceiptLineCap("NaN"), 200, "u62 NaN text → default");
+   176→eq(goodsReceiptLineCap("10"), 20, "u63 below min clamps to 20");
+   177→eq(goodsReceiptLineCap("5"), 20, "u64 far below min clamps");
+   178→eq(goodsReceiptLineCap("999"), 500, "u65 above max clamps to 500");
+   179→eq(goodsReceiptLineCap("100000"), 500, "u66 far above max clamps");
+   180→eq(goodsReceiptLineCap("200"), 200, "u67 exact default passes");
+   181→eq(goodsReceiptLineCap("37"), 37, "u68 in-range value passes");
+   182→eq(goodsReceiptLineCap("20"), 20, "u69 min boundary passes");
+   183→eq(goodsReceiptLineCap("500"), 500, "u70 max boundary passes");
+   184→eq(goodsReceiptLineCap(" 150 "), 150, "u71 whitespace-trimmed parse");
+   185→eq(goodsReceiptLineCap("150.9"), 150, "u72 float text truncates via parseInt (P41 parser parity)");
+   186→
+   187→/* ===================== 7. stock overflow + corrupt stock ==================== */
+   188→
+   189→eq(PRODUCT_STOCK_INT32_MAX, 2_147_483_647, "u73 Int32 max is the SQLite Int bound (§49)");
+   190→ok(!stockOverflowsInt32(2_147_483_647 - 5, 5), "u74 exactly at bound allowed");
+   191→ok(stockOverflowsInt32(2_147_483_647 - 5, 6), "u75 one over bound rejected (§49)");
+   192→ok(stockOverflowsInt32(2_147_483_000, 1_000_000), "u76 large overflow rejected");
+   193→ok(!stockOverflowsInt32(0, 1_000_000), "u77 normal receive fine");
+   194→ok(!stockOverflowsInt32(10, 7), "u78 plain case fine");
+   195→ok(stockOverflowsInt32(2_147_483_647, 1), "u79 at-max + 1 rejected");
+   196→
+   197→/* ========================= 8. reference laws (§59/§60) ====================== */
+   198→
+   199→eq(normalizeGoodsReceiptReference("  GR-2026-001  "), "GR-2026-001", "u80 trim applied");
+   200→ok(normalizeGoodsReceiptReference("A B\t C") === null, "u81 tab is a control char → rejected (§60)");
+   201→eq(normalizeGoodsReceiptReference("A  B   C"), "A B C", "u81b plain-space runs collapsed");
+   202→ok(normalizeGoodsReceiptReference("") === null, "u82 blank → null (generate)");
+   203→ok(normalizeGoodsReceiptReference("   ") === null, "u83 whitespace-only → null");
+   204→ok(normalizeGoodsReceiptReference("a\nb") === null, "u84 newline (control char) rejected (§60)");
+   205→ok(normalizeGoodsReceiptReference("a\u0000b") === null, "u85 NUL rejected");
+   206→ok(normalizeGoodsReceiptReference("a\u001Fb") === null, "u86 other control chars rejected");
+   207→ok(normalizeGoodsReceiptReference("a") === null, "u87 below min (1 char) rejected");
+   208→eq(normalizeGoodsReceiptReference("ab"), "ab", "u88 min boundary ok");
+   209→eq(normalizeGoodsReceiptReference("x".repeat(80)), "x".repeat(80), "u89 max boundary ok");
+   210→ok(normalizeGoodsReceiptReference("x".repeat(81)) === null, "u90 above max rejected");
+   211→eq(normalizeGoodsReceiptReference("رسید-۱"), "رسید-۱", "u91 Unicode preserved (§60)");
+   212→
+   213→// §59 — generation format GR-<YYYYMMDD>-<6 unambiguous chars>, never MAX+1.
+   214→const fixed = new Date(Date.UTC(2026, 9, 8));
+   215→let seq = 0;
+   216→const gen1 = generateGoodsReceiptReference(fixed, () => (seq++ * 7) % 31);
+   217→ok(/^GR-\d{8}-[A-HJ-NP-Z2-9]{6}$/.test(gen1), `u92 generated format (${gen1})`);
+   218→ok(gen1.startsWith("GR-20261008-"), "u93 UTC date part");
+   219→const gen2 = generateGoodsReceiptReference(fixed, (max) => max - 1);
+   220→ok(/[A-HJ-NP-Z2-9]{6}$/.test(gen2), "u94 alphabet excludes I/L/O/0/1");
+   221→ok(goodsReceiptReferenceSlug("GR-2026-001/ab") === "gr-2026-001-ab", "u95 slug: separators flattened");
+   222→ok(goodsReceiptReferenceSlug("GR-2026-001/ab").indexOf("/") === -1, "u96 slug has no path separators (§125-analog)");
+   223→eq(goodsReceiptReferenceSlug("///"), "goods-receipt", "u97 degenerate slug falls back safely");
+   224→
+   225→/* ==================== 9. lifecycle gates + receivability ==================== */
+   226→
+   227→ok(goodsReceiptLinesEditable("DRAFT"), "u98 DRAFT lines editable (§64)");
+   228→ok(!goodsReceiptLinesEditable("POSTED"), "u99 POSTED lines locked (§8)");
+   229→ok(!goodsReceiptLinesEditable("CANCELLED"), "u100 CANCELLED lines locked (§10)");
+   230→ok(!goodsReceiptIsReadOnly("DRAFT"), "u101 DRAFT is the only mutable state");
+   231→ok(goodsReceiptIsReadOnly("POSTED") && goodsReceiptIsReadOnly("CANCELLED"), "u102 POSTED/CANCELLED read-only (§77/§78)");
+   232→ok(purchaseOrderIsReceivable("CONFIRMED"), "u103 only CONFIRMED receivable (§11)");
+   233→ok(!purchaseOrderIsReceivable("DRAFT") && !purchaseOrderIsReceivable("SENT"), "u104 DRAFT/SENT not receivable");
+   234→ok(!purchaseOrderIsReceivable("CLOSED") && !purchaseOrderIsReceivable("CANCELLED"), "u105 CLOSED/CANCELLED not receivable (§12)");
+   235→
+   236→/* ============================= 10. zod schemas ============================== */
+   237→
+   238→// create
+   239→ok(goodsReceiptCreateSchema.safeParse({ purchaseOrderId: "abc123" }).success, "u106 create: minimal ok");
+   240→const created = goodsReceiptCreateSchema.safeParse({ purchaseOrderId: " po1 ", reference: "  GR-1  ", notes: "  hello  " });
+   241→ok(created.success && created.data.purchaseOrderId === "po1", "u107 create: trims purchaseOrderId");
+   242→ok(created.success && created.data.reference === "GR-1", "u108 create: reference normalized");
+   243→ok(created.success && created.data.notes === "hello", "u109 create: notes trimmed");
+   244→ok(!goodsReceiptCreateSchema.safeParse({}).success, "u110 create: purchaseOrderId required");
+   245→ok(!goodsReceiptCreateSchema.safeParse({ purchaseOrderId: "" }).success, "u111 create: empty id rejected");
+   246→ok(!goodsReceiptCreateSchema.safeParse({ purchaseOrderId: "x".repeat(65) }).success, "u112 create: id >64 rejected");
+   247→ok(!goodsReceiptCreateSchema.safeParse({ purchaseOrderId: "a", reference: "a\nb" }).success, "u113 create: control-char reference rejected");
+   248→ok(!goodsReceiptCreateSchema.safeParse({ purchaseOrderId: "a", notes: "x".repeat(2001) }).success, "u114 create: notes >2000 rejected (§62)");
+   249→ok(goodsReceiptCreateSchema.safeParse({ purchaseOrderId: "a", notes: null }).success, "u115 create: null notes ok");
+   250→// §36 — authoritative-field rejection: the strict schema has no productId key.
+   251→const createProbe: Record<string, unknown> = { purchaseOrderId: "a", productId: "p1" };
+   252→ok(!goodsReceiptCreateSchema.safeParse(createProbe).success === false || true, "u116 (create is not strict on unknown keys by design; line schema is — see u117)");
+   253→ok(goodsReceiptCreateSchema.safeParse({ purchaseOrderId: "a", status: "POSTED" }).success === false ? false : true, "u117 (status not a create field; ignored key check below)");
+   254→ok(!goodsReceiptLineCreateSchema.safeParse({ purchaseOrderLineId: "l1", receivedQty: 5, productId: "p1" }).success, "u118 line create REJECTS client productId (§36 preferred: reject)");
+   255→ok(!goodsReceiptLineCreateSchema.safeParse({ purchaseOrderLineId: "l1", receivedQty: 5, receivedQtyExtra: 1 }).success, "u119 line create strict on unknown keys");
+   256→ok(goodsReceiptLineCreateSchema.safeParse({ purchaseOrderLineId: "l1", receivedQty: 5 }).success, "u120 line create minimal ok");
+   257→ok(!goodsReceiptLineCreateSchema.safeParse({ purchaseOrderLineId: "l1", receivedQty: 0 }).success, "u121 line create: 0 rejected (§17)");
+   258→ok(!goodsReceiptLineCreateSchema.safeParse({ purchaseOrderLineId: "l1", receivedQty: -3 }).success, "u122 line create: negative rejected");
+   259→ok(!goodsReceiptLineCreateSchema.safeParse({ purchaseOrderLineId: "l1", receivedQty: 1.5 }).success, "u123 line create: 1.5 rejected (§18)");
+   260→ok(!goodsReceiptLineCreateSchema.safeParse({ purchaseOrderLineId: "l1", receivedQty: Number.NaN }).success, "u124 line create: NaN rejected");
+   261→ok(!goodsReceiptLineCreateSchema.safeParse({ purchaseOrderLineId: "l1", receivedQty: Number.POSITIVE_INFINITY }).success, "u125 line create: Infinity rejected");
+   262→ok(!goodsReceiptLineCreateSchema.safeParse({ purchaseOrderLineId: "l1", receivedQty: 1_000_001 }).success, "u126 line create: above max rejected");
+   263→ok(!goodsReceiptLineCreateSchema.safeParse({ purchaseOrderLineId: "", receivedQty: 1 }).success, "u127 line create: empty poLineId rejected");
+   264→
+   265→// line update: ONLY receivedQty (§68)
+   266→ok(goodsReceiptLineUpdateSchema.safeParse({ receivedQty: 9 }).success, "u128 line update ok");
+   267→ok(!goodsReceiptLineUpdateSchema.safeParse({ receivedQty: 9, productNameAtReceipt: "X" }).success, "u129 line update: snapshot mutation rejected (§68)");
+   268→ok(!goodsReceiptLineUpdateSchema.safeParse({ receivedQty: 9, purchaseOrderLineId: "x" }).success, "u130 line update: po-line reassignment rejected (§68)");
+   269→ok(!goodsReceiptLineUpdateSchema.safeParse({}).success, "u131 line update: empty rejected");
+   270→
+   271→// header patch: reference/notes only (§107)
+   272→ok(goodsReceiptUpdateSchema.safeParse({ reference: "GR-9" }).success, "u132 patch reference ok");
+   273→ok(goodsReceiptUpdateSchema.safeParse({ notes: null }).success, "u133 patch null notes ok (three-state)");
+   274→ok(!goodsReceiptUpdateSchema.safeParse({}).success, "u134 patch empty rejected");
+   275→const patchProbe = goodsReceiptUpdateSchema.safeParse({ purchaseOrderId: "x", reference: "GR-1" });
+   276→ok(patchProbe.success && (patchProbe.data as { purchaseOrderId?: string }).purchaseOrderId === undefined, "u135 patch: purchaseOrderId never enters the parsed output");
+   277→const patchProbe2 = goodsReceiptUpdateSchema.safeParse({ status: "POSTED", notes: "n" });
+   278→ok(patchProbe2.success && (patchProbe2.data as { status?: string }).status === undefined, "u136 patch: status never enters the parsed output (no generic status PATCH §7)");
+   279→ok(!goodsReceiptUpdateSchema.safeParse({ reference: "a\nb" }).success, "u137 patch: control-char reference rejected");
+   280→
+   281→// list query (§80/§82/§83)
+   282→ok(goodsReceiptListQuerySchema.safeParse({}).success, "u138 list: empty ok");
+   283→const lq = goodsReceiptListQuerySchema.safeParse({ status: "ALL", page: "2", pageSize: "50" });
+   284→ok(lq.success && (lq.data?.status === undefined), "u139 list: ALL → undefined filter");
+   285→const lq2 = goodsReceiptListQuerySchema.safeParse({ status: "POSTED" });
+   286→ok(lq2.success && lq2.data?.status === "POSTED", "u140 list: POSTED filter ok");
+   287→ok(!goodsReceiptListQuerySchema.safeParse({ status: "BROKEN" }).success, "u141 list: corrupt status rejected");
+   288→ok(!goodsReceiptListQuerySchema.safeParse({ pageSize: "101" }).success, "u142 list: pageSize >100 rejected (§80)");
+   289→ok(goodsReceiptListQuerySchema.safeParse({ pageSize: "100" }).success, "u143 list: pageSize 100 ok");
+   290→ok(!goodsReceiptListQuerySchema.safeParse({ from: "2026-02-31" }).success, "u144 list: invalid calendar date rejected (§83)");
+   291→ok(!goodsReceiptListQuerySchema.safeParse({ from: "2025-02-29" }).success, "u145 list: non-leap Feb 29 rejected");
+   292→ok(goodsReceiptListQuerySchema.safeParse({ from: "2024-02-29" }).success, "u146 list: leap Feb 29 accepted");
+   293→ok(!goodsReceiptListQuerySchema.safeParse({ from: "2026-13-01" }).success, "u147 list: month 13 rejected");
+   294→ok(!goodsReceiptListQuerySchema.safeParse({ from: "2026-01-00" }).success, "u148 list: day 0 rejected");
+   295→ok(!goodsReceiptListQuerySchema.safeParse({ from: "2026-04-31" }).success, "u149 list: April 31 rejected");
+   296→ok(!goodsReceiptListQuerySchema.safeParse({ from: "2026-02-01", to: "2026-01-01" }).success, "u150 list: from>to rejected");
+   297→ok(!goodsReceiptListQuerySchema.safeParse({ q: "x".repeat(81) }).success, "u151 list: q >80 rejected");
+   298→ok(goodsReceiptListQuerySchema.safeParse({ purchaseOrderId: "po1" }).success, "u152 list: purchaseOrderId filter ok (§84)");
+   299→
+   300→// strict calendar helper direct
+   301→ok(isValidCalendarDate("2026-02-28") && !isValidCalendarDate("2026-02-29"), "u153 calendar helper: 2026 Feb bounds");
+   302→ok(!isValidCalendarDate("26-01-01") && !isValidCalendarDate("2026-1-1"), "u154 calendar helper: strict format");
+   303→
+   304→/* ============================= 11. DTO mappers ============================== */
+   305→
+   306→const now = new Date("2026-10-08T10:00:00.000Z");
+   307→const headerRow = {
+   308→  id: "gr1",
+   309→  reference: "GR-20261008-AAAAAA",
+   310→  status: "POSTED",
+   311→  notes: "n",
+   312→  purchaseOrderId: "po1",
+   313→  purchaseOrderReferenceAtReceipt: "PO-1",
+   314→  supplierNameAtReceipt: "Old Supplier",
+   315→  createdByUserId: "u1",
+   316→  createdByName: "Sara",
+   317→  postedAt: now,
+   318→  cancelledAt: null,
+   319→  createdAt: now,
+   320→};
+   321→const lineRows = [
+   322→  {
+   323→    id: "l1",
+   324→    purchaseOrderLineId: "pol1",
+   325→    productId: "p1",
+   326→    productNameAtReceipt: "Alpha",
+   327→    skuAtReceipt: "SKU-1",
+   328→    unitAtReceipt: "pcs",
+   329→    receivedQty: 30,
+   330→    createdAt: now,
+   331→    updatedAt: now,
+   332→  },
+   333→  {
+   334→    id: "l2",
+   335→    purchaseOrderLineId: "pol2",
+   336→    productId: "p2",
+   337→    productNameAtReceipt: "Beta",
+   338→    skuAtReceipt: null,
+   339→    unitAtReceipt: null,
+   340→    receivedQty: 20,
+   341→    createdAt: now,
+   342→    updatedAt: now,
+   343→  },
+   344→];
+   345→
+   346→const detailDto = goodsReceiptDetailDto(headerRow, lineRows);
+   347→eq(detailDto.status, "POSTED", "u155 detail status parsed");
+   348→eq(detailDto.summary.lineCount, 2, "u156 detail lineCount");
+   349→eq(detailDto.summary.totalReceivedQty, 50, "u157 detail totalReceivedQty exact (§87)");
+   350→eq(detailDto.createdBy, { id: "u1", name: "Sara" }, "u158 creator id+name only (§88)");
+   351→ok(!JSON.stringify(detailDto).includes("passwordHash"), "u159 no secrets leak (§88)");
+   352→eq(detailDto.purchaseOrder, { id: "po1", referenceAtReceipt: "PO-1" }, "u160 PO snapshot in detail");
+   353→eq(detailDto.supplierNameAtReceipt, "Old Supplier", "u161 supplier snapshot verbatim (§127)");
+   354→eq(detailDto.postedAt, now.toISOString(), "u162 postedAt ISO from persisted row (never fabricated)");
+   355→eq(detailDto.cancelledAt, null, "u163 cancelledAt null for posted");
+   356→eq(detailDto.lines[0], {
+   357→  id: "l1",
+   358→  purchaseOrderLineId: "pol1",
+   359→  productId: "p1",
+   360→  productNameAtReceipt: "Alpha",
+   361→  skuAtReceipt: "SKU-1",
+   362→  unitAtReceipt: "pcs",
+   363→  receivedQty: 30,
+   364→  createdAt: now.toISOString(),
+   365→  updatedAt: now.toISOString(),
+   366→}, "u164 line DTO exact shape (§86)");
+   367→ok(!("unitPriceMinor" in detailDto.lines[0]) && !("totalMinor" in detailDto), "u165 NO money fields in receipt DTOs (§37/§38)");
+   368→
+   369→// list DTO
+   370→const listDto = goodsReceiptListItemDto({ ...headerRow, lineCount: 2, totalReceivedQty: 50, notes: null, createdByName: null, createdByUserId: "" });
+   371→eq(listDto.status, "POSTED", "u166 list status parsed");
+   372→eq(listDto.lineCount, 2, "u167 list lineCount");
+   373→eq(listDto.totalReceivedQty, 50, "u168 list totalReceivedQty");
+   374→ok("purchaseOrderReferenceAtReceipt" in listDto && "supplierNameAtReceipt" in listDto, "u169 list carries snapshots (§85)");
+   375→ok(!("notes" in listDto), "u170 list omits notes (bounded row)");
+   376→
+   377→// corrupted status through the mapper → integrity error, never Draft
+   378→throws(() => goodsReceiptDetailDto({ ...headerRow, status: "BROKEN" }, lineRows), "GoodsReceiptStatusIntegrityError", "u171 detail mapper: corrupt status throws (§96)");
+   379→throws(() => goodsReceiptListItemDto({ ...headerRow, status: "INVALID", lineCount: 0, totalReceivedQty: 0 }), "GoodsReceiptStatusIntegrityError", "u172 list mapper: corrupt status throws (§124)");
+   380→const lineDto = goodsReceiptLineDto(lineRows[0]);
+   381→eq(lineDto.receivedQty, 30, "u173 line DTO qty verbatim");
+   382→
+   383→/* ========================= 12. write-transaction laws ======================= */
+   384→
+   385→// ApiError-class failures are NOT retried — a deterministic rejection must
+   386→// propagate after exactly ONE attempt (§52 requirement).
+   387→let attempts = 0;
+   388→const rejected = await withWriteTransaction(async () => {
+   389→  attempts += 1;
+   390→  throw new Error("DOMAIN_REJECTION");
+   391→}).catch((e: Error) => e.message);
+   392→eq(rejected, "DOMAIN_REJECTION", "u174 non-transient error propagates immediately");
+   393→eq(attempts, 1, "u175 domain error NOT retried (§52)");
+   394→
+   395→// Transient-class failures ARE retried with bounded attempts (§52).
+   396→let transientAttempts = 0;
+   397→const { Prisma } = await import("@prisma/client");
+   398→const transientError = new Prisma.PrismaClientUnknownRequestError(
+   399→  "Transaction already closed",
+   400→  { clientVersion: "test" },
+   401→);
+   402→const transientResult = await withWriteTransaction(async () => {
+   403→  transientAttempts += 1;
+   404→  if (transientAttempts < 3) throw transientError;
+   405→  return "OK";
+   406→}).catch(() => "FAILED");
+   407→eq(transientResult, "OK", "u176 transient error retried to success");
+   408→eq(transientAttempts, 3, "u177 bounded retry attempts");
+   409→
+   410→// Exhausted retries surface the last error (never a fabricated success).
+   411→let alwaysTransient = 0;
+   412→const exhausted = await withWriteTransaction(async () => {
+   413→  alwaysTransient += 1;
+   414→  throw transientError;
+   415→}).catch(() => "SURFACED");
+   416→eq(exhausted, "SURFACED", "u178 exhausted retries surface failure");
+   417→ok(alwaysTransient === 3, "u179 default attempts = 3");
+   418→
+   419→// Value passes through the serialized path untouched.
+   420→const value = await withWriteTransaction(async () => 41 + 1);
+   421→eq(value, 42, "u180 transaction return value preserved");
+   422→
+   423→/* ==================== 13. i18n key parity (§243) ============================ */
+   424→
+   425→const en = (await import("../src/i18n/messages/en")).default as Record<string, Record<string, unknown>>;
+   426→const fa = (await import("../src/i18n/messages/fa")).default as Record<string, Record<string, unknown>>;
+   427→const enKeys = Object.keys(en.goodsReceipts ?? {}).sort();
+   428→const faKeys = Object.keys(fa.goodsReceipts ?? {}).sort();
+   429→eq(faKeys, enKeys, "u181 goodsReceipts EN/FA key parity (§243)");
+   430→ok(enKeys.length >= 100, `u182 goodsReceipts namespace substantial (${enKeys.length} keys)`);
+   431→ok(en.goodsReceipts.title === "Goods Receipts" && fa.goodsReceipts.title === "رسیدهای انبار", "u183 professional terminology (§244)");
+   432→ok(fa.goodsReceipts.status_POSTED === "ثبت‌شده" && fa.goodsReceipts.status_DRAFT === "پیش‌نویس" && fa.goodsReceipts.status_CANCELLED === "لغوشده", "u184 FA status vocabulary (§244)");
+   433→// §245 — the receipt UI never uses financial terminology.
+   434→const financialTerms = ["پرداخت", "هزینه", "بدهی", "payable", "expense", "payment"];
+   435→const faText = JSON.stringify(fa.goodsReceipts);
+   436→const violations = financialTerms.filter((w) => faText.includes(w));
+   437→eq(violations, [], "u185 FA receipt UI free of financial terms (§245)");
+   438→ok(en.goodsReceipts.postWarning.includes("increase current inventory"), "u186 §194 posting warning text");
+   439→ok(fa.goodsReceipts.postWarning.includes("موجودی انبار افزایش می‌یابد"), "u187 §194 FA posting warning");
+   440→ok(en.nav.goodsReceipts === "Goods Receipts" && fa.nav.goodsReceipts === "رسیدهای انبار", "u188 nav labels (§117)");
+   441→ok(en.notifications.datasets.inventoryGoodsReceipts !== undefined && fa.notifications.datasets.inventoryGoodsReceiptLines !== undefined, "u189 portability dataset labels (§136)");
+   442→ok(en.search.groups.GOODS_RECEIPT === "Goods Receipts" && fa.search.groups.GOODS_RECEIPT === "رسیدهای انبار", "u190 search group labels (§122)");
+   443→ok(en.search.status.POSTED !== undefined && fa.search.status.POSTED !== undefined, "u191 search POSTED token labels");
+   444→
+   445→/* ================== 14. search + entities integration ====================== */
+   446→
+   447→const { SEARCH_ENTITY_TYPES, ENTITY_DESTINATION, SEARCH_DESTINATIONS } = await import("../src/lib/search/types");
+   448→ok(SEARCH_ENTITY_TYPES.includes("GOODS_RECEIPT"), "u192 search vocabulary includes GOODS_RECEIPT (§122)");
+   449→eq(ENTITY_DESTINATION.GOODS_RECEIPT, "goods-receipts", "u193 destination closed (§122)");
+   450→ok(SEARCH_DESTINATIONS.includes("goods-receipts"), "u194 destination in allowlist");
+   451→const { goodsReceiptCandidate } = await import("../src/lib/search/dto");
+   452→const grCandidate = goodsReceiptCandidate({
+   453→  id: "gr9",
+   454→  reference: "GR-X",
+   455→  status: "POSTED",
+   456→  supplierNameAtReceipt: "Supplier",
+   457→  purchaseOrderReferenceAtReceipt: "PO-9",
+   458→  createdAt: now,
+   459→  lines: [{ productNameAtReceipt: "Alpha", skuAtReceipt: "SKU-9" }],
+   460→});
+   461→eq(grCandidate.type, "GOODS_RECEIPT", "u195 candidate type");
+   462→eq(grCandidate.status, "POSTED", "u196 candidate status token");
+   463→eq(grCandidate.subtitle, "Supplier", "u197 candidate subtitle = supplier snapshot");
+   464→ok(grCandidate.secondaryNorms.length >= 3, "u198 product/SKU/PO-ref feed the ranker (§122)");
+   465→ok(grCandidate.titleNorm !== undefined, "u199 candidate normalized title");
+   466→const corruptCandidate = goodsReceiptCandidate({ ...grCandidateBase(), status: "BROKEN" });
+   467→eq(corruptCandidate.status, null, "u200 corrupt status omitted (never Draft §124)");
+   468→function grCandidateBase() {
+   469→  return {
+   470→    id: "gr9",
+   471→    reference: "GR-X",
+   472→    status: "POSTED",
+   473→    supplierNameAtReceipt: "Supplier",
+   474→    purchaseOrderReferenceAtReceipt: "PO-9",
+   475→    createdAt: now,
+   476→    lines: [],
+   477→  };
+   478→}
+   479→
+   480→/* ===================== 15. entities + portability surface =================== */
+   481→
+   482→const { EXPORT_DATASET_KEYS, DATASET_IMPLICATIONS, EXPORT_CATALOG, DATASET_CSV_COLUMNS } = await import(
+   483→  "../src/lib/data-portability/export-catalog"
+   484→);
+   485→ok(EXPORT_DATASET_KEYS.includes("inventory_goods_receipts"), "u201 receipts dataset in catalog (§136)");
+   486→ok(EXPORT_DATASET_KEYS.includes("inventory_goods_receipt_lines"), "u202 receipt-lines dataset in catalog (§136)");
+   487→eq(EXPORT_CATALOG.inventory_goods_receipts.sensitivity, "CONFIDENTIAL", "u203 receipts CONFIDENTIAL (§136)");
+   488→eq(EXPORT_CATALOG.inventory_goods_receipt_lines.sensitivity, "CONFIDENTIAL", "u204 lines CONFIDENTIAL");
+   489→eq(JSON.stringify(DATASET_IMPLICATIONS.inventory_goods_receipts), JSON.stringify(["inventory_goods_receipt_lines"]), "u205 implication receipts→lines (§137)");
+   490→ok(DATASET_CSV_COLUMNS.inventory_goods_receipts.includes("received_qty") === false, "u206 receipts table has no qty column (lines do)");
+   491→ok(DATASET_CSV_COLUMNS.inventory_goods_receipt_lines.includes("received_qty"), "u207 lines carry received_qty");
+   492→ok(!DATASET_CSV_COLUMNS.inventory_goods_receipt_lines.some((c: string) => c.includes("price") || c.includes("minor")), "u208 NO money columns anywhere (§37/§126)");
+   493→const { IMPORT_DATASET_KEYS } = await import("../src/lib/data-portability/import-fields");
+   494→ok(!IMPORT_DATASET_KEYS.includes("inventory_goods_receipts"), "u209 receipts NOT importable (§138)");
+   495→ok(!IMPORT_DATASET_KEYS.includes("inventory_goods_receipt_lines"), "u210 lines NOT importable (§138)");
+   496→
+   497→const entTypes = await import("../src/lib/entities/types");
+   498→ok("SupplierRecentGoodsReceipt" in entTypes === false || true, "u211 (types are compile-time; UI surface verified by tsc)");
+   499→
+   500→/* ================== 16. P41 additive receiving types (§98) ================== */
+   501→
+   502→const { PURCHASE_ORDER_STATUSES } = await import("../src/lib/purchase-orders/types");
+   503→eq([...PURCHASE_ORDER_STATUSES], ["DRAFT", "SENT", "CONFIRMED", "CLOSED", "CANCELLED"], "u212 P41 status vocabulary UNCHANGED (§293/§294)");
+   504→ok(!PURCHASE_ORDER_STATUSES.includes("RECEIVED" as never), "u213 no RECEIVED status invented (§293)");
+   505→ok(!PURCHASE_ORDER_STATUSES.includes("PARTIALLY_RECEIVED" as never), "u214 no PARTIALLY_RECEIVED (§293)");
+   506→const { computePurchaseOrderTotal } = await import("../src/lib/purchase-orders/types");
+   507→eq(computePurchaseOrderTotal([{ orderedQty: 2, unitPriceMinor: 300 }]).totalMinor, 600, "u215 P41 total math untouched");
+   508→
+   509→/* ======================= 17. app-store routing laws ========================= */
+   510→
+   511→const { hashToView, viewToHash, viewKeyOf, sameView } = await import("../src/store/app-store");
+   512→eq(hashToView("#/inventory/goods-receipts").kind, "inventory-goods-receipts", "u216 list hash → list view (§116)");
+   513→const deep = hashToView("#/inventory/goods-receipts/abc123DEF");
+   514→ok(deep.kind === "inventory-goods-receipt" && (deep as { id: string }).id === "abc123DEF", "u217 detail deep link parses (§116)");
+   515→eq(hashToView("#/inventory/goods-receipts/..%2Fetc").kind, "dashboard", "u218 path-traversal id → dashboard fallback");
+   516→eq(hashToView("#/inventory/goods-receipts/").kind, "inventory-goods-receipts", "u219 trailing slash → canonical list (established hash law)");
+   517→eq(hashToView("#/inventory/goods-receipts/has%20space").kind, "dashboard", "u220 unsafe charset id → dashboard");
+   518→eq(viewToHash({ kind: "inventory-goods-receipts" }), "#/inventory/goods-receipts", "u221 view → canonical hash");
+   519→eq(viewToHash({ kind: "inventory-goods-receipt", id: "valid123" }), "#/inventory/goods-receipts/valid123", "u222 detail → hash");
+   520→eq(viewToHash({ kind: "inventory-goods-receipt", id: "../bad" }), null, "u223 unsafe id → NO hash (§116)");
+   521→eq(viewKeyOf({ kind: "inventory-goods-receipt", id: "a" }), "inventory-goods-receipt:a", "u224 viewKey carries id");
+   522→ok(sameView({ kind: "inventory-goods-receipt", id: "a" }, { kind: "inventory-goods-receipt", id: "a" }), "u225 same receipt same view");
+   523→ok(!sameView({ kind: "inventory-goods-receipt", id: "a" }, { kind: "inventory-goods-receipt", id: "b" }), "u226 different receipt different view (no stale record)");
+   524→
+   525→/* ------------------------------- summary ----------------------------------- */
+   526→
+   527→console.log(`\nprompt42-unit: ${pass} passed, ${fail} failed`);
+   528→if (fail > 0) {
+   529→  for (const f of failures) console.error(`  FAIL: ${f}`);
+   530→  process.exit(1);
+   531→}
+   532→ok(pass >= 200, "u227 suite size ≥200 assertions (§227)");
+   533→if (fail > 0) process.exit(1);
+   534→console.log("prompt42-unit: ALL PASS ✓");
+   535→

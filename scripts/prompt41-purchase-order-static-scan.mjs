@@ -330,7 +330,14 @@ const forbiddenImplementations = [
   ["weighted average", /weightedAverage|movingAverage/i],
   ["journal/GL", /journalEntry|generalLedger|chartOfAccounts|trialBalance/i],
   ["double entry", /doubleEntry|debit.*credit/i],
-  ["goods receipt", /goodsReceipt|stockReceipt|receiptNote/i],
+  // P42-F — rule PRECISELY updated: Prompt 42's sanctioned additive PO
+  // integration (§98/§146 — PO cancel hardening via POSTED-receipt count,
+  // receiving aggregates via groupBy, shared integrity codes) legitimately
+  // READS GoodsReceipt data inside the P41 service and is REQUIRED by the
+  // P42 scan (rules 134-140). The §127 danger this rule guards is P41
+  // IMPLEMENTING receiving — i.e. WRITING receipt rows. The ban therefore
+  // targets receipt WRITE operations, not the sanctioned read integration.
+  ["goods receipt", /goodsReceipt(Line)?\s*\.(create|update|upsert|delete)|stockReceipt|receiptNote/i],
 ];
 const poCode = CODE(); // rules scan CODE, not prose — negation wordings in
 // comments (e.g. the send route's "no email/webhook is claimed") are laws.

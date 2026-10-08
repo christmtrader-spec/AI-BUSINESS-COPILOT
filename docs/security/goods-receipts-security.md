@@ -61,3 +61,10 @@ Scope: `src/lib/inventory/goods-receipt/*`, `src/app/api/v1/inventory/goods-rece
 ## 11. Prohibited scope (verified by static scan)
 
 No expense/payment/sale/statement/aging/payable writes, no double-entry vocabulary, no warehouse/barcode/lot/serial fields, no new notification types, no AI tools, no client-trusted totals — enforced by `scripts/prompt42-goods-receipt-static-scan.mjs` (177 rules).
+
+## 12. Finalization hardening (P42-F)
+
+- **No unbounded historical reads**: the POSTED received-quantity sum is computed by the database (`aggregate(_sum)`) inside the same tenant-safe chain (receipt → PO line → PO, all previously tenant-verified by the caller). The aggregate result is re-validated as an exact non-negative integer before use; corruption surfaces as the stable `GOODS_RECEIPT_CORRUPT_RECEIVED` 500.
+- **Read-cap invariant**: all bounded reads use `take: cap + 1` completeness proofs. The +1 row or a `_count`/slice mismatch fails with `GOODS_RECEIPT_LINE_CAP_INVARIANT` (500) — a corrupted or silently truncated document can never be rendered as a partial DTO.
+- **Error-surface stability**: every remaining-quantity call site maps canonical-math integrity failures through one mapper, so clients only ever see the stable codes (`GOODS_RECEIPT_EXCEEDS_REMAINING` 409, `GOODS_RECEIPT_CORRUPT_RECEIVED` 500, `GOODS_RECEIPT_LINE_CAP_INVARIANT` 500) — never Prisma internals, SQL, or stack traces.
+- Scan baseline after finalization: `scripts/prompt42-goods-receipt-static-scan.mjs` — 188 rules, including the strengthened cap+1 completeness rule and the new DB-aggregate rule.

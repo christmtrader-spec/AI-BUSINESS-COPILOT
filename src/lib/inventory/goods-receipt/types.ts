@@ -158,6 +158,17 @@ export function computeReceivedQty(postedQuantities: ReadonlyArray<number>): num
  */
 export const GOODS_RECEIPT_CORRUPT_RECEIVED = "GOODS_RECEIPT_CORRUPT_RECEIVED";
 
+/**
+ * P42-F §10-§14 — read-cap invariant: a persisted document that contains
+ * MORE lines than its own configured cap is database corruption. Read
+ * paths fetch cap+1 rows to PROVE completeness; the +1 row (or a
+ * `_count` mismatch) must fail the read with this stable code — never a
+ * silently truncated/partial DTO. Distinct from GOODS_RECEIPT_LINE_LIMIT_REACHED
+ * (422 input/lifecycle rejection at write time): the invariant is a 500
+ * data-integrity failure.
+ */
+export const GOODS_RECEIPT_LINE_CAP_INVARIANT = "GOODS_RECEIPT_LINE_CAP_INVARIANT";
+
 export class GoodsReceiptIntegrityError extends Error {
   readonly code = GOODS_RECEIPT_CORRUPT_RECEIVED;
   constructor(message: string) {
@@ -267,6 +278,7 @@ export const GOODS_RECEIPT_ERROR_CODES = {
   INVALID_PERSISTED_STOCK: "GOODS_RECEIPT_INVALID_PERSISTED_STOCK",
   IMMUTABLE: "GOODS_RECEIPT_IMMUTABLE",
   CORRUPT_RECEIVED: GOODS_RECEIPT_CORRUPT_RECEIVED,
+  LINE_CAP_INVARIANT: GOODS_RECEIPT_LINE_CAP_INVARIANT,
 } as const;
 
 /* ---------------------------- lifecycle gates ------------------------------ */

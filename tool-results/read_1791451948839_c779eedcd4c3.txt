@@ -1,0 +1,432 @@
+     1→#!/usr/bin/env node
+     2→/**
+     3→ * Prompt 42 — goods-receipt static security scan (§223-§226).
+     4→ *
+     5→ * Dependency-free source scan over the whole P42 surface (domain, routes,
+     6→ * UI, prisma schema, write-transaction utility, export catalog, search,
+     7→ * entities, i18n, app store, docs). Rule classes (§223):
+     8→ *   tenant scoping · RBAC · status machine · no client businessId
+     9→ *   no client product authority · no client totals · integer quantities
+    10→ *   line caps · OVER-RECEIPT LAW · stock mutation present (§224)
+    11→ *   transaction boundary · audit atomicity · CSV security/no-store
+    12→ *   rate limit/entitlement · i18n · search tenant safety · deep links
+    13→ *   NO financial posting (§5/§160-§164/§224) · NO double-entry terms (§225)
+    14→ *   NO warehouse scope (§226) · no notification expansion (§257)
+    15→ *   no AI expansion (§258) · P41 additive integration (§98/§146)
+    16→ *
+    17→ * Run: node scripts/prompt42-goods-receipt-static-scan.mjs
+    18→ */
+    19→import { readFileSync, existsSync } from "node:fs";
+    20→
+    21→const ROOT = new URL("..", import.meta.url).pathname;
+    22→const read = (p) => {
+    23→  try {
+    24→    return readFileSync(`${ROOT}${p}`, "utf8");
+    25→  } catch {
+    26→    return "";
+    27→  }
+    28→};
+    29→
+    30→const DOMAIN = [
+    31→  "src/lib/inventory/goods-receipt/types.ts",
+    32→  "src/lib/inventory/goods-receipt/schema.ts",
+    33→  "src/lib/inventory/goods-receipt/dto.ts",
+    34→  "src/lib/inventory/goods-receipt/service.ts",
+    35→  "src/lib/inventory/goods-receipt/export.ts",
+    36→  "src/lib/inventory/goods-receipt/index.ts",
+    37→];
+    38→const ROUTES = [
+    39→  "src/app/api/v1/inventory/goods-receipts/route.ts",
+    40→  "src/app/api/v1/inventory/goods-receipts/[id]/route.ts",
+    41→  "src/app/api/v1/inventory/goods-receipts/[id]/lines/route.ts",
+    42→  "src/app/api/v1/inventory/goods-receipts/[id]/lines/[lineId]/route.ts",
+    43→  "src/app/api/v1/inventory/goods-receipts/[id]/post/route.ts",
+    44→  "src/app/api/v1/inventory/goods-receipts/[id]/cancel/route.ts",
+    45→  "src/app/api/v1/inventory/goods-receipts/[id]/export/route.ts",
+    46→];
+    47→const UI = [
+    48→  "src/modules/inventory/goods-receipts/goods-receipts-view.tsx",
+    49→  "src/modules/inventory/goods-receipts/goods-receipt-detail-view.tsx",
+    50→  "src/modules/inventory/goods-receipts/goods-receipt-create-dialog.tsx",
+    51→  "src/modules/inventory/goods-receipts/goods-receipt-line-picker.tsx",
+    52→  "src/modules/inventory/goods-receipts/goods-receipt-line-dialog.tsx",
+    53→  "src/modules/inventory/goods-receipts/goods-receipts-api.ts",
+    54→];
+    55→
+    56→const domainSource = () => DOMAIN.map(read).join("\n");
+    57→const routeSource = () => ROUTES.map(read).join("\n");
+    58→const uiSource = () => UI.filter((p) => existsSync(`${ROOT}${p}`)).map(read).join("\n");
+    59→const grSource = () => `${domainSource()}\n${routeSource()}\n${uiSource()}`;
+    60→
+    61→/** Strip // and /* *​/ comments so rules scan CODE, not prose (§7-analog). */
+    62→function stripComments(src) {
+    63→  return src
+    64→    .replace(/\/\*[\s\S]*?\*\//g, "")
+    65→    .replace(/(^|\s)\/\/[^\n]*/g, "$1");
+    66→}
+    67→const CODE = () => stripComments(grSource());
+    68→const DOMAIN_CODE = () => stripComments(domainSource());
+    69→const SERVICE_CODE = () => stripComments(read("src/lib/inventory/goods-receipt/service.ts"));
+    70→
+    71→let passed = 0;
+    72→let failed = 0;
+    73→const failedRules = [];
+    74→
+    75→function record(name, cond, info = "") {
+    76→  if (cond) passed += 1;
+    77→  else {
+    78→    failed += 1;
+    79→    failedRules.push(`${name}${info ? ` (${info})` : ""}`);
+    80→  }
+    81→}
+    82→
+    83→/* ------------------------- existence of the surface ------------------------ */
+    84→
+    85→for (const p of [...DOMAIN, ...ROUTES]) {
+    86→  record(`00. file exists ${p}`, existsSync(`${ROOT}${p}`));
+    87→}
+    88→record("00. UI module files exist", UI.filter((p) => existsSync(`${ROOT}${p}`)).length === 6);
+    89→
+    90→/* ------------------------------ tenant scoping ----------------------------- */
+    91→
+    92→record("01. receipt load scoped by businessId", /where: \{ id, businessId \}/.test(domainSource()));
+    93→record("02. routes use ctx.businessId only", (routeSource().match(/ctx\.businessId/g) || []).length >= 9);
+    94→record("03. no client businessId accepted", !/body\.businessId|searchParams\.get\("businessId"\)|req\.json\(\)\.businessId/.test(routeSource()));
+    95→record("04. create derives tenant from ctx", /businessId: ctx\.businessId/.test(read("src/app/api/v1/inventory/goods-receipts/route.ts")));
+    96→record("05. PO line validation joins tenant-scoped PO", /purchaseOrderLine\.findFirst\(\{[\s\S]*?purchaseOrderId: header\.purchaseOrderId/.test(SERVICE_CODE()));
+    97→record("06. product existence re-checked with tenant scope at post", /product\.findFirst\(\{[\s\S]*?businessId: input\.businessId/.test(SERVICE_CODE()));
+    98→record("07. foreign receipt → 404 NOT_FOUND", (domainSource().match(/Goods receipt not found\./g) || []).length >= 1);
+    99→record("08. foreign PO → 404 on create", /Purchase order not found\./.test(SERVICE_CODE()));
+   100→
+   101→/* --------------------------------- RBAC ------------------------------------ */
+   102→
+   103→record("09. reads gated data:read", (routeSource().match(/requirePermission\(ctx, "data:read"\)/g) || []).length >= 3);
+   104→record("10. writes gated data:write", (routeSource().match(/requirePermission\(ctx, "data:write"\)/g) || []).length >= 5);
+   105→record("11. getAuthContext used in every route", (routeSource().match(/getAuthContext\(req\)/g) || []).length >= 7);
+   106→record("12. UI gates with can(role, data:write)", uiSource().includes('can(role, "data:write")'));
+   107→
+   108→/* -------------------- no raw Prisma responses / server-only ---------------- */
+   109→
+   110→record("13. DTO mappers exist", /goodsReceiptDetailDto|goodsReceiptListItemDto|goodsReceiptLineDto/.test(read("src/lib/inventory/goods-receipt/dto.ts")));
+   111→record("14. service is server-only", read("src/lib/inventory/goods-receipt/service.ts").startsWith('import "server-only";'));
+   112→record("15. export builder is server-only", read("src/lib/inventory/goods-receipt/export.ts").startsWith('import "server-only";'));
+   113→record("16. no server-only import in UI module", !/from "server-only"/.test(uiSource()));
+   114→record("17. barrel exports only pure modules", !/export \* from "\.\/(service|schema|export)"/.test(read("src/lib/inventory/goods-receipt/index.ts")));
+   115→record("18. creator from ctx.userId", /userId: ctx\.userId/.test(routeSource()));
+   116→record("19. createdBy DTO exposes id+name only", /createdBy: \{ id: string; name: string \| null \} \| null;/.test(read("src/lib/inventory/goods-receipt/dto.ts")));
+   117→
+   118→/* ----------------------------- quantity safety ----------------------------- */
+   119→
+   120→record("20. receivedQty bound centralized", /GOODS_RECEIPT_QTY_MAX = 1_000_000/.test(read("src/lib/inventory/goods-receipt/types.ts")));
+   121→record("21. qty min = 1 centralized", /RECEIVED_QTY_MIN = 1/.test(read("src/lib/inventory/goods-receipt/types.ts")));
+   122→record("22. zod enforces int + min + max", /\.int\("receivedQty must be an integer\."\)/.test(read("src/lib/inventory/goods-receipt/schema.ts")));
+   123→record("23. no parseFloat anywhere in P42 code", !/parseFloat\s*\(/.test(CODE()));
+   124→record("24. no Math.round in P42 code", !/Math\.round\s*\(/.test(CODE()));
+   125→record("25. no decimal.js dependency in P42", !/from "decimal\.js"|require\("decimal\.js"\)/.test(CODE()));
+   126→record("26. stock overflow guard exists (§49)", /stockOverflowsInt32/.test(SERVICE_CODE()));
+   127→record("27. PRODUCT_STOCK_INT32_MAX defined (§49)", /PRODUCT_STOCK_INT32_MAX = 2_147_483_647/.test(read("src/lib/inventory/goods-receipt/types.ts")));
+   128→record("28. corrupt persisted stock → controlled 500 (§46/§47)", /INVALID_PERSISTED_STOCK/.test(SERVICE_CODE()));
+   129→record("29. corrupt stock is never silently repaired", !/stockQty: 0\b/.test(SERVICE_CODE()));
+   130→record("30. integer stock arithmetic (+ only)", /stockQty \+ line\.receivedQty/.test(SERVICE_CODE()));
+   131→
+   132→/* ------------------------------ line cap (§20/§71) ------------------------- */
+   133→
+   134→record("31. cap default 200 clamp 20..500", /GOODS_RECEIPT_LINE_CAP_DEFAULT = 200/.test(read("src/lib/inventory/goods-receipt/types.ts")) && /GOODS_RECEIPT_LINE_CAP_MAX = 500/.test(read("src/lib/inventory/goods-receipt/types.ts")));
+   135→record("32. defensive cap parser exists", /export function goodsReceiptLineCap/.test(read("src/lib/inventory/goods-receipt/types.ts")));
+   136→record("33. line-add enforces cap", /assertLineCap/.test(SERVICE_CODE()));
+   137→record("34. post enforces cap+1 completeness", /take: cap \+ 1/.test(SERVICE_CODE()));
+   138→record("35. list line slice bounded by cap", /take: cap,/.test(SERVICE_CODE()) || /take: goodsReceiptLineCap/.test(SERVICE_CODE()));
+   139→
+   140→/* --------------------------- over-receipt law (§15) ------------------------ */
+   141→
+   142→record("36. exceedsRemaining pure law exists", /export function exceedsRemaining/.test(read("src/lib/inventory/goods-receipt/types.ts")));
+   143→record("37. line-add consults the law", /exceedsRemaining\(/.test(SERVICE_CODE()));
+   144→record("38. post consults the law (authoritative)", (SERVICE_CODE().match(/exceedsRemaining\(/g) || []).length >= 2);
+   145→record("39. over-receipt stable error code", /GOODS_RECEIPT_EXCEEDS_REMAINING/.test(read("src/lib/inventory/goods-receipt/types.ts")));
+   146→record("40. over-receipt maps to 409", /409,[\s\S]{0,60}GOODS_RECEIPT_ERROR_CODES\.EXCEEDS_REMAINING/.test(SERVICE_CODE()));
+   147→record("41. no tolerance percentage anywhere", !/tolerance/i.test(DOMAIN_CODE()));
+   148→record("42. no bypass/override flag anywhere", !/allowOverReceipt|bypassRemaining|forcePost/.test(CODE()));
+   149→record("43. posted-only sum helper (§99 draft/cancelled excluded)", /status: "POSTED"/.test(SERVICE_CODE()));
+   150→record("44. stale draft post rejected via remaining re-check (§67)", /sumPostedQtyForPoLine/.test(SERVICE_CODE()));
+   151→
+   152→/* ------------------------------ status machine ----------------------------- */
+   153→
+   154→record("45. closed status vocabulary", /\["DRAFT", "POSTED", "CANCELLED"\]/.test(read("src/lib/inventory/goods-receipt/types.ts")));
+   155→record("46. POSTED is terminal (no reversal §7)", /POSTED: \[\]/.test(read("src/lib/inventory/goods-receipt/types.ts")));
+   156→record("47. CANCELLED is terminal (§10)", /CANCELLED: \[\]/.test(read("src/lib/inventory/goods-receipt/types.ts")));
+   157→record("48. dedicated post endpoint", existsSync(`${ROOT}src/app/api/v1/inventory/goods-receipts/[id]/post/route.ts`));
+   158→record("49. dedicated cancel endpoint", existsSync(`${ROOT}src/app/api/v1/inventory/goods-receipts/[id]/cancel/route.ts`));
+   159→record("50. NO generic status PATCH route", !existsSync(`${ROOT}src/app/api/v1/inventory/goods-receipts/[id]/status/route.ts`));
+   160→record("51. corrupt persisted status → stable 500 (§96)", /GOODS_RECEIPT_INVALID_PERSISTED_STATUS/.test(SERVICE_CODE()));
+   161→record("52. parser never defaults to DRAFT (§173)", /throw new GoodsReceiptStatusIntegrityError/.test(read("src/lib/inventory/goods-receipt/types.ts")));
+   162→record("53. export maps corrupt status to controlled 500 (§97)", /INVALID_PERSISTED_STATUS/.test(read("src/lib/inventory/goods-receipt/export.ts")));
+   163→record("54. PO receivability gate (§11/§65)", /purchaseOrderIsReceivable/.test(SERVICE_CODE()) && /PURCHASE_ORDER_NOT_RECEIVABLE|PO_NOT_RECEIVABLE/.test(read("src/lib/inventory/goods-receipt/types.ts")));
+   164→record("55. post re-checks PO status inside tx (§149/§150)", /assertPurchaseOrderReceivable\(po\.status\)/.test(SERVICE_CODE()));
+   165→record("56. line-add re-checks PO status (§65)", (SERVICE_CODE().match(/assertPurchaseOrderReceivable\(/g) || []).length >= 2);
+   166→
+   167→/* ------------------------- transaction boundary (§39/§72) ------------------ */
+   168→
+   169→record("57. posting runs in ONE write transaction", /withWriteTx\(async \(tx\) => \{[\s\S]*?assertTransition\(header\.status, "POSTED"\)/.test(SERVICE_CODE()));
+   170→record("58. uses the SHARED write-transaction utility (§52)", /from "@\/lib\/db\/write-transaction"/.test(read("src/lib/inventory/goods-receipt/service.ts")));
+   171→record("59. P41 service also uses the shared utility (§53)", /from "@\/lib\/db\/write-transaction"/.test(read("src/lib/purchase-orders/service.ts")));
+   172→record("60. shared utility retries transient only", /P2034|P2024/.test(read("src/lib/db/write-transaction.ts")));
+   173→record("61. shared utility FIFO serialization", /writeChain/.test(read("src/lib/db/write-transaction.ts")));
+   174→record("62. post status re-check INSIDE the transaction (§73)", /loadReceiptHeader\(tx,/.test(SERVICE_CODE()));
+   175→
+   176→/* --------------------------- stock mutation (§4/§39/§224) ------------------ */
+   177→
+   178→record("63. posting updates Product.stockQty (§4 REQUIRED)", /tx\.product\.update\(\{[\s\S]*?stockQty: newStock/.test(SERVICE_CODE()));
+   179→record("64. posting creates InventoryAdjustment (§41 REQUIRED)", /tx\.inventoryAdjustment\.create\(/.test(SERVICE_CODE()));
+   180→record("65. adjustment delta = receivedQty (§45)", /delta: line\.receivedQty/.test(SERVICE_CODE()));
+   181→record("66. adjustment reason identifies the receipt (§41)", /Goods receipt \$\{reference\}|Goods receipt \$\{header\.reference\}/.test(SERVICE_CODE()));
+   182→record("67. adjustment actorId from ctx (§42)", /actorId: input\.userId/.test(SERVICE_CODE()));
+   183→record("68. adjustment businessId from ctx (§43)", /businessId: input\.businessId/.test(SERVICE_CODE()));
+   184→record("69. postedAt server-generated (§74)", /data: \{ status: "POSTED", postedAt \}/.test(SERVICE_CODE()) || /status: "POSTED", postedAt \}/.test(SERVICE_CODE()));
+   185→record("70. empty receipt cannot post (§70)", /ERROR_CODES\.EMPTY/.test(SERVICE_CODE()));
+   186→
+   187→/* -------------------- NO financial mutation (§5/§160-§164/§224) ------------- */
+   188→
+   189→record("71. P42 code never creates Expense", !/expense\.create|tx\.expense\.create/.test(DOMAIN_CODE()));
+   190→record("72. P42 code never creates Payment", !/payment\.create|tx\.payment\.create/.test(DOMAIN_CODE()));
+   191→record("73. P42 code never creates Sale", !/sale\.create|tx\.sale\.create/.test(DOMAIN_CODE()));
+   192→record("74. P42 code never writes statement/aging", !/statement\.(create|update)|aging/i.test(DOMAIN_CODE()));
+   193→record("75. P42 code never touches payable balances", !/payable/i.test(DOMAIN_CODE()));
+   194→
+   195→/* --------------------------- §225 double-entry ban ------------------------- */
+   196→
+   197→const bannedDoubleEntry = ["journalEntry", "ledgerEntry", "chartOfAccounts", "doubleEntry", "COGS", "debit", "credit"];
+   198→const dcHit = bannedDoubleEntry.filter((w) => new RegExp(`\\b${w}\\b`).test(DOMAIN_CODE()));
+   199→record("76. NO double-entry implementations (§225)", dcHit.length === 0, dcHit.join(","));
+   200→
+   201→/* --------------------------- §226 warehouse ban ---------------------------- */
+   202→
+   203→const bannedWarehouse = ["warehouseId", "warehouseLocation", "binId", "shelfId", "barcode", "lotNumber", "serialNumber", "expiryDate"];
+   204→const whHit = bannedWarehouse.filter((w) => new RegExp(`\\b${w}\\b`).test(DOMAIN_CODE()));
+   205→record("77. NO warehouse scope (§226)", whHit.length === 0, whHit.join(","));
+   206→record("78. schema has no Warehouse model", !/model Warehouse/.test(read("prisma/schema.prisma")));
+   207→
+   208→/* ------------------------- snapshots (§24/§25/§28/§29) --------------------- */
+   209→
+   210→record("79. supplier snapshot copied from PO's frozen snapshot (§25)", /supplierNameAtOrder/.test(SERVICE_CODE()) && /supplierNameAtReceipt: po\.supplierNameAtOrder/.test(SERVICE_CODE()));
+   211→record("80. PO reference snapshot (§24)", /purchaseOrderReferenceAtReceipt: po\.reference/.test(SERVICE_CODE()));
+   212→record("81. line snapshots from PO line (§29)", /productNameAtReceipt: poLine\.productNameAtOrder/.test(SERVICE_CODE()));
+   213→record("82. snapshot columns in schema", /productNameAtReceipt String/.test(read("prisma/schema.prisma")));
+   214→record("83. DTO uses snapshot fields (§127)", /productNameAtReceipt|skuAtReceipt|unitAtReceipt/.test(read("src/lib/inventory/goods-receipt/dto.ts")));
+   215→
+   216→/* ------------------------------ reference (§59-§61) ------------------------ */
+   217→
+   218→record("84. unique [businessId, reference] in schema (§59)", /@@unique\(\[businessId, reference\]\)/.test(read("prisma/schema.prisma")));
+   219→record("85. duplicate reference → 409 (§61)", /DUPLICATE_REFERENCE/.test(SERVICE_CODE()));
+   220→record("86. secure random generation (not MAX+1)", /randomInt/.test(SERVICE_CODE()) && !/MAX\(\s*reference/.test(CODE()));
+   221→record("87. line uniqueness in schema (§27)", /@@unique\(\[goodsReceiptId, purchaseOrderLineId\]\)/.test(read("prisma/schema.prisma")));
+   222→record("88. duplicate line → 409 (§209)", /P2002/.test(SERVICE_CODE()));
+   223→
+   224→/* ------------------------------- audit (§153-§156) ------------------------- */
+   225→
+   226→record("89. audit actions cover the lifecycle (§153)", (SERVICE_CODE().match(/goods_receipt\.(create|update|line_add|line_update|line_remove|post|cancel)/g) || []).length >= 7);
+   227→record("90. audit inside the same transaction (§154)", /audit\(\s*[\s\S]{0,400}?\),\s*\n?\s*tx,/.test(SERVICE_CODE()));
+   228→record("91. audit never logs notes CONTENT (§155)", (() => {
+   229→  // Extract the payload object (last balanced {...}) of EVERY auditInput(
+   230→  // call site and the auditInput helper's own after-argument template.
+   231→  const code = SERVICE_CODE();
+   232→  const payloads = [];
+   233→  let idx = code.indexOf("auditInput(");
+   234→  while (idx !== -1) {
+   235→    // balanced-paren scan for the full argument list
+   236→    let depth = 0;
+   237→    let end = idx + "auditInput".length;
+   238→    for (; end < code.length; end += 1) {
+   239→      if (code[end] === "(") depth += 1;
+   240→      else if (code[end] === ")") {
+   241→        depth -= 1;
+   242→        if (depth === 0) break;
+   243→      }
+   244→    }
+   245→    const call = code.slice(idx, end + 1);
+   246→    // last balanced {...} inside the call = the after payload
+   247→    const lastBrace = call.lastIndexOf("{");
+   248→    if (lastBrace !== -1) {
+   249→      let d = 0;
+   250→      for (let i = lastBrace; i < call.length; i += 1) {
+   251→        if (call[i] === "{") d += 1;
+   252→        else if (call[i] === "}") {
+   253→          d -= 1;
+   254→          if (d === 0) {
+   255→            payloads.push(call.slice(lastBrace, i + 1));
+   256→            break;
+   257→          }
+   258→        }
+   259→      }
+   260→    }
+   261→    idx = code.indexOf("auditInput(", end);
+   262→  }
+   263→  // The helper's `after: { reference, ...after }` template is allowed;
+   264→  // `notes: { changed: true }` (three-state pattern) is allowed; the
+   265→  // CONTENT of notes (raw string / passthrough) is never logged.
+   266→  return payloads.length >= 7 && payloads.every((pl) => !/notes:\s*("(?:[^"\\]|\\.)*"|input\.|header\.|row\.|line\.)/.test(pl));
+   267→})());
+   268→record("92. export route audits data.export (§135)", /action: "data\.export"/.test(read("src/app/api/v1/inventory/goods-receipts/[id]/export/route.ts")));
+   269→record("93. export audit entityType GoodsReceiptCSV (§135)", /GoodsReceiptCSV/.test(read("src/app/api/v1/inventory/goods-receipts/[id]/export/route.ts")));
+   270→
+   271→/* ------------------------- CSV export security (§125-§134) ----------------- */
+   272→
+   273→const exportRoute = read("src/app/api/v1/inventory/goods-receipts/[id]/export/route.ts");
+   274→record("94. CSV_EXPORT entitlement gate (§131)", /assertFeatureAccess\([\s\S]*?"CSV_EXPORT"/.test(exportRoute));
+   275→record("95. export rate limit 10/5min (§132)", /GOODS_RECEIPT_EXPORT_RATE_LIMIT = 10/.test(exportRoute));
+   276→record("96. 11th export → 429", /429/.test(exportRoute));
+   277→record("97. no-store cache control (§134)", /"cache-control": "no-store"/.test(exportRoute));
+   278→record("98. attachment disposition", /attachment/.test(exportRoute));
+   279→record("99. strict locale en|fa (§130)", /localeParam !== "en" && localeParam !== "fa"/.test(exportRoute));
+   280→record("100. shared toCsv (BOM/CRLF/injection-safe §129)", /toCsv\(/.test(read("src/lib/inventory/goods-receipt/export.ts")));
+   281→record("101. CSV covers ALL lines cap+1 (§128)", /take: cap \+ 1/.test(read("src/lib/inventory/goods-receipt/export.ts")));
+   282→record("102. CSV has NO money columns (§126)", !/unitPriceMinor|lineTotalMinor|totalMinor/.test(stripComments(read("src/lib/inventory/goods-receipt/export.ts"))));
+   283→record("103. malformed export id → 404 before data read (§133)", /isValidEntityId\(id\)/.test(exportRoute));
+   284→
+   285→/* ----------------------------- API validation (§94) ------------------------ */
+   286→
+   287→record("104. parseBody on every write route", (routeSource().match(/parseBody\(req, /g) || []).length >= 4);
+   288→record("105. ApiError conventions used", /ApiError/.test(routeSource()));
+   289→record("106. list pagination DB-level (§175)", /skip: \(input\.page - 1\) \* input\.pageSize/.test(SERVICE_CODE()));
+   290→record("107. pageSize ≤ 100 enforced (§80)", /max\(100\)/.test(read("src/lib/inventory/goods-receipt/schema.ts")));
+   291→
+   292→/* -------------------------------- search (§122-§124) ----------------------- */
+   293→
+   294→const searchTypes = read("src/lib/search/types.ts");
+   295→const searchQuery = read("src/lib/search/query.ts");
+   296→const searchDto = read("src/lib/search/dto.ts");
+   297→record("108. GOODS_RECEIPT in search vocabulary (§122)", /"GOODS_RECEIPT"/.test(searchTypes));
+   298→record("109. search destination allowlisted", /"goods-receipts"/.test(searchTypes));
+   299→record("110. search WHERE carries businessId (§123)", /searchGoodsReceipts[\s\S]*?businessId,/.test(searchQuery));
+   300→record("111. search selects NO money/qty (§122)", (() => {
+   301→  const m = searchQuery.match(/async function searchGoodsReceipts[\s\S]*?\n\}/);
+   302→  return m ? !/(unitPriceMinor|totalMinor|receivedQty|stockQty)/.test(stripComments(m[0])) : false;
+   303→})());
+   304→record("112. corrupt search status omitted, never Draft (§124)", (() => {
+   305→  const m = searchDto.match(/function goodsReceiptStatusToken[\s\S]*?\n\}/);
+   306→  return m ? m[0].includes("null") && !m[0].includes('"DRAFT" ? "DRAFT"') : false;
+   307→})());
+   308→record("113. search bounded by per-entity take", /take: SEARCH_PER_ENTITY_TAKE/.test(searchQuery.split("searchGoodsReceipts")[1] ?? ""));
+   309→
+   310→/* ------------------------------ deep links (§116/§119) --------------------- */
+   311→
+   312→const appStore = read("src/store/app-store.ts");
+   313→record("114. hash routes registered (§116)", appStore.includes("#/inventory/goods-receipts"));
+   314→record("115. safe-ID gate on deep link ids", (() => {
+   315→  const block = appStore.match(/if \(path === "inventory\/goods-receipts"\)[\s\S]*?return \{ kind: "inventory-goods-receipt", id \};/);
+   316→  return !!block && block[0].includes("isValidEntityId") && block[0].includes("dashboard");
+   317→})());
+   318→record("116. receipt detail links to PO (§119)", /kind: "purchase-order", id: data\.purchaseOrder\.id/.test(read("src/modules/inventory/goods-receipts/goods-receipt-detail-view.tsx")));
+   319→record("117. PO detail links to receipt detail (§119)", /kind: "inventory-goods-receipt", id/.test(read("src/modules/purchase-orders/purchase-order-detail-view.tsx")));
+   320→record("118. sidebar nav entry (§117)", /"inventory-goods-receipts"/.test(read("src/modules/shell/app-sidebar.tsx")));
+   321→record("119. command palette entry (§118)", /inventory-goods-receipts/.test(read("src/modules/shell/command-palette.tsx")));
+   322→record("120. app-shell renders both views", (read("src/modules/shell/app-shell.tsx").match(/inventory-goods-receipts?" ?\?/g) || []).length >= 2);
+   323→
+   324→/* ------------------------------- UI laws (§108-§114) ----------------------- */
+   325→
+   326→const detailView = read("src/modules/inventory/goods-receipts/goods-receipt-detail-view.tsx");
+   327→record("121. posted receipts read-only (no cancel button)", !/canCancel = writable && \(data\.status === "DRAFT" \|\| data\.status === "POSTED"\)/.test(detailView));
+   328→record("122. §194 posting warning key present", /postWarning/.test(read("src/i18n/messages/en.ts")));
+   329→record("123. §193 confirmation shows quantities", /totalReceivedQty/.test(detailView) && /postTitle/.test(read("src/i18n/messages/en.ts")));
+   330→record("124. stale-remaining conflict banner (§113)", /staleRemaining/.test(detailView));
+   331→record("125. NO auto-rebase of quantities (§114)", !/rebase/i.test(CODE()));
+   332→record("126. line picker is PO-line based (§110)", /purchaseOrderLineId/.test(read("src/modules/inventory/goods-receipts/goods-receipt-line-picker.tsx")));
+   333→record("127. picker filters remaining > 0 (§110)", /remainingQty > 0/.test(read("src/modules/inventory/goods-receipts/goods-receipts-api.ts")));
+   334→record("128. picker shows NO price (§111)", !/unitPriceMinor|price/i.test(stripComments(read("src/modules/inventory/goods-receipts/goods-receipt-line-picker.tsx"))));
+   335→record("129. picker bounded (page 10, §241)", /pageSize: "10"/.test(read("src/modules/inventory/goods-receipts/goods-receipts-api.ts")));
+   336→record("130. qty dialog max = remaining (§112)", /maxQty/.test(read("src/modules/inventory/goods-receipts/goods-receipt-line-dialog.tsx")));
+   337→
+   338→/* --------------------------- P41 additive integration ---------------------- */
+   339→
+   340→const poService = read("src/lib/purchase-orders/service.ts");
+   341→record("131. PO receiving summary additive (§98)", /receiving\?[\s\S]*?fullyReceived/.test(read("src/lib/purchase-orders/dto.ts")));
+   342→record("132. P41 status vocabulary unchanged (§293)", !/"RECEIVED"|"PARTIALLY_RECEIVED"|"FULFILLED"/.test(stripComments(read("src/lib/purchase-orders/types.ts"))));
+   343→record("133. receiving derived, never stored (§99/§295)", !/receivedQty Int/.test(read("prisma/schema.prisma").split("model GoodsReceiptLine")[0].split("model PurchaseOrderLine")[1] ?? ""));
+   344→record("134. PO cancel hardening (§146)", /PURCHASE_ORDER_HAS_POSTED_RECEIPTS/.test(poService));
+   345→record("135. hardening checks POSTED receipts inside tx (§146)", /goodsReceipt\.count\(\{[\s\S]*?status: "POSTED"/.test(poService));
+   346→record("136. §147 close warning wording (EN)", /Closing prevents further goods receipt/.test(read("src/i18n/messages/en.ts")));
+   347→record("137. §147 close warning wording (FA)", /دریافت کالا متوقف می‌شود/.test(read("src/i18n/messages/fa.ts")));
+   348→record("138. PO detail recent receipts bounded 10 (§104/§105)", /listRecentReceiptsForPurchaseOrder\(\{[\s\S]{0,200}?take: 10/.test(poService));
+   349→record("139. receiving aggregates grouped, no N+1 (§181)", /goodsReceiptLine\.groupBy/.test(poService));
+   350→record("140. corruption surfaces not clamped (§283)", /GoodsReceiptIntegrityError/.test(poService));
+   351→
+   352→/* ------------------------------- i18n (§243-§245) -------------------------- */
+   353→
+   354→const en = read("src/i18n/messages/en.ts");
+   355→const fa = read("src/i18n/messages/fa.ts");
+   356→const enKeys = (en.match(/\n  goodsReceipts: \{[\s\S]*?\n  \},/)?.[0].match(/\n    [a-zA-Z_0-9]+:/g) ?? []).map((s) => s.trim());
+   357→const faKeys = (fa.match(/\n  goodsReceipts: \{[\s\S]*?\n  \},/)?.[0].match(/\n    [a-zA-Z_0-9]+:/g) ?? []).map((s) => s.trim());
+   358→record("141. goodsReceipts namespace exists in EN", enKeys.length >= 100);
+   359→record("142. goodsReceipts EN/FA key parity (§243)", JSON.stringify(enKeys) === JSON.stringify(faKeys));
+   360→record("143. FA professional terminology (§244)", fa.includes("رسیدهای انبار") && fa.includes("ثبت دریافت کالا"));
+   361→record("144. FA receipt UI has no financial terms (§245)", (() => {
+   362→  const m = fa.match(/\n  goodsReceipts: \{[\s\S]*?\n  \},/);
+   363→  if (!m) return false;
+   364→  return !/پرداخت|هزینه|بدهی/.test(m[0]);
+   365→})());
+   366→record("145. nav labels present", en.includes('goodsReceipts: "Goods Receipts"') && fa.includes('goodsReceipts: "رسیدهای انبار"'));
+   367→record("146. search POSTED token localized", en.includes('POSTED: "Posted"') && fa.includes('POSTED: "ثبت‌شده"'));
+   368→
+   369→/* ---------------------- portability + backup (§136-§140) ------------------- */
+   370→
+   371→const catalog = read("src/lib/data-portability/export-catalog.ts");
+   372→record("147. receipts dataset in export catalog (§136)", /inventory_goods_receipts/.test(catalog));
+   373→record("148. receipt lines dataset in catalog", /inventory_goods_receipt_lines/.test(catalog));
+   374→record("149. implication receipts → lines (§137)", /inventory_goods_receipts: \["inventory_goods_receipt_lines"\]/.test(catalog));
+   375→record("150. receipt import NOT in import catalog (§138)", (() => {
+   376→  const fields = read("src/lib/data-portability/import-fields.ts");
+   377→  return !fields.includes("inventory_goods_receipts");
+   378→})());
+   379→record("151. restore-drill probes GoodsReceipt (§140)", /"GoodsReceipt", "GoodsReceiptLine"/.test(read("scripts/restore-drill.mjs")));
+   380→
+   381→/* ------------------- no notification/AI expansion (§257/§258) --------------- */
+   382→
+   383→record("152. no new notification types (§257)", !/goods_receipt/i.test(read("src/lib/notifications/types.ts") || ""));
+   384→record("153. no AI tools for receipts (§258)", (() => {
+   385→  const aiDir = `${ROOT}src/lib/ai`;
+   386→  return !JSON.stringify(existsSync(aiDir) ? read("src/lib/ai/tools.ts") : "").match(/goods.?receipt/i);
+   387→})());
+   388→record("154. notes never in AI context (§166)", !/goodsReceipt.*notes/i.test(read("src/lib/copilot-sessions.ts") || ""));
+   389→
+   390→/* ------------------------------ schema DDL (§141/§142) --------------------- */
+   391→
+   392→const schema = read("prisma/schema.prisma");
+   393→record("155. GoodsReceipt model exists (§21)", /model GoodsReceipt \{/.test(schema));
+   394→record("156. GoodsReceiptLine model exists (§26)", /model GoodsReceiptLine \{/.test(schema));
+   395→record("157. exactly one P42 migration (§141)", (() => {
+   396→  const migrations = read("scripts/prompt42-goods-receipt-static-scan.mjs") && existsSync(`${ROOT}prisma/migrations/20261007090000_prompt42_goods_receipts/migration.sql`);
+   397→  return migrations;
+   398→})());
+   399→record("158. business cascade on receipts (§143)", /business   Business @relation\(fields: \[businessId\], references: \[id\], onDelete: Cascade\)/.test(schema.split("model GoodsReceipt")[1] ?? ""));
+   400→record("159. creator Restrict (consistent with P40/P41)", /onDelete: Restrict/.test(schema.split("model GoodsReceipt")[1]?.split("model GoodsReceiptLine")[0] ?? ""));
+   401→record("160. product Restrict on lines (§144)", /onDelete: Restrict/.test(schema.split("model GoodsReceiptLine")[1] ?? ""));
+   402→record("161. no price columns in GoodsReceipt (§37)", (() => {
+   403→  const m = schema.split("model GoodsReceipt {")[1]?.split("model GoodsReceiptLine")[0] ?? "";
+   404→  return !/(totalMinor|subtotalMinor|unitPriceMinor|lineTotalMinor)/.test(m);
+   405→})());
+   406→record("162. no price columns in GoodsReceiptLine (§38)", (() => {
+   407→  const m = schema.split("model GoodsReceiptLine {")[1] ?? "";
+   408→  return !/(unitPriceMinor|lineTotalMinor)/.test(m);
+   409→})());
+   410→record("163. §179 indexes present", /@@index\(\[businessId, status\]\)/.test(schema.split("model GoodsReceipt {")[1]?.split("model GoodsReceiptLine")[0] ?? "") && /@@index\(\[purchaseOrderLineId\]\)/.test(schema.split("model GoodsReceiptLine {")[1] ?? ""));
+   411→
+   412→/* ------------------------------ docs (§246-§255) --------------------------- */
+   413→
+   414→record("164. product doc exists (§248)", existsSync(`${ROOT}docs/product/goods-receipts.md`));
+   415→record("165. security doc exists (§249)", existsSync(`${ROOT}docs/security/goods-receipts-security.md`));
+   416→record("166. ADR exists (§250)", existsSync(`${ROOT}docs/adr/0042-goods-receipts.md`));
+   417→record("167. financial-semantics mentions P42 (§247)", /Prompt 42|Goods Receipt/i.test(read("docs/audit/financial-semantics.md")));
+   418→record("168. architecture doc mentions Goods Receipts (§246)", /Goods Receipt/i.test(read("docs/ARCHITECTURE.md")));
+   419→record("169. data-export doc updated (§251)", /inventory_goods_receipts/.test(read("docs/data/data-export.md")));
+   420→record("170. data-import doc blocks receipts (§252)", /goods.?receipt/i.test(read("docs/data/data-import.md")));
+   421→record("171. backup plan updated (§253)", /GoodsReceipt/.test(read("docs/deployment/backup-restore-plan.md")));
+   422→record("172. deletion matrix updated (§254)", /goods.?receipt/i.test(read("docs/legal/data-deletion-matrix.md")));
+   423→
+   424→/* ------------------------------- summary ----------------------------------- */
+   425→
+   426→console.log(`\nprompt42-goods-receipt-static-scan: ${passed} passed, ${failed} failed`);
+   427→if (failed > 0) {
+   428→  for (const f of failedRules) console.error(`  FAIL: ${f}`);
+   429→  process.exit(1);
+   430→}
+   431→console.log("prompt42-goods-receipt-static-scan: ALL RULES PASS ✓");
+   432→

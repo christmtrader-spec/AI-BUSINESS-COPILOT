@@ -6,7 +6,9 @@
  * Run: bun scripts/prompt42-unit.ts
  */
 import {
+  GOODS_RECEIPT_ERROR_CODES,
   GOODS_RECEIPT_LINE_CAP_DEFAULT,
+  GOODS_RECEIPT_LINE_CAP_INVARIANT,
   GOODS_RECEIPT_LINE_CAP_MAX,
   GOODS_RECEIPT_LINE_CAP_MIN,
   GOODS_RECEIPT_QTY_MAX,
@@ -422,25 +424,39 @@ eq(value, 42, "u180 transaction return value preserved");
 
 /* ==================== 13. i18n key parity (§243) ============================ */
 
-const en = (await import("../src/i18n/messages/en")).default as Record<string, Record<string, unknown>>;
-const fa = (await import("../src/i18n/messages/fa")).default as Record<string, Record<string, unknown>>;
-const enKeys = Object.keys(en.goodsReceipts ?? {}).sort();
-const faKeys = Object.keys(fa.goodsReceipts ?? {}).sort();
+/* P42-F — typed accessors for the dynamically-imported i18n trees (the
+ * messages modules are loosely typed; these helpers keep tsc strict-clean
+ * while preserving the exact same assertions). */
+type MsgTree = { [key: string]: unknown };
+function asTree(value: unknown): MsgTree {
+  return value && typeof value === "object" ? (value as MsgTree) : {};
+}
+function branch(root: unknown, ...path: string[]): MsgTree {
+  let cur: unknown = root;
+  for (const key of path) cur = asTree(cur)[key];
+  return asTree(cur);
+}
+const en = (await import("../src/i18n/messages/en")).default as MsgTree;
+const fa = (await import("../src/i18n/messages/fa")).default as MsgTree;
+const enGR = branch(en, "goodsReceipts");
+const faGR = branch(fa, "goodsReceipts");
+const enKeys = Object.keys(enGR).sort();
+const faKeys = Object.keys(faGR).sort();
 eq(faKeys, enKeys, "u181 goodsReceipts EN/FA key parity (§243)");
 ok(enKeys.length >= 100, `u182 goodsReceipts namespace substantial (${enKeys.length} keys)`);
-ok(en.goodsReceipts.title === "Goods Receipts" && fa.goodsReceipts.title === "رسیدهای انبار", "u183 professional terminology (§244)");
-ok(fa.goodsReceipts.status_POSTED === "ثبت‌شده" && fa.goodsReceipts.status_DRAFT === "پیش‌نویس" && fa.goodsReceipts.status_CANCELLED === "لغوشده", "u184 FA status vocabulary (§244)");
+ok(enGR.title === "Goods Receipts" && faGR.title === "رسیدهای انبار", "u183 professional terminology (§244)");
+ok(faGR.status_POSTED === "ثبت‌شده" && faGR.status_DRAFT === "پیش‌نویس" && faGR.status_CANCELLED === "لغوشده", "u184 FA status vocabulary (§244)");
 // §245 — the receipt UI never uses financial terminology.
 const financialTerms = ["پرداخت", "هزینه", "بدهی", "payable", "expense", "payment"];
-const faText = JSON.stringify(fa.goodsReceipts);
+const faText = JSON.stringify(faGR);
 const violations = financialTerms.filter((w) => faText.includes(w));
 eq(violations, [], "u185 FA receipt UI free of financial terms (§245)");
-ok(en.goodsReceipts.postWarning.includes("increase current inventory"), "u186 §194 posting warning text");
-ok(fa.goodsReceipts.postWarning.includes("موجودی انبار افزایش می‌یابد"), "u187 §194 FA posting warning");
-ok(en.nav.goodsReceipts === "Goods Receipts" && fa.nav.goodsReceipts === "رسیدهای انبار", "u188 nav labels (§117)");
-ok(en.notifications.datasets.inventoryGoodsReceipts !== undefined && fa.notifications.datasets.inventoryGoodsReceiptLines !== undefined, "u189 portability dataset labels (§136)");
-ok(en.search.groups.GOODS_RECEIPT === "Goods Receipts" && fa.search.groups.GOODS_RECEIPT === "رسیدهای انبار", "u190 search group labels (§122)");
-ok(en.search.status.POSTED !== undefined && fa.search.status.POSTED !== undefined, "u191 search POSTED token labels");
+ok(String(enGR.postWarning).includes("increase current inventory"), "u186 §194 posting warning text");
+ok(String(faGR.postWarning).includes("موجودی انبار افزایش می‌یابد"), "u187 §194 FA posting warning");
+ok(branch(en, "nav").goodsReceipts === "Goods Receipts" && branch(fa, "nav").goodsReceipts === "رسیدهای انبار", "u188 nav labels (§117)");
+ok(branch(en, "notifications", "datasets").inventoryGoodsReceipts !== undefined && branch(fa, "notifications", "datasets").inventoryGoodsReceiptLines !== undefined, "u189 portability dataset labels (§136)");
+ok(branch(en, "search", "groups").GOODS_RECEIPT === "Goods Receipts" && branch(fa, "search", "groups").GOODS_RECEIPT === "رسیدهای انبار", "u190 search group labels (§122)");
+ok(branch(en, "search", "status").POSTED !== undefined && branch(fa, "search", "status").POSTED !== undefined, "u191 search POSTED token labels");
 
 /* ================== 14. search + entities integration ====================== */
 
@@ -491,8 +507,8 @@ ok(DATASET_CSV_COLUMNS.inventory_goods_receipts.includes("received_qty") === fal
 ok(DATASET_CSV_COLUMNS.inventory_goods_receipt_lines.includes("received_qty"), "u207 lines carry received_qty");
 ok(!DATASET_CSV_COLUMNS.inventory_goods_receipt_lines.some((c: string) => c.includes("price") || c.includes("minor")), "u208 NO money columns anywhere (§37/§126)");
 const { IMPORT_DATASET_KEYS } = await import("../src/lib/data-portability/import-fields");
-ok(!IMPORT_DATASET_KEYS.includes("inventory_goods_receipts"), "u209 receipts NOT importable (§138)");
-ok(!IMPORT_DATASET_KEYS.includes("inventory_goods_receipt_lines"), "u210 lines NOT importable (§138)");
+ok(!(IMPORT_DATASET_KEYS as readonly string[]).includes("inventory_goods_receipts"), "u209 receipts NOT importable (§138)");
+ok(!(IMPORT_DATASET_KEYS as readonly string[]).includes("inventory_goods_receipt_lines"), "u210 lines NOT importable (§138)");
 
 const entTypes = await import("../src/lib/entities/types");
 ok("SupplierRecentGoodsReceipt" in entTypes === false || true, "u211 (types are compile-time; UI surface verified by tsc)");
@@ -521,6 +537,25 @@ eq(viewToHash({ kind: "inventory-goods-receipt", id: "../bad" }), null, "u223 un
 eq(viewKeyOf({ kind: "inventory-goods-receipt", id: "a" }), "inventory-goods-receipt:a", "u224 viewKey carries id");
 ok(sameView({ kind: "inventory-goods-receipt", id: "a" }, { kind: "inventory-goods-receipt", id: "a" }), "u225 same receipt same view");
 ok(!sameView({ kind: "inventory-goods-receipt", id: "a" }, { kind: "inventory-goods-receipt", id: "b" }), "u226 different receipt different view (no stale record)");
+
+/* ================== 13b. P42-F hardening laws (§5-§14) ===================== */
+
+eq(GOODS_RECEIPT_ERROR_CODES.LINE_CAP_INVARIANT, "GOODS_RECEIPT_LINE_CAP_INVARIANT", "u228 P42-F read-cap invariant code canonical (§11)");
+eq(GOODS_RECEIPT_LINE_CAP_INVARIANT, "GOODS_RECEIPT_LINE_CAP_INVARIANT", "u229 invariant const exact");
+// §9 — the aggregate-era corruption contract: remaining computation must
+// KEEP throwing on received > ordered (no Math.max clamp to 0).
+throws(() => computeRemainingQty(10, 11), "GoodsReceiptIntegrityError", "u230 §9 received>ordered → integrity error (never clamped)");
+ok(computeRemainingQty(10, 10) === 0 && computeRemainingQty(10, 0) === 10, "u231 §9 valid aggregates still compute exact remaining");
+// §8 — the aggregate sum contract is integer/≥0 exact (pure mirror of the
+// DB _sum validation the service performs).
+ok(computeReceivedQty([5, 5, 5, 5, 5, 5]) === 30, "u232 §8 six-receipt aggregate mirror sums exactly");
+throws(() => computeReceivedQty([3, -1, 5]), "Error", "u233 §9 negative persisted qty is corruption, not a summand");
+// §14 — cap families are DISTINCT: receipt lines use GOODS_RECEIPT_MAX_LINES,
+// PO lines in receiving summaries use PURCHASE_ORDER_MAX_LINES.
+const { purchaseOrderLineCap } = await import("../src/lib/purchase-orders/types");
+eq(goodsReceiptLineCap("20"), 20, "u234 receipt cap floor honored");
+eq(purchaseOrderLineCap("20"), 20, "u235 PO line cap floor honored (same parser law)");
+ok(goodsReceiptLineCap(undefined) === 200 && purchaseOrderLineCap(undefined) === 200, "u236 both cap families default 200");
 
 /* ------------------------------- summary ----------------------------------- */
 

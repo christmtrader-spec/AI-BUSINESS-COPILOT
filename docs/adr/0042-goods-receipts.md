@@ -41,3 +41,12 @@ Prompt 41 delivered procurement commitments (Purchase Orders) with the explicit 
 ## Future extension path
 
 Goods returns / debit notes (the missing reversal workflow), purchase invoices, lot/serial/expiry tracking, warehouse locations, inventory valuation layers, and accounts-payable posting are explicitly OUT OF SCOPE and belong to separate future prompts. The receipt document was shaped (snapshots, immutable POSTED state, no money) so those layers can attach without breaking the current contract.
+
+## Finalization decision record (P42-F)
+
+Two real hardening defects were found in the audit and fixed without changing any domain law:
+
+1. **In-memory received-quantity sums (replaced).** `sumPostedQtyForPoLine` loaded every historical POSTED receipt line for a PO line and summed in application memory — an unbounded read on the hottest path. Replaced with a database `aggregate(_sum)` plus integer/≥ 0 re-validation. Remaining checks (line-add advisory, line-update, post-time authoritative) keep identical semantics; corruption of the aggregate still surfaces as `GOODS_RECEIPT_CORRUPT_RECEIVED`.
+2. **Silent read truncation (eliminated).** Read paths used `take: cap` and trusted that the cap invariant held. All read paths (receipt detail, receipt list rows, post transaction, PO receiving summary — now correctly using the purchase-order line cap family — and the PO/product/supplier recent-receipt widgets) fetch `cap + 1` rows and fail with the new stable `GOODS_RECEIPT_LINE_CAP_INVARIANT` (500) when the proof fails. The receipt list additionally cross-checks `_count.lines` against each row slice, so a partial total is structurally impossible.
+
+Test-harness synchronization (no product behavior change): the P34 entity-shape suite was updated for the sanctioned additive `recentGoodsReceipts` sections (§62/§63); the P41 static scan's prohibited-scope rule now bans receipt WRITE operations precisely, allowing the sanctioned read-only receiving integration (§98/§146); env-repair's ledger baseline includes the P42 migration so a sandbox revert can never leave it pending (§107).

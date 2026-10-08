@@ -196,7 +196,8 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
     [],
   );
   // Prompt 41 added the read-only `recentPurchaseOrders` section (≤10, bounded).
-  eq(Object.keys(supp), ["supplier", "summary", "recentExpenses", "recentPayments", "recentPurchaseOrders"], "v14 SupplierDetail top-level keys");
+  // Prompt 42 (§121) added the read-only `recentGoodsReceipts` section — appended last.
+  eq(Object.keys(supp), ["supplier", "summary", "recentExpenses", "recentPayments", "recentPurchaseOrders", "recentGoodsReceipts"], "v14 SupplierDetail top-level keys");
 
   const prod = mapProductDetail(
     { id: "pr1", name: "Widget", sku: "W1", unit: "pcs", salePriceMinor: 500, costPriceMinor: 300, stockQty: 9, lowStockAt: 5, isActive: true, createdAt: base, updatedAt: base },
@@ -205,7 +206,8 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
     10,
   );
   // Prompt 41 added the read-only `recentPurchaseOrders` section (≤10, bounded).
-  eq(Object.keys(prod), ["product", "inventory", "recentAdjustments", "recentSales", "recentStocktakes", "recentPurchaseOrders"], "v14 ProductDetail top-level keys");
+  // Prompt 42 (§120) added the read-only `recentGoodsReceipts` section — appended last.
+  eq(Object.keys(prod), ["product", "inventory", "recentAdjustments", "recentSales", "recentStocktakes", "recentPurchaseOrders", "recentGoodsReceipts"], "v14 ProductDetail top-level keys");
   eq(Object.keys(prod.product), ["id", "name", "sku", "unit", "salePriceMinor", "costPriceMinor", "isActive", "createdAt", "updatedAt"], "v14 product sub-object keys");
 
   const sale = mapSaleDetail(

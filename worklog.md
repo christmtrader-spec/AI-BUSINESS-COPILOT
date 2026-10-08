@@ -3646,3 +3646,72 @@ Work Log:
 Stage Summary:
 - Full P42 backend + UI surface implemented per prompt; NO P41 rebuild (only additive DTO fields + cancel hardening), NO new migrations beyond the one, NO prohibited scope (no warehouse/barrier/lot/valuation/accounting/AI/notifications).
 - Next: unit suite (§227), static scan (§223), E2E (§229), browser fixture + QA (§230-§242), docs (§246-§255), full regression + release closure.
+
+---
+Task ID: p42-finalization (audit checkpoint)
+Agent: Z.ai Code
+Task: Prompt 42-F — deep audit of the implemented Goods Receipts feature before hardening
+
+Work Log:
+- Read worklog history, service/types/dto/schema/export, all 7 API routes, write-transaction helper, PO service integration (detail receiving agg + cancel hardening), stocktake/adjustment interaction points, all prompt42-* scripts (unit 534L, E2E 1221L, cap-check 384L, static scan 431L, fixture 157L), docs set.
+- Built the P42-F defect matrix (D1–D9):
+
+  ID | Area | Current | Expected | Risk | Fix | Regression
+  D1 | sumPostedQtyForPoLine | findMany + in-memory sum (unbounded historical read) | DB aggregate _sum (§5–§7) | unbounded read on hottest path | aggregate + integer/≥0 validation, no clamp | §8 many-receipts sum (existing 40+25+35 + new 6-receipt probe)
+  D2 | GET receipt detail | lines take:cap (silent truncation) | cap+1 + GOODS_RECEIPT_LINE_CAP_INVARIANT 500 (§10/§11) | false partial DTO | cap+1 + invariant throw | new corruption probe (E2E)
+  D3 | GET receipt list | lines take:cap, partial sum, _count not cross-checked | cap+1 per row + _count.lines===lines.length + honest failure (§12/§13) | false partial totals | cap+1 + consistency invariant + corruption mapping | new E2E probe
+  D4 | getPurchaseOrderReceivingSummary | poLines take:cap with GOODS_RECEIPT cap family | purchaseOrderLineCap + cap+1 + invariant (§14) | partial receiving summary | cap family fix + cap+1 + throw | §16 PO-line cap corruption probe
+  D5 | PO detail inline receiving agg | poLines take:cap | cap+1 + invariant, stable code (§14) | partial summary on PO detail | cap+1 + throw GOODS_RECEIPT_LINE_CAP_INVARIANT | §16 probe
+  D6 | recent-receipt widgets (PO/Supplier) | lines take:cap → possible partial totalReceivedQty | cap+1 + invariant (§10 analog) | wrong widget totals | cap+1 + throw | bounds tests remain green
+  D7 | post/add/update-line remaining check | GoodsReceiptIntegrityError from computeRemainingQty propagates raw → generic 500 without stable code | stable GOODS_RECEIPT_CORRUPT_RECEIVED (§9/§283) | unstable client contract | remainingQtyOrIntegrity() mapping helper in all 3 write paths | unit u44 + E2E 15.16
+  D8 | static scan rule 35 | requires bare `take: cap,` in service (obsolete after D2–D6) | require cap+1 completeness proof on ALL read paths (§10–§14) | scan failure after legitimate hardening | strengthen rule: ≥5 `take: cap + 1` AND no bare `take: cap,` (strengthening, documented) | scan rerun
+  D9 | error vocabulary | no canonical read-cap integrity code | add GOODS_RECEIPT_LINE_CAP_INVARIANT (§11/§121) | ad-hoc strings | types.ts const + codes map + unit assertion | unit suite
+
+- Verified NOT defects (already correct): PO cancel hardening inside tx (§34), shared write-transaction FIFO+retry (§26–§28), corrupt persisted status policy across detail/list/search/export/post/cancel (§17), corrupt stock policy (§19), Int32 overflow (§20), atomic post + rollback (§21/§22), duplicate PO-line unique (§114), snapshot sourcing (§45), CSV cap+1 (§65), DTO allowlists, tenant scoping, portability catalogs, restore-drill probes.
+
+Stage Summary:
+- Implementation is structurally sound; 2 real hardening defects (D1 unbounded sum, D2–D6 silent read truncation family) + 2 contract gaps (D7, D9) + 1 scan-rule obsolescence (D8).
+- Proceeding to fix D1–D9 without touching any closed-domain behavior, then full regression.
+
+---
+Task ID: p42-finalization
+Agent: Z.ai Code
+Task: Prompt 42 Finalization + Hardening + Deep QA + Release Closure
+
+Work Log:
+- DEEP AUDIT: read every P42 area (service/types/dto/schema/export, 7 API routes, UI module, PO integration, stocktake/adjustment interactions, write-transaction, all prompt42-* scripts, docs) and built the defect matrix (checkpoint entry above). Implementation confirmed structurally sound; 2 real hardening defects + 2 contract gaps + 1 scan obsolescence + stale-harness regressions found.
+
+DEFECTS FOUND & FIXED (product code):
+1. D1 (§5-§7 REAL HARDENING BUG #1): sumPostedQtyForPoLine loaded the PO line's ENTIRE POSTED receipt history via findMany and summed in application memory — unbounded historical read on the hottest path. Replaced with database aggregate(_sum) + re-validation (exact integer, ≥ 0); over-received history still surfaces as stable 500 GOODS_RECEIPT_CORRUPT_RECEIVED (never clamped). E2E regression: 6 receipts × 5 units on ONE PO line → exact sum 30, stock +30, 6 adjustments, exhausted remaining → 409 (probes 15b.1-15b.8).
+2. D2 (§10/§11 REAL HARDENING BUG #2, detail): receipt detail read used take:cap — could silently truncate corrupt data into a false partial DTO. Now take:cap+1 + over-cap → 500 GOODS_RECEIPT_LINE_CAP_INVARIANT (new canonical code). E2E 15b.14-15b.15/15b.17: 201-line corrupt receipt → 500 invariant → restored → 200.
+3. D3 (§12/§13, list): list rows used take:cap + partial sum; _count.lines not cross-checked. Now cap+1 per row + _count.lines===lines.length consistency + honest 500 on mismatch. E2E 15b.16/15b.19 + consistency probes 15b.9-15b.10.
+4. D4 (§14/§15, receiving summary): standalone summary read PO lines with the RECEIPT cap family and take:cap. Now purchaseOrderLineCap(PURCHASE_ORDER_MAX_LINES) + cap+1 + invariant. E2E 15b.12-15b.13/15b.18 (201-line corrupt PO → 500 invariant, recovers).
+5. D5 (§14, PO detail inline receiving agg): same take:cap → cap+1 + stable invariant code (500) before any partial summary can be computed.
+6. D6 (§10 analog): PO-detail + Supplier-360 recent-receipt widgets computed totalReceivedQty from a take:cap slice → cap+1 + invariant (wrong widget totals now impossible).
+7. D7 (§9 contract gap): GoodsReceiptIntegrityError from bare computeRemainingQty in add/update/post leaked as a generic 500. All 3 write paths now map through the ONE mapper → stable GOODS_RECEIPT_CORRUPT_RECEIVED.
+8. D9: new canonical error code GOODS_RECEIPT_LINE_CAP_INVARIANT in the domain codes map (distinct from the 422 write-time GOODS_RECEIPT_LINE_LIMIT_REACHED).
+
+REGRESSION FIXES (test harnesses/docs only):
+9. D8: P42 static rule 35 was obsolete after the cap+1 hardening — STRENGTHENED (≥5 take:cap+1 reads, bare take:cap banned, invariant code required); added rules 35b (list _count cross-check) and 44b (sum is DB aggregate with validation). 186 → 188 rules, all pass.
+10. prompt34-entity-check + prompt34-unit: exact top-level key allowlists for supplier/product detail predated P42's sanctioned additive recentGoodsReceipts sections (§62/§63) — synchronized with documentation. 111/111 + 139/139.
+11. prompt41 static rule 99 (/goodsReceipt/i blanket ban) contradicted the sanctioned P42 read-only PO integration required by P42 rules 134-140 — precisely updated to ban receipt WRITE operations (goodsReceipt(Line).(create|update|upsert|delete)) while allowing the sanctioned reads. 145/145.
+12. env-repair.mjs MIGRATIONS baseline lacked the P42 migration → after a sandbox revert P42 would be left falsely pending and a later deploy would collide with existing tables. Added 20261007090000_prompt42_goods_receipts + maintenance-law comment; list verified to match the real chain exactly (22/22, no missing/stale).
+13. prompt42-unit.ts: fixed 10 PRE-EXISTING tsc errors (loosely-typed i18n accessors + dataset-key casts) — repo-wide tsc is now 0 errors; added P42-F assertions u228-u236 (invariant code canonical, aggregate-era corruption contract, distinct cap families).
+
+FILES ADDED: qa-p42-goods-receipts-{en-light,en-dark,fa-light,fa-dark,mobile,mobile-fa-dark}.png (6 real browser screenshots).
+FILES MODIFIED: src/lib/inventory/goods-receipt/{types,service}.ts · src/lib/purchase-orders/service.ts · scripts/{prompt42-goods-receipt-static-scan,prompt42-unit,prompt42-goods-receipt-check,prompt34-entity-check,prompt34-unit,prompt41-purchase-order-static-scan,env-repair}.mjs|.ts · docs/product/goods-receipts.md · docs/security/goods-receipts-security.md · docs/adr/0042-goods-receipts.md.
+FILES DELETED: none.
+
+MIGRATION COUNT: 22 applied / 0 pending (latest 20261007090000_prompt42_goods_receipts). No new migration. Clean-DB deploy from zero: fresh scratch DB + prisma migrate deploy → all 22 applied, no migrate resolve fakery.
+UNIT COUNT: 237 passed / 0 failed (target ≥200 met; exact count recorded).
+STATIC COUNT: 188 passed / 0 failed (baseline 186 preserved; 2 rules strengthened/added, 1 precisely updated with documentation — bar never lowered).
+E2E COUNT: 273 passed / 0 failed (create/update/line CRUD/post/cancel/partial/multi-receipt/over-receipt/aggregate regression/read-cap invariants/concurrency/stock/audit/stocktake/manual adjustment/PO lifecycle/search/deep links/export/import rejection/portability/teardown-to-zero). Isolated cap/concurrency: 35 passed / 0 failed (cap=20: 20 accepted, 21st rejected, 24-way line race, duplicate line/reference races, 20-way concurrent posts ≤ ordered, single-transition post, cancel replay).
+REGRESSION RESULTS (all EXECUTED, exact counts): P17 30/0 · P18 28/0 · P19 24/0 · P20 56/0 · P21 76/0 · P22 72/0 · P23 34/0 · P24 67/0 · P25 68/0 · P26 108/0 · P27 65/0 · P28 86/0 · P29 105/0 + unit 91/91 · P30 93/0 + unit 54/54 · P31 106/0 + unit 71/71 · P32 102/0 · P33 76/0 + unit 64/64 · P34 111/0 + unit 139/139 · P35 148/0 + unit 104/0 · P36 161/0 + unit 95/0 · P37 149/0 + unit 181/181 · P38 124/0 + unit 116/116 · P39 117/0 + unit 164/164 · P40 133/0 + unit 209/209 + stocktake static 44/44 + P40 live line-cap 12/0 (server run with INVENTORY_STOCKTAKE_MAX_LINES=100, then restored) · P41 E2E 218/0 + unit 233/233 + static 145/145 + cap 20/20. Cross-cutting: search static 67/67 · statement static 41/41 · notification static 28/28 + catalog 473/473 · low-stock static 52/52 · identity static 20/20 · entity-detail static 20/20 · i18n audit 0 missing/0 parity gaps · data-portability audit 53/53 · exports-round static 40/40 · audit-usage consistent · ai-context secret scan 11/11 clean.
+BROWSER QA (real Chrome session, agent-browser): 1920×1080 EN light/dark + FA light/dark · 1366×768 · 412×915 · 390×844 FA RTL dark (dialogs, pickers, posted read-only view) · 360×640 full mobile receive flow: Goods Receipts → New Receipt → picker shows ONLY confirmed POs with remaining>0 (CLOSED order correctly absent, bounded, no price) → line picker (snapshot/SKU/unit/ordered/received/remaining, no price) → qty dialog rejects 40 > remaining 25 client-side → valid 10 saved → post confirmation shows quantities + "increases current inventory… cannot be edited or cancelled" → posted → PO receiving 65→55, product stock 4→14, adjustment "Goods receipt P42GR-MOBILE: inventory receiving", product history widget updated. POSTED/CANCELLED read-only (Copy link + Export CSV only) at every size. scrollWidth==clientWidth at ALL sizes (360/390/412/1366/1920). Console: 0 application errors, 0 React warnings, 0 unhandled rejections (only dev Fast Refresh logs). Fixture rerun + --teardown verified; residue 0 businesses / 0 users / 0 receipts / 0 POs; persistent baselines intact.
+DATABASE INTEGRITY: PRAGMA quick_check = ok; PRAGMA foreign_key_check = 0 rows. prisma validate ✓ · prisma generate ✓ · tsc --noEmit 0 errors · eslint 0 errors.
+BACKUP/RESTORE: backup-db → sha256 sidecar · verify-backup PASS (integrity ok/quick ok/fk 0, 22 migrations) · restore-drill PASS (17 read-only entity probes incl. GoodsReceipt/GoodsReceiptLine).
+FEATURE MATRIX: Database ✓ · Migration ✓ (22/0) · Domain ✓ · API ✓ · RBAC ✓ · Tenant isolation ✓ (both directions) · Lifecycle ✓ · Partial receiving ✓ (40+25+35+6×5) · Over-receipt ✓ (single + concurrent) · Concurrency ✓ (FIFO write tx shared with P41, P41 concurrency suite green) · Stock mutation ✓ · Inventory adjustment ✓ · Audit ✓ (all 7 actions, exactly-once, atomic) · Stocktake interaction ✓ · PO integration ✓ (cancel hardening/close/full) · Search ✓ · Deep links ✓ · Supplier 360 ✓ · Product history ✓ · CSV ✓ · Portability ✓ · Backup ✓ · EN ✓ · FA ✓ · RTL ✓ · Dark ✓ · Mobile ✓ · Accessibility ✓ (dialog names, labels, roles, touch targets observed).
+HEALTH/READINESS: dev server healthy on :3000; health/readiness contracts covered by P29 suite (105/105).
+KNOWN LIMITATIONS (unchanged, intentional): no reversal/returns; no lot/serial/expiry/barcode/warehouse/bins; no valuation layers; no financial posting; PO status never auto-changes; POSTED immutable (correction = new compensating receipt).
+NOT EXECUTED: bun run build — environment restriction (build execution prohibited in this sandbox); recorded honestly, NOT converted to PASS. SMTP delivery — out of scope (P29 dev transport covers the documented contract). Performance percentiles — not claimed (bounded queries/DB aggregation/pagination proven instead, per §123).
+FINAL STATE: **PROMPT 42 = CLOSED** — all 46 acceptance criteria of §131 satisfied; release blockers (§128): none remaining. Prompt 43 NOT started.

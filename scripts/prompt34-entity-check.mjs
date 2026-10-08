@@ -294,14 +294,18 @@ section("DTO");
   const { res, data } = await call(fA, `/api/v1/suppliers/${supplierId}`);
   check("D supplier detail 200", res.status === 200);
   // Prompt 41 added the read-only `recentPurchaseOrders` section (≤10, bounded).
-  check("D supplier exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["supplier", "summary", "recentExpenses", "recentPayments", "recentPurchaseOrders"]));
+  // Prompt 42 (§121) added the read-only `recentGoodsReceipts` section (≤10,
+  // snapshot identity, NO financial statement contamination) — appended last.
+  check("D supplier exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["supplier", "summary", "recentExpenses", "recentPayments", "recentPurchaseOrders", "recentGoodsReceipts"]));
   check("D summary keys", data && JSON.stringify(Object.keys(data.summary)) === JSON.stringify(["totalExpensesMinor", "paidExpensesMinor", "payableMinor", "expenseCount", "paidExpenseCount", "openExpenseCount"]));
 }
 {
   const { res, data } = await call(fA, `/api/v1/products/${productId}`);
   check("E product detail 200", res.status === 200);
   // Prompt 41 added the read-only `recentPurchaseOrders` section (≤10, bounded).
-  check("E product exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["product", "inventory", "recentAdjustments", "recentSales", "recentStocktakes", "recentPurchaseOrders"]));
+  // Prompt 42 (§120) added the read-only `recentGoodsReceipts` section (≤10,
+  // NO money) — appended last.
+  check("E product exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["product", "inventory", "recentAdjustments", "recentSales", "recentStocktakes", "recentPurchaseOrders", "recentGoodsReceipts"]));
   check("E inventory keys", data && JSON.stringify(Object.keys(data.inventory)) === JSON.stringify(["stockQty", "lowStockAt", "state"]));
   check("E inventory.state closed token", ["OUT_OF_STOCK", "LOW_STOCK", "HEALTHY"].includes(data?.inventory?.state), String(data?.inventory?.state));
   const ps = data?.recentSales?.[0];

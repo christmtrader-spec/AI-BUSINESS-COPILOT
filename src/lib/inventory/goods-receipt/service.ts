@@ -24,6 +24,15 @@ import "server-only";
  *    and NEVER overwritten from live data.
  *  - Quantities are exact integers (§18/§48); stock math is Int32-bounded
  *    (§49); corrupt persisted state is surfaced, never repaired (§46/§47).
+ *  - P42-F READ-CAP LAW (§10-§14): every bounded read fetches cap+1 rows
+ *    to PROVE completeness — a document holding more rows than its own cap
+ *    (or a `_count` mismatch) is corruption and fails the read with the
+ *    stable GOODS_RECEIPT_LINE_CAP_INVARIANT code. Read paths NEVER render
+ *    a silently truncated slice or a partial total.
+ *  - P42-F AGGREGATE LAW (§5-§9): POSTED received quantities are summed
+ *    by the DATABASE (aggregate _sum), never by loading history into
+ *    application memory. The aggregate result is re-validated (integer,
+ *    ≥ 0) and ordered-remaining corruption still surfaces, never clamps.
  *  - Audit through the single sanctioned helper INSIDE the same
  *    transaction as every mutation (§154) — safe metadata only, never
  *    notes content (§155).
@@ -38,6 +47,7 @@ import {
   GOODS_RECEIPT_ERROR_CODES,
   GoodsReceiptIntegrityError,
   GOODS_RECEIPT_INVALID_PERSISTED_STATUS,
+  GOODS_RECEIPT_LINE_CAP_INVARIANT,
   PRODUCT_STOCK_INT32_MAX,
   canTransitionGoodsReceipt,
   computeReceivedQty,
@@ -50,6 +60,7 @@ import {
   stockOverflowsInt32,
   type GoodsReceiptStatus,
 } from "./types";
+import { purchaseOrderLineCap } from "@/lib/purchase-orders/types";
 import {
   goodsReceiptDetailDto,
   goodsReceiptLineDto,
@@ -128,6 +139,34 @@ export function mapPureGoodsReceiptDomainError(error: unknown): never {
     );
   }
   throw error;
+}
+
+/**
+ * P42-F §9 — remaining-quantity computation with the corruption policy
+ * applied at EVERY call site: received history that exceeds its order
+ * quantity throws the stable GOODS_RECEIPT_CORRUPT_RECEIVED 500 — never a
+ * raw unmapped error, never a Math.max clamp to 0.
+ */
+function remainingQtyOrIntegrity(orderedQty: number, receivedQty: number): number {
+  try {
+    return computeRemainingQty(orderedQty, receivedQty);
+  } catch (error) {
+    return mapPureGoodsReceiptDomainError(error);
+  }
+}
+
+/**
+ * P42-F §10-§14 — the ONE read-cap invariant failure. cap+1 fetches exist
+ * to prove completeness; the +1 row (or a count mismatch) is corruption.
+ */
+function assertLineCapInvariant(actualLines: number, cap: number): void {
+  if (actualLines > cap) {
+    throw new ApiError(
+      500,
+      GOODS_RECEIPT_LINE_CAP_INVARIANT,
+      "Stored document data exceeds its configured line cap. Please contact support.",
+    );
+  }
 }
 
 function requireDraft(status: GoodsReceiptStatus): void {
@@ -225,20 +264,32 @@ function auditInput(
  * authoritative check): POSTED-only quantity sum for ONE PO line.
  * DRAFT/CANCELLED receipts never count (§99). Tenant scope is inherited
  * from the receipt→PO chain which the caller has already verified.
+ *
+ * P42-F §5-§7 — the sum is a DATABASE aggregate (goodsReceiptLine
+ * .aggregate _sum), never a findMany of the line's whole history into
+ * application memory: a successful PO line can accumulate unbounded
+ * receipt rows over its lifetime and MUST NOT be materialized on every
+ * remaining-check. The aggregate result is re-validated (exact integer,
+ * ≥ 0); the ordered-remaining corruption policy stays with the caller's
+ * computeRemainingQty — nothing is silently clamped (§6).
  */
 async function sumPostedQtyForPoLine(tx: Tx, purchaseOrderLineId: string): Promise<number> {
-  const rows = await tx.goodsReceiptLine.findMany({
+  const agg = await tx.goodsReceiptLine.aggregate({
     where: {
       purchaseOrderLineId,
       goodsReceipt: { status: "POSTED" }, // §99 — POSTED only
     },
-    select: { receivedQty: true },
+    _sum: { receivedQty: true },
   });
-  try {
-    return computeReceivedQty(rows.map((r) => r.receivedQty));
-  } catch (error) {
-    return mapPureGoodsReceiptDomainError(error);
+  const sum = agg._sum.receivedQty ?? 0; // §6 — no rows → exactly 0
+  if (!Number.isInteger(sum) || sum < 0) {
+    // §9 — a corrupted persisted history (negative/fractional aggregate)
+    // is surfaced through the ONE canonical mapping, never clamped.
+    return mapPureGoodsReceiptDomainError(
+      new Error("GOODS_RECEIPT_CORRUPT_RECEIVED_HISTORY"),
+    );
   }
+  return sum;
 }
 
 /** §71 — defensive line-count validation (add line + post). */
@@ -422,8 +473,11 @@ export async function listGoodsReceipts(input: {
         createdAt: true,
         lines: {
           // §180 — bounded aggregate relation, not one query per row.
+          // P42-F §12 — take cap+1 PROVES the slice is the whole line set:
+          // a receipt over its own cap is corruption and fails the read
+          // below — never a silently truncated total.
           select: { receivedQty: true },
-          take: cap,
+          take: cap + 1,
         },
         _count: { select: { lines: true } },
       },
@@ -431,25 +485,36 @@ export async function listGoodsReceipts(input: {
   ]);
 
   const items = rows.map((row) => {
-    // §180 — the capped relation slice IS the full line set (a receipt can
-    // never exceed its own cap), so the sum below is provably complete.
-    const totalReceivedQty = computeReceivedQty(row.lines.map((l) => l.receivedQty));
-    return goodsReceiptListItemDto({
-      id: row.id,
-      reference: row.reference,
-      status: row.status,
-      purchaseOrderId: row.purchaseOrderId,
-      purchaseOrderReferenceAtReceipt: row.purchaseOrderReferenceAtReceipt,
-      supplierNameAtReceipt: row.supplierNameAtReceipt,
-      lineCount: row._count.lines,
-      totalReceivedQty,
-      postedAt: row.postedAt,
-      cancelledAt: row.cancelledAt,
-      createdAt: row.createdAt,
-      createdByUserId: "",
-      createdByName: null,
-      notes: null,
-    });
+    // P42-F §13 — the capped slice is only trustworthy when the database
+    // really contains ≤ cap rows: the +1 row or a _count mismatch means
+    // corruption — fail the read honestly, never compute a partial total.
+    if (row.lines.length > cap || row._count.lines !== row.lines.length) {
+      assertLineCapInvariant(Math.max(row.lines.length, row._count.lines), cap);
+    }
+    try {
+      // §180 — proven-complete slice → the canonical sum is exact.
+      const totalReceivedQty = computeReceivedQty(row.lines.map((l) => l.receivedQty));
+      return goodsReceiptListItemDto({
+        id: row.id,
+        reference: row.reference,
+        status: row.status,
+        purchaseOrderId: row.purchaseOrderId,
+        purchaseOrderReferenceAtReceipt: row.purchaseOrderReferenceAtReceipt,
+        supplierNameAtReceipt: row.supplierNameAtReceipt,
+        lineCount: row._count.lines,
+        totalReceivedQty,
+        postedAt: row.postedAt,
+        cancelledAt: row.cancelledAt,
+        createdAt: row.createdAt,
+        createdByUserId: "",
+        createdByName: null,
+        notes: null,
+      });
+    } catch (error) {
+      // §9 — a corrupted quantity inside history surfaces as the stable
+      // integrity 500, never a partial row and never a generic 500.
+      return mapPureGoodsReceiptDomainError(error);
+    }
   });
   return { items, total, page: input.page, pageSize: input.pageSize };
 }
@@ -462,6 +527,9 @@ export async function getGoodsReceipt(input: {
 }): Promise<GoodsReceiptDetailDto> {
   const cap = goodsReceiptLineCap(process.env.GOODS_RECEIPT_MAX_LINES);
   // §176 — lines are bounded by the document's own cap; one bounded read.
+  // P42-F §11 — take cap+1 proves completeness: the +1 row is corruption
+  // and fails the read with the stable invariant code below — never a
+  // detail DTO silently rendered from only the first cap lines.
   const row = await db.goodsReceipt.findFirst({
     where: { id: input.id, businessId: input.businessId }, // §89
     select: {
@@ -479,7 +547,7 @@ export async function getGoodsReceipt(input: {
       createdByUser: { select: { name: true } }, // §88 — name only
       lines: {
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-        take: cap,
+        take: cap + 1,
         select: {
           id: true,
           purchaseOrderLineId: true,
@@ -495,6 +563,8 @@ export async function getGoodsReceipt(input: {
     },
   });
   if (!row) throw new ApiError(404, "NOT_FOUND", "Goods receipt not found.");
+  // P42-F §11 — never render a partial document.
+  assertLineCapInvariant(row.lines.length, cap);
 
   try {
     return goodsReceiptDetailDto(
@@ -634,8 +704,10 @@ export async function addGoodsReceiptLine(input: {
     // (ordered − POSTED received). Draft lines of OTHER receipts are
     // deliberately NOT subtracted — over-allocation across drafts is the
     // documented §67 stale-draft scenario and only POST is authoritative.
+    // P42-F §9 — corrupted history (> ordered) surfaces as the stable
+    // integrity 500, never a raw error and never a clamp.
     const alreadyPosted = await sumPostedQtyForPoLine(tx, poLine.id);
-    const remaining = computeRemainingQty(poLine.orderedQty, alreadyPosted); // §172
+    const remaining = remainingQtyOrIntegrity(poLine.orderedQty, alreadyPosted); // §172
     if (exceedsRemaining(poLine.orderedQty, alreadyPosted, input.receivedQty)) {
       throw new ApiError(
         409,
@@ -720,7 +792,7 @@ export async function updateGoodsReceiptLine(input: {
     });
     if (!poLine) throw new ApiError(404, "NOT_FOUND", "Purchase order line not found.");
     const alreadyPosted = await sumPostedQtyForPoLine(tx, line.purchaseOrderLineId);
-    const remaining = computeRemainingQty(poLine.orderedQty, alreadyPosted);
+    const remaining = remainingQtyOrIntegrity(poLine.orderedQty, alreadyPosted); // P42-F §9
     if (exceedsRemaining(poLine.orderedQty, alreadyPosted, input.receivedQty)) {
       throw new ApiError(
         409,
@@ -890,10 +962,10 @@ export async function postGoodsReceipt(input: {
       }
 
       const alreadyPosted = await sumPostedQtyForPoLine(tx, line.purchaseOrderLineId);
-      const remaining = computeRemainingQty(
+      const remaining = remainingQtyOrIntegrity(
         line.purchaseOrderLine.orderedQty,
         alreadyPosted,
-      ); // §100 — throws on corrupted over-received history (§283)
+      ); // §100 — throws on corrupted over-received history (§283, P42-F §9)
       if (exceedsRemaining(line.purchaseOrderLine.orderedQty, alreadyPosted, line.receivedQty)) {
         // §15/§16/§67 — the HARD over-receipt law, final authority.
         throw new ApiError(
@@ -1041,13 +1113,18 @@ export async function getPurchaseOrderReceivingSummary(input: {
   if (!po) throw new ApiError(404, "NOT_FOUND", "Purchase order not found.");
 
   // §296 — one transactional read of lines + posted aggregates.
-  const cap = goodsReceiptLineCap(process.env.GOODS_RECEIPT_MAX_LINES);
+  // P42-F §14/§16 — the PO-line read uses the P41 PO-LINE cap family
+  // (PURCHASE_ORDER_MAX_LINES) and take cap+1 proves completeness: more
+  // rows than the PO's own cap is corruption → stable invariant 500, never
+  // a partial receiving summary computed from a truncated slice.
+  const poLineCap = purchaseOrderLineCap(process.env.PURCHASE_ORDER_MAX_LINES);
   return db.$transaction(async (tx) => {
     const poLines = await tx.purchaseOrderLine.findMany({
       where: { purchaseOrderId: po.id },
       select: { id: true, orderedQty: true },
-      take: cap, // bounded by the PO's own line cap (P41 law)
+      take: poLineCap + 1, // P42-F §14 — completeness proof
     });
+    assertLineCapInvariant(poLines.length, poLineCap); // P42-F §16
 
     // §178 — sum POSTED receipt lines per PO line, grouped in one query.
     const grouped = await tx.goodsReceiptLine.groupBy({
@@ -1112,11 +1189,14 @@ export async function listRecentReceiptsForPurchaseOrder(input: {
       status: true,
       postedAt: true,
       createdAt: true,
-      lines: { select: { receivedQty: true }, take: cap },
+      // P42-F §10 — cap+1 proves completeness; a truncated slice could
+      // report a WRONG totalReceivedQty on the PO detail widget.
+      lines: { select: { receivedQty: true }, take: cap + 1 },
     },
   });
   return rows.map((r) => {
     try {
+      assertLineCapInvariant(r.lines.length, cap); // P42-F §10
       return {
         id: r.id,
         reference: r.reference,
@@ -1204,11 +1284,13 @@ export async function listRecentReceiptsForSupplier(input: {
       reference: true,
       status: true,
       postedAt: true,
-      lines: { select: { receivedQty: true }, take: cap },
+      // P42-F §10 — cap+1 completeness proof (same law as the PO widget).
+      lines: { select: { receivedQty: true }, take: cap + 1 },
     },
   });
   return rows.map((r) => {
     try {
+      assertLineCapInvariant(r.lines.length, cap); // P42-F §10
       return {
         id: r.id,
         reference: r.reference,

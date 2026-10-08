@@ -135,7 +135,17 @@ record("31. cap default 200 clamp 20..500", /GOODS_RECEIPT_LINE_CAP_DEFAULT = 20
 record("32. defensive cap parser exists", /export function goodsReceiptLineCap/.test(read("src/lib/inventory/goods-receipt/types.ts")));
 record("33. line-add enforces cap", /assertLineCap/.test(SERVICE_CODE()));
 record("34. post enforces cap+1 completeness", /take: cap \+ 1/.test(SERVICE_CODE()));
-record("35. list line slice bounded by cap", /take: cap,/.test(SERVICE_CODE()) || /take: goodsReceiptLineCap/.test(SERVICE_CODE()));
+// P42-F §10-§14 — rule STRENGTHENED (was: "list line slice bounded by cap",
+// which accepted a bare `take: cap,` that can silently truncate corrupt
+// data into a false partial DTO). Every bounded READ path now fetches
+// cap+1 rows to PROVE completeness (list rows, detail, post, receiving
+// summary PO lines, recent-receipt widgets) and fails with the stable
+// GOODS_RECEIPT_LINE_CAP_INVARIANT code when the +1 row exists. A bare
+// `take: cap,` relation read is now a scan failure.
+record("35. ALL read paths prove completeness with cap+1 (§10-§14, strengthened)", (SERVICE_CODE().match(/take: cap \+ 1/g) || []).length >= 5 && !/take: cap,/.test(SERVICE_CODE()) && /GOODS_RECEIPT_LINE_CAP_INVARIANT/.test(SERVICE_CODE()));
+// P42-F §13 — the list MUST cross-check the aggregated `_count` against the
+// cap+1 slice so a corrupt document can never produce a partial total.
+record("35b. list cross-checks _count.lines against the cap+1 slice (§13, added)", /row\._count\.lines !== row\.lines\.length/.test(SERVICE_CODE()));
 
 /* --------------------------- over-receipt law (§15) ------------------------ */
 
@@ -148,6 +158,13 @@ record("41. no tolerance percentage anywhere", !/tolerance/i.test(DOMAIN_CODE())
 record("42. no bypass/override flag anywhere", !/allowOverReceipt|bypassRemaining|forcePost/.test(CODE()));
 record("43. posted-only sum helper (§99 draft/cancelled excluded)", /status: "POSTED"/.test(SERVICE_CODE()));
 record("44. stale draft post rejected via remaining re-check (§67)", /sumPostedQtyForPoLine/.test(SERVICE_CODE()));
+// P42-F §5-§7 — the POSTED received-quantity sum is a DATABASE aggregate
+// (_sum), never an unbounded historical findMany materialized into
+// application memory; the aggregate result is re-validated (integer, ≥ 0).
+record("44b. posted-qty sum is a DB aggregate with validation (§5-§7, added)", (() => {
+  const m = SERVICE_CODE().match(/async function sumPostedQtyForPoLine[\s\S]*?\n\}/);
+  return !!m && /\.aggregate\(\{/.test(m[0]) && /_sum: \{ receivedQty: true \}/.test(m[0]) && !/\.findMany\(/.test(m[0]);
+})());
 
 /* ------------------------------ status machine ----------------------------- */
 

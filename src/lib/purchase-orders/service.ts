@@ -31,6 +31,7 @@ import {
   computeRemainingQty,
   GoodsReceiptIntegrityError,
   GOODS_RECEIPT_ERROR_CODES,
+  GOODS_RECEIPT_LINE_CAP_INVARIANT,
 } from "@/lib/inventory/goods-receipt/types";
 import { listRecentReceiptsForPurchaseOrder } from "@/lib/inventory/goods-receipt/service";
 import {
@@ -487,13 +488,23 @@ export async function getPurchaseOrder(input: { businessId: string; id: string }
   // transactional document read (two reads, each internally consistent;
   // the aggregates only ever grow so a marginally newer posted receipt is
   // a safe display race — never a stock or quantity authority).
+  // P42-F §14/§16 — take cap+1 proves the PO-line read is complete: more
+  // lines than the PO's own cap is corruption → stable invariant 500,
+  // never a partial receiving summary computed from a truncated slice.
   let receivingAgg: Parameters<typeof purchaseOrderDetailDto>[2] | undefined;
   try {
     const poLines = await db.purchaseOrderLine.findMany({
       where: { purchaseOrderId: header.id },
       select: { id: true, orderedQty: true },
-      take: cap,
+      take: cap + 1, // P42-F §14 — completeness proof
     });
+    if (poLines.length > cap) {
+      throw new ApiError(
+        500,
+        GOODS_RECEIPT_LINE_CAP_INVARIANT,
+        "Stored purchase order data exceeds its configured line cap. Please contact support.",
+      );
+    }
     const grouped = await db.goodsReceiptLine.groupBy({
       by: ["purchaseOrderLineId"],
       where: {

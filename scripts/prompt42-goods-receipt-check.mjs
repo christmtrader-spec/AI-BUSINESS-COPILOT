@@ -19,7 +19,12 @@
  * (§125-§134) · business export (§136/§137/§220) · import rejection
  * (§139/§221/§275) · global search tenant safety (§122-§124) · audit
  * events (§153/§215) · replay immutability (§278/§279/§280/§281) ·
- * teardown to ZERO (§231).
+ * P42-F DB-aggregate exact-sum regression over MANY posted receipts
+ * (§5-§9) · P42-F read-cap invariants: over-cap receipt detail / receipt
+ * list / PO receiving summary fail with stable
+ * GOODS_RECEIPT_LINE_CAP_INVARIANT, list↔detail count consistency, and
+ * full recovery after corruption cleanup (§10-§16) · teardown to ZERO
+ * (§231).
  *
  * Concurrency (§50/§51/§208/§209/§210/§211/§215) runs in the ISOLATED
  * service-level process scripts/prompt42-cap-check.ts (spawned here with
@@ -876,6 +881,134 @@ async function main() {
     const zStock = await db.product.findUnique({ where: { id: prodOv.id }, select: { stockQty: true } });
     ok("15.17c no stock mutation from the corrupted probe", zStock?.stockQty === 0, String(zStock?.stockQty));
     await db.purchaseOrderLine.update({ where: { id: yD.body.data.lines[0].id }, data: { orderedQty: savedOrderedY } }); // restore
+  }
+
+  /* -------- 15b. P42-F: DB-aggregate regression + read-cap invariants ----- */
+  section("15b. P42-F — DB-aggregate regression (§5-§9) + read-cap integrity (§10-§16)");
+  {
+    // §8 — MANY posted receipts against ONE PO line: the post/line-add
+    // remaining check now sums via a DB aggregate (_sum). Six receipts of
+    // 5 units must aggregate to the EXACT sum (30) — never an array-length
+    // or positional artifact — with one adjustment per posted line.
+    const prodAgg = await createProduct(fA, bizA.id, `${TAG}-PROD-AGG`, `${TAG}-SKU-AGG`, 7);
+    const poAgg = await confirmedPO(fA, bizA.id, supBeta.id, [{ productId: prodAgg.id, orderedQty: 30, unitPriceMinor: 100 }]);
+    const poAggD = await call(fA, `/api/v1/purchase-orders/${poAgg}`, { headers: B(bizA.id) });
+    const aggLineId = poAggD.body.data.lines[0].id;
+    for (let i = 0; i < 6; i += 1) {
+      const g = await createGR(fA, bizA.id, { purchaseOrderId: poAgg, reference: `GR-AGG${i}-${STAMP}` });
+      const add = await grAddLine(fA, bizA.id, g.body.data.id, { purchaseOrderLineId: aggLineId, receivedQty: 5 });
+      const post = await grPost(fA, bizA.id, g.body.data.id);
+      ok(`15b.1.${i} receipt ${i + 1}/6 posts 5 units`, g.status === 201 && add.status === 201 && post.status === 200, JSON.stringify(post.body));
+    }
+    const poAggFinal = await call(fA, `/api/v1/purchase-orders/${poAgg}`, { headers: B(bizA.id) });
+    const aggSummary = poAggFinal.body?.data?.receiving;
+    ok("15b.2 §8 aggregated receivedQty = exact sum 30 (6×5)", aggSummary?.receivedQty === 30, JSON.stringify(aggSummary));
+    ok("15b.3 remaining 0 + fullyReceived true", aggSummary?.remainingQty === 0 && aggSummary?.fullyReceived === true, JSON.stringify(aggSummary));
+    ok("15b.4 receiptCount 6 (§15 every grouped receipt POSTED)", aggSummary?.receiptCount === 6, String(aggSummary?.receiptCount));
+    ok("15b.5 orderedQty exact 30 (§15)", aggSummary?.orderedQty === 30, String(aggSummary?.orderedQty));
+    const prodAggRow = await db.product.findUnique({ where: { id: prodAgg.id }, select: { stockQty: true } });
+    ok("15b.6 stock 7 → 37 (+30, aggregate era no lost update)", prodAggRow?.stockQty === 37, String(prodAggRow?.stockQty));
+    const aggAdj = await db.inventoryAdjustment.count({ where: { businessId: bizA.id, productId: prodAgg.id, reason: { startsWith: "Goods receipt" } } });
+    ok("15b.7 exactly 6 adjustments (one per posted line §49)", aggAdj === 6, String(aggAdj));
+    const gOver = await createGR(fA, bizA.id, { purchaseOrderId: poAgg, reference: `GR-OV2-${STAMP}` });
+    const overAdd = await grAddLine(fA, bizA.id, gOver.body.data.id, { purchaseOrderLineId: aggLineId, receivedQty: 1 });
+    ok("15b.8 §9 exhausted aggregate remaining → 409 EXCEEDS_REMAINING", overAdd.status === 409 && overAdd.body?.error?.code === "GOODS_RECEIPT_EXCEEDS_REMAINING", JSON.stringify(overAdd.body));
+
+    // §13 — the list row aggregates agree with the detail document.
+    const listAgg = await call(fA, `${GR(bizA.id)}?q=${`GR-AGG0-${STAMP}`}`, { headers: B(bizA.id) });
+    const aggRow = (listAgg.body?.data?.items ?? [])[0];
+    const aggDetail = await grDetail(fA, bizA.id, aggRow.id);
+    ok("15b.9 §13 list lineCount === detail lines.length", aggRow?.lineCount === aggDetail.body?.data?.lines?.length, `${aggRow?.lineCount} vs ${aggDetail.body?.data?.lines?.length}`);
+    ok("15b.10 §13 list totalReceivedQty === detail summary.totalReceivedQty", aggRow?.totalReceivedQty === aggDetail.body?.data?.summary?.totalReceivedQty, `${aggRow?.totalReceivedQty} vs ${aggDetail.body?.data?.summary?.totalReceivedQty}`);
+
+    // §11/§12/§16 — READ-CAP INVARIANTS: raw corruption fixtures push ONE
+    // PO and ONE receipt to cap+1 lines (201 > default cap 200); every
+    // affected read must fail with the stable GOODS_RECEIPT_LINE_CAP_INVARIANT —
+    // never a silently truncated DTO, never a partial receiving summary.
+    const CAP = 200; // GOODS_RECEIPT_LINE_CAP_DEFAULT === PURCHASE_ORDER_LINE_CAP_DEFAULT
+    await db.product.createMany({
+      data: Array.from({ length: CAP + 1 }, (_, i) => ({
+        businessId: bizA.id,
+        name: `${TAG}-CAP-${STAMP}-${i}`,
+        sku: `${TAG}-CAPSKU-${STAMP}-${i}`,
+        unit: "piece",
+        stockQty: 0,
+        costPriceMinor: 100,
+        salePriceMinor: 200,
+        isActive: true,
+      })),
+    });
+    const capProducts = await db.product.findMany({
+      where: { businessId: bizA.id, sku: { startsWith: `${TAG}-CAPSKU-` } },
+      select: { id: true, name: true, sku: true },
+      orderBy: { sku: "asc" },
+    });
+    ok("15b.11 cap fixture products created", capProducts.length === CAP + 1, String(capProducts.length));
+    const poCap = await db.purchaseOrder.create({
+      data: {
+        businessId: bizA.id,
+        supplierId: supBeta.id,
+        reference: `PO-CAP-${STAMP}`,
+        status: "CONFIRMED",
+        currencyCodeAtOrder: "USD",
+        currencySymbolAtOrder: "$",
+        decimalPrecisionAtOrder: 2,
+        orderedAt: new Date(),
+        confirmedAt: new Date(),
+        supplierNameAtOrder: "P42GR-CAP-SUP",
+        createdByUserId: userA.id,
+      },
+      select: { id: true },
+    });
+    await db.purchaseOrderLine.createMany({
+      data: capProducts.map((p) => ({
+        purchaseOrderId: poCap.id,
+        productId: p.id,
+        orderedQty: 5,
+        unitPriceMinor: 100,
+        productNameAtOrder: p.name,
+        skuAtOrder: p.sku,
+        unitAtOrder: "piece",
+      })),
+    });
+    ok("15b.12 §16 PO pushed to cap+1 lines (corruption fixture)", (await db.purchaseOrderLine.count({ where: { purchaseOrderId: poCap.id } })) === CAP + 1);
+    const poCapRead = await call(fA, `/api/v1/purchase-orders/${poCap.id}`, { headers: B(bizA.id) });
+    ok("15b.13 §16 over-cap PO detail → 500 LINE_CAP_INVARIANT (no partial summary)", poCapRead.status === 500 && poCapRead.body?.error?.code === "GOODS_RECEIPT_LINE_CAP_INVARIANT", JSON.stringify(poCapRead.body).slice(0, 200));
+
+    const gCap = await createGR(fA, bizA.id, { purchaseOrderId: poCap.id, reference: `GR-CAP-${STAMP}` });
+    const capPoLines = await db.purchaseOrderLine.findMany({
+      where: { purchaseOrderId: poCap.id },
+      select: { id: true, productId: true, productNameAtOrder: true, skuAtOrder: true, unitAtOrder: true },
+      orderBy: { createdAt: "asc" },
+    });
+    const capAdd1 = await grAddLine(fA, bizA.id, gCap.body.data.id, { purchaseOrderLineId: capPoLines[0].id, receivedQty: 1 });
+    await db.goodsReceiptLine.createMany({
+      data: capPoLines.slice(1).map((l) => ({
+        goodsReceiptId: gCap.body.data.id,
+        purchaseOrderLineId: l.id,
+        productId: l.productId,
+        receivedQty: 1,
+        productNameAtReceipt: l.productNameAtOrder,
+        skuAtReceipt: l.skuAtOrder,
+        unitAtReceipt: l.unitAtOrder,
+      })),
+    });
+    ok("15b.14 §11 receipt pushed to cap+1 lines (corruption fixture)", capAdd1.status === 201 && (await db.goodsReceiptLine.count({ where: { goodsReceiptId: gCap.body.data.id } })) === CAP + 1);
+    const capDetail = await grDetail(fA, bizA.id, gCap.body.data.id);
+    ok("15b.15 §11 over-cap receipt detail → 500 LINE_CAP_INVARIANT (never partial DTO)", capDetail.status === 500 && capDetail.body?.error?.code === "GOODS_RECEIPT_LINE_CAP_INVARIANT", JSON.stringify(capDetail.body).slice(0, 200));
+    const capList = await call(fA, `${GR(bizA.id)}?q=${`GR-CAP-${STAMP}`}`, { headers: B(bizA.id) });
+    ok("15b.16 §12/§13 over-cap row fails the list honestly (no partial total)", capList.status === 500 && capList.body?.error?.code === "GOODS_RECEIPT_LINE_CAP_INVARIANT", JSON.stringify(capList.body).slice(0, 200));
+
+    // restore: remove the raw corruption rows; reads must recover fully
+    await db.goodsReceiptLine.deleteMany({ where: { goodsReceiptId: gCap.body.data.id, purchaseOrderLineId: { in: capPoLines.slice(1).map((l) => l.id) } } });
+    await db.purchaseOrderLine.deleteMany({ where: { id: { in: capPoLines.slice(1).map((l) => l.id) } } });
+    await db.product.deleteMany({ where: { id: { in: capProducts.slice(1).map((p) => p.id) } } });
+    const capDetailOk = await grDetail(fA, bizA.id, gCap.body.data.id);
+    ok("15b.17 restored receipt detail reads 200 again", capDetailOk.status === 200 && capDetailOk.body?.data?.lines?.length === 1, JSON.stringify(capDetailOk.body).slice(0, 120));
+    const poCapOk = await call(fA, `/api/v1/purchase-orders/${poCap.id}`, { headers: B(bizA.id) });
+    ok("15b.18 restored PO detail reads 200 again", poCapOk.status === 200 && poCapOk.body?.data?.lines?.length === 1, JSON.stringify(poCapOk.body).slice(0, 120));
+    const capListOk = await call(fA, `${GR(bizA.id)}?q=${`GR-CAP-${STAMP}`}`, { headers: B(bizA.id) });
+    ok("15b.19 restored list reads 200 with exact totals", capListOk.status === 200 && capListOk.body?.data?.items?.[0]?.lineCount === 1, JSON.stringify(capListOk.body).slice(0, 120));
   }
 
   /* ------------------- 16. tenant isolation round 2 (§123) ----------------- */

@@ -110,3 +110,10 @@ Every query and mutation is scoped by `businessId` from the authenticated member
 - No inventory valuation layers (FIFO/LIFO/weighted average) — the operational stock value derived from `stockQty × costPriceMinor` is NOT an accounting asset.
 - No financial posting of any kind; supplier statements and payables aging are untouched by receipts.
 - PO receiving progress is derived data only — no new PO statuses.
+
+## Finalization hardening (P42-F)
+
+- **Database-aggregate receiving math**: the POSTED received-quantity sum behind every remaining check is a database `aggregate(_sum)` — a product line's full receipt history is never materialized into application memory, no matter how many receipts accumulate over its lifetime. The aggregate result is re-validated (exact integer, ≥ 0) and the ordered-remaining corruption policy still applies: `received > ordered` is a controlled 500 (`GOODS_RECEIPT_CORRUPT_RECEIVED`), never a clamp to 0.
+- **Read-cap integrity**: every bounded read (receipt detail, receipt list rows, the post transaction, the PO receiving summary, PO/product/supplier recent-receipt widgets) fetches `cap + 1` rows to *prove* completeness. A document holding more lines than its own configured cap — or a list `_count` that disagrees with its row slice — fails the read with the stable `GOODS_RECEIPT_LINE_CAP_INVARIANT` (500) code. Read paths never render a silently truncated slice or a partial total.
+- **Receiving summary cap family**: the PO-lines read inside the receiving summary uses the purchase-order line cap (`PURCHASE_ORDER_MAX_LINES`) with the same cap+1 proof.
+- The list endpoint cross-checks `_count.lines` against the fetched slice on every row, so list totals always agree with the detail document (verified E2E).
