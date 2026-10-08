@@ -1,0 +1,895 @@
+     1→import "server-only";
+     2→
+     3→/**
+     4→ * Prompt 41 — purchase-order service (server-only, §118/§212).
+     5→ *
+     6→ * LAWS:
+     7→ *  - PROCUREMENT COMMITMENT ONLY (§4/§255): no operation here ever writes
+     8→ *    Expense, Payment, Sale, InventoryAdjustment, Product.stockQty,
+     9→ *    statements, payables or aging balances — create/send/confirm/close/
+    10→ *    cancel included. The static scan enforces this (§147-§150).
+    11→ *  - Every query is tenant-scoped by ctx.businessId (§47) — never a client
+    12→ *    businessId. Foreign supplier/product/order → 404, no existence leak
+    13→ *    (§48/§10/§26).
+    14→ *  - Status transitions are server-authoritative through dedicated
+    15→ *    operations (§15/§42); the current status is RE-CHECKED INSIDE the
+    16→ *    transaction (§61) so concurrent transitions cannot double-apply.
+    17→ *  - Money is integer minor units; totals are server-derived with BigInt
+    18→ *    and must stay safe integers (§23/§30/§32).
+    19→ *  - Snapshots (supplier name, product name/sku/unit, currency) are frozen
+    20→ *    at write time and NEVER overwritten from live data (§11/§22/§27).
+    21→ *  - Audit through the single sanctioned helper inside the same transaction
+    22→ *    (§62-§64); safe metadata only — never notes content, never tokens.
+    23→ */
+    24→import { randomInt } from "node:crypto";
+    25→import { Prisma } from "@prisma/client";
+    26→import { db } from "@/lib/db";
+    27→import { audit } from "@/lib/audit";
+    28→import { ApiError } from "@/lib/api-helpers";
+    29→import {
+    30→  PURCHASE_ORDER_ERROR_CODES,
+    31→  PURCHASE_ORDER_INVALID_PERSISTED_STATUS,
+    32→  PURCHASE_ORDER_TRANSITION_TARGET,
+    33→  PurchaseOrderStatusIntegrityError,
+    34→  canTransitionPurchaseOrder,
+    35→  computePurchaseOrderTotal,
+    36→  generatePurchaseOrderReference,
+    37→  isPurchaseOrderStatus,
+    38→  parsePurchaseOrderStatus,
+    39→  purchaseOrderLineCap,
+    40→  type PurchaseOrderStatus,
+    41→} from "./types";
+    42→import {
+    43→  purchaseOrderDetailDto,
+    44→  purchaseOrderLineDto,
+    45→  purchaseOrderListItemDto,
+    46→} from "./dto";
+    47→
+    48→type Tx = Prisma.TransactionClient;
+    49→
+    50→/**
+    51→ * §25/§28 — SQLite is a single-writer database. Prisma interactive
+    52→ * transactions issue BEGIN IMMEDIATE, so N concurrent P41 writes contend on
+    53→ * the one write lock; losers used to sit until the 5s transaction timeout
+    54→ * and die with "Transaction already closed" (a generic 500). Two defenses:
+    55→ *
+    56→ *  1. In-process FIFO serialization of P41 WRITE transactions — requests
+    57→ *     still run concurrently up to the transaction boundary, then take the
+    58→ *     write lock one at a time (each transaction is a few ms, so latency
+    59→ *     stays bounded; reads are never blocked).
+    60→ *  2. A bounded retry for TRANSIENT transaction failures (P2034 write
+    61→ *     conflict / P2024 timeout / expired transaction from another process,
+    62→ *     e.g. test scripts sharing the dev DB) with deterministic backoff.
+    63→ *
+    64→ * Domain errors (ApiError) are NEVER retried — they propagate unchanged.
+    65→ */
+    66→let writeChain: Promise<unknown> = Promise.resolve();
+    67→function runSerializedWrite<T>(fn: () => Promise<T>): Promise<T> {
+    68→  const result = writeChain.then(() => fn());
+    69→  writeChain = result.then(
+    70→    () => undefined,
+    71→    () => undefined,
+    72→  );
+    73→  return result;
+    74→}
+    75→
+    76→function isTransientTxError(error: unknown): boolean {
+    77→  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    78→    return error.code === "P2034" || error.code === "P2024";
+    79→  }
+    80→  if (error instanceof Prisma.PrismaClientUnknownRequestError) {
+    81→    return /Transaction already closed|SQLITE_BUSY|database is locked/i.test(error.message);
+    82→  }
+    83→  return false;
+    84→}
+    85→
+    86→const TX_OPTIONS = { timeout: 15_000, maxWait: 5_000 } as const;
+    87→
+    88→async function withWriteTx<T>(fn: (tx: Tx) => Promise<T>, attempts = 3): Promise<T> {
+    89→  let lastError: unknown;
+    90→  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    91→    try {
+    92→      return await runSerializedWrite(() => db.$transaction(fn, TX_OPTIONS));
+    93→    } catch (error) {
+    94→      lastError = error;
+    95→      if (!isTransientTxError(error)) throw error;
+    96→      // Deterministic backoff; bounded (§25 — graceful, never a hot spin).
+    97→      await new Promise((resolve) => setTimeout(resolve, 30 * (attempt + 1)));
+    98→    }
+    99→  }
+   100→  throw lastError;
+   101→}
+   102→
+   103→/** RFC-4180-unsafe day-window helpers on orderedAt (day-precision filters). */
+   104→function dayWindow(from?: string, to?: string): { gte?: Date; lte?: Date } {
+   105→  const window: { gte?: Date; lte?: Date } = {};
+   106→  if (from) window.gte = new Date(`${from}T00:00:00.000Z`);
+   107→  if (to) window.lte = new Date(`${to}T23:59:59.999Z`);
+   108→  return window;
+   109→}
+   110→
+   111→/** §20 — calendar date → the project's UTC-midnoon convention. */
+   112→function midnoon(dateIso: string): Date {
+   113→  return new Date(`${dateIso}T12:00:00.000Z`);
+   114→}
+   115→
+   116→/* ---------------------------- shared internals ----------------------------- */
+   117→
+   118→function assertTransition(from: PurchaseOrderStatus, to: PurchaseOrderStatus): void {
+   119→  if (!canTransitionPurchaseOrder(from, to)) {
+   120→    throw new ApiError(
+   121→      422,
+   122→      PURCHASE_ORDER_ERROR_CODES.INVALID_TRANSITION,
+   123→      `Cannot move a purchase order from ${from} to ${to}.`,
+   124→    );
+   125→  }
+   126→}
+   127→
+   128→function requireDraft(status: PurchaseOrderStatus): void {
+   129→  if (status !== "DRAFT") {
+   130→    throw new ApiError(
+   131→      409,
+   132→      PURCHASE_ORDER_ERROR_CODES.IMMUTABLE,
+   133→      "Only DRAFT purchase orders can be edited.",
+   134→    );
+   135→  }
+   136→}
+   137→
+   138→/**
+   139→ * §12 — server-side mapping of the pure integrity error to a controlled
+   140→ * HTTP result: 500 with the stable PURCHASE_ORDER_INVALID_PERSISTED_STATUS
+   141→ * code and a fixed, value-free message. Internal DB details never leak.
+   142→ */
+   143→function parseDbStatus(value: string): PurchaseOrderStatus {
+   144→  try {
+   145→    return parsePurchaseOrderStatus(value);
+   146→  } catch (error) {
+   147→    if (error instanceof PurchaseOrderStatusIntegrityError) {
+   148→      throw new ApiError(
+   149→        500,
+   150→        PURCHASE_ORDER_INVALID_PERSISTED_STATUS,
+   151→        "Purchase order data is in an invalid state. Please contact support.",
+   152→      );
+   153→    }
+   154→    throw error;
+   155→  }
+   156→}
+   157→
+   158→/**
+   159→ * §17/§18 — map pure canonical-total failures to their controlled HTTP
+   160→ * result: an unsafe total is a 422 (client-relevant bound), never a silent
+   161→ * rounding. Integrity errors keep their 500 mapping. Also used by the
+   162→ * Supplier 360 / Product history routes so corrupted PO rows surface the
+   163→ * SAME stable codes (§12) instead of generic 500s.
+   164→ */
+   165→export function mapPurePurchaseOrderDomainError(error: unknown): never {
+   166→  if (error instanceof PurchaseOrderStatusIntegrityError) {
+   167→    throw new ApiError(
+   168→      500,
+   169→      PURCHASE_ORDER_INVALID_PERSISTED_STATUS,
+   170→      "Purchase order data is in an invalid state. Please contact support.",
+   171→    );
+   172→  }
+   173→  if (error instanceof Error && error.message === "PURCHASE_ORDER_TOTAL_OVERFLOW") {
+   174→    throw new ApiError(
+   175→      422,
+   176→      PURCHASE_ORDER_ERROR_CODES.TOTAL_OVERFLOW,
+   177→      "This purchase order total exceeds the safe numeric range.",
+   178→    );
+   179→  }
+   180→  throw error;
+   181→}
+   182→
+   183→/** Server-side alias used inside this module. */
+   184→function mapPureDomainError(error: unknown): never {
+   185→  return mapPurePurchaseOrderDomainError(error);
+   186→}
+   187→
+   188→async function loadSupplier(tx: Tx, businessId: string, supplierId: string) {
+   189→  const supplier = await tx.supplier.findFirst({
+   190→    where: { id: supplierId, businessId, deletedAt: null }, // §10 — tenant + not deleted
+   191→    select: { id: true, name: true },
+   192→  });
+   193→  if (!supplier) {
+   194→    // §48 — foreign/deleted supplier is indistinguishable from unknown.
+   195→    throw new ApiError(404, PURCHASE_ORDER_ERROR_CODES.INVALID_SUPPLIER, "Supplier not found.");
+   196→  }
+   197→  return supplier;
+   198→}
+   199→
+   200→async function loadOrderHeader(
+   201→  tx: Tx,
+   202→  businessId: string,
+   203→  id: string,
+   204→): Promise<{
+   205→  id: string;
+   206→  reference: string;
+   207→  status: PurchaseOrderStatus;
+   208→  supplierId: string;
+   209→  supplierNameAtOrder: string;
+   210→  orderedAt: Date;
+   211→  expectedDate: Date | null;
+   212→  notes: string | null;
+   213→  currencyCodeAtOrder: string;
+   214→  currencySymbolAtOrder: string;
+   215→  decimalPrecisionAtOrder: number;
+   216→  createdByUserId: string;
+   217→  sentAt: Date | null;
+   218→  confirmedAt: Date | null;
+   219→  closedAt: Date | null;
+   220→  cancelledAt: Date | null;
+   221→  createdAt: Date;
+   222→  updatedAt: Date;
+   223→}> {
+   224→  const row = await tx.purchaseOrder.findFirst({
+   225→    where: { id, businessId }, // §47 — tenant scope from auth context only
+   226→    select: {
+   227→      id: true,
+   228→      reference: true,
+   229→      status: true,
+   230→      supplierId: true,
+   231→      supplierNameAtOrder: true,
+   232→      orderedAt: true,
+   233→      expectedDate: true,
+   234→      notes: true,
+   235→      currencyCodeAtOrder: true,
+   236→      currencySymbolAtOrder: true,
+   237→      decimalPrecisionAtOrder: true,
+   238→      createdByUserId: true,
+   239→      sentAt: true,
+   240→      confirmedAt: true,
+   241→      closedAt: true,
+   242→      cancelledAt: true,
+   243→      createdAt: true,
+   244→      updatedAt: true,
+   245→    },
+   246→  });
+   247→  if (!row) throw new ApiError(404, "NOT_FOUND", "Purchase order not found.");
+   248→  // §11/§12 — a corrupted persisted status NEVER silently becomes DRAFT:
+   249→  // it is a controlled 500 integrity error (invalid state ≠ draft).
+   250→  return { ...row, status: parseDbStatus(row.status) };
+   251→}
+   252→
+   253→function auditInput(
+   254→  businessId: string,
+   255→  actorId: string,
+   256→  action: string,
+   257→  purchaseOrderId: string,
+   258→  reference: string,
+   259→  after: Record<string, unknown>,
+   260→  before?: Record<string, unknown>,
+   261→) {
+   262→  return {
+   263→    businessId,
+   264→    actorId,
+   265→    action,
+   266→    entityType: "PurchaseOrder",
+   267→    entityId: purchaseOrderId,
+   268→    ...(before ? { before } : {}),
+   269→    after: { reference, ...after }, // §63 — safe metadata; never notes content
+   270→  };
+   271→}
+   272→
+   273→/** §32 — guard the post-mutation total; 422 instead of silent precision loss. */
+   274→function assertSafeTotal(lines: ReadonlyArray<{ orderedQty: number; unitPriceMinor: number }>): void {
+   275→  try {
+   276→    computePurchaseOrderTotal(lines);
+   277→  } catch {
+   278→    throw new ApiError(
+   279→      422,
+   280→      PURCHASE_ORDER_ERROR_CODES.TOTAL_OVERFLOW,
+   281→      "This combination of quantities and prices exceeds the safe total range.",
+   282→    );
+   283→  }
+   284→}
+   285→
+   286→/* -------------------------------- create ---------------------------------- */
+   287→
+   288→export async function createPurchaseOrder(input: {
+   289→  businessId: string;
+   290→  userId: string;
+   291→  supplierId: string;
+   292→  reference?: string; // undefined/blank → server-generated (§13)
+   293→  orderedAt?: string; // calendar date; default now
+   294→  expectedDate?: string | null;
+   295→  notes?: string | null;
+   296→  ip?: string | null;
+   297→  userAgent?: string | null;
+   298→}) {
+   299→  const cap = purchaseOrderLineCap(process.env.PURCHASE_ORDER_MAX_LINES);
+   300→  void cap; // creation starts with zero lines; cap bounds LINES (§33)
+   301→  const orderedAt = input.orderedAt ? midnoon(input.orderedAt) : new Date();
+   302→  const expectedDate = input.expectedDate ? midnoon(input.expectedDate) : null;
+   303→
+   304→  return withWriteTx(async (tx) => {
+   305→    const supplier = await loadSupplier(tx, input.businessId, input.supplierId);
+   306→    const business = await tx.business.findUnique({
+   307→      where: { id: input.businessId },
+   308→      select: { currencyCode: true, currencySymbol: true, decimalPrecision: true },
+   309→    });
+   310→    if (!business) throw new ApiError(404, "NOT_FOUND", "Business not found.");
+   311→
+   312→    const generated = !input.reference;
+   313→    const baseReference = generated
+   314→      ? generatePurchaseOrderReference(new Date(), (max) => randomInt(max))
+   315→      : (input.reference as string);
+   316→
+   317→    // §13 — bounded retry ONLY for generated references; a user-chosen
+   318→    // duplicate fails immediately with the stable 409 (§12/§60).
+   319→    let lastCollision = false;
+   320→    for (let attempt = 0; attempt < 5; attempt += 1) {
+   321→      const reference = generated && attempt > 0
+   322→        ? generatePurchaseOrderReference(new Date(), (max) => randomInt(max))
+   323→        : baseReference;
+   324→      try {
+   325→        const row = await tx.purchaseOrder.create({
+   326→          data: {
+   327→            businessId: input.businessId,
+   328→            supplierId: supplier.id,
+   329→            reference,
+   330→            status: "DRAFT",
+   331→            // §22 — currency snapshot from the business, never the client.
+   332→            currencyCodeAtOrder: business.currencyCode,
+   333→            currencySymbolAtOrder: business.currencySymbol,
+   334→            decimalPrecisionAtOrder: business.decimalPrecision,
+   335→            orderedAt,
+   336→            expectedDate,
+   337→            notes: input.notes ?? null,
+   338→            supplierNameAtOrder: supplier.name, // §11 — historical identity
+   339→            createdByUserId: input.userId, // §209 — always ctx.userId
+   340→          },
+   341→          select: { id: true, reference: true, status: true },
+   342→        });
+   343→        await audit(
+   344→          auditInput(input.businessId, input.userId, "purchase_order.create", row.id, row.reference, {
+   345→            status: row.status,
+   346→            supplierId: supplier.id,
+   347→            supplierNameAtOrder: supplier.name,
+   348→            currencyCodeAtOrder: business.currencyCode,
+   349→            lineCount: 0,
+   350→          }),
+   351→          tx,
+   352→        );
+   353→        return row;
+   354→      } catch (error) {
+   355→        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+   356→          lastCollision = true;
+   357→          if (!generated) break; // §60 — user-chosen reference collision → 409
+   358→          continue; // §13 — regenerate and retry (bounded)
+   359→        }
+   360→        throw error;
+   361→      }
+   362→    }
+   363→    if (lastCollision) {
+   364→      throw new ApiError(
+   365→        409,
+   366→        PURCHASE_ORDER_ERROR_CODES.DUPLICATE_REFERENCE,
+   367→        "A purchase order with this reference already exists.",
+   368→      );
+   369→    }
+   370→    throw new ApiError(500, "INTERNAL_ERROR", "Purchase order could not be created.");
+   371→  });
+   372→}
+   373→
+   374→/* --------------------------------- list ----------------------------------- */
+   375→
+   376→export async function listPurchaseOrders(input: {
+   377→  businessId: string;
+   378→  q?: string;
+   379→  status?: string;
+   380→  from?: string;
+   381→  to?: string;
+   382→  page: number;
+   383→  pageSize: number;
+   384→}) {
+   385→  const cap = purchaseOrderLineCap(process.env.PURCHASE_ORDER_MAX_LINES);
+   386→  const where: Prisma.PurchaseOrderWhereInput = { businessId: input.businessId };
+   387→  if (input.q) {
+   388→    // §53 — reference + supplier snapshot + product snapshot names/SKUs.
+   389→    where.OR = [
+   390→      { reference: { contains: input.q } },
+   391→      { supplierNameAtOrder: { contains: input.q } },
+   392→      { supplier: { is: { name: { contains: input.q } } } },
+   393→      { lines: { some: { OR: [
+   394→        { productNameAtOrder: { contains: input.q } },
+   395→        { skuAtOrder: { contains: input.q } },
+   396→      ] } } },
+   397→    ];
+   398→  }
+   399→  if (input.status && isPurchaseOrderStatus(input.status)) where.status = input.status;
+   400→  if (input.from || input.to) where.orderedAt = dayWindow(input.from, input.to);
+   401→
+   402→  const [rows, total] = await Promise.all([
+   403→    db.purchaseOrder.findMany({
+   404→      where,
+   405→      // §55 — deterministic: orderedAt DESC, then createdAt DESC, then id DESC.
+   406→      orderBy: [{ orderedAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+   407→      skip: (input.page - 1) * input.pageSize,
+   408→      take: input.pageSize,
+   409→      select: {
+   410→        id: true,
+   411→        reference: true,
+   412→        status: true,
+   413→        supplierId: true,
+   414→        supplierNameAtOrder: true,
+   415→        currencyCodeAtOrder: true,
+   416→        currencySymbolAtOrder: true,
+   417→        decimalPrecisionAtOrder: true,
+   418→        orderedAt: true,
+   419→        expectedDate: true,
+   420→        createdAt: true,
+   421→        updatedAt: true,
+   422→        // §16 — the line slice is EXPLICITLY bounded by the same cap law as
+   423→        // the write path (defense against invariant drift/corrupt rows).
+   424→        lines: { select: { orderedQty: true, unitPriceMinor: true }, take: cap },
+   425→        _count: { select: { lines: true } },
+   426→      },
+   427→    }),
+   428→    db.purchaseOrder.count({ where }),
+   429→  ]);
+   430→
+   431→  let items;
+   432→  try {
+   433→    items = rows.map((row) => {
+   434→      if (row._count.lines > row.lines.length) {
+   435→        // §16 — a truncated slice would make every total a LIE. The write
+   436→        // path forbids this; treat it as the invariant violation it is.
+   437→        throw new Error("PURCHASE_ORDER_LINE_CAP_INVARIANT");
+   438→      }
+   439→      return purchaseOrderListItemDto({
+   440→        ...row,
+   441→        supplierName: null,
+   442→        createdByName: null,
+   443→        createdByUserId: "",
+   444→        sentAt: null,
+   445→        confirmedAt: null,
+   446→        closedAt: null,
+   447→        cancelledAt: null,
+   448→        notes: null,
+   449→        lineCount: row._count.lines,
+   450→      });
+   451→    });
+   452→  } catch (error) {
+   453→    if (error instanceof Error && error.message === "PURCHASE_ORDER_LINE_CAP_INVARIANT") {
+   454→      throw new ApiError(
+   455→        500,
+   456→        "PURCHASE_ORDER_LINE_CAP_INVARIANT",
+   457→        "Purchase order line cap invariant violated.",
+   458→      );
+   459→    }
+   460→    mapPureDomainError(error); // §17 — overflow/integrity → controlled errors
+   461→  }
+   462→
+   463→  return {
+   464→    items,
+   465→    total,
+   466→    page: input.page,
+   467→    pageSize: input.pageSize,
+   468→  };
+   469→}
+   470→
+   471→/* -------------------------------- detail ---------------------------------- */
+   472→
+   473→export async function getPurchaseOrder(input: { businessId: string; id: string }) {
+   474→  const cap = purchaseOrderLineCap(process.env.PURCHASE_ORDER_MAX_LINES);
+   475→  // §22 — header, supplier state, creator and lines are read in ONE
+   476→  // consistent transaction so the response can never combine a stale header
+   477→  // with mismatched line state (production-quality document read).
+   478→  const { header, supplier, creator, lineRows } = await db.$transaction(async (tx) => {
+   479→    const hdr = await loadOrderHeader(tx, input.businessId, input.id);
+   480→    const [sup, usr, lineRws] = await Promise.all([
+   481→      // §23 — EXPLICIT tenant scope on the live-supplier read: a foreign
+   482→      // tenant's supplier row is unreachable even by internal id.
+   483→      tx.supplier.findFirst({
+   484→        where: { id: hdr.supplierId, businessId: input.businessId },
+   485→        select: { name: true, deletedAt: true },
+   486→      }),
+   487→      // §24 — creator read exposes ONLY id + name (no hashes/secrets).
+   488→      tx.user.findUnique({
+   489→        where: { id: hdr.createdByUserId },
+   490→        select: { id: true, name: true },
+   491→      }),
+   492→      // §158 — ALL lines (the order is hard-capped); cap+1 proves completeness.
+   493→      tx.purchaseOrderLine.findMany({
+   494→        where: { purchaseOrderId: hdr.id },
+   495→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+   496→        take: cap + 1,
+   497→        select: {
+   498→          id: true,
+   499→          productId: true,
+   500→          productNameAtOrder: true,
+   501→          skuAtOrder: true,
+   502→          unitAtOrder: true,
+   503→          orderedQty: true,
+   504→          unitPriceMinor: true,
+   505→          createdAt: true,
+   506→          updatedAt: true,
+   507→        },
+   508→      }),
+   509→    ]);
+   510→    return { header: hdr, supplier: sup, creator: usr, lineRows: lineRws };
+   511→  });
+   512→
+   513→  if (lineRows.length > cap) {
+   514→    // Defensive: the write path prevents this; never render a partial document.
+   515→    throw new ApiError(500, "INTERNAL_ERROR", "Purchase order line cap invariant violated.");
+   516→  }
+   517→
+   518→  try {
+   519→    return purchaseOrderDetailDto(
+   520→      {
+   521→        ...header,
+   522→        // §11 — live name ONLY as a navigation aid; display identity is the
+   523→        // snapshot. A soft-deleted supplier renders as "no longer listed".
+   524→        supplierName: supplier && supplier.deletedAt === null ? supplier.name : null,
+   525→        createdByName: creator?.name ?? null,
+   526→      },
+   527→      lineRows,
+   528→    );
+   529→  } catch (error) {
+   530→    mapPureDomainError(error); // §13/§17 — controlled integrity/overflow
+   531→  }
+   532→}
+   533→
+   534→/* ---------------------------- draft header patch --------------------------- */
+   535→
+   536→export async function updatePurchaseOrder(input: {
+   537→  businessId: string;
+   538→  userId: string;
+   539→  id: string;
+   540→  reference?: string;
+   541→  orderedAt?: string;
+   542→  expectedDate?: string | null;
+   543→  notes?: string | null;
+   544→  ip?: string | null;
+   545→  userAgent?: string | null;
+   546→}) {
+   547→  return withWriteTx(async (tx) => {
+   548→    const header = await loadOrderHeader(tx, input.businessId, input.id);
+   549→    requireDraft(header.status); // §43 — DRAFT-only header patch
+   550→
+   551→    const data: Prisma.PurchaseOrderUpdateInput = {};
+   552→    if (input.reference !== undefined) data.reference = input.reference;
+   553→    if (input.orderedAt !== undefined) data.orderedAt = midnoon(input.orderedAt);
+   554→    if (input.expectedDate !== undefined) {
+   555→      data.expectedDate = input.expectedDate ? midnoon(input.expectedDate) : null;
+   556→    }
+   557→    if (input.notes !== undefined) data.notes = input.notes;
+   558→
+   559→    const updated = await tx.purchaseOrder.update({
+   560→      where: { id: header.id },
+   561→      data,
+   562→      select: { id: true, reference: true, status: true, updatedAt: true },
+   563→    });
+   564→    await audit(
+   565→      auditInput(
+   566→        input.businessId,
+   567→        input.userId,
+   568→        "purchase_order.update",
+   569→        header.id,
+   570→        updated.reference,
+   571→        {
+   572→          status: updated.status,
+   573→          changed: {
+   574→            ...(input.reference !== undefined ? { reference: true } : {}),
+   575→            ...(input.orderedAt !== undefined ? { orderedAt: input.orderedAt } : {}),
+   576→            ...(input.expectedDate !== undefined ? { expectedDate: input.expectedDate } : {}),
+   577→            ...(input.notes !== undefined ? { notes: true } : {}),
+   578→          },
+   579→          // §63 — before/after of the changed header fields (no notes content).
+   580→          ...(input.reference !== undefined ? { referenceBefore: header.reference } : {}),
+   581→          ...(input.expectedDate !== undefined
+   582→            ? { expectedDateBefore: header.expectedDate?.toISOString() ?? null }
+   583→            : {}),
+   584→        },
+   585→      ),
+   586→      tx,
+   587→    );
+   588→    return updated;
+   589→  });
+   590→}
+   591→
+   592→/* -------------------------------- lines ----------------------------------- */
+   593→
+   594→export async function addPurchaseOrderLine(input: {
+   595→  businessId: string;
+   596→  userId: string;
+   597→  id: string;
+   598→  productId: string;
+   599→  orderedQty: number;
+   600→  unitPriceMinor: number;
+   601→  ip?: string | null;
+   602→  userAgent?: string | null;
+   603→}) {
+   604→  const cap = purchaseOrderLineCap(process.env.PURCHASE_ORDER_MAX_LINES);
+   605→  return withWriteTx(async (tx) => {
+   606→    // §58 steps 1-2 — order exists in tenant + DRAFT.
+   607→    const header = await loadOrderHeader(tx, input.businessId, input.id);
+   608→    requireDraft(header.status);
+   609→
+   610→    // §58 step 3-5 — product exists in the same business, not deleted, and
+   611→    // ACTIVE for NEW selections (existing draft lines stay historical §26).
+   612→    const product = await tx.product.findFirst({
+   613→      where: { id: input.productId, businessId: input.businessId, deletedAt: null },
+   614→      select: { id: true, name: true, sku: true, unit: true, isActive: true },
+   615→    });
+   616→    if (!product) {
+   617→      throw new ApiError(404, PURCHASE_ORDER_ERROR_CODES.INVALID_PRODUCT, "Product not found.");
+   618→    }
+   619→    if (!product.isActive) {
+   620→      throw new ApiError(
+   621→        422,
+   622→        PURCHASE_ORDER_ERROR_CODES.PRODUCT_INACTIVE,
+   623→        "Inactive products cannot be added to a purchase order.",
+   624→      );
+   625→    }
+   626→
+   627→    // §58 step 6 — line cap.
+   628→    const lineCount = await tx.purchaseOrderLine.count({ where: { purchaseOrderId: header.id } });
+   629→    if (lineCount >= cap) {
+   630→      throw new ApiError(
+   631→        422,
+   632→        PURCHASE_ORDER_ERROR_CODES.LINE_LIMIT,
+   633→        `Purchase order line limit reached (${cap}).`,
+   634→      );
+   635→    }
+   636→
+   637→    // §58 step 9 — snapshot product metadata at write time (§27).
+   638→    try {
+   639→      const line = await tx.purchaseOrderLine.create({
+   640→        data: {
+   641→          purchaseOrderId: header.id,
+   642→          productId: product.id,
+   643→          orderedQty: input.orderedQty,
+   644→          unitPriceMinor: input.unitPriceMinor,
+   645→          productNameAtOrder: product.name,
+   646→          skuAtOrder: product.sku,
+   647→          unitAtOrder: product.unit,
+   648→        },
+   649→        // §67 — the FULL persisted row feeds the DTO (real timestamps).
+   650→        select: {
+   651→          id: true,
+   652→          orderedQty: true,
+   653→          unitPriceMinor: true,
+   654→          createdAt: true,
+   655→          updatedAt: true,
+   656→        },
+   657→      });
+   658→
+   659→      // §25 — belt-and-braces cap re-check INSIDE the transaction: two
+   660→      // racing adds cannot both survive SQLite serialization — if the
+   661→      // create pushed the count past the cap, this throw ROLLS BACK the
+   662→      // whole transaction so >cap lines can never persist.
+   663→      const lineCountAfter = await tx.purchaseOrderLine.count({
+   664→        where: { purchaseOrderId: header.id },
+   665→      });
+   666→      if (lineCountAfter > cap) {
+   667→        throw new ApiError(
+   668→          422,
+   669→          PURCHASE_ORDER_ERROR_CODES.LINE_LIMIT,
+   670→          `Purchase order line limit reached (${cap}).`,
+   671→        );
+   672→      }
+   673→
+   674→      // §58 step 10 — audit inside the same transaction.
+   675→      await audit(
+   676→        auditInput(input.businessId, input.userId, "purchase_order.line_add", header.id, header.reference, {
+   677→          lineId: line.id,
+   678→          productId: product.id,
+   679→          productNameAtOrder: product.name,
+   680→          orderedQty: line.orderedQty,
+   681→          unitPriceMinor: line.unitPriceMinor,
+   682→          lineCount: lineCountAfter,
+   683→        }),
+   684→        tx,
+   685→      );
+   686→
+   687→      // §32 — the resulting document total must remain a safe integer.
+   688→      const lines = await tx.purchaseOrderLine.findMany({
+   689→        where: { purchaseOrderId: header.id },
+   690→        select: { orderedQty: true, unitPriceMinor: true },
+   691→      });
+   692→      assertSafeTotal(lines);
+   693→
+   694→      // §67 — DTO built from the PERSISTED row: real snapshots + real
+   695→      // timestamps, nothing fabricated.
+   696→      return purchaseOrderLineDto({
+   697→        ...line,
+   698→        productId: product.id,
+   699→        productNameAtOrder: product.name,
+   700→        skuAtOrder: product.sku,
+   701→        unitAtOrder: product.unit,
+   702→      });
+   703→    } catch (error) {
+   704→      // §59 — DB uniqueness is authoritative for duplicate products.
+   705→      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+   706→        throw new ApiError(
+   707→          409,
+   708→          PURCHASE_ORDER_ERROR_CODES.DUPLICATE_PRODUCT,
+   709→          "This product is already on the purchase order.",
+   710→        );
+   711→      }
+   712→      throw error;
+   713→    }
+   714→  });
+   715→}
+   716→
+   717→export async function updatePurchaseOrderLine(input: {
+   718→  businessId: string;
+   719→  userId: string;
+   720→  id: string;
+   721→  lineId: string;
+   722→  orderedQty?: number;
+   723→  unitPriceMinor?: number;
+   724→  ip?: string | null;
+   725→  userAgent?: string | null;
+   726→}) {
+   727→  return withWriteTx(async (tx) => {
+   728→    const header = await loadOrderHeader(tx, input.businessId, input.id);
+   729→    requireDraft(header.status); // §35 — DRAFT-only
+   730→
+   731→    const line = await tx.purchaseOrderLine.findFirst({
+   732→      where: { id: input.lineId, purchaseOrderId: header.id }, // §47 — scoped via parent
+   733→      select: { id: true, orderedQty: true, unitPriceMinor: true, productId: true },
+   734→    });
+   735→    if (!line) throw new ApiError(404, "NOT_FOUND", "Purchase order line not found.");
+   736→
+   737→    const data: Prisma.PurchaseOrderLineUpdateInput = {};
+   738→    if (input.orderedQty !== undefined) data.orderedQty = input.orderedQty;
+   739→    if (input.unitPriceMinor !== undefined) data.unitPriceMinor = input.unitPriceMinor;
+   740→
+   741→    // §9 — re-read the COMPLETE persisted row after the mutation: the API
+   742→    // response must carry the real stored snapshots (productNameAtOrder /
+   743→    // skuAtOrder / unitAtOrder) and the real stored timestamps — never
+   744→    // placeholders and never fabricated `new Date()` approximations.
+   745→    const updated = await tx.purchaseOrderLine.update({
+   746→      where: { id: line.id },
+   747→      data,
+   748→      select: {
+   749→        id: true,
+   750→        productId: true,
+   751→        productNameAtOrder: true,
+   752→        skuAtOrder: true,
+   753→        unitAtOrder: true,
+   754→        orderedQty: true,
+   755→        unitPriceMinor: true,
+   756→        createdAt: true,
+   757→        updatedAt: true,
+   758→      },
+   759→    });
+   760→
+   761→    await audit(
+   762→      auditInput(input.businessId, input.userId, "purchase_order.line_update", header.id, header.reference, {
+   763→        lineId: line.id,
+   764→        changed: {
+   765→          ...(input.orderedQty !== undefined
+   766→            ? { orderedQty: { from: line.orderedQty, to: updated.orderedQty } }
+   767→            : {}),
+   768→          ...(input.unitPriceMinor !== undefined
+   769→            ? { unitPriceMinor: { from: line.unitPriceMinor, to: updated.unitPriceMinor } }
+   770→            : {}),
+   771→        },
+   772→      }),
+   773→      tx,
+   774→    );
+   775→
+   776→    // §32 — total stays safe after the edit.
+   777→    const lines = await tx.purchaseOrderLine.findMany({
+   778→      where: { purchaseOrderId: header.id },
+   779→      select: { orderedQty: true, unitPriceMinor: true },
+   780→    });
+   781→    assertSafeTotal(lines);
+   782→
+   783→    // §9 — DTO straight from the persisted row (real values, zero fabrication).
+   784→    return purchaseOrderLineDto(updated);
+   785→  });
+   786→}
+   787→
+   788→export async function removePurchaseOrderLine(input: {
+   789→  businessId: string;
+   790→  userId: string;
+   791→  id: string;
+   792→  lineId: string;
+   793→  ip?: string | null;
+   794→  userAgent?: string | null;
+   795→}) {
+   796→  return withWriteTx(async (tx) => {
+   797→    const header = await loadOrderHeader(tx, input.businessId, input.id);
+   798→    requireDraft(header.status); // §36 — DRAFT-only
+   799→
+   800→    const line = await tx.purchaseOrderLine.findFirst({
+   801→      where: { id: input.lineId, purchaseOrderId: header.id },
+   802→      select: { id: true, productId: true, orderedQty: true, unitPriceMinor: true },
+   803→    });
+   804→    if (!line) throw new ApiError(404, "NOT_FOUND", "Purchase order line not found.");
+   805→
+   806→    await tx.purchaseOrderLine.delete({ where: { id: line.id } });
+   807→    const lineCount = await tx.purchaseOrderLine.count({ where: { purchaseOrderId: header.id } });
+   808→
+   809→    await audit(
+   810→      auditInput(input.businessId, input.userId, "purchase_order.line_remove", header.id, header.reference, {
+   811→        lineId: line.id,
+   812→        productId: line.productId,
+   813→        lineCount,
+   814→      }),
+   815→      tx,
+   816→    );
+   817→
+   818→    return { removed: true, lineCount };
+   819→  });
+   820→}
+   821→
+   822→/* ------------------------------- lifecycle --------------------------------- */
+   823→
+   824→async function assertSupplierStillValid(tx: Tx, businessId: string, supplierId: string) {
+   825→  const supplier = await tx.supplier.findFirst({
+   826→    where: { id: supplierId, businessId, deletedAt: null },
+   827→    select: { id: true },
+   828→  });
+   829→  if (!supplier) {
+   830→    throw new ApiError(
+   831→      422,
+   832→      PURCHASE_ORDER_ERROR_CODES.INVALID_SUPPLIER,
+   833→      "The supplier of this purchase order is no longer available.",
+   834→    );
+   835→  }
+   836→}
+   837→
+   838→export async function transitionPurchaseOrder(input: {
+   839→  businessId: string;
+   840→  userId: string;
+   841→  id: string;
+   842→  op: "send" | "confirm" | "close" | "cancel";
+   843→  ip?: string | null;
+   844→  userAgent?: string | null;
+   845→}) {
+   846→  const target = PURCHASE_ORDER_TRANSITION_TARGET[input.op];
+   847→
+   848→  return withWriteTx(async (tx) => {
+   849→    // §61 — current status re-checked INSIDE the transaction; two concurrent
+   850→    // confirms cannot both succeed (the second sees the new status).
+   851→    const header = await loadOrderHeader(tx, input.businessId, input.id);
+   852→    assertTransition(header.status, target);
+   853→
+   854→    if (input.op === "send") {
+   855→      // §37/§38 — a document needs at least one line to be sent.
+   856→      const lineCount = await tx.purchaseOrderLine.count({ where: { purchaseOrderId: header.id } });
+   857→      if (lineCount < 1) {
+   858→        throw new ApiError(
+   859→          422,
+   860→          PURCHASE_ORDER_ERROR_CODES.EMPTY_ORDER,
+   861→          "Add at least one line before sending.",
+   862→        );
+   863→      }
+   864→      // §38 — supplier must still exist and not be soft-deleted.
+   865→      await assertSupplierStillValid(tx, input.businessId, header.supplierId);
+   866→    }
+   867→
+   868→    const now = new Date();
+   869→    const data: Prisma.PurchaseOrderUpdateInput = { status: target };
+   870→    if (target === "SENT") data.sentAt = now;
+   871→    if (target === "CONFIRMED") data.confirmedAt = now;
+   872→    if (target === "CLOSED") data.closedAt = now;
+   873→    if (target === "CANCELLED") data.cancelledAt = now;
+   874→
+   875→    const updated = await tx.purchaseOrder.update({
+   876→      where: { id: header.id },
+   877→      data,
+   878→      select: { id: true, reference: true, status: true, sentAt: true, confirmedAt: true, closedAt: true, cancelledAt: true },
+   879→    });
+   880→
+   881→    // §17/§18 — CONFIRMED/CLOSED are pure document-state transitions: NO
+   882→    // inventory, expense, payment or statement write happens here (pinned
+   883→    // by the §110-§113 negative tests and the §147-§150 static scan).
+   884→    await audit(
+   885→      auditInput(input.businessId, input.userId, `purchase_order.${input.op}`, header.id, header.reference, {
+   886→        previousStatus: header.status,
+   887→        newStatus: target,
+   888→      }),
+   889→      tx,
+   890→    );
+   891→
+   892→    return updated;
+   893→  });
+   894→}
+   895→

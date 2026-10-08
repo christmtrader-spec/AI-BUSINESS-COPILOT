@@ -17,6 +17,8 @@ import {
   type PurchaseOrderStatus,
   type PurchaseOrderTotal,
 } from "./types";
+import type { PurchaseOrderRecentReceiptDto } from "@/lib/inventory/goods-receipt/dto";
+export type { PurchaseOrderRecentReceiptDto };
 
 /** §51 — bounded, lighter-than-detail list row. */
 export type PurchaseOrderListItemDto = {
@@ -46,6 +48,13 @@ export type PurchaseOrderLineDto = {
   orderedQty: number;
   unitPriceMinor: number;
   lineTotalMinor: number;
+  /**
+   * Prompt 42 §98 — ADDITIVE receiving facts (derived from POSTED goods
+   * receipt lines, §99/§100). Present only when receiving data was
+   * computed by the service; never client-trusted.
+   */
+  receivedQty?: number;
+  remainingQty?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -82,6 +91,23 @@ export type PurchaseOrderDetailDto = {
   updatedAt: string;
   summary: PurchaseOrderTotal;
   lines: PurchaseOrderLineDto[];
+  /**
+   * Prompt 42 §98 — ADDITIVE receiving summary on the EXISTING detail DTO
+   * (never a rebuild of P41). Ordered/Received/Remaining are derived
+   * operational quantities — NO accounting wording is attached (§102).
+   */
+  receiving?: {
+    orderedQty: number;
+    receivedQty: number;
+    remainingQty: number;
+    receiptCount: number;
+    fullyReceived: boolean;
+  };
+  /**
+   * Prompt 42 §104 — ADDITIVE bounded recent-receipts list (take 10,
+   * §105). Click-through to the receipt detail deep link.
+   */
+  recentReceipts?: PurchaseOrderRecentReceiptDto[];
 };
 
 /* ------------------------------- row shapes ------------------------------- */
@@ -192,12 +218,26 @@ export function purchaseOrderLineDto(row: PurchaseOrderLineRow): PurchaseOrderLi
 /**
  * §50 — detail mapper (header + summary + all lines, cap-bounded).
  * §18 — SAME canonical total law as list/create/export — no second math.
+ * Prompt 42 §98 — receiving data arrives precomputed from the service's
+ * transactional read; the mapper performs NO second aggregation.
  */
 export function purchaseOrderDetailDto(
   row: PurchaseOrderHeaderRow,
   lines: ReadonlyArray<PurchaseOrderLineRow>,
+  receiving?: {
+    orderedQty: number;
+    receivedQty: number;
+    remainingQty: number;
+    receiptCount: number;
+    fullyReceived: boolean;
+    lines: ReadonlyArray<{ lineId: string; receivedQty: number; remainingQty: number }>;
+  },
+  recentReceipts?: ReadonlyArray<PurchaseOrderRecentReceiptDto>,
 ): PurchaseOrderDetailDto {
   const totals: PurchaseOrderTotal = computePurchaseOrderTotal(lines);
+  const receivingByLine = new Map(
+    receiving ? receiving.lines.map((r) => [r.lineId, r]) : [],
+  );
   return {
     id: row.id,
     reference: row.reference,
@@ -228,6 +268,28 @@ export function purchaseOrderDetailDto(
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
     summary: totals,
-    lines: lines.map(purchaseOrderLineDto),
+    lines: lines.map((l) => {
+      const dto = purchaseOrderLineDto(l);
+      const recv = receivingByLine.get(l.id);
+      if (recv) {
+        dto.receivedQty = recv.receivedQty;
+        dto.remainingQty = recv.remainingQty;
+      }
+      return dto;
+    }),
+    ...(receiving
+      ? {
+          receiving: {
+            orderedQty: receiving.orderedQty,
+            receivedQty: receiving.receivedQty,
+            remainingQty: receiving.remainingQty,
+            receiptCount: receiving.receiptCount,
+            fullyReceived: receiving.fullyReceived,
+          },
+        }
+      : {}),
+    ...(recentReceipts && recentReceipts.length > 0
+      ? { recentReceipts: [...recentReceipts] }
+      : {}),
   };
 }

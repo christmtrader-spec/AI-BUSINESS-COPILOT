@@ -9,6 +9,7 @@ import {
   ClipboardList,
   CreditCard,
   Package,
+  PackageCheck,
   ShoppingCart,
   Target,
   TrendingUp,
@@ -30,6 +31,7 @@ export const SEARCH_TYPE_ICONS: Record<SearchEntityType, LucideIcon> = {
   OPPORTUNITY: TrendingUp,
   // Prompt 41 (§152) — procurement documents in search results.
   PURCHASE_ORDER: ClipboardList,
+  GOODS_RECEIPT: PackageCheck,
 };
 
 /** Medium localized date for result rows (never raw ISO in the UI). */

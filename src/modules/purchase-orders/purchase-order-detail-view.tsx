@@ -22,6 +22,7 @@ import {
   Download,
   Link2,
   Lock,
+  PackageCheck,
   PackageSearch,
   Pencil,
   Plus,
@@ -66,6 +67,7 @@ import {
   updatePurchaseOrderLine,
 } from "./purchase-orders-api";
 import { PurchaseOrderProductPicker } from "./purchase-order-product-picker";
+import { GoodsReceiptCreateDialog } from "../inventory/goods-receipts/goods-receipt-create-dialog";
 
 type LifecycleAction = "send" | "confirm" | "close" | "cancel";
 
@@ -86,6 +88,7 @@ function toMinorExact(value: string, precision: number): number | null {
 
 export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }) {
   const t = useTranslations("purchaseOrders");
+  const tGr = useTranslations("goodsReceipts");
   const tCommon = useTranslations("common");
   const tErrors = useTranslations("errors");
   const queryClient = useQueryClient();
@@ -99,6 +102,8 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
   const [editTarget, setEditTarget] = useState<PurchaseOrderLineDto | null>(null);
   const [removeTarget, setRemoveTarget] = useState<{ lineId: string; name: string } | null>(null);
   const [lifecycle, setLifecycle] = useState<LifecycleAction | null>(null);
+  // Prompt 42 §103 — the Record Goods Receipt dialog opened from this PO.
+  const [grOpen, setGrOpen] = useState(false);
 
   const detail = useQuery({
     queryKey: purchaseOrderKeys.detail(businessId, id),
@@ -134,6 +139,13 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
             ? { title: t("emptyOrderError"), variant: "destructive" }
             : { title: t("invalidTransition"), variant: "destructive" },
         );
+      } else if (
+        err instanceof ApiClientError &&
+        err.code === "PURCHASE_ORDER_HAS_POSTED_RECEIPTS"
+      ) {
+        // Prompt 42 §146 — cancellation blocked: posted receipts exist.
+        toast({ title: tGr("poCancelledWithReceipts"), variant: "destructive" });
+        setLifecycle(null);
       } else {
         toast({ title: tErrors("generic"), variant: "destructive" });
       }
@@ -384,6 +396,57 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
         </Card>
       ) : null}
 
+      {/* Prompt 42 §102 — Receiving Summary (operational quantities ONLY —
+          no accounting wording §102). CTA per §103: CONFIRMED + remaining. */}
+      {data.receiving ? (
+        <Card data-testid="po-receiving-summary">
+          <CardContent className="pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-base font-semibold">{tGr("receivingSummary")}</h2>
+              <div className="flex items-center gap-2">
+                {data.receiving.fullyReceived ? (
+                  <Badge
+                    variant="outline"
+                    className="border-emerald-500/30 bg-emerald-500/10 text-xs font-medium text-emerald-700 dark:text-emerald-300"
+                  >
+                    {tGr("fullyReceivedLabel")}
+                  </Badge>
+                ) : null}
+                {status === "CONFIRMED" && writable && data.receiving.remainingQty > 0 ? (
+                  <Button type="button" size="sm" onClick={() => setGrOpen(true)} data-testid="po-record-receipt">
+                    <PackageCheck className="size-4" aria-hidden />
+                    {tGr("recordReceipt")}
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+            <div className="mt-3 grid gap-4 sm:grid-cols-3">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">{tGr("orderedTotal")}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums" dir="ltr">
+                  {data.receiving.orderedQty}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">{tGr("receivedTotal")}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums text-emerald-600 dark:text-emerald-400" dir="ltr">
+                  {data.receiving.receivedQty}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">{tGr("remainingTotal")}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums" dir="ltr">
+                  {data.receiving.remainingQty}
+                </p>
+              </div>
+            </div>
+            {status === "CLOSED" && data.receiving.remainingQty > 0 ? (
+              <p className="mt-2 text-xs text-muted-foreground">{tGr("receivingBlockedClosed")}</p>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
       {/* Lines */}
       <Card>
         <CardContent className="pt-4">
@@ -451,6 +514,20 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
                         <span className="tabular-nums" dir="ltr">{l.orderedQty}</span>
                       ),
                     },
+                    ...(data.receiving
+                      ? [
+                          {
+                            id: "receiving" as const,
+                            header: tGr("receivingSummary"),
+                            align: "end" as const,
+                            cell: (l: PurchaseOrderLineDto) => (
+                              <span className="text-muted-foreground tabular-nums" dir="ltr">
+                                {l.receivedQty ?? 0} / {l.remainingQty ?? 0}
+                              </span>
+                            ),
+                          },
+                        ]
+                      : []),
                     {
                       id: "price",
                       header: t("unitPrice"),
@@ -524,10 +601,15 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
                         {moneyFmt(l.lineTotalMinor)}
                       </span>
                     </div>
-                    <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+                    <div className="text-muted-foreground mt-2 flex items-center justify-between text-xs">
                       <span dir="ltr">{t("orderedQty")}: {l.orderedQty}</span>
                       <span dir="ltr">{t("unitPrice")}: {moneyFmt(l.unitPriceMinor)}</span>
                     </div>
+                    {data.receiving ? (
+                      <p className="text-muted-foreground mt-1 text-xs tabular-nums" dir="ltr">
+                        {tGr("receivedTotal")}: {l.receivedQty ?? 0} · {tGr("remainingTotal")}: {l.remainingQty ?? 0}
+                      </p>
+                    ) : null}
                     {editable ? (
                       <div className="mt-2 flex justify-end gap-1">
                         <Button
@@ -575,6 +657,49 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
           <p className="mt-1 text-xs text-muted-foreground">{t("financialNote")}</p>
         </CardContent>
       </Card>
+
+      {/* Prompt 42 §104 — Recent Goods Receipts (bounded 10, §105).
+          Click-through to the receipt detail deep link (§119). */}
+      {data.recentReceipts && data.recentReceipts.length > 0 ? (
+        <Card data-testid="po-recent-receipts">
+          <CardContent className="pt-4">
+            <h2 className="text-base font-semibold">{tGr("recentReceipts")}</h2>
+            <ul className="mt-2 divide-y">
+              {data.recentReceipts.map((r) => (
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-2 rounded-md px-1 py-2 text-start text-sm transition-colors hover:bg-muted/40"
+                    onClick={() => navigate({ kind: "inventory-goods-receipt", id: r.id })}
+                  >
+                    <span className="min-w-0 truncate font-medium" dir="auto">{r.reference}</span>
+                    <span className="text-muted-foreground flex shrink-0 items-center gap-2 text-xs">
+                      <span
+                        className={cn(
+                          "rounded border px-1.5 py-0.5",
+                          r.status === "POSTED"
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                            : r.status === "CANCELLED"
+                              ? "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                              : "bg-muted text-muted-foreground border-border",
+                        )}
+                      >
+                        {tGr(`status_${r.status}`)}
+                      </span>
+                      <span className="tabular-nums" dir="ltr">
+                        {tGr("receivedTotal")}: {r.totalReceivedQty}
+                      </span>
+                      {r.postedAt ? (
+                        <span dir="ltr">{dateFmt.format(new Date(r.postedAt))}</span>
+                      ) : null}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Line add dialog — product fixed, qty + price (§83/§82) */}
       {addTarget ? (
@@ -646,6 +771,25 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
           pending={lifecycleMutation.isPending}
           onConfirm={(action) => lifecycleMutation.mutate(action)}
           onClose={() => setLifecycle(null)}
+        />
+      ) : null}
+
+      {/* Prompt 42 §103 — Record Goods Receipt dialog, PO preselected. */}
+      {grOpen ? (
+        <GoodsReceiptCreateDialog
+          businessId={businessId}
+          presetPo={{
+            id: data.id,
+            reference: data.reference,
+            supplierNameAtOrder: data.supplier.nameAtOrder,
+            remainingQty: data.receiving?.remainingQty ?? 0,
+          }}
+          onClose={() => setGrOpen(false)}
+          onCreated={async (receiptId) => {
+            setGrOpen(false);
+            await invalidate();
+            navigate({ kind: "inventory-goods-receipt", id: receiptId });
+          }}
         />
       ) : null}
     </div>

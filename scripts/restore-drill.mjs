@@ -196,6 +196,9 @@ try {
     // verification surface (same honest-absent rule as P40: older backups
     // may predate the models — reported, never a drill failure).
     "PurchaseOrder", "PurchaseOrderLine",
+    // Prompt 42 (§140) — goods receipts + lines join the restore
+    // verification surface (same honest-absent rule).
+    "GoodsReceipt", "GoodsReceiptLine",
   ];
   const counts = {};
   for (const entity of ENTITIES) {

@@ -39,6 +39,8 @@ import { StocktakesView } from "../inventory/stocktakes/stocktakes-view";
 import { StocktakeDetailView } from "../inventory/stocktakes/stocktake-detail-view";
 import { PurchaseOrdersView } from "../purchase-orders/purchase-orders-view";
 import { PurchaseOrderDetailView } from "../purchase-orders/purchase-order-detail-view";
+import { GoodsReceiptsView } from "../inventory/goods-receipts/goods-receipts-view";
+import { GoodsReceiptDetailView } from "../inventory/goods-receipts/goods-receipt-detail-view";
 import { SubscriptionView } from "../billing/subscription-view";
 import { PaymentReturnView } from "../billing/payment-return-view";
 import { AuditView } from "../audit/audit-view";
@@ -82,6 +84,11 @@ function labelKeyOf(view: AppView): string {
       return "purchaseOrders";
     case "purchase-order":
       return "purchaseOrders";
+    // Prompt 42 — goods-receipt document titles (§117).
+    case "inventory-goods-receipts":
+      return "goodsReceipts";
+    case "inventory-goods-receipt":
+      return "goodsReceipts";
     case "profile":
       return "profile";
     case "module": {
@@ -298,6 +305,30 @@ export function AppShell({
                   onDashboard={() => navigate({ kind: "dashboard" })}
                 >
                   <PurchaseOrderDetailView id={view.id} role={role} />
+                </ModuleBoundary>
+              ) : null}
+              {view.kind === "inventory-goods-receipts" ? (
+                <ModuleBoundary
+                  moduleKey={viewKey}
+                  title={tBoundary("title")}
+                  description={tBoundary("description")}
+                  retry={tCommon("retry")}
+                  dashboardLabel={tNav("dashboard")}
+                  onDashboard={() => navigate({ kind: "dashboard" })}
+                >
+                  <GoodsReceiptsView role={role} />
+                </ModuleBoundary>
+              ) : null}
+              {view.kind === "inventory-goods-receipt" ? (
+                <ModuleBoundary
+                  moduleKey={viewKey}
+                  title={tBoundary("title")}
+                  description={tBoundary("description")}
+                  retry={tCommon("retry")}
+                  dashboardLabel={tNav("dashboard")}
+                  onDashboard={() => navigate({ kind: "dashboard" })}
+                >
+                  <GoodsReceiptDetailView id={view.id} role={role} />
                 </ModuleBoundary>
               ) : null}
               {view.kind === "profile" ? <ProfileView /> : null}

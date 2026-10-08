@@ -50,6 +50,8 @@ export type ExportDatasetKey =
   | "inventory_stocktake_lines"
   | "purchase_orders"
   | "purchase_order_lines"
+  | "inventory_goods_receipts"
+  | "inventory_goods_receipt_lines"
   | "subscription_summary"
   | "usage_summary";
 
@@ -72,6 +74,8 @@ export const EXPORT_DATASET_KEYS = [
   "inventory_stocktake_lines",
   "purchase_orders",
   "purchase_order_lines",
+  "inventory_goods_receipts",
+  "inventory_goods_receipt_lines",
   "subscription_summary",
   "usage_summary",
 ] as const satisfies readonly ExportDatasetKey[];
@@ -83,6 +87,8 @@ export const DATASET_IMPLICATIONS: Partial<Record<ExportDatasetKey, ExportDatase
   inventory_stocktakes: ["inventory_stocktake_lines"],
   // Prompt 41 (§95) — purchase orders always carry their lines.
   purchase_orders: ["purchase_order_lines"],
+  // Prompt 42 (§137) — goods receipts always carry their receipt lines.
+  inventory_goods_receipts: ["inventory_goods_receipt_lines"],
 };
 
 export type DatasetMeta = {
@@ -125,6 +131,10 @@ export const EXPORT_CATALOG: Record<ExportDatasetKey, DatasetMeta> = {
   // (CONFIDENTIAL): snapshots + document totals, never provider/secret data.
   purchase_orders: { key: "purchase_orders", sensitivity: "CONFIDENTIAL", csvFile: "purchase_orders.csv", labelKey: "purchaseOrders" },
   purchase_order_lines: { key: "purchase_order_lines", sensitivity: "CONFIDENTIAL", csvFile: "purchase_order_lines.csv", labelKey: "purchaseOrderLines" },
+  // Prompt 42 (§136) — receiving documents: CONFIDENTIAL (tenant inventory
+  // evidence). Export-ONLY (§138/§252) — import is intentionally blocked.
+  inventory_goods_receipts: { key: "inventory_goods_receipts", sensitivity: "CONFIDENTIAL", csvFile: "inventory_goods_receipts.csv", labelKey: "inventoryGoodsReceipts" },
+  inventory_goods_receipt_lines: { key: "inventory_goods_receipt_lines", sensitivity: "CONFIDENTIAL", csvFile: "inventory_goods_receipt_lines.csv", labelKey: "inventoryGoodsReceiptLines" },
   subscription_summary: { key: "subscription_summary", sensitivity: "CONFIDENTIAL", csvFile: "subscription.csv", labelKey: "subscriptionSummary" },
   usage_summary: { key: "usage_summary", sensitivity: "CONFIDENTIAL", csvFile: "usage.csv", labelKey: "usageSummary" },
 };
@@ -987,6 +997,100 @@ export const DATASET_FETCHERS: Record<ExportDatasetKey, DatasetFetcher> = {
     };
   },
 
+  // Prompt 42 (§136/§252) — goods-receipt datasets: export-ONLY. Rows carry
+  // historical snapshots verbatim (§127); there is NO money in this domain
+  // (§37) so no minor-unit conversion applies anywhere below.
+  inventory_goods_receipts: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.goodsReceipt.findMany({
+        where: { businessId: ctx.businessId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take,
+        select: {
+          id: true,
+          reference: true,
+          status: true,
+          purchaseOrderId: true,
+          purchaseOrderReferenceAtReceipt: true,
+          supplierNameAtReceipt: true,
+          notes: true,
+          createdByUserId: true,
+          postedAt: true,
+          cancelledAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((gr) => ({
+        json: {
+          id: gr.id,
+          reference: gr.reference,
+          status: gr.status,
+          purchaseOrderId: gr.purchaseOrderId,
+          purchaseOrderReferenceAtReceipt: gr.purchaseOrderReferenceAtReceipt,
+          supplierNameAtReceipt: gr.supplierNameAtReceipt,
+          notes: gr.notes,
+          createdByUserId: gr.createdByUserId,
+          postedAt: iso(gr.postedAt),
+          cancelledAt: iso(gr.cancelledAt),
+          createdAt: gr.createdAt.toISOString(),
+          updatedAt: gr.updatedAt.toISOString(),
+        },
+        csv: [
+          gr.id, gr.reference, gr.status, gr.purchaseOrderId, gr.purchaseOrderReferenceAtReceipt,
+          gr.supplierNameAtReceipt, gr.notes, gr.createdByUserId,
+          iso(gr.postedAt), iso(gr.cancelledAt), gr.createdAt.toISOString(), gr.updatedAt.toISOString(),
+        ],
+      })),
+      truncated,
+    };
+  },
+
+  inventory_goods_receipt_lines: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.goodsReceiptLine.findMany({
+        where: { goodsReceipt: { businessId: ctx.businessId } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take,
+        select: {
+          id: true,
+          goodsReceiptId: true,
+          purchaseOrderLineId: true,
+          productId: true,
+          productNameAtReceipt: true,
+          skuAtReceipt: true,
+          unitAtReceipt: true,
+          receivedQty: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((l) => ({
+        json: {
+          id: l.id,
+          goodsReceiptId: l.goodsReceiptId,
+          purchaseOrderLineId: l.purchaseOrderLineId,
+          productId: l.productId,
+          productNameAtReceipt: l.productNameAtReceipt,
+          skuAtReceipt: l.skuAtReceipt,
+          unitAtReceipt: l.unitAtReceipt,
+          receivedQty: l.receivedQty,
+          createdAt: l.createdAt.toISOString(),
+          updatedAt: l.updatedAt.toISOString(),
+        },
+        csv: [
+          l.id, l.goodsReceiptId, l.purchaseOrderLineId, l.productId, l.productNameAtReceipt,
+          l.skuAtReceipt, l.unitAtReceipt, l.receivedQty, l.createdAt.toISOString(), l.updatedAt.toISOString(),
+        ],
+      })),
+      truncated,
+    };
+  },
+
 subscription_summary: async (ctx) => {
     // §51 — customer-visible subscription state ONLY. Provider verification
     // internals, webhook signatures and merchant credentials do not exist here.
@@ -1086,6 +1190,8 @@ export const DATASET_CSV_COLUMNS: Record<ExportDatasetKey, string[]> = {
   // Prompt 41 (§96) — procurement document fields (snapshots verbatim §236).
   purchase_orders: ["id", "reference", "status", "supplier_id", "supplier_name_at_order", "currency_code_at_order", "currency_symbol_at_order", "decimal_precision_at_order", "ordered_at", "expected_date", "notes", "created_by_user_id", "sent_at", "confirmed_at", "closed_at", "cancelled_at", "created_at", "updated_at"],
   purchase_order_lines: ["id", "purchase_order_id", "product_id", "product_name_at_order", "sku_at_order", "unit_at_order", "ordered_qty", "unit_price_minor", "created_at", "updated_at"],
+  inventory_goods_receipts: ["id", "reference", "status", "purchase_order_id", "purchase_order_reference_at_receipt", "supplier_name_at_receipt", "notes", "created_by_user_id", "posted_at", "cancelled_at", "created_at", "updated_at"],
+  inventory_goods_receipt_lines: ["id", "goods_receipt_id", "purchase_order_line_id", "product_id", "product_name_at_receipt", "sku_at_receipt", "unit_at_receipt", "received_qty", "created_at", "updated_at"],
   subscription_summary: ["plan_code", "plan_name", "status", "billing_period", "current_period_start", "current_period_end", "trial_start", "trial_end", "cancel_at_period_end", "canceled_at", "ended_at", "created_at"],
   usage_summary: ["metric", "used", "limit", "remaining", "percentage_used", "period_start", "period_end"],
 };

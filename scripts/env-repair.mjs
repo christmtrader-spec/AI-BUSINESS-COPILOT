@@ -52,6 +52,11 @@ const MIGRATIONS = [
   "20261002113000_prompt37_crm_task_reminders",
   "20261003093000_payables_aging_expense_terms",
   "20261005080000_prompt40_inventory_stocktake",
+  // Prompt 41 — must stay in the baseline list: sandbox reverts recreate the
+  // ledger only when every ALREADY-APPLIED migration is resolved. The P42
+  // migration must NEVER appear here — it is always genuinely deployed
+  // (its tables do not exist until `migrate deploy` runs for real).
+  "20261006090000_prompt41_purchase_orders",
 ];
 
 function log(step, msg) {
@@ -147,7 +152,7 @@ function runScript(cmd) {
 async function verify(envChanged) {
   const status = run(["bunx", "prisma", "migrate", "status"]);
   const okMig = status.status === 0 && /up to date/i.test(`${status.stdout}${status.stderr}`);
-  log(6, `migrations: ${okMig ? "20 applied / 0 pending ✓" : "STILL BROKEN ✗"}`);
+  log(6, `migrations: ${okMig ? "up to date ✓" : "STILL BROKEN ✗"}`);
 
   const [users, businesses, plans] = await Promise.all([
     prisma.user.count(),

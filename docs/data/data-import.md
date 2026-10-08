@@ -188,3 +188,19 @@ overflow laws) outside the API — with no user story that needs it. The
 rejects both (negative test: an import attempt naming a purchase-order
 dataset is rejected as unsupported and creates nothing). Restore from backup
 is the sanctioned recovery path for procurement documents.
+
+
+## Goods Receipt datasets (Prompt 42)
+
+**Goods receipt import: NOT IMPLEMENTED — deliberately blocked.** A posted
+receipt is a stock-mutation workflow: posting atomically increases
+`Product.stockQty` and writes positive `InventoryAdjustment` rows inside one
+serialized transaction with the over-receipt law re-verified against the
+purchase order. Replaying receipts from an import file would bypass that
+entire transactional process (double-counting stock, fabricating adjustments,
+and violating over-receipt protection), so receipt datasets are
+**export-only**. The importer's allowlist (customers / suppliers / products)
+rejects `inventory_goods_receipts` and `inventory_goods_receipt_lines`
+(negative test: an import attempt naming a receipt dataset is rejected as
+unsupported and creates nothing — E2E §139/§275). Restore from backup is the
+sanctioned recovery path for receiving documents.

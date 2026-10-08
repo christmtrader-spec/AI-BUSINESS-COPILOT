@@ -17,9 +17,11 @@ import "server-only";
 import { db } from "@/lib/db";
 import { SEARCH_PER_ENTITY_TAKE } from "./schema";
 import { purchaseOrderLineCap } from "@/lib/purchase-orders/types";
+import { goodsReceiptLineCap } from "@/lib/inventory/goods-receipt/types";
 import {
   customerCandidate,
   expenseCandidate,
+  goodsReceiptCandidate,
   leadCandidate,
   opportunityCandidate,
   paymentCandidate,
@@ -29,6 +31,7 @@ import {
   supplierCandidate,
   type ExpenseRow,
   type OpportunityRow,
+  type GoodsReceiptSearchRow,
   type PaymentRow,
   type PurchaseOrderSearchRow,
   type SaleRow,
@@ -337,6 +340,57 @@ async function searchPurchaseOrders(
 }
 
 /**
+ * Prompt 42 (§122-§124) — goods-receipt prefilter: receipt reference, PO
+ * reference snapshot, supplier snapshot AND product snapshot names/SKUs.
+ * Tenant scope is absolute (§123 — businessId in every WHERE). NO money
+ * exists in this domain and NO stock quantities are selected (§122).
+ * Cancelled/draft receipts stay searchable (documents, not state).
+ */
+async function searchGoodsReceipts(
+  businessId: string,
+  variants: string[],
+): Promise<SearchCandidate[]> {
+  const rows = await db.goodsReceipt.findMany({
+    where: {
+      businessId, // §123 — server-derived tenant scope, never client input
+      OR: [
+        ...variants.map((v) => ({ reference: { contains: v } })),
+        ...variants.map((v) => ({ purchaseOrderReferenceAtReceipt: { contains: v } })),
+        ...variants.map((v) => ({ supplierNameAtReceipt: { contains: v } })),
+        ...variants.map((v) => ({
+          lines: {
+            some: {
+              OR: [
+                { productNameAtReceipt: { contains: v } },
+                { skuAtReceipt: { contains: v } },
+              ],
+            },
+          },
+        })),
+      ],
+    },
+    select: {
+      id: true,
+      reference: true,
+      status: true,
+      supplierNameAtReceipt: true,
+      purchaseOrderReferenceAtReceipt: true,
+      createdAt: true,
+      // §122 — line SNAPSHOT TEXT (name/SKU) feeds the ranker's match
+      // fields; bounded by the SAME P42 line-cap law (never unbounded).
+      // No quantities and no money selected.
+      lines: {
+        select: { productNameAtReceipt: true, skuAtReceipt: true },
+        take: goodsReceiptLineCap(process.env.GOODS_RECEIPT_MAX_LINES),
+      },
+    },
+    orderBy: { createdAt: "desc" as const },
+    take: SEARCH_PER_ENTITY_TAKE,
+  });
+  return rows.map((r) => goodsReceiptCandidate(r as GoodsReceiptSearchRow));
+}
+
+/**
  * Run all requested entity searches concurrently (§6) and return the
  * combined candidate pool (pre-dedup, pre-rank). Bounded to
  * types.length × SEARCH_PER_ENTITY_TAKE rows.
@@ -378,6 +432,9 @@ export async function fetchSearchCandidates(options: {
         break;
       case "PURCHASE_ORDER":
         tasks.push(searchPurchaseOrders(businessId, variants));
+        break;
+      case "GOODS_RECEIPT":
+        tasks.push(searchGoodsReceipts(businessId, variants));
         break;
     }
   }

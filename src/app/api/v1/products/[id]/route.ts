@@ -17,6 +17,7 @@ import { db } from "@/lib/db";
 import { productUpdateSchema } from "@/lib/schemas";
 import { mapPurePurchaseOrderDomainError } from "@/lib/purchase-orders/service";
 import { mapProductDetail } from "@/lib/entities";
+import { listRecentReceiptsForProduct } from "@/lib/inventory/goods-receipt/service";
 
 export const dynamic = "force-dynamic";
 
@@ -52,7 +53,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   // §42 — parallel bounded queries, deterministic ordering, explicit select.
   // Prompt 41 (§66) — Product detail gains a bounded purchase-order history:
   // READ-ONLY (§201), historical line snapshots (§236), never stock-related.
-  const [recentAdjustments, recentSaleItems, recentStocktakeLines, recentPurchaseOrderLines] =
+  const [recentAdjustments, recentSaleItems, recentStocktakeLines, recentPurchaseOrderLines, recentGoodsReceiptLines] =
     await Promise.all([
     db.inventoryAdjustment.findMany({
       where: { businessId: ctx.businessId, productId: id },
@@ -116,6 +117,8 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         },
       },
     }),
+    // Prompt 42 (§120) — ≤10 recent goods-receipt lines (NO money §120).
+    listRecentReceiptsForProduct({ businessId: ctx.businessId, productId: id, take: 10 }),
   ]);
 
   // Flatten SaleItem → Sale into the mapper's input shape (no N+1: the
@@ -154,6 +157,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         currencySymbolAtOrder: l.purchaseOrder.currencySymbolAtOrder,
         decimalPrecisionAtOrder: l.purchaseOrder.decimalPrecisionAtOrder,
       })),
+      recentGoodsReceiptLines,
     );
   } catch (error) {
     // §12/§13 — corrupted PO status → the SAME stable integrity code as the

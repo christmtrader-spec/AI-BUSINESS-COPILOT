@@ -18,6 +18,7 @@ import {
   LogOut,
   Moon,
   Package,
+  PackageCheck,
   ScrollText,
   Search,
   Settings,
@@ -60,6 +61,7 @@ type PaletteNavKey =
   | "dashboard"
   | "customers"
   | "suppliers"
+  | "goodsReceipts"
   | "products"
   | "inventory"
   | "sales"
@@ -86,6 +88,8 @@ const NAV_ITEMS: PaletteItem[] = [
   { view: { kind: "dashboard" }, labelKey: "dashboard", icon: LayoutDashboard },
   { view: { kind: "module", module: "customers" }, labelKey: "customers", icon: Users },
   { view: { kind: "module", module: "suppliers" }, labelKey: "suppliers", icon: Truck },
+  // Prompt 42 (§118) — Goods Receipts reachable through the SAME palette.
+  { view: { kind: "inventory-goods-receipts" }, labelKey: "goodsReceipts", icon: PackageCheck },
   { view: { kind: "module", module: "products" }, labelKey: "products", icon: Package },
   { view: { kind: "module", module: "inventory" }, labelKey: "inventory", icon: Warehouse },
   { view: { kind: "module", module: "sales" }, labelKey: "sales", icon: ShoppingCart },

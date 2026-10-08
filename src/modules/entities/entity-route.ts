@@ -26,10 +26,15 @@ export function entityView(entity: EntityType, id: string): AppView {
  * by entityToHash when the hash is built).
  * Prompt 41 (§67/§152) — PURCHASE_ORDER is NOT an entity-router record: its
  * result deep-links to the dedicated #/purchase-orders/<id> view.
+ * Prompt 42 (§122/§119) — GOODS_RECEIPT likewise deep-links to the
+ * dedicated #/inventory/goods-receipts/<id> view.
  */
 export function entityViewFromSearchItem(item: SearchResultItem): AppView {
   if (item.type === "PURCHASE_ORDER") {
     return { kind: "purchase-order", id: item.id };
+  }
+  if (item.type === "GOODS_RECEIPT") {
+    return { kind: "inventory-goods-receipt", id: item.id };
   }
   const entity = SEARCH_TYPE_TO_ENTITY[item.type];
   return { kind: "entity", entity, id: item.id };

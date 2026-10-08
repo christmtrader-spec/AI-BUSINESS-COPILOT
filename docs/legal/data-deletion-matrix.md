@@ -203,3 +203,15 @@ dangling id strings. Nothing rewrites or anonymizes them — NOT CURRENTLY AUTOM
 | Account deletion | `createdByUserId` (session creator) and `countedByUserId` (line counter) are `onDelete: Restrict` — the same creator-linked policy as CRM creator-linked records: account deletion is gated by the existing rules and the tenant rows are not silently rewritten; documented here BEFORE the migration. |
 | User-facing hard delete | **NONE.** No DELETE endpoint exists for stocktake records; a session that should not reconcile ends via **Cancel** (terminal, immutable) — cancellation removes no data and changes no stock. |
 | Notes field | Optional free text (≤ 2000 chars) may contain user-entered content; it is **never logged, never audited, never sent to AI**, and survives exactly as long as its session. |
+
+
+## Goods Receipt lifecycle (Prompt 42)
+
+| Aspect | Policy |
+| --- | --- |
+| Lifecycle | `DRAFT → POSTED / CANCELLED`; `POSTED` and `CANCELLED` are terminal |
+| User-facing hard delete | **None** — receipts have no delete endpoint; document retention is the lifecycle immutability strategy |
+| Posted receipt | Immutable historical inventory evidence (stock already moved; `InventoryAdjustment` rows exist). No edit, no cancel, no reversal — a genuine reversal workflow is a separate future prompt |
+| Cancelled receipt | Terminal, read-only; never mutated stock so there is nothing to reverse |
+| Business-level deletion | Governed by the existing tenant deletion policy: `GoodsReceipt`/`GoodsReceiptLine` cascade with the business (tenant offboarding removes its receiving history); the creator link is `Restrict` (same policy as P40/P41 documents); product links are `Restrict` so soft-deleted products keep their history |
+| Purchase order interaction | A PO with posted receipts cannot be cancelled (`PURCHASE_ORDER_HAS_POSTED_RECEIPTS`); PO deletion is only ever the business-cascade path |

@@ -88,6 +88,9 @@ export function mapSupplierDetail(
   recentExpenses: SupplierExpenseRow[],
   recentPayments: SupplierPaymentRecordRow[],
   recentPurchaseOrders: SupplierPurchaseOrderRow[] = [],
+  // Prompt 42 (§121) — bounded receipt history passes through verbatim
+  // (already mapped + status-parsed by the goods-receipt service).
+  recentGoodsReceipts: SupplierDetail["recentGoodsReceipts"] = [],
 ): SupplierDetail {
   return {
     supplier: {
@@ -103,6 +106,7 @@ export function mapSupplierDetail(
     recentExpenses: mapRecentExpenses(recentExpenses),
     recentPayments: mapSupplierPayments(recentPayments),
     recentPurchaseOrders: mapSupplierPurchaseOrders(recentPurchaseOrders),
+    recentGoodsReceipts,
   };
 }
 

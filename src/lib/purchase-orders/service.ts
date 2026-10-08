@@ -24,8 +24,15 @@ import "server-only";
 import { randomInt } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { withWriteTransaction } from "@/lib/db/write-transaction";
 import { audit } from "@/lib/audit";
 import { ApiError } from "@/lib/api-helpers";
+import {
+  computeRemainingQty,
+  GoodsReceiptIntegrityError,
+  GOODS_RECEIPT_ERROR_CODES,
+} from "@/lib/inventory/goods-receipt/types";
+import { listRecentReceiptsForPurchaseOrder } from "@/lib/inventory/goods-receipt/service";
 import {
   PURCHASE_ORDER_ERROR_CODES,
   PURCHASE_ORDER_INVALID_PERSISTED_STATUS,
@@ -48,57 +55,21 @@ import {
 type Tx = Prisma.TransactionClient;
 
 /**
- * §25/§28 — SQLite is a single-writer database. Prisma interactive
- * transactions issue BEGIN IMMEDIATE, so N concurrent P41 writes contend on
- * the one write lock; losers used to sit until the 5s transaction timeout
- * and die with "Transaction already closed" (a generic 500). Two defenses:
- *
- *  1. In-process FIFO serialization of P41 WRITE transactions — requests
- *     still run concurrently up to the transaction boundary, then take the
- *     write lock one at a time (each transaction is a few ms, so latency
- *     stays bounded; reads are never blocked).
- *  2. A bounded retry for TRANSIENT transaction failures (P2034 write
- *     conflict / P2024 timeout / expired transaction from another process,
- *     e.g. test scripts sharing the dev DB) with deterministic backoff.
- *
- * Domain errors (ApiError) are NEVER retried — they propagate unchanged.
+ * Prompt 42 §146 — stable error code: a purchase order with POSTED goods
+ * receipts can never be cancelled (no receipt-reversal workflow exists).
  */
-let writeChain: Promise<unknown> = Promise.resolve();
-function runSerializedWrite<T>(fn: () => Promise<T>): Promise<T> {
-  const result = writeChain.then(() => fn());
-  writeChain = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
-}
+export const PURCHASE_ORDER_HAS_POSTED_RECEIPTS = "PURCHASE_ORDER_HAS_POSTED_RECEIPTS";
 
-function isTransientTxError(error: unknown): boolean {
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    return error.code === "P2034" || error.code === "P2024";
-  }
-  if (error instanceof Prisma.PrismaClientUnknownRequestError) {
-    return /Transaction already closed|SQLITE_BUSY|database is locked/i.test(error.message);
-  }
-  return false;
-}
-
-const TX_OPTIONS = { timeout: 15_000, maxWait: 5_000 } as const;
-
-async function withWriteTx<T>(fn: (tx: Tx) => Promise<T>, attempts = 3): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      return await runSerializedWrite(() => db.$transaction(fn, TX_OPTIONS));
-    } catch (error) {
-      lastError = error;
-      if (!isTransientTxError(error)) throw error;
-      // Deterministic backoff; bounded (§25 — graceful, never a hot spin).
-      await new Promise((resolve) => setTimeout(resolve, 30 * (attempt + 1)));
-    }
-  }
-  throw lastError;
-}
+/**
+ * §25/§28 — SQLite single-writer hardening (P42 §52/§53): the FIFO
+ * serialized-write + bounded-transient-retry mechanism now lives in the
+ * ONE shared server utility (`@/lib/db/write-transaction`) so the P41
+ * procurement path and the P42 receiving path cannot interleave on the
+ * SQLite write lock. Behavior is unchanged: same serialization, same
+ * P2034/P2024/SQLITE_BUSY retry class, same deterministic backoff, and
+ * domain (ApiError) failures are still never retried.
+ */
+const withWriteTx = withWriteTransaction;
 
 /** RFC-4180-unsafe day-window helpers on orderedAt (day-precision filters). */
 function dayWindow(from?: string, to?: string): { gte?: Date; lte?: Date } {
@@ -475,6 +446,8 @@ export async function getPurchaseOrder(input: { businessId: string; id: string }
   // §22 — header, supplier state, creator and lines are read in ONE
   // consistent transaction so the response can never combine a stale header
   // with mismatched line state (production-quality document read).
+  // Prompt 42 §98/§181/§296 — the receiving aggregates are computed in the
+  // SAME transaction via a grouped query (never one query per line).
   const { header, supplier, creator, lineRows } = await db.$transaction(async (tx) => {
     const hdr = await loadOrderHeader(tx, input.businessId, input.id);
     const [sup, usr, lineRws] = await Promise.all([
@@ -510,9 +483,81 @@ export async function getPurchaseOrder(input: { businessId: string; id: string }
     return { header: hdr, supplier: sup, creator: usr, lineRows: lineRws };
   });
 
+  // Prompt 42 §98 — bounded grouped receiving aggregates AFTER the
+  // transactional document read (two reads, each internally consistent;
+  // the aggregates only ever grow so a marginally newer posted receipt is
+  // a safe display race — never a stock or quantity authority).
+  let receivingAgg: Parameters<typeof purchaseOrderDetailDto>[2] | undefined;
+  try {
+    const poLines = await db.purchaseOrderLine.findMany({
+      where: { purchaseOrderId: header.id },
+      select: { id: true, orderedQty: true },
+      take: cap,
+    });
+    const grouped = await db.goodsReceiptLine.groupBy({
+      by: ["purchaseOrderLineId"],
+      where: {
+        purchaseOrderLineId: { in: poLines.map((l) => l.id) },
+        goodsReceipt: { status: "POSTED" }, // §99 — POSTED receipts only
+      },
+      _sum: { receivedQty: true },
+    });
+    const receivedByLine = new Map(
+      grouped.map((g) => [g.purchaseOrderLineId, g._sum.receivedQty ?? 0]),
+    );
+    const receiptCount = await db.goodsReceipt.count({
+      where: { purchaseOrderId: header.id, status: "POSTED" },
+    });
+    let orderedQty = 0;
+    let receivedQty = 0;
+    const recvLines = poLines.map((l) => {
+      const lineReceived = receivedByLine.get(l.id) ?? 0;
+      const lineRemaining = computeRemainingQty(l.orderedQty, lineReceived); // §100
+      orderedQty += l.orderedQty;
+      receivedQty += lineReceived;
+      return { lineId: l.id, receivedQty: lineReceived, remainingQty: lineRemaining };
+    });
+    const remainingQty = computeRemainingQty(orderedQty, receivedQty);
+    receivingAgg = {
+      orderedQty,
+      receivedQty,
+      remainingQty,
+      receiptCount,
+      fullyReceived: remainingQty === 0, // §101 — derived
+      lines: recvLines,
+    };
+  } catch (error) {
+    // §283 — corrupted received history surfaces as the stable P42 code
+    // (never a silent clamp, never a generic 500).
+    if (
+      error instanceof GoodsReceiptIntegrityError ||
+      (error instanceof Error && error.message === "GOODS_RECEIPT_CORRUPT_RECEIVED_HISTORY")
+    ) {
+      throw new ApiError(
+        500,
+        GOODS_RECEIPT_ERROR_CODES.CORRUPT_RECEIVED,
+        "Receiving data is inconsistent. Please contact support.",
+      );
+    }
+    mapPureDomainError(error); // §17 — overflow/integrity → controlled errors
+  }
+
   if (lineRows.length > cap) {
     // Defensive: the write path prevents this; never render a partial document.
     throw new ApiError(500, "INTERNAL_ERROR", "Purchase order line cap invariant violated.");
+  }
+
+  // §104 — bounded recent receipts (take 10, §105). Read AFTER the main
+  // document read; a marginally newer receipt is a safe display race.
+  let recentReceipts;
+  try {
+    recentReceipts = await listRecentReceiptsForPurchaseOrder({
+      businessId: input.businessId,
+      purchaseOrderId: header.id,
+      take: 10,
+    });
+  } catch {
+    recentReceipts = undefined; // §104-analog — history is display-only
   }
 
   try {
@@ -525,6 +570,8 @@ export async function getPurchaseOrder(input: { businessId: string; id: string }
         createdByName: creator?.name ?? null,
       },
       lineRows,
+      receivingAgg,
+      recentReceipts,
     );
   } catch (error) {
     mapPureDomainError(error); // §13/§17 — controlled integrity/overflow
@@ -863,6 +910,24 @@ export async function transitionPurchaseOrder(input: {
       }
       // §38 — supplier must still exist and not be soft-deleted.
       await assertSupplierStillValid(tx, input.businessId, header.supplierId);
+    }
+
+    if (input.op === "cancel") {
+      // Prompt 42 §146 — PO CANCELLATION HARDENING: an order with POSTED
+      // goods receipts cannot be cancelled. Physical inventory already
+      // exists behind it; there is no receipt-reversal workflow (and none
+      // may be silently invented here). Checked INSIDE the write
+      // transaction so a receipt posting concurrently cannot slip through.
+      const postedReceipts = await tx.goodsReceipt.count({
+        where: { businessId: input.businessId, purchaseOrderId: header.id, status: "POSTED" },
+      });
+      if (postedReceipts > 0) {
+        throw new ApiError(
+          409,
+          PURCHASE_ORDER_HAS_POSTED_RECEIPTS,
+          "This purchase order has posted goods receipts and can no longer be cancelled.",
+        );
+      }
     }
 
     const now = new Date();

@@ -108,6 +108,7 @@ guards on every cell, and `no-store` attachments.
 | Aging (receivables / payables) | `GET /api/v1/reports/aging/export?side=receivables\|payables&locale=en\|fa` | Rows rendered from `buildAgingReport()` — the exact engine the UI JSON uses. One table: `total` row, always 4 `bucket` rows, the payables `past_due` row when present, and the top-party rows (≤ 8, balance desc). Money = exact decimal strings at the business precision. |
 | Purchase order (per order) | `GET /api/v1/purchase-orders/[id]/export?locale=en\|fa` | ALL lines of the purchase order (never one page — bounded by the P41 line cap, provably complete via a cap+1 fetch). Columns: reference, status, supplier, product, sku, unit, ordered_qty, unit_price_minor, line_total_minor, order_total_minor, currency_at_order, ordered_at, expected_date. Historical SNAPSHOT values only (never live names); money is raw integer minor units; the total is a procurement DOCUMENT total, not a payable. EN machine-form headers / FA Persian headers. |
 | Inventory adjustments | `GET /api/v1/inventory/adjustments?format=csv&locale=en\|fa` (+ optional `direction`, `productId`, `q`, `from`/`to` filters) | ALL matching rows up to 1,000 (mirrors `AGING_SCAN_CAP` / the stocktake line cap); truncation is recorded honestly in the audit record. Columns: created_at, product, sku, unit, direction, quantity, reason, by. The JSON feed itself is DTO-allowlisted with server-side pagination (`page`/`pageSize`, cap 100) — legacy `take` stays supported as a page-1 alias. |
+| Goods receipt (per receipt) | `GET /api/v1/inventory/goods-receipts/[id]/export?locale=en\|fa` | ALL lines of the receipt (never one page — bounded by the P42 receipt line cap, provably complete via a cap+1 fetch). Columns: reference, status, purchase_order_reference, supplier, product, sku, unit, received_qty, posted_at. Historical SNAPSHOT values only; **NO money columns exist in this domain** (§37/§126). EN machine-form headers / FA Persian headers; entitlement + rate limit + no-store + audit as every other CSV. |
 
 `locale` switches the CSV header row (and, for adjustments, the direction
 labels) between English (`reference,status,…`) and Persian
@@ -115,3 +116,15 @@ labels) between English (`reference,status,…`) and Persian
 export next to the data it mirrors: the stocktake detail header, both aging
 cards, and the inventory adjustment-history card (whose filters are exactly
 the CSV filters).
+
+
+## Goods Receipt datasets (Prompt 42)
+
+`inventory_goods_receipts` and `inventory_goods_receipt_lines` join the export
+catalog as CONFIDENTIAL datasets; the receipts dataset always implies its lines
+(§137). Rows carry historical snapshots verbatim (`supplierNameAtReceipt`,
+`purchaseOrderReferenceAtReceipt`, `productNameAtReceipt`, `skuAtReceipt`,
+`unitAtReceipt`) and physical quantities only — there is no money in this
+domain, so no minor-unit conversion applies anywhere. **Import is intentionally
+NOT implemented** (see data-import.md); restore from backup is the sanctioned
+recovery path for receiving documents.

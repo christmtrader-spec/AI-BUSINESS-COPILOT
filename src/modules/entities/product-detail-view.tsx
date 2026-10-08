@@ -15,6 +15,7 @@ import {
   Boxes,
   Layers,
   Package,
+  PackageCheck,
   Pencil,
   ShoppingCart,
   Tag,
@@ -74,6 +75,7 @@ export function ProductDetailView({
   const navigate = useAppStore((s) => s.navigate);
   const tStock = useTranslations("inventory.stocktakes");
   const tPo = useTranslations("purchaseOrders");
+  const tGr = useTranslations("goodsReceipts");
 
   const writable = can(role, "data:write");
   const p = data.product;
@@ -299,6 +301,44 @@ export function ProductDetailView({
                       </Badge>
                       <span className="text-sm font-semibold tabular-nums" dir="ltr">
                         {po.unitPriceMinor / 10 ** po.decimalPrecisionAtOrder} {po.currencySymbolAtOrder}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Prompt 42 (§120) — bounded goods-receipt history (≤10). Shows the
+          receipt reference, received quantity and posted date — NO money. */}
+      <Card data-testid="product-goods-receipt-history">
+        <CardContent className="pt-6">
+          <h2 className="mb-3 text-base font-semibold">{tGr("productHistory")}</h2>
+          {!data.recentGoodsReceipts || data.recentGoodsReceipts.length === 0 ? (
+            <p className="text-muted-foreground text-sm">{tGr("noProductHistory")}</p>
+          ) : (
+            <ul className="divide-y">
+              {data.recentGoodsReceipts.map((gr) => (
+                <li key={`${gr.id}`}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40"
+                    onClick={() => navigate({ kind: "inventory-goods-receipt", id: gr.id })}
+                    aria-label={`${tGr("productHistory")}: ${gr.reference}`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium" dir="auto">{gr.reference}</span>
+                      <span className="text-muted-foreground block truncate text-xs" dir="ltr">
+                        {gr.postedAt
+                          ? `${tGr("postedAtLabel")}: ${new Date(gr.postedAt).toISOString().slice(0, 10)}`
+                          : tGr(`status_${gr.status}`)}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <span className="text-sm font-semibold tabular-nums" dir="ltr">
+                        +{gr.receivedQty}
                       </span>
                     </span>
                   </button>

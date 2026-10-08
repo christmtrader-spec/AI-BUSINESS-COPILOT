@@ -172,3 +172,17 @@ Search now spans **eight** entity types: the original six plus
   never trusted for navigation (Prompt 34 law, unchanged).
 - Same privacy rules: 2–64 char q, bounded candidate caps, no query logging,
   no search history.
+
+
+## GOODS_RECEIPT (Prompt 42)
+
+Goods receipts join universal search as a tenant-scoped, read-only discovery
+surface. Searchable fields (§122): receipt `reference`, PO reference snapshot
+(`purchaseOrderReferenceAtReceipt`), supplier snapshot
+(`supplierNameAtReceipt`), and product snapshot names/SKUs from receipt lines.
+NO money exists in this domain and NO stock quantities are carried in the
+snippet payload. Tenant isolation is absolute (businessId in every WHERE;
+verified in both directions); a corrupted persisted status never renders as
+Draft — its status token is safely omitted (§124). Results deep-link to
+`#/inventory/goods-receipts/<id>`; the candidate pool is bounded by the
+per-entity search take and the receipt line cap.

@@ -302,3 +302,15 @@ shipped and rate-limited:
       steps 2–3) — repeat monthly
 - [ ] Owner-facing export documented in the onboarding/FAQ copy
       (`docs/marketing/launch-readiness.md` §3 approved claims)
+
+
+## Prompt 42 — Goods Receipt restore verification
+
+`scripts/restore-drill.mjs` probes `GoodsReceipt` and `GoodsReceiptLine` with
+read-only `SELECT COUNT(*)` smoke queries after the restore (same
+honest-absent rule as every entity: backups predating Prompt 42 are reported
+as `table absent in this backup`, never a drill failure). Expected final probe
+surface: User, Business, Subscription, Customer, Supplier, Product, Sale,
+Expense, AuditLog, UsageEvent, AiCostRecord, PlatformAuditLog,
+InventoryStocktake, InventoryStocktakeLine, PurchaseOrder, PurchaseOrderLine,
+**GoodsReceipt, GoodsReceiptLine**.

@@ -14,6 +14,7 @@ import {
   ClipboardList,
   CreditCard,
   FileText,
+  PackageCheck,
   Pencil,
   ReceiptText,
   Trash2,
@@ -58,6 +59,7 @@ export function SupplierDetailView({
   const tSearch = useTranslations("search");
   const tErrors = useTranslations("errors");
   const tPo = useTranslations("purchaseOrders");
+  const tGr = useTranslations("goodsReceipts");
   const queryClient = useQueryClient();
   const businessId = useAppStore((s) => s.activeBusinessId);
   const navigate = useAppStore((s) => s.navigate);
@@ -235,6 +237,28 @@ export function SupplierDetailView({
         }))}
         onOpenRow={(id) => navigate({ kind: "purchase-order", id })}
       />
+
+      {/* Prompt 42 (§121) — bounded goods-receipt history (≤10). Snapshot
+          supplier identity; NO financial statement contamination — these
+          rows are physical receiving evidence, never payables. */}
+      {data.recentGoodsReceipts && data.recentGoodsReceipts.length > 0 ? (
+        <RelatedRecordList
+          title={tGr("supplierHistory")}
+          entity={null}
+          emptyText={tGr("noSupplierHistory")}
+          onOpen={() => undefined}
+          items={data.recentGoodsReceipts.map((gr) => ({
+            id: gr.id,
+            icon: PackageCheck,
+            primary: gr.reference,
+            secondary: gr.postedAt
+              ? `${tGr("postedAtLabel")}: ${fmtDate(business, gr.postedAt)}`
+              : tGr(`status_${gr.status}`),
+            trailing: `${tGr("receivedTotal")}: ${gr.totalReceivedQty}`,
+          }))}
+          onOpenRow={(id) => navigate({ kind: "inventory-goods-receipt", id })}
+        />
+      ) : null}
 
       <PartyFormDialog
         open={editOpen}

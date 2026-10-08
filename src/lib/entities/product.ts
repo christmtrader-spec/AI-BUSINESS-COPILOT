@@ -111,6 +111,9 @@ export function mapProductDetail(
   recentSaleCap: number,
   recentStocktakeLines: ProductStocktakeLineRow[] = [],
   recentPurchaseOrderLines: ProductPurchaseOrderLineRow[] = [],
+  // Prompt 42 (§120) — bounded receipt-line history passes through
+  // verbatim (already mapped by the goods-receipt service).
+  recentGoodsReceipts: ProductDetail["recentGoodsReceipts"] = [],
 ): ProductDetail {
   return {
     product: {
@@ -133,6 +136,7 @@ export function mapProductDetail(
     recentSales: mapProductRecentSales(recentSaleItems, recentSaleCap),
     recentStocktakes: mapRecentStocktakes(recentStocktakeLines),
     recentPurchaseOrders: mapRecentPurchaseOrders(recentPurchaseOrderLines),
+    recentGoodsReceipts,
   };
 }
 

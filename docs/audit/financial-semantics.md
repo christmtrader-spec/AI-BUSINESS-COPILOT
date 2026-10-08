@@ -218,3 +218,24 @@ Checked EN vs FA for the terms defined above; both dictionaries carry the honest
 2. Inventory valuation (§2.4) uses **current** `costPriceMinor` × current stock; historic cost is not snapshotted, so the valuation moves when a product's cost is edited. Documented behavior, not a bug — but it must not be called "asset value".
 3. `avgSaleMinor` is the only `Math.round` over a ratio (`reports.ts:217`); it can differ from any naive client-side recompute by ±0.5 minor units — the server value is authoritative.
 4. Receivables/payables list endpoints cap at 200 rows (`receivables/route.ts:19`, `payables/route.ts:19`) while the aggregate in `reports.ts:103-112` is unbounded — totals stay correct beyond 200 open documents, only the itemized list truncates.
+
+---
+
+## 7. Goods Receipt (Prompt 42)
+
+A GoodsReceipt is a **physical inventory movement**, not a financial document. Full domain review: `docs/product/goods-receipts.md`.
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Physical inventory movement | **YES** (posting only) | `tx.product.update({ data: { stockQty: newStock } })` + one `InventoryAdjustment` per posted line (`delta = receivedQty`, reason `Goods receipt <reference>`) — `src/lib/inventory/goods-receipt/service.ts` post path |
+| Expense | **NO** | no `expense.create` anywhere in the P42 domain (static scan rule 71); E2E pins Expense count unchanged (§216) |
+| Payment | **NO** | static scan rule 72; E2E §216 |
+| Supplier Statement | **NO** | statements derive from Expense+Payment only; receipts never enter the statement pipeline |
+| Payables Aging | **NO** | receipts add no payable balance; E2E §216 pins expense/paid sums unchanged |
+| Double Entry | **NO** | no journalEntry/ledgerEntry/debit/credit/chartOfAccounts/COGS vocabulary in P42 code (static scan rule 76, §225) |
+| InventoryAdjustment | **YES** — one positive row per posted line | `delta = receivedQty > 0` (§45); draft/cancelled receipts create none |
+| Product.stockQty | **YES** — increases on POST only | exact integer arithmetic, Int32 overflow guard (`GOODS_RECEIPT_STOCK_OVERFLOW`); DRAFT/CANCELLED mutate nothing |
+
+**Operational stock value only:** the derived figure `stockQty × costPriceMinor` rises when goods are received because the QUANTITY rose. That figure remains operational inventory value (§2.4 of this document) — it is NOT asset recognition, NOT a balance-sheet posting, and NOT an inventory valuation layer. No costing method (FIFO/LIFO/weighted average) exists.
+
+**Wording law:** the receipt UI uses receiving vocabulary only (receive / received / remaining). Persian labels use رسید انبار / ثبت دریافت کالا / مقدار دریافت‌شده — never پرداخت / هزینه / بدهی in receipt copy (§245; static scan rule 144). The PO close warning now states the receiving consequence explicitly ("Closing prevents further goods receipt. Unreceived quantities remain unreceived. No financial payable is created.").

@@ -126,6 +126,15 @@ export type SupplierRecentExpense = {
 };
 
 /** Prompt 41 (§65) — bounded procurement history for Supplier 360. */
+export type SupplierRecentGoodsReceipt = {
+  id: string;
+  reference: string;
+  status: string;
+  postedAt: string | null;
+  /** Total received units across the receipt (§121 — NO money). */
+  totalReceivedQty: number;
+};
+
 export type SupplierRecentPurchaseOrder = {
   id: string;
   reference: string;
@@ -156,6 +165,8 @@ export type SupplierDetail = {
   recentPayments: RecentPaymentRow[];
   /** Prompt 41 (§65) — bounded: ≤ 10 procurement documents. */
   recentPurchaseOrders: SupplierRecentPurchaseOrder[];
+  /** Prompt 42 (§121) — bounded: ≤ 10 goods receipts (snapshot identity). */
+  recentGoodsReceipts?: SupplierRecentGoodsReceipt[];
 };
 
 /* ------------------------------------------------------------------ */
@@ -184,6 +195,15 @@ export type ProductRecentStocktake = {
 };
 
 /** Prompt 41 (§66) — bounded procurement history for Product detail. */
+export type ProductRecentGoodsReceipt = {
+  id: string;
+  reference: string;
+  status: string;
+  postedAt: string | null;
+  /** Units received on THIS line (§120 — NO money). */
+  receivedQty: number;
+};
+
 export type ProductRecentPurchaseOrder = {
   purchaseOrderId: string;
   reference: string;
@@ -228,6 +248,8 @@ export type ProductDetail = {
   recentStocktakes: ProductRecentStocktake[];
   /** Prompt 41 (§66) — ≤ 10 recent procurement lines for this product. */
   recentPurchaseOrders: ProductRecentPurchaseOrder[];
+  /** Prompt 42 (§120) — ≤ 10 recent goods-receipt lines (NO money). */
+  recentGoodsReceipts?: ProductRecentGoodsReceipt[];
 };
 
 /* ------------------------------------------------------------------ */

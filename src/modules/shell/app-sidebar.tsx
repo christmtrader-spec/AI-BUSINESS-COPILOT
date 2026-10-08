@@ -22,6 +22,7 @@ import {
   Users,
   Wallet,
   ArrowUpRight,
+  PackageCheck,
   Warehouse,
   type LucideIcon,
 } from "lucide-react";
@@ -57,6 +58,7 @@ type NavItem = {
     | "customers"
     | "suppliers"
     | "purchaseOrders"
+    | "goodsReceipts"
     | "products"
     | "inventory"
     | "sales"
@@ -87,6 +89,8 @@ const OPERATIONS: NavItem[] = [
   { view: { kind: "module", module: "suppliers" }, labelKey: "suppliers", icon: Truck },
   // Prompt 41 (§72) — procurement documents get their own navigation entry.
   { view: { kind: "purchase-orders" }, labelKey: "purchaseOrders", icon: ClipboardList },
+  // Prompt 42 (§117) — goods receipts under procurement/inventory operations.
+  { view: { kind: "inventory-goods-receipts" }, labelKey: "goodsReceipts", icon: PackageCheck },
   { view: { kind: "module", module: "products" }, labelKey: "products", icon: Package },
   { view: { kind: "module", module: "inventory" }, labelKey: "inventory", icon: Warehouse },
   { view: { kind: "module", module: "sales" }, labelKey: "sales", icon: ShoppingCart },

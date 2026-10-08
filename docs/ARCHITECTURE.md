@@ -155,6 +155,7 @@ deletions are soft (`deletedAt`) for financial records.
 | Party Statements  | 39    | Derived customer/supplier transaction statements: opening/increase/decrease/running/closing balance, signed-cursor pagination, CSV export (see docs/product/party-statements.md — a DERIVED reporting capability over Sale/Expense/Payment, NOT double-entry accounting) |
 | Inventory Stocktake | 40  | Operational inventory control (physical count sessions, variance reconciliation via InventoryAdjustment); NOT a financial posting system / NOT double-entry (see docs/product/inventory-stocktake.md) |
 | Purchase Orders | 41  | PROCUREMENT COMMITMENT documents (supplier intent, snapshot-frozen history, DRAFT→SENT→CONFIRMED→CLOSED/CANCELLED lifecycle); NOT an expense / payment / inventory receipt / payable / accounting record — lifecycle transitions write NO financial or inventory authority (see docs/product/purchase-orders.md) |
+| Goods Receipts | 42  | Inventory RECEIVING documents (physical goods received against CONFIRMED purchase orders; DRAFT→POSTED/CANCELLED with immutable POSTED; partial receiving + hard over-receipt law). Posting mutates Product.stockQty through one positive InventoryAdjustment per line — it is NOT an expense / payment / payable / statement row / accounting entry (see docs/product/goods-receipts.md) |
 | Billing           | —     | Boundary placeholder only (A16)                        |
 
 ### 5.2 Future Modules (NOT in MVP — direction only)

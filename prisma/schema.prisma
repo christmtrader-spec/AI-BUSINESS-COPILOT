@@ -82,6 +82,9 @@ model User {
   // Prompt 41 — Purchase Orders (§6): creator link is Restrict — the same
   // creator-linked policy as CRM/P40 (documented in the deletion matrix).
   purchaseOrderCreations      PurchaseOrder[]           @relation("PurchaseOrderCreator")
+  // Prompt 42 — Goods Receipts (§21): creator link is Restrict — the same
+  // creator-linked policy as P40/P41 (documented in the deletion matrix).
+  goodsReceiptCreations       GoodsReceipt[]            @relation("GoodsReceiptCreator")
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +295,8 @@ model Business {
   inventoryStocktakes  InventoryStocktake[]
   // Prompt 41 — procurement commitment documents (tenant-scoped, cascade).
   purchaseOrders       PurchaseOrder[]
+  // Prompt 42 — goods receipt documents (tenant-scoped, cascade; §22).
+  goodsReceipts        GoodsReceipt[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -442,6 +447,9 @@ model Product {
   // Prompt 41 — procurement lines that snapshotted this product (the line
   // keeps its own historical snapshot; §26/§27).
   purchaseOrderLines PurchaseOrderLine[]
+  // Prompt 42 — receipt lines that moved this product's stock (the line
+  // keeps its own historical snapshot; §28-§30).
+  goodsReceiptLines GoodsReceiptLine[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -1894,6 +1902,9 @@ model PurchaseOrder {
   updatedAt DateTime @updatedAt
 
   lines PurchaseOrderLine[]
+  // Prompt 42 — goods receipts recorded against this order (§23). Cascade
+  // mirrors the tenant-deletion path: receipts never outlive their order.
+  goodsReceipts GoodsReceipt[]
 
   @@unique([businessId, reference])
   @@index([businessId, status])
@@ -1933,4 +1944,124 @@ model PurchaseOrderLine {
   @@unique([purchaseOrderId, productId])
   @@index([purchaseOrderId])
   @@index([productId])
+
+  // Prompt 42 — receipt lines recorded against this PO line (§34/§14).
+  goodsReceiptLines GoodsReceiptLine[]
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 42 — Goods Receipts / Inventory Receiving (§4/§21).
+// GoodsReceipt = "the business has PHYSICALLY RECEIVED these quantities of
+// products against a confirmed purchase order". It is the second concept in
+// the hierarchy PURCHASE ORDER → GOODS RECEIPT → PRODUCT STOCK →
+// INVENTORY ADJUSTMENT HISTORY (§2).
+//
+// SEMANTIC LAW (§3/§5/§37/§38): a receipt contains NO MONEY — no totals,
+// no prices, no expense, no payment, no supplier-statement/payable/aging
+// row, no accounting entry. POSTING a receipt is the ONLY state that
+// mutates inventory: Product.stockQty increases and one positive
+// InventoryAdjustment row is created per non-zero received line (§4/§39/§45).
+// DRAFT/CANCELLED receipts are pure preparation documents (§9/§10).
+//
+// LIFECYCLE (§7): DRAFT → POSTED | CANCELLED. There is deliberately NO
+// POSTED → CANCELLED (reversal workflow is out of scope) — a POSTED
+// receipt is immutable historical inventory evidence (§8).
+// ---------------------------------------------------------------------------
+model GoodsReceipt {
+  id String @id @default(cuid())
+
+  // §22 — tenant scope is ALWAYS the authenticated membership, never client
+  // input. Cascade mirrors every other tenant document: deleting the
+  // business removes its receipts (business-level deletion is the only
+  // hard-delete path — receipts have no user-facing delete §10).
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  // §23 — exactly one purchase order; §11 — only CONFIRMED orders accept
+  // new receipts. Cascade keeps tenant deletion possible (§143): the PO is
+  // itself business-cascaded, and a PO containing posted receipts is never
+  // user-deletable (§145) — the FK only ever fires at business deletion.
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  // §59 — business-local unique reference, DB-enforced (concurrency-safe:
+  // duplicate inserts lose the race with a constraint error → 409).
+  reference String
+  // §7 — closed vocabulary DRAFT|POSTED|CANCELLED. Transitions are
+  // server-authoritative through the dedicated post/cancel endpoints.
+  status    String   @default("DRAFT")
+
+  // §25 — supplier identity snapshot copied from the PO's ALREADY-FROZEN
+  // supplierNameAtOrder (never the live Supplier.name — the supplier may
+  // later rename or soft-delete; history must stay readable).
+  supplierNameAtReceipt String
+  // §24 — PO reference snapshot at receipt creation.
+  purchaseOrderReferenceAtReceipt String
+
+  // §62 — optional free text (≤2000 chars); document data only — never
+  // logged to audit bodies, never sent to AI, never indexed into search.
+  notes String?
+
+  createdByUserId String
+  createdByUser   User @relation("GoodsReceiptCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  // §74 — postedAt is server-generated UTC at the post transition; never
+  // client-controlled. cancelledAt mirrors it for the cancel transition.
+  postedAt    DateTime?
+  cancelledAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines GoodsReceiptLine[]
+
+  @@unique([businessId, reference])
+  // §179 — list/filter/query indexes.
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+  @@index([businessId, postedAt])
+  @@index([businessId, purchaseOrderId])
+}
+
+// GoodsReceiptLine = one product physically received within a receipt
+// document (§26). A PO line appears AT MOST ONCE per receipt (§27 —
+// DB-enforced) but MAY appear across many different receipts (§14 —
+// partial receiving). receivedQty is a whole-unit integer ≥ 1 (§17/§18);
+// a receipt contains NO price columns (§37/§38).
+model GoodsReceiptLine {
+  id String @id @default(cuid())
+
+  goodsReceiptId String
+  goodsReceipt   GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+
+  // §34 — the PO line is the quantity authority (orderedQty, remaining);
+  // deleting the PO (business cascade) removes the receipt lines too.
+  purchaseOrderLineId String
+  purchaseOrderLine   PurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Cascade)
+
+  // §30 — the product row is the operational stock authority (posting
+  // updates Product.stockQty). Restrict mirrors PurchaseOrderLine: product
+  // soft-delete keeps history; a hard product delete can never silently
+  // destroy receiving evidence.
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  // §17/§18 — integer 1..GOODS_RECEIPT_QTY_MAX whole units. No floats.
+  receivedQty Int
+
+  // §28/§29 — historical product identity copied from the PO LINE
+  // snapshot (never the live Product row — silent history drift avoided).
+  productNameAtReceipt String
+  skuAtReceipt         String?
+  unitAtReceipt        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // §27 — at most once per receipt document…
+  @@unique([goodsReceiptId, purchaseOrderLineId])
+  // §179 — …but many receipts per PO line need the reverse index.
+  @@index([purchaseOrderLineId])
+  @@index([productId])
+  @@index([goodsReceiptId])
 }
