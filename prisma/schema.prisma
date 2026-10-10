@@ -88,6 +88,7 @@ model User {
   // Prompt 43 — Goods Returns (§24): creator link is Restrict — the same
   // creator-linked policy as P40/P41/P42 (documented in the deletion matrix).
   goodsReturnCreations        GoodsReturn[]             @relation("GoodsReturnCreator")
+  goodsDispatchCreations      GoodsDispatch[]           @relation("GoodsDispatchCreator")
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +303,8 @@ model Business {
   goodsReceipts        GoodsReceipt[]
   // Prompt 43 — goods return documents (tenant-scoped, cascade; §25).
   goodsReturns         GoodsReturn[]
+  // Prompt 44 — goods dispatch documents (tenant-scoped, cascade).
+  goodsDispatches      GoodsDispatch[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -398,6 +401,9 @@ model Customer {
   // them; the normal UI soft-delete hides them from active timelines.
   crmActivities   CrmActivity[]
   crmTasks        CrmTask[]
+  // Prompt 44 — dispatch history rows pointing at this customer. SetNull:
+  // deleting the customer detaches the link but never destroys history.
+  goodsDispatches GoodsDispatch[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -458,6 +464,9 @@ model Product {
   // Prompt 43 — return lines that moved this product's stock back to the
   // supplier (the line keeps its own historical snapshot; §30).
   goodsReturnLines GoodsReturnLine[]
+  // Prompt 44 — dispatch lines that moved this product's stock out (the
+  // line keeps its own historical snapshot).
+  goodsDispatchLines GoodsDispatchLine[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -2212,4 +2221,99 @@ model GoodsReturnLine {
   @@index([goodsReceiptLineId])
   @@index([productId])
   @@index([goodsReturnId])
+}
+
+// Prompt 44 — GoodsDispatch = "the business has PHYSICALLY DISPATCHED these
+// quantities of products out of stock" (to a customer or otherwise out the
+// door). It is an INVENTORY OUTFLOW document — NOT an invoice, NOT a sale
+// record, NOT money of any kind. Posting DECREASES Product.stockQty and
+// writes ONE negative InventoryAdjustment per line; drafts and cancellations
+// mutate nothing. This is the outbound mirror of P42 receipts / P43 returns.
+model GoodsDispatch {
+  id String @id @default(cuid())
+
+  // §tenant — scope is ALWAYS the authenticated membership, never client
+  // input. Cascade mirrors every other tenant document.
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  // §link — an OPTIONAL customer association. SetNull: deleting the
+  // customer must never destroy dispatch history; the name snapshot below
+  // keeps the row readable regardless.
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  // §snapshot — customer identity frozen at creation from the linked
+  // Customer (empty string when the dispatch has no customer). Renames or
+  // deletions never rewrite dispatch history.
+  customerNameAtDispatch String @default("")
+
+  // §reference — business-local unique reference, DB-enforced (duplicate
+  // inserts lose the race with a constraint error → 409).
+  reference String
+  // §lifecycle — closed vocabulary DRAFT|POSTED|CANCELLED. Transitions are
+  // server-authoritative through the dedicated post/cancel endpoints;
+  // POSTED is immutable, CANCELLED is terminal.
+  status    String   @default("DRAFT")
+
+  // §notes — optional free text (≤2000 chars); document data only — never
+  // logged to audit bodies, never sent to AI, never indexed into search.
+  notes String?
+
+  createdByUserId String
+  createdByUser   User @relation("GoodsDispatchCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  // §posting — server-generated UTC timestamps; never client-controlled.
+  postedAt    DateTime?
+  cancelledAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines GoodsDispatchLine[]
+
+  @@unique([businessId, reference])
+  // §indexes — list/filter/query indexes.
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+  @@index([businessId, postedAt])
+  @@index([businessId, customerId])
+}
+
+// GoodsDispatchLine = one product physically dispatched within a dispatch
+// document. The PRODUCT ITSELF is the source (outbound flows are not always
+// chained to a purchase order), so snapshots are copied from the live
+// Product row at line-add time and never refreshed afterwards.
+model GoodsDispatchLine {
+  id String @id @default(cuid())
+
+  goodsDispatchId String
+  goodsDispatch   GoodsDispatch @relation(fields: [goodsDispatchId], references: [id], onDelete: Cascade)
+
+  // §product — Restrict mirrors P42/P43: product soft-delete keeps history;
+  // a hard product delete can never silently destroy dispatch evidence.
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  // §qty — integer 1..GOODS_DISPATCH_QTY_MAX whole units. No floats.
+  qty Int
+
+  // §reason — closed vocabulary SALE|GIFT_SAMPLE|TRANSFER_OUT|OTHER
+  // (SQLite has no Prisma enums; validated with zod at every boundary).
+  reasonCode String
+
+  // §snapshot — historical product identity copied from the Product row at
+  // line-add time (never re-read live afterwards — history stays readable
+  // across renames/soft-deletes).
+  productNameAtDispatch String
+  skuAtDispatch         String?
+  unitAtDispatch        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // §line-law — at most one line per product per dispatch document…
+  @@unique([goodsDispatchId, productId])
+  // §indexes — …but many dispatch lines per product need reverse indexes.
+  @@index([productId])
+  @@index([goodsDispatchId])
 }

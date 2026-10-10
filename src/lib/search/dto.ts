@@ -516,3 +516,60 @@ export function goodsReturnCandidate(row: GoodsReturnSearchRow): SearchCandidate
     method: null,
   };
 }
+// ---------------------------------------------------------------------------
+// Prompt 44 — goods-dispatch candidate. Search fields: dispatch reference,
+// customer snapshot, product snapshot names/SKUs. NO money exists in this
+// domain and NO stock quantities are carried in the candidate.
+// ---------------------------------------------------------------------------
+
+export type GoodsDispatchSearchRow = {
+  id: string;
+  reference: string;
+  status: string;
+  customerNameAtDispatch: string;
+  createdAt: Date;
+  /** Line snapshot TEXT (never money/stock qty) feeds the ranker. */
+  lines?: ReadonlyArray<{ productNameAtDispatch: string; skuAtDispatch: string | null }>;
+};
+
+/**
+ * Closed-token guard for the dispatch lifecycle (same safe-omission policy
+ * as the receipt/return candidates): an invalid persisted status is NOT
+ * mapped to Draft — the status token is omitted (null) and the document
+ * still renders under its reference.
+ */
+function goodsDispatchStatusToken(status: string): SearchItemStatus | null {
+  return status === "DRAFT" || status === "POSTED" || status === "CANCELLED"
+    ? status
+    : null;
+}
+
+export function goodsDispatchCandidate(row: GoodsDispatchSearchRow): SearchCandidate {
+  const skuNorms = (row.lines ?? [])
+    .map((l) => l.skuAtDispatch)
+    .filter((v): v is string => Boolean(v))
+    .map(normalizeSearchText);
+  const productNorms = (row.lines ?? [])
+    .flatMap((l) => [l.productNameAtDispatch, l.skuAtDispatch])
+    .filter((v): v is string => Boolean(v))
+    .map(normalizeSearchText);
+  return {
+    id: row.id,
+    type: "GOODS_DISPATCH",
+    title: row.reference,
+    titleNorm: normalizeSearchText(row.reference),
+    subtitle: row.customerNameAtDispatch || null,
+    identifierNorm: normalizeSearchText(row.reference),
+    identifierExtras: skuNorms,
+    numericIdentifier: null,
+    secondaryNorms: [row.customerNameAtDispatch, ...productNorms]
+      .filter((v): v is string => Boolean(v))
+      .map(normalizeSearchText),
+    createdAt: row.createdAt,
+    status: goodsDispatchStatusToken(row.status),
+    date: row.createdAt.toISOString(),
+    direction: null,
+    method: null,
+  };
+}
+

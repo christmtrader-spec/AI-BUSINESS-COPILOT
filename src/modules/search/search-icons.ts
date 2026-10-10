@@ -11,6 +11,7 @@ import {
   Package,
   PackageCheck,
   PackageMinus,
+  PackageOpen,
   ShoppingCart,
   Target,
   TrendingUp,
@@ -35,6 +36,8 @@ export const SEARCH_TYPE_ICONS: Record<SearchEntityType, LucideIcon> = {
   GOODS_RECEIPT: PackageCheck,
   // Prompt 43 (§101) — return documents in search results.
   GOODS_RETURN: PackageMinus,
+  // Prompt 44 — outbound dispatch documents in search results.
+  GOODS_DISPATCH: PackageOpen,
 };
 
 /** Medium localized date for result rows (never raw ISO in the UI). */

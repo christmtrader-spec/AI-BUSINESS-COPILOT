@@ -1,0 +1,764 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * PricingView — Prompt 25 §1/§4-§29/§56-§83/§111-§119/§126-§141/§149-§153.
+     5→ *
+     6→ * The PUBLIC pricing experience, rendered from ONE catalog endpoint
+     7→ * (GET /api/v1/public/pricing — the PricingService underneath, §136). Works
+     8→ * in two modes through the SAME component:
+     9→ *  - public  (unauthenticated): standalone page with its own header/footer;
+    10→ *  - in-app  (authenticated): rendered inside the shell; CTAs navigate to
+    11→ *    the existing billing flow — this view NEVER mutates a subscription
+    12→ *    (§120/§25) and never shows private usage (§13/§141).
+    13→ *
+    14→ * Honesty invariants:
+    15→ * - EVERY amount comes from the payload (amountMinor + currency metadata,
+    16→ *   formatted through formatMinor — §17). No price literal exists here.
+    17→ * - Yearly is the STORED yearly row — never monthly × anything (§15/§137).
+    18→ * - Savings are only shown when deterministically computable from the two
+    19→ *   stored prices (§76) and labeled with the computed percent, never
+    20→ *   "2 months free".
+    21→ * - A currency without an active book shows "not available" — never zero,
+    22→ *   never a converted estimate (§19/§23/§78).
+    23→ * - CTA states reflect availability: FREE → signup, paid → signup (public)
+    24→ *   or billing navigation (authenticated), ENTERPRISE → contact sales,
+    25→ *   payments-disabled → contact us (§22/§24-§27).
+    26→ */
+    27→
+    28→import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+    29→import { useQuery } from "@tanstack/react-query";
+    30→import { useSession } from "next-auth/react";
+    31→import { useTranslations } from "next-intl";
+    32→import {
+    33→  BadgeCheck,
+    34→  Building2,
+    35→  Check,
+    36→  Loader2,
+    37→  Minus,
+    38→  RefreshCw,
+    39→  Sparkles,
+    40→  X,
+    41→} from "lucide-react";
+    42→import { api } from "@/lib/api-client";
+    43→import { trackClientEvent } from "@/lib/analytics-client";
+    44→import { formatMinor } from "@/lib/payments/pricing";
+    45→import { useAppStore } from "@/store/app-store";
+    46→import { useSubscription } from "@/hooks/use-billing";
+    47→import { Button } from "@/components/ui/button";
+    48→import { Badge } from "@/components/ui/badge";
+    49→import { Card, CardContent } from "@/components/ui/card";
+    50→import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+    51→import { cn } from "@/lib/utils";
+    52→import { ContactSalesDialog } from "./contact-sales-dialog";
+    53→import { LocaleSwitcher, ThemeToggle } from "@/modules/shell/header";
+    54→
+    55→// ---------------------------------------------------------------------------
+    56→// Payload types (mirror of the server DTO — no internal ids exist in it)
+    57→// ---------------------------------------------------------------------------
+    58→
+    59→type PublicPlan = {
+    60→  code: string;
+    61→  name: string;
+    62→  description: string;
+    63→  sortOrder: number;
+    64→  selfService: boolean;
+    65→  availability: "AVAILABLE" | "NOT_PURCHASABLE" | "NOT_SELF_SERVICE" | "NOT_PRICED";
+    66→  pricing: {
+    67→    monthlyMinor: number;
+    68→    yearlyMinor: number;
+    69→    currency: string;
+    70→    priceVersion: string;
+    71→  } | null;
+    72→  entitlements: Record<string, number | null | boolean>;
+    73→};
+    74→
+    75→type PublicPricingPayload = {
+    76→  plans: PublicPlan[];
+    77→  definitions: Array<{ code: string; type: "LIMIT" | "BOOLEAN"; unit: string | null; group: string }>;
+    78→  settlementCurrency: string;
+    79→  currencies: Array<{
+    80→    code: string;
+    81→    displayName: string;
+    82→    symbol: string;
+    83→    minorUnitExponent: number;
+    84→    available: boolean;
+    85→  }>;
+    86→  paymentsEnabled: boolean;
+    87→  trialsEnabled: boolean;
+    88→  trialDays: number | null;
+    89→  featuredPlan: string | null;
+    90→};
+    91→
+    92→type BillingPeriod = "MONTHLY" | "YEARLY";
+    93→
+    94→type Translator = ReturnType<typeof useTranslations>;
+    95→
+    96→const PENDING_PLAN_KEY = "abc:pendingPlan";
+    97→
+    98→/** Card-top feature codes (the full matrix lives in the comparison table). */
+    99→const CARD_FEATURES = ["CUSTOMERS_MAX", "PRODUCTS_MAX", "TEAM_MEMBERS_MAX", "AI_REQUESTS_MAX"] as const;
+   100→
+   101→export function PricingView() {
+   102→  const t = useTranslations("pricing");
+   103→  const tBilling = useTranslations("billing");
+   104→  const tCommon = useTranslations("common");
+   105→  const { status } = useSession();
+   106→  const authenticated = status === "authenticated";
+   107→  const locale = useAppStore((s) => s.locale);
+   108→  const setAuthMode = useAppStore((s) => s.setAuthMode);
+   109→  const navigate = useAppStore((s) => s.navigate);
+   110→
+   111→  const [period, setPeriod] = useState<BillingPeriod>("MONTHLY");
+   112→  /** null = use the payload default; a code = an explicit visitor choice. */
+   113→  const [currency, setCurrency] = useState<string | null>(null);
+   114→  const [contactOpen, setContactOpen] = useState(false);
+   115→
+   116→  const { data, isLoading, isError, refetch, isFetching } = useQuery<PublicPricingPayload>({
+   117→    queryKey: ["public-pricing", currency ?? ""],
+   118→    queryFn: () =>
+   119→      api<PublicPricingPayload>(`/api/v1/public/pricing${currency ? `?currency=${encodeURIComponent(currency)}` : ""}`, {
+   120→        businessId: null,
+   121→      }),
+   122→    staleTime: 30_000,
+   123→  });
+   124→
+   125→  // §13/§141 — the authenticated mode needs the CURRENT plan for CTA
+   126→  // wording ("Current plan" / "Upgrade"). Server-verified like everywhere.
+   127→  const { data: subscriptionPayload } = useSubscription(authenticated);
+   128→  const currentPlanCode = authenticated ? (subscriptionPayload?.subscription.plan.code ?? null) : null;
+   129→
+   130→  // §49 — PRICING_VIEWED, once per currency per session (the server also
+   131→  // dedupes per day; the ref guards re-render storms client-side).
+   132→  const viewedFor = useRef<string | null>(null);
+   133→  useEffect(() => {
+   134→    if (!data) return;
+   135→    const key = data.settlementCurrency;
+   136→    if (viewedFor.current === key) return;
+   137→    viewedFor.current = key;
+   138→    trackClientEvent("PRICING_VIEWED", { page: "pricing", currency: key, locale });
+   139→  }, [data, locale]);
+   140→
+   141→  // Document title for the public page (in-app, app-shell owns the title).
+   142→  useEffect(() => {
+   143→    if (authenticated) return;
+   144→    document.title = t("seo.title");
+   145→  }, [authenticated, t]);
+   146→
+   147→  const plans = useMemo(() => data?.plans ?? [], [data]);
+   148→
+   149→  /** Deterministic yearly savings from the two STORED prices (§76). */
+   150→  function savingsPercent(plan: PublicPlan): number | null {
+   151→    if (!plan.pricing) return null;
+   152→    const { monthlyMinor, yearlyMinor } = plan.pricing;
+   153→    const fullYear = monthlyMinor * 12;
+   154→    if (fullYear <= 0 || yearlyMinor >= fullYear) return null;
+   155→    const percent = Math.round((1 - yearlyMinor / fullYear) * 100);
+   156→    return percent > 0 ? percent : null;
+   157→  }
+   158→
+   159→  // §120/§25 — selection NEVER mutates a subscription: it records the funnel
+   160→  // step and routes into the appropriate flow (signup or billing).
+   161→  function selectPlan(plan: PublicPlan) {
+   162→    trackClientEvent("PLAN_SELECTED", {
+   163→      planCode: plan.code,
+   164→      billingPeriod: period,
+   165→      currency: data?.settlementCurrency,
+   166→      page: "pricing",
+   167→      locale,
+   168→    });
+   169→  }
+   170→
+   171→  function startSignup(planCode: string | null) {
+   172→    try {
+   173→      if (planCode) {
+   174→        window.localStorage.setItem(PENDING_PLAN_KEY, JSON.stringify({ planCode, billingPeriod: period }));
+   175→      }
+   176→    } catch {
+   177→      // storage unavailable — signup still works, the preselect is a nicety
+   178→    }
+   179→    setAuthMode("signup");
+   180→    navigate({ kind: "dashboard" });
+   181→  }
+   182→
+   183→  /** CTA model for one plan card (§24-§27). */
+   184→  function ctaFor(plan: PublicPlan): {
+   185→    label: string;
+   186→    onClick?: () => void;
+   187→    disabled?: boolean;
+   188→    variant: "default" | "outline" | "secondary";
+   189→  } {
+   190→    const isCurrent = currentPlanCode === plan.code;
+   191→
+   192→    if (plan.code === "ENTERPRISE") {
+   193→      return { label: t("availability.contactSales"), onClick: () => setContactOpen(true), variant: "outline" };
+   194→    }
+   195→
+   196→    if (plan.availability === "NOT_PURCHASABLE") {
+   197→      // FREE — signup when public; honest billing navigation when logged in.
+   198→      if (!authenticated) {
+   199→        return { label: t("availability.startFree"), onClick: () => { selectPlan(plan); startSignup("FREE"); }, variant: "default" };
+   200→      }
+   201→      return isCurrent
+   202→        ? { label: t("availability.currentPlan"), disabled: true, variant: "secondary" }
+   203→        : { label: t("availability.changePlan"), onClick: () => navigate({ kind: "settings:billing" }), variant: "outline" };
+   204→    }
+   205→
+   206→    if (plan.availability !== "AVAILABLE" || !plan.pricing) {
+   207→      // NOT_PRICED in the selected currency (e.g. IRR today) — §23/§78.
+   208→      return { label: t("availability.notAvailable"), disabled: true, variant: "outline" };
+   209→    }
+   210→
+   211→    if (!data?.paymentsEnabled) {
+   212→      // §22 — never fake a checkout; the honest CTA is contact.
+   213→      return { label: t("availability.contactUs"), onClick: () => setContactOpen(true), variant: "outline" };
+   214→    }
+   215→
+   216→    if (!authenticated) {
+   217→      return {
+   218→        label: t("availability.choose", { plan: plan.code === "FREE" ? t("plans.FREE.name") : plan.name }),
+   219→        onClick: () => { selectPlan(plan); startSignup(plan.code); },
+   220→        variant: "default",
+   221→      };
+   222→    }
+   223→
+   224→    if (isCurrent) {
+   225→      return { label: t("availability.currentPlan"), disabled: true, variant: "secondary" };
+   226→    }
+   227→
+   228→    // §25 — navigation only; the billing flow owns every mutation.
+   229→    const higher = plan.sortOrder > (plans.find((p) => p.code === currentPlanCode)?.sortOrder ?? 0);
+   230→    return {
+   231→      label: higher ? t("availability.upgrade") : t("availability.changePlan"),
+   232→      onClick: () => navigate({ kind: "settings:billing" }),
+   233→      variant: higher ? "default" : "outline",
+   234→    };
+   235→  }
+   236→
+   237→  /** One card's price line (§17 — formatMinor only, no manual math). */
+   238→  function priceLine(plan: PublicPlan): React.ReactNode {
+   239→    if (plan.code === "FREE") return <span className="text-3xl font-semibold">{t("plans.freePrice")}</span>;
+   240→    if (plan.code === "ENTERPRISE") return <span className="text-3xl font-semibold">{t("plans.customPrice")}</span>;
+   241→    if (!plan.pricing) {
+   242→      return <span className="text-muted-foreground text-sm font-medium">{t("currency.unavailableShort")}</span>;
+   243→    }
+   244→    const amountMinor = period === "MONTHLY" ? plan.pricing.monthlyMinor : plan.pricing.yearlyMinor;
+   245→    const suffix = period === "MONTHLY" ? t("toggle.perMonth") : t("toggle.perYear");
+   246→    return (
+   247→      <span className="flex items-baseline gap-1">
+   248→        <span className="text-3xl font-semibold tabular-nums" dir="ltr">
+   249→          {formatMinor(amountMinor, plan.pricing.currency, locale)}
+   250→        </span>
+   251→        <span className="text-muted-foreground text-sm">{suffix}</span>
+   252→      </span>
+   253→    );
+   254→  }
+   255→
+   256→  // §126/§128 — catalog failed → honest error state, NEVER fallback prices.
+   257→  if (isError) {
+   258→    return (
+   259→      <div className="bg-background flex min-h-svh flex-col" data-view="pricing-error">
+   260→        <PublicHeader authenticated={authenticated} onContact={() => setContactOpen(true)} />
+   261→        <main className="flex flex-1 items-center justify-center p-6">
+   262→          <div className="mx-auto max-w-md space-y-4 text-center">
+   263→            <div className="bg-destructive/10 text-destructive mx-auto flex size-12 items-center justify-center rounded-full" aria-hidden="true">
+   264→              <Building2 className="size-6" />
+   265→            </div>
+   266→            <h1 className="text-xl font-semibold">{t("error.title")}</h1>
+   267→            <p className="text-muted-foreground text-sm">{t("error.subtitle")}</p>
+   268→            <Button onClick={() => void refetch()} variant="outline">
+   269→              <RefreshCw className="size-4" aria-hidden="true" />
+   270→              {t("error.retry")}
+   271→            </Button>
+   272→          </div>
+   273→        </main>
+   274→        <ContactSalesDialog open={contactOpen} onOpenChange={setContactOpen} />
+   275→      </div>
+   276→    );
+   277→  }
+   278→
+   279→  const hasUnavailableCurrency = (data?.currencies ?? []).some((c) => !c.available);
+   280→
+   281→  return (
+   282→    <div className="bg-background flex min-h-svh flex-col" data-view="pricing">
+   283→      <PublicHeader authenticated={authenticated} onContact={() => setContactOpen(true)} />
+   284→
+   285→      <main className="flex-1">
+   286→        {/* Hero */}
+   287→        <section className="from-primary/5 via-primary/10 to-primary/5 border-b bg-gradient-to-b">
+   288→          <div className="mx-auto w-full max-w-6xl space-y-6 px-4 py-12 text-center sm:px-6 lg:py-16">
+   289→            <h1 className="text-3xl font-semibold tracking-tight gradient-text sm:text-4xl">
+   290→              {t("hero.title")}
+   291→            </h1>
+   292→            <p className="text-muted-foreground mx-auto max-w-2xl text-base">{t("hero.subtitle")}</p>
+   293→
+   294→            {isLoading || !data ? (
+   295→              <div className="text-muted-foreground flex items-center justify-center gap-2 py-6 text-sm" role="status">
+   296→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   297→                {tCommon("loading")}
+   298→              </div>
+   299→            ) : (
+   300→              <>
+   301→                {/* Billing period toggle (§15) */}
+   302→                <div
+   303→                  className="bg-background mx-auto flex w-fit items-center gap-1 rounded-full border p-1 shadow-sm"
+   304→                  role="tablist"
+   305→                  aria-label={t("toggle.monthly")}
+   306→                >
+   307→                  {(["MONTHLY", "YEARLY"] as const).map((p) => (
+   308→                    <button
+   309→                      key={p}
+   310→                      type="button"
+   311→                      role="tab"
+   312→                      aria-selected={period === p}
+   313→                      onClick={() => setPeriod(p)}
+   314→                      className={cn(
+   315→                        "rounded-full px-5 py-2 text-sm font-medium transition-colors",
+   316→                        period === p
+   317→                          ? "bg-primary text-primary-foreground shadow-sm"
+   318→                          : "text-muted-foreground hover:text-foreground",
+   319→                      )}
+   320→                    >
+   321→                      {p === "MONTHLY" ? t("toggle.monthly") : t("toggle.yearly")}
+   322→                    </button>
+   323→                  ))}
+   324→                </div>
+   325→
+   326→                {/* Currency selector (§20/§78) — ONLY server-declared currencies */}
+   327→                <div className="mx-auto flex flex-col items-center gap-2">
+   328→                  <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
+   329→                    {t("currency.label")}
+   330→                  </span>
+   331→                  <div className="flex flex-wrap items-center justify-center gap-2" role="group" aria-label={t("currency.label")}>
+   332→                    {(data.currencies ?? []).map((c) => {
+   333→                      const active = data.settlementCurrency === c.code;
+   334→                      return (
+   335→                        <button
+   336→                          key={c.code}
+   337→                          type="button"
+   338→                          disabled={!c.available}
+   339→                          aria-pressed={active}
+   340→                          title={c.available ? c.displayName : t("currency.unavailable")}
+   341→                          onClick={() => setCurrency(c.code)}
+   342→                          className={cn(
+   343→                            "rounded-full border px-4 py-1.5 text-sm font-medium transition-colors",
+   344→                            active
+   345→                              ? "border-primary bg-primary/10 text-primary"
+   346→                              : "text-muted-foreground hover:border-foreground/20 hover:text-foreground",
+   347→                            !c.available && "cursor-not-allowed opacity-50 line-through hover:text-muted-foreground",
+   348→                          )}
+   349→                        >
+   350→                          {c.code}
+   351→                          {!c.available ? <span className="ms-1.5 text-xs">({t("availability.notAvailable")})</span> : null}
+   352→                        </button>
+   353→                      );
+   354→                    })}
+   355→                  </div>
+   356→                  {hasUnavailableCurrency ? (
+   357→                    <p className="text-muted-foreground max-w-md text-xs">{t("currency.unavailable")}</p>
+   358→                  ) : null}
+   359→                </div>
+   360→              </>
+   361→            )}
+   362→          </div>
+   363→        </section>
+   364→        {/* Plan cards (§69/§152 — semantic, price dominant, honest CTAs) */}
+   365→        <section className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6" aria-label={t("compare.title")}>
+   366→          {isLoading || !data ? null : (
+   367→            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+   368→              {plans.map((plan) => {
+   369→                const cta = ctaFor(plan);
+   370→                const save = period === "YEARLY" ? savingsPercent(plan) : null;
+   371→                const featured = data.featuredPlan === plan.code;
+   372→                return (
+   373→                  <Card
+   374→                    key={plan.code}
+   375→                    className={cn(
+   376→                      "relative flex flex-col transition-shadow duration-200 hover:shadow-md",
+   377→                      featured && "border-primary/40 shadow-sm ring-1 ring-primary/20",
+   378→                    )}
+   379→                    data-plan={plan.code}
+   380→                  >
+   381→                    <CardContent className="flex flex-1 flex-col gap-4 p-5">
+   382→                      <div className="space-y-1.5">
+   383→                        <div className="flex items-center justify-between gap-2">
+   384→                          <h2 className="text-base font-semibold">{planDisplayName(plan.code, t)}</h2>
+   385→                          {featured ? (
+   386→                            <Badge className="bg-primary/10 text-primary border-primary/20" variant="outline">
+   387→                              <Sparkles className="size-3" aria-hidden="true" />
+   388→                              {t("featured")}
+   389→                            </Badge>
+   390→                          ) : null}
+   391→                        </div>
+   392→                        <p className="text-muted-foreground min-h-[2.5rem] text-xs leading-relaxed">
+   393→                          {planTagline(plan.code, t)}
+   394→                        </p>
+   395→                      </div>
+   396→
+   397→                      <div className="space-y-1">
+   398→                        <div className="min-h-[2.75rem]">{priceLine(plan)}</div>
+   399→                        {period === "YEARLY" && plan.pricing ? (
+   400→                          <p className="text-muted-foreground text-xs">
+   401→                            {t("toggle.billedYearly")}
+   402→                            {save !== null ? (
+   403→                              <span className="text-emerald-600 dark:text-emerald-400"> · {t("toggle.savePercent", { percent: save })}</span>
+   404→                            ) : null}
+   405→                          </p>
+   406→                        ) : null}
+   407→                      </div>
+   408→
+   409→                      <Button
+   410→                        className="w-full"
+   411→                        variant={cta.variant}
+   412→                        disabled={cta.disabled}
+   413→                        onClick={cta.onClick}
+   414→                      >
+   415→                        {cta.label}
+   416→                      </Button>
+   417→
+   418→                      <ul className="space-y-2 border-t pt-3" aria-label={t("features.title")}>
+   419→                        {CARD_FEATURES.map((code) => {
+   420→                          const value = plan.entitlements[code];
+   421→                          return (
+   422→                            <li key={code} className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
+   423→                              <span>{tBilling(`entitlement.${code}` as "entitlement.CUSTOMERS_MAX")}</span>
+   424→                              <span className="text-foreground font-medium">
+   425→                                {limitLabel(value, plan.code, t)}
+   426→                              </span>
+   427→                            </li>
+   428→                          );
+   429→                        })}
+   430→                        <li className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
+   431→                          <span>{tBilling("entitlement.AI_COPILOT" as "entitlement.AI_COPILOT")}</span>
+   432→                          {plan.entitlements.AI_COPILOT ? (
+   433→                            <BadgeCheck className="text-emerald-600 size-4 dark:text-emerald-400" aria-label={t("features.included")} />
+   434→                          ) : (
+   435→                            <Minus className="size-4" aria-label={t("features.notIncluded")} />
+   436→                          )}
+   437→                        </li>
+   438→                      </ul>
+   439→                    </CardContent>
+   440→                  </Card>
+   441→                );
+   442→              })}
+   443→            </div>
+   444→          )}
+   445→        </section>
+   446→
+   447→        {/* Comparison (§10/§14/§70/§138/§153) — desktop table, scrollable on mobile */}
+   448→        {data && data.plans.length > 0 ? (
+   449→          <section className="mx-auto w-full max-w-6xl px-4 pb-12 sm:px-6" aria-label={t("compare.title")}>
+   450→            <div className="mb-4 space-y-1">
+   451→              <h2 className="text-xl font-semibold tracking-tight">{t("compare.title")}</h2>
+   452→              <p className="text-muted-foreground text-sm">{t("compare.subtitle")}</p>
+   453→            </div>
+   454→            <ComparisonTable payload={data} locale={locale} />
+   455→          </section>
+   456→        ) : null}
+   457→
+   458→        {/* FAQ (§111-§115) — the trial item ONLY when trials are enabled (§114) */}
+   459→        {data ? (
+   460→          <section className="border-t" aria-label={t("faq.title")}>
+   461→            <div className="mx-auto w-full max-w-3xl space-y-4 px-4 py-12 sm:px-6">
+   462→              <h2 className="text-xl font-semibold tracking-tight">{t("faq.title")}</h2>
+   463→              <Accordion type="single" collapsible className="w-full">
+   464→                {faqItems(data.trialsEnabled).map((key) => (
+   465→                  <AccordionItem key={key} value={key}>
+   466→                    <AccordionTrigger className="text-start text-sm font-medium">
+   467→                      {/* Flat keys: faq.q1 / faq.a1 (BUGFIX #17 — the raw
+   468→                          key path rendered because faq.q1.q never existed). */}
+   469→                      {t(`faq.${key}` as "faq.q1")}
+   470→                    </AccordionTrigger>
+   471→                    <AccordionContent className="text-muted-foreground text-sm leading-relaxed">
+   472→                      {t(`faq.a${key.slice(1)}` as "faq.a1")}
+   473→                    </AccordionContent>
+   474→                  </AccordionItem>
+   475→                ))}
+   476→              </Accordion>
+   477→            </div>
+   478→          </section>
+   479→        ) : null}
+   480→      </main>
+   481→
+   482→      {/* Footer (§133 — only real destinations) */}
+   483→      <footer className="border-t">
+   484→        <div className="text-muted-foreground mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-2 px-4 py-4 text-xs sm:flex-row">
+   485→          <p className="flex items-center gap-3">
+   486→            <span className="text-foreground font-medium">{t("footer.pricing")}</span>
+   487→            <a href="#pricing-faq" className="hover:text-foreground underline-offset-4 hover:underline">
+   488→              {t("footer.faq")}
+   489→            </a>
+   490→            <button type="button" className="hover:text-foreground underline-offset-4 hover:underline" onClick={() => setContactOpen(true)}>
+   491→              {t("footer.contact")}
+   492→            </button>
+   493→          </p>
+   494→          <p>{t("footer.note")}</p>
+   495→        </div>
+   496→      </footer>
+   497→
+   498→      <ContactSalesDialog open={contactOpen} onOpenChange={setContactOpen} />
+   499→      <JsonLd payload={data ?? null} locale={locale} />
+   500→      <span id="pricing-faq" className="sr-only" aria-hidden="true" />
+   501→    </div>
+   502→  );
+   503→}
+   504→
+   505→// ---------------------------------------------------------------------------
+   506→// Sub-components + helpers
+   507→// ---------------------------------------------------------------------------
+   508→
+   509→function PublicHeader({
+   510→  authenticated,
+   511→  onContact,
+   512→}: {
+   513→  authenticated: boolean;
+   514→  onContact: () => void;
+   515→}) {
+   516→  const t = useTranslations("pricing");
+   517→  const tCommon = useTranslations("common");
+   518→  const navigate = useAppStore((s) => s.navigate);
+   519→  const setAuthMode = useAppStore((s) => s.setAuthMode);
+   520→
+   521→  return (
+   522→    <header className="bg-background/80 sticky top-0 z-40 border-b backdrop-blur">
+   523→      <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+   524→        <button
+   525→          type="button"
+   526→          className="flex items-center gap-2.5"
+   527→          onClick={() => {
+   528→            setAuthMode("signin");
+   529→            navigate({ kind: "dashboard" });
+   530→          }}
+   531→        >
+   532→          <span className="bg-background flex size-9 items-center justify-center rounded-xl border shadow-sm">
+   533→            <img src="/logo.svg" alt="" className="size-5" aria-hidden="true" />
+   534→          </span>
+   535→          <span className="text-start">
+   536→            <span className="gradient-text block text-sm font-semibold leading-tight">{tCommon("appName")}</span>
+   537→            <span className="text-muted-foreground block text-xs leading-tight">{tCommon("tagline")}</span>
+   538→          </span>
+   539→        </button>
+   540→        <div className="flex items-center gap-1.5">
+   541→          <LocaleSwitcher />
+   542→          <ThemeToggle />
+   543→          {authenticated ? null : (
+   544→            <Button
+   545→              size="sm"
+   546→              variant="outline"
+   547→              onClick={() => {
+   548→                setAuthMode("signin");
+   549→                navigate({ kind: "dashboard" });
+   550→              }}
+   551→            >
+   552→              {t("nav.signIn")}
+   553→            </Button>
+   554→          )}
+   555→          <Button size="sm" variant="ghost" className="hidden sm:inline-flex" onClick={onContact}>
+   556→            {t("availability.contactUs")}
+   557→          </Button>
+   558→        </div>
+   559→      </div>
+   560→    </header>
+   561→  );
+   562→}
+   563→
+   564→/**
+   565→ * Comparison matrix. Desktop: semantic table, plans as columns (§14).
+   566→ * Small screens: horizontally scrollable container with a sticky feature
+   567→ * column — no shrunken text, no clipped columns (§153).
+   568→ */
+   569→function ComparisonTable({ payload, locale }: { payload: PublicPricingPayload; locale: string }) {
+   570→  const t = useTranslations("pricing");
+   571→  const tBilling = useTranslations("billing");
+   572→
+   573→  const groups = useMemo(() => {
+   574→    const byGroup = new Map<string, typeof payload.definitions>();
+   575→    for (const def of payload.definitions) {
+   576→      const list = byGroup.get(def.group) ?? [];
+   577→      list.push(def);
+   578→      byGroup.set(def.group, list);
+   579→    }
+   580→    return [...byGroup.entries()];
+   581→  }, [payload.definitions]);
+   582→
+   583→  return (
+   584→    <div className="bg-background overflow-hidden rounded-xl border shadow-sm">
+   585→      <div className="overflow-x-auto" dir="ltr">
+   586→        <table className="w-full min-w-[640px] border-collapse text-sm" dir={locale === "fa" ? "rtl" : "ltr"}>
+   587→          <caption className="sr-only">{t("compare.title")}</caption>
+   588→          <thead>
+   589→            <tr className="bg-muted/40 border-b">
+   590→              <th scope="col" className="sticky start-0 bg-muted/40 z-10 w-2/5 p-3 text-start font-medium">
+   591→                {t("compare.title")}
+   592→              </th>
+   593→              {payload.plans.map((p) => (
+   594→                <th key={p.code} scope="col" className="p-3 text-center font-semibold">
+   595→                  {planDisplayName(p.code, t)}
+   596→                  <span className="text-muted-foreground block text-xs font-normal tabular-nums">
+   597→                    {p.pricing
+   598→                      ? formatMinor(
+   599→                          payload.plans && p.pricing ? p.pricing.monthlyMinor : 0,
+   600→                          p.pricing.currency,
+   601→                          locale,
+   602→                        )
+   603→                      : p.code === "FREE"
+   604→                        ? t("plans.freePrice")
+   605→                        : t("plans.customPrice")}
+   606→                  </span>
+   607→                </th>
+   608→              ))}
+   609→            </tr>
+   610→          </thead>
+   611→          <tbody>
+   612→            {groups.map(([group, defs]) => (
+   613→              <Fragment key={`${group}-header`}>
+   614→                <tr className="bg-muted/20">
+   615→                  <td
+   616→                    colSpan={payload.plans.length + 1}
+   617→                    className="text-muted-foreground sticky start-0 p-2 text-xs font-semibold uppercase tracking-wide"
+   618→                  >
+   619→                    {t(`compare.groups.${group}` as "compare.groups.business")}
+   620→                  </td>
+   621→                </tr>
+   622→                {defs.map((def) => (
+   623→                  <tr key={def.code} className="border-t">
+   624→                    <th scope="row" className="bg-background sticky start-0 z-10 p-3 text-start font-normal">
+   625→                      {tBilling(`entitlement.${def.code}` as "entitlement.CUSTOMERS_MAX")}
+   626→                    </th>
+   627→                    {payload.plans.map((p) => (
+   628→                      <td key={p.code} className="text-center p-3 tabular-nums">
+   629→                        <Cell plan={p} code={def.code} type={def.type} />
+   630→                      </td>
+   631→                    ))}
+   632→                  </tr>
+   633→                ))}
+   634→              </Fragment>
+   635→            ))}
+   636→          </tbody>
+   637→        </table>
+   638→      </div>
+   639→    </div>
+   640→  );
+   641→}
+   642→
+   643→function Cell({
+   644→  plan,
+   645→  code,
+   646→  type,
+   647→}: {
+   648→  plan: PublicPlan;
+   649→  code: string;
+   650→  type: "LIMIT" | "BOOLEAN";
+   651→}) {
+   652→  const t = useTranslations("pricing");
+   653→  const value = plan.entitlements[code];
+   654→
+   655→  if (type === "BOOLEAN") {
+   656→    return value ? (
+   657→      <span className="inline-flex items-center justify-center">
+   658→        <Check className="text-emerald-600 size-4 dark:text-emerald-400" aria-label={t("features.included")} />
+   659→      </span>
+   660→    ) : (
+   661→      <span className="inline-flex items-center justify-center">
+   662→        <X className="text-muted-foreground/50 size-4" aria-label={t("features.notIncluded")} />
+   663→      </span>
+   664→    );
+   665→  }
+   666→
+   667→  return <LimitValue value={value} planCode={plan.code} />;
+   668→}
+   669→
+   670→function LimitValue({ value, planCode }: { value: number | null | boolean; planCode: string }) {
+   671→  const t = useTranslations("pricing");
+   672→  if (typeof value === "boolean" || value === undefined) return <span>—</span>;
+   673→  if (value === null) {
+   674→    // §11 — "Unlimited" only when the catalog truly defines unlimited;
+   675→    // ENTERPRISE nulls are negotiated, displayed as Custom (§83).
+   676→    if (planCode === "ENTERPRISE") return <span>{t("features.custom")}</span>;
+   677→    return <span>{t("features.unlimited")}</span>;
+   678→  }
+   679→  return (
+   680→    <span>
+   681→      {new Intl.NumberFormat().format(value)}
+   682→    </span>
+   683→  );
+   684→}
+   685→
+   686→function limitLabel(
+   687→  value: number | null | boolean,
+   688→  planCode: string,
+   689→  t: Translator,
+   690→): string {
+   691→  if (typeof value === "boolean" || value === undefined) return "—";
+   692→  if (value === null) return planCode === "ENTERPRISE" ? t("features.custom") : t("features.unlimited");
+   693→  return t("features.upTo", { count: new Intl.NumberFormat().format(value) });
+   694→}
+   695→
+   696→/** Localized plan display names (§8) — the API's English names stay catalog-neutral. */
+   697→function planDisplayName(code: string, t: Translator): string {
+   698→  const map: Record<string, string> = {
+   699→    FREE: t("plans.FREE.name"),
+   700→    STARTER: t("plans.STARTER.name"),
+   701→    BUSINESS: t("plans.BUSINESS.name"),
+   702→    PRO: t("plans.PRO.name"),
+   703→    ENTERPRISE: t("plans.ENTERPRISE.name"),
+   704→  };
+   705→  return map[code] ?? code;
+   706→}
+   707→
+   708→function planTagline(code: string, t: Translator): string {
+   709→  const map: Record<string, string> = {
+   710→    FREE: t("plans.FREE.tagline"),
+   711→    STARTER: t("plans.STARTER.tagline"),
+   712→    BUSINESS: t("plans.BUSINESS.tagline"),
+   713→    PRO: t("plans.PRO.tagline"),
+   714→    ENTERPRISE: t("plans.ENTERPRISE.tagline"),
+   715→  };
+   716→  return map[code] ?? "";
+   717→}
+   718→
+   719→/** §111 — the trial FAQ exists ONLY when trials are enabled (§114). */
+   720→function faqItems(trialsEnabled: boolean): string[] {
+   721→  const keys = ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q9", "q10", "q11"];
+   722→  return trialsEnabled ? ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8", "q9", "q10", "q11"] : keys;
+   723→}
+   724→
+   725→/**
+   726→ * §58/§59/§135 — structured data ONLY from the live catalog: one Product
+   727→ * with Offers exclusively for plans that are genuinely AVAILABLE in the
+   728→ * payload's currency. No IRR offers, no stale prices, no fabricated data.
+   729→ */
+   730→function JsonLd({ payload, locale }: { payload: PublicPricingPayload | null; locale: string }) {
+   731→  const json = useMemo(() => {
+   732→    if (!payload) return null;
+   733→    const offers = payload.plans
+   734→      .filter((p) => p.availability === "AVAILABLE" && p.pricing)
+   735→      .map((p) => {
+   736→        const digits = payload.currencies.find((c) => c.code === p.pricing!.currency)?.minorUnitExponent ?? 2;
+   737→        return {
+   738→          "@type": "Offer",
+   739→          name: p.name,
+   740→          price: (p.pricing!.monthlyMinor / 10 ** digits).toFixed(digits),
+   741→          priceCurrency: p.pricing!.currency,
+   742→          availability: "https://schema.org/InStock",
+   743→        };
+   744→      });
+   745→    if (offers.length === 0) return null;
+   746→    return {
+   747→      "@context": "https://schema.org",
+   748→      "@type": "Product",
+   749→      name: "AI Business Copilot",
+   750→      description: locale === "fa" ? "مدیریت کسب‌وکار با دستیار هوشمند" : "Business management with an AI copilot",
+   751→      offers,
+   752→    };
+   753→  }, [payload, locale]);
+   754→
+   755→  if (!json) return null;
+   756→  return (
+   757→    <script
+   758→      type="application/ld+json"
+   759→      // Data comes exclusively from the typed catalog above — no user input.
+   760→      dangerouslySetInnerHTML={{ __html: JSON.stringify(json) }}
+   761→    />
+   762→  );
+   763→}
+   764→

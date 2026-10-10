@@ -202,6 +202,7 @@ try {
     // Prompt 43 (§116/§181) — goods returns + lines join the restore
     // verification surface (same honest-absent rule).
     "GoodsReturn", "GoodsReturnLine",
+    "GoodsDispatch", "GoodsDispatchLine",
   ];
   const counts = {};
   for (const entity of ENTITIES) {

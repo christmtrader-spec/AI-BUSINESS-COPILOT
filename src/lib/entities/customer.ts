@@ -118,6 +118,9 @@ export function mapCustomerDetail(
   recentSales: CustomerSaleRow[],
   recentPayments: CustomerPaymentRecordRow[],
   crm?: CustomerCrmSection,
+  // Prompt 44 — bounded dispatch history passes through verbatim (already
+  // mapped by the goods-dispatch service).
+  recentGoodsDispatches: CustomerDetail["recentGoodsDispatches"] = [],
 ): CustomerDetail {
   return {
     customer: {
@@ -132,6 +135,7 @@ export function mapCustomerDetail(
     summary,
     recentSales: mapRecentSales(recentSales),
     recentPayments: mapRecentPayments(recentPayments),
+    recentGoodsDispatches,
     // §44 — present but EMPTY for legacy callers; the detail route always
     // supplies the real bounded section.
     crm: crm ?? {

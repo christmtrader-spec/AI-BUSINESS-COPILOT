@@ -16,6 +16,7 @@ import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { partyUpdateSchema } from "@/lib/schemas";
+import { listRecentDispatchesForCustomer } from "@/lib/inventory/goods-dispatch/service";
 import {
   compute360Summary,
   mapCustomerCrm,
@@ -50,7 +51,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   // §40 — independent bounded queries in parallel; aggregates via groupBy
   // (one round trip, no N+1); recent lists take ≤10 with deterministic
   // ordering; explicit select everywhere (§86).
-  const [statusBuckets, recentSales, recentPayments, openOppCount, recentOpps, leadOrigin] = await Promise.all([
+  const [statusBuckets, recentSales, recentPayments, openOppCount, recentOpps, leadOrigin, recentGoodsDispatches] = await Promise.all([
     db.sale.groupBy({
       by: ["status"],
       where: { businessId: ctx.businessId, customerId: id, deletedAt: null },
@@ -112,6 +113,9 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
       orderBy: [{ convertedAt: "desc" }, { id: "desc" }],
       select: { id: true, name: true, convertedAt: true },
     }),
+    // Prompt 44 — ≤10 recent goods-dispatch documents for this customer
+    // (NO money; quantity only — dispatches are inventory events).
+    listRecentDispatchesForCustomer({ businessId: ctx.businessId, customerId: id, take: 10 }),
   ]);
 
   const summary = compute360Summary(
@@ -124,11 +128,18 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   );
 
   return ok(
-    mapCustomerDetail(customer, summary, recentSales, recentPayments, mapCustomerCrm({
-      openOpportunityCount: openOppCount,
-      recentOpportunities: recentOpps,
-      leadOrigin,
-    })),
+    mapCustomerDetail(
+      customer,
+      summary,
+      recentSales,
+      recentPayments,
+      mapCustomerCrm({
+        openOpportunityCount: openOppCount,
+        recentOpportunities: recentOpps,
+        leadOrigin,
+      }),
+      recentGoodsDispatches,
+    ),
   );
 });
 

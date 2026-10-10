@@ -77,6 +77,7 @@ export function ProductDetailView({
   const tPo = useTranslations("purchaseOrders");
   const tGr = useTranslations("goodsReceipts");
   const tRt = useTranslations("goodsReturns");
+  const tGd = useTranslations("goodsDispatches");
 
   const writable = can(role, "data:write");
   const p = data.product;
@@ -380,6 +381,47 @@ export function ProductDetailView({
                     <span className="flex items-center gap-2">
                       <span className="text-sm font-semibold tabular-nums text-amber-600 dark:text-amber-400" dir="ltr">
                         −{ret.returnedQty}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Prompt 44 — bounded goods-dispatch history (≤10). Dispatch
+          reference, customer snapshot, dispatched quantity, reason and
+          date — NO money (dispatches are inventory events, never
+          financial ones). */}
+      <Card data-testid="product-goods-dispatch-history">
+        <CardContent className="pt-6">
+          <h2 className="mb-3 text-base font-semibold">{tGd("productHistory")}</h2>
+          {!data.recentGoodsDispatches || data.recentGoodsDispatches.length === 0 ? (
+            <p className="text-muted-foreground text-sm">{tGd("noProductHistory")}</p>
+          ) : (
+            <ul className="divide-y">
+              {data.recentGoodsDispatches.map((dsp) => (
+                <li key={`${dsp.id}`}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40"
+                    onClick={() => navigate({ kind: "inventory-goods-dispatch", id: dsp.id })}
+                    aria-label={`${tGd("productHistory")}: ${dsp.reference}`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium" dir="auto">{dsp.reference}</span>
+                      <span className="text-muted-foreground block truncate text-xs" dir="auto">
+                        {dsp.customerNameAtDispatch || "—"} · {tGd(`reason_${dsp.reasonCode}`)}
+                        {dsp.postedAt
+                          ? ` · ${tGd("postedAtLabel")}: ${new Date(dsp.postedAt).toISOString().slice(0, 10)}`
+                          : ` · ${tGd(`status_${dsp.status}`)}`}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <span className="text-sm font-semibold tabular-nums text-amber-600 dark:text-amber-400" dir="ltr">
+                        −{dsp.qty}
                       </span>
                     </span>
                   </button>

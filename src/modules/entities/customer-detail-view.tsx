@@ -14,6 +14,7 @@ import {
   CreditCard,
   FileText,
   HandCoins,
+  PackageOpen,
   Pencil,
   ReceiptText,
   ShoppingCart,
@@ -56,6 +57,7 @@ export function CustomerDetailView({
   role: Role;
 }) {
   const t = useTranslations("entityDetail");
+  const tGd = useTranslations("goodsDispatches");
   const tCommon = useTranslations("common");
   const tStatements = useTranslations("statements");
   const tSearch = useTranslations("search");
@@ -208,6 +210,27 @@ export function CustomerDetailView({
           secondary: p.note,
           trailing: fmtMoney(business, p.amountMinor),
           trailingMuted: fmtDate(business, p.paidAt),
+        }))}
+      />
+
+      {/* Prompt 44 — bounded goods-dispatch history (≤10). Inventory
+          events, never financial rows; rows deep-link to the dispatch
+          document (#/inventory/goods-dispatches/<id>). */}
+      <RelatedRecordList
+        title={tGd("customerHistory")}
+        entity={null}
+        emptyText={tGd("noCustomerHistory")}
+        onOpen={() => {}}
+        onOpenRow={(id) => navigate({ kind: "inventory-goods-dispatch", id })}
+        items={(data.recentGoodsDispatches ?? []).map((d) => ({
+          id: d.id,
+          icon: PackageOpen,
+          primary: d.reference,
+          secondary: d.customerNameAtDispatch || undefined,
+          trailing: `${tGd("totalDispatched")}: ${d.totalDispatchedQty}`,
+          trailingMuted: d.postedAt
+            ? fmtDate(business, d.postedAt)
+            : tGd(`status_${d.status}`),
         }))}
       />
 

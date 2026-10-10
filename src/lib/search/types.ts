@@ -19,7 +19,10 @@
  *  NO money, NO stock quantities in snippets §122).
  *  Prompt 43 (§101): GOODS_RETURN joins — discovery over return documents
  *  (return reference + source receipt reference + PO reference snapshot +
- *  supplier/product snapshots; NO money, NO quantities in snippets). */
+ *  supplier/product snapshots; NO money, NO quantities in snippets).
+ *  Prompt 44: GOODS_DISPATCH joins — discovery over outbound documents
+ *  (dispatch reference + customer snapshot + product snapshots; NO money,
+ *  NO stock quantities in snippets). */
 export const SEARCH_ENTITY_TYPES = [
   "CUSTOMER",
   "SUPPLIER",
@@ -32,6 +35,7 @@ export const SEARCH_ENTITY_TYPES = [
   "PURCHASE_ORDER",
   "GOODS_RECEIPT",
   "GOODS_RETURN",
+  "GOODS_DISPATCH",
 ] as const;
 
 export type SearchEntityType = (typeof SEARCH_ENTITY_TYPES)[number];
@@ -49,6 +53,7 @@ export const SEARCH_DESTINATIONS = [
   "purchase-orders",
   "goods-receipts",
   "goods-returns",
+  "goods-dispatches",
 ] as const;
 
 export type SearchDestination = (typeof SEARCH_DESTINATIONS)[number];
@@ -66,6 +71,7 @@ export const ENTITY_DESTINATION: Record<SearchEntityType, SearchDestination> = {
   PURCHASE_ORDER: "purchase-orders",
   GOODS_RECEIPT: "goods-receipts",
   GOODS_RETURN: "goods-returns",
+  GOODS_DISPATCH: "goods-dispatches",
 };
 
 /** Closed status tokens (client localizes; server never renders HTML).

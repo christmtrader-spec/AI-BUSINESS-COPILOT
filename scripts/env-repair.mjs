@@ -9,7 +9,7 @@
  * docs/database/data-inventory-before-baseline.md) in the exact sanctioned
  * order, idempotently:
  *
- *   1. Re-baseline the migration ledger (prisma migrate resolve --applied ×22;
+ *   1. Re-baseline the migration ledger (prisma migrate resolve --applied ×24;
  *      ledger writes ONLY — never touches application tables).
  *   2. Restore the dev .env baseline (real secrets via node:crypto).
  *   3. Re-seed billing plans + pricing books (sanctioned idempotent seeds).
@@ -17,7 +17,7 @@
  *      subscription guard).
  *   5. Re-create the e2e-smoke persistent fixture contract
  *      (sara/eve/ali/rep16007 + memberships).
- *   6. Verify: migrations 22/0, health endpoint, DB integrity, row floors.
+ *   6. Verify: migrations 24/0, health endpoint, DB integrity, row floors.
  *
  * Safe to run repeatedly; every step detects existing state first.
  */
@@ -64,6 +64,9 @@ const MIGRATIONS = [
   // 0 pending). Same maintenance law: keep every applied migration in this
   // baseline list so a sandbox revert never leaves it falsely pending.
   "20261008090000_prompt43_goods_returns",
+  // Prompt 44 — the P44 Goods Dispatch migration is genuinely applied (24
+  // applied / 0 pending). Same maintenance law.
+  "20261010090000_prompt44_goods_dispatches",
 ];
 
 function log(step, msg) {

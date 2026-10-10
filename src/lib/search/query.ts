@@ -18,12 +18,14 @@ import { db } from "@/lib/db";
 import { SEARCH_PER_ENTITY_TAKE } from "./schema";
 import { purchaseOrderLineCap } from "@/lib/purchase-orders/types";
 import { goodsReceiptLineCap } from "@/lib/inventory/goods-receipt/types";
+import { goodsDispatchLineCap } from "@/lib/inventory/goods-dispatch/types";
 import { goodsReturnLineCap } from "@/lib/inventory/goods-return/types";
 import {
   customerCandidate,
   expenseCandidate,
   goodsReceiptCandidate,
   goodsReturnCandidate,
+  goodsDispatchCandidate,
   leadCandidate,
   opportunityCandidate,
   paymentCandidate,
@@ -35,6 +37,7 @@ import {
   type OpportunityRow,
   type GoodsReceiptSearchRow,
   type GoodsReturnSearchRow,
+  type GoodsDispatchSearchRow,
   type PaymentRow,
   type PurchaseOrderSearchRow,
   type SaleRow,
@@ -446,6 +449,54 @@ async function searchGoodsReturns(
   });
   return rows.map((r) => goodsReturnCandidate(r as GoodsReturnSearchRow));
 }
+/**
+ * Prompt 44 — goods-dispatch search. Tenant-scoped at every level; the
+ * line-cap law bounds the snapshot text fetch. NO money exists in this
+ * domain and NO stock quantities are selected. Draft/cancelled dispatches
+ * stay searchable (documents, not state).
+ */
+async function searchGoodsDispatches(
+  businessId: string,
+  variants: string[],
+): Promise<SearchCandidate[]> {
+  const rows = await db.goodsDispatch.findMany({
+    where: {
+      businessId, // server-derived tenant scope, never client input
+      OR: [
+        ...variants.map((v) => ({ reference: { contains: v } })),
+        ...variants.map((v) => ({ customerNameAtDispatch: { contains: v } })),
+        ...variants.map((v) => ({
+          lines: {
+            some: {
+              OR: [
+                { productNameAtDispatch: { contains: v } },
+                { skuAtDispatch: { contains: v } },
+              ],
+            },
+          },
+        })),
+      ],
+    },
+    select: {
+      id: true,
+      reference: true,
+      status: true,
+      customerNameAtDispatch: true,
+      createdAt: true,
+      // Line SNAPSHOT TEXT (name/SKU) feeds the ranker's match fields;
+      // bounded by the SAME P44 line-cap law (never unbounded).
+      // No quantities and no money selected.
+      lines: {
+        select: { productNameAtDispatch: true, skuAtDispatch: true },
+        take: goodsDispatchLineCap(process.env.GOODS_DISPATCH_MAX_LINES),
+      },
+    },
+    orderBy: { createdAt: "desc" as const },
+    take: SEARCH_PER_ENTITY_TAKE,
+  });
+  return rows.map((r) => goodsDispatchCandidate(r as GoodsDispatchSearchRow));
+}
+
 
 /**
  * Run all requested entity searches concurrently (§6) and return the
@@ -495,6 +546,9 @@ export async function fetchSearchCandidates(options: {
         break;
       case "GOODS_RETURN":
         tasks.push(searchGoodsReturns(businessId, variants));
+        break;
+      case "GOODS_DISPATCH":
+        tasks.push(searchGoodsDispatches(businessId, variants));
         break;
     }
   }

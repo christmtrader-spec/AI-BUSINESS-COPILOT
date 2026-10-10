@@ -1,0 +1,867 @@
+     1→// AI Business Copilot — Schema v1 (Phase 01: Foundation)
+     2→// Constitution: A01 multi-tenant, A02 RBAC, A04 currency, A07 UTC dates,
+     3→// A08 money as integer minor units (Int), A09 auditability.
+     4→
+     5→generator client {
+     6→  provider = "prisma-client-js"
+     7→}
+     8→
+     9→datasource db {
+    10→  provider = "sqlite"
+    11→  url      = env("DATABASE_URL")
+    12→}
+    13→
+    14→// NOTE: SQLite connector does not support Prisma enums.
+    15→// Roles are stored as strings; the authoritative set lives in
+    16→// src/lib/rbac.ts and is validated with zod at every boundary.
+    17→
+    18→model User {
+    19→  id           String           @id @default(cuid())
+    20→  email        String           @unique
+    21→  name         String?
+    22→  passwordHash String
+    23→  locale       String           @default("en") // user display preference (A05)
+    24→  // Prompt 18 session security: bumped on password change / password reset /
+    25→  // account security events. JWTs carry the version they were issued with;
+    26→  // a mismatch means the session was invalidated and must re-authenticate.
+    27→  sessionVersion Int            @default(0)
+    28→  createdAt    DateTime         @default(now())
+    29→  updatedAt    DateTime         @updatedAt
+    30→
+    31→  memberships BusinessMember[]
+    32→  ownedBusinesses Business[]   @relation("BusinessOwner")
+    33→  auditLogs   AuditLog[]
+    34→  inventoryAdjustments InventoryAdjustment[]
+    35→  payments    Payment[]
+    36→  invitesCreated BusinessInvite[] @relation("InviteCreator")
+    37→  invitesAccepted BusinessInvite[] @relation("InviteAcceptor")
+    38→  chatSessions ChatSession[]
+    39→  chatMessages ChatMessage[]
+    40→  passwordResetTokens PasswordResetToken[]
+    41→  subscriptionEvents SubscriptionEvent[]
+    42→}
+    43→
+    44→// ---------------------------------------------------------------------------
+    45→// Prompt 18 — credential recovery. ONLY the SHA-256 HASH of a one-time reset
+    46→// token is stored (the raw token lives exclusively inside the emailed link).
+    47→// Tokens are single-use (usedAt), short-lived (expiresAt, 30 minutes) and
+    48→// cleaned up opportunistically. requestedIp/userAgent support security
+    49→// review of recovery abuse; they never contain secrets.
+    50→// ---------------------------------------------------------------------------
+    51→model PasswordResetToken {
+    52→  id        String    @id @default(cuid())
+    53→  userId    String
+    54→  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    55→  tokenHash String    @unique
+    56→  expiresAt DateTime
+    57→  usedAt    DateTime?
+    58→  requestedIp String?
+    59→  userAgent   String?
+    60→  createdAt DateTime  @default(now())
+    61→
+    62→  @@index([userId, createdAt])
+    63→  @@index([expiresAt])
+    64→}
+    65→
+    66→model Business {
+    67→  id               String   @id @default(cuid())
+    68→  name             String
+    69→  slug             String   @unique
+    70→  // A04 — currency is configuration, never hard-coded
+    71→  currencyCode     String   @default("USD")
+    72→  currencySymbol   String   @default("$")
+    73→  decimalPrecision Int      @default(2) // 0..4
+    74→  // A05/A07 — locale & timezone are business configuration
+    75→  locale           String   @default("en")
+    76→  timezone         String   @default("UTC")
+    77→
+    78→  ownerId String
+    79→  owner   User   @relation("BusinessOwner", fields: [ownerId], references: [id])
+    80→
+    81→  // Prompt 25 — onboarding state (§44/§45): server-authoritative, NOT
+    82→  // localStorage. null = onboarding not yet completed/dismissed. The
+    83→  // baseline migration backfills BOTH for every pre-Prompt-25 business so
+    84→  // existing tenants are never forced into the new flow.
+    85→  onboardingCompletedAt DateTime?
+    86→  onboardingDismissedAt DateTime?
+    87→
+    88→  members   BusinessMember[]
+    89→  auditLogs AuditLog[]
+    90→  invites   BusinessInvite[]
+    91→  customers Customer[]
+    92→  suppliers Supplier[]
+    93→  products  Product[]
+    94→  inventoryAdjustments InventoryAdjustment[]
+    95→  sales     Sale[]
+    96→  expenses  Expense[]
+    97→  payments  Payment[]
+    98→  chatSessions ChatSession[]
+    99→  subscription Subscription?
+   100→  subscriptionEvents SubscriptionEvent[]
+   101→  usagePeriods UsagePeriod[]
+   102→  usageEvents  UsageEvent[]
+   103→  checkoutSessions CheckoutSession[]
+   104→
+   105→  createdAt DateTime @default(now())
+   106→  updatedAt DateTime @updatedAt
+   107→
+   108→  @@index([ownerId])
+   109→}
+   110→
+   111→model BusinessMember {
+   112→  id         String   @id @default(cuid())
+   113→  businessId String
+   114→  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   115→  userId     String
+   116→  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+   117→  // One of: OWNER | ADMIN | MANAGER | STAFF | ACCOUNTANT | VIEWER (rbac.ts)
+   118→  role       String   @default("VIEWER")
+   119→  createdAt  DateTime @default(now())
+   120→
+   121→  @@unique([businessId, userId])
+   122→  @@index([userId])
+   123→}
+   124→
+   125→// Phase 06+ — invite links (no email sending in MVP scope): an OWNER/ADMIN
+   126→// mints a one-time token link; the invitee opens #/join/<token>, previews
+   127→// the business + role and accepts. Roles/audit identical to member.add.
+   128→model BusinessInvite {
+   129→  id           String    @id @default(cuid())
+   130→  businessId   String
+   131→  business     Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   132→  // Opaque 48-char token; unique lookup by token — never guessable.
+   133→  token        String    @unique
+   134→  // OWNER is intentionally NOT grantable via invites (see rbac.ts).
+   135→  role         String    @default("VIEWER")
+   136→  createdById  String?
+   137→  createdBy    User?     @relation("InviteCreator", fields: [createdById], references: [id], onDelete: SetNull)
+   138→  expiresAt    DateTime
+   139→  acceptedById String?
+   140→  acceptedBy   User?     @relation("InviteAcceptor", fields: [acceptedById], references: [id], onDelete: SetNull)
+   141→  acceptedAt   DateTime?
+   142→  revokedAt    DateTime?
+   143→  createdAt    DateTime  @default(now())
+   144→
+   145→  @@index([businessId, createdAt])
+   146→}
+   147→
+   148→model AuditLog {
+   149→  id         String   @id @default(cuid())
+   150→  // Nullable since Prompt 18: account-level security events (password
+   151→  // change/reset, account deletion) are not bound to a business.
+   152→  businessId String?
+   153→  business   Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   154→  actorId    String?
+   155→  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+   156→  action     String // e.g. "business.update", "member.role_change"
+   157→  entityType String // e.g. "Business", "BusinessMember"
+   158→  entityId   String?
+   159→  beforeJson String?
+   160→  afterJson  String?
+   161→  ip         String?
+   162→  userAgent  String?
+   163→
+   164→  createdAt DateTime @default(now())
+   165→
+   166→  @@index([businessId, createdAt])
+   167→  @@index([entityType, entityId])
+   168→}
+   169→
+   170→// ---------------------------------------------------------------------------
+   171→// Phase 02 — Master data (Constitution MVP scope §2 items 5-7, 13)
+   172→// Financial records use soft delete (deletedAt); money is Int minor units.
+   173→// ---------------------------------------------------------------------------
+   174→
+   175→model Customer {
+   176→  id         String    @id @default(cuid())
+   177→  businessId String
+   178→  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   179→  name       String
+   180→  phone      String?
+   181→  email      String?
+   182→  address    String?
+   183→  note       String?
+   184→  deletedAt  DateTime?
+   185→  createdAt  DateTime  @default(now())
+   186→  updatedAt  DateTime  @updatedAt
+   187→
+   188→  sales Sale[]
+   189→
+   190→  @@index([businessId, deletedAt])
+   191→  @@index([businessId, name])
+   192→}
+   193→
+   194→model Supplier {
+   195→  id         String    @id @default(cuid())
+   196→  businessId String
+   197→  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   198→  name       String
+   199→  phone      String?
+   200→  email      String?
+   201→  address    String?
+   202→  note       String?
+   203→  deletedAt  DateTime?
+   204→  createdAt  DateTime  @default(now())
+   205→  updatedAt  DateTime  @updatedAt
+   206→
+   207→  expenses Expense[]
+   208→
+   209→  @@index([businessId, deletedAt])
+   210→  @@index([businessId, name])
+   211→}
+   212→
+   213→model Product {
+   214→  id             String    @id @default(cuid())
+   215→  businessId     String
+   216→  business       Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   217→  name           String
+   218→  sku            String?
+   219→  unit           String? // e.g. piece, kg, hour
+   220→  // A08 — prices stored as integer minor units (never floats)
+   221→  salePriceMinor Int       @default(0)
+   222→  costPriceMinor Int       @default(0)
+   223→  // Basic inventory: current stock quantity in whole units
+   224→  stockQty       Int       @default(0)
+   225→  lowStockAt     Int       @default(5) // threshold for low-stock alert
+   226→  isActive       Boolean   @default(true)
+   227→  deletedAt      DateTime?
+   228→  createdAt      DateTime  @default(now())
+   229→  updatedAt      DateTime  @updatedAt
+   230→
+   231→  adjustments InventoryAdjustment[]
+   232→  saleItems   SaleItem[]
+   233→
+   234→  @@index([businessId, deletedAt])
+   235→  @@index([businessId, name])
+   236→}
+   237→
+   238→model InventoryAdjustment {
+   239→  id         String   @id @default(cuid())
+   240→  businessId String
+   241→  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   242→  productId  String
+   243→  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+   244→  delta      Int // signed change in units
+   245→  reason     String
+   246→  actorId    String?
+   247→  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+   248→  createdAt  DateTime @default(now())
+   249→
+   250→  @@index([businessId, createdAt])
+   251→  @@index([productId, createdAt])
+   252→}
+   253→
+   254→// ---------------------------------------------------------------------------
+   255→// Phase 03 — Transactions (Constitution MVP scope items 8-12)
+   256→// Money = Int minor units (A08). `paidMinor` + `status` on Sale/Expense are
+   257→// denormalized summaries maintained transactionally with every Payment write
+   258→// (single writer path: the payments pipeline). Status values:
+   259→// UNPAID | PARTIAL | PAID — computed by lib/money.statusOf, never client input.
+   260→// ---------------------------------------------------------------------------
+   261→
+   262→model Sale {
+   263→  id         String    @id @default(cuid())
+   264→  businessId String
+   265→  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   266→  // Per-business sequential invoice number (displayed as INV-0001)
+   267→  number     Int
+   268→  customerId String?
+   269→  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+   270→  // Totals computed server-side with integer math at creation (A08)
+   271→  subtotalMinor Int
+   272→  discountMinor Int     @default(0)
+   273→  totalMinor    Int
+   274→  // Payment summary — updated in the same tx as every Payment create/delete
+   275→  paidMinor  Int       @default(0)
+   276→  status     String    @default("UNPAID")
+   277→  issueDate  DateTime  @default(now())
+   278→  note       String?
+   279→  deletedAt  DateTime?
+   280→  createdAt  DateTime  @default(now())
+   281→  updatedAt  DateTime  @updatedAt
+   282→
+   283→  items    SaleItem[]
+   284→  payments Payment[]
+   285→
+   286→  @@unique([businessId, number])
+   287→  @@index([businessId, deletedAt, createdAt])
+   288→  @@index([businessId, status])
+   289→  @@index([customerId])
+   290→}
+   291→
+   292→model SaleItem {
+   293→  id             String   @id @default(cuid())
+   294→  saleId         String
+   295→  sale           Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+   296→  productId      String?
+   297→  product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+   298→  name           String // snapshot of product/custom item name at sale time
+   299→  unit           String? // snapshot
+   300→  qty            Int // whole units (MVP contract)
+   301→  unitPriceMinor Int
+   302→  lineTotalMinor Int // qty * unitPriceMinor, integer math
+   303→
+   304→  @@index([saleId])
+   305→}
+   306→
+   307→model Expense {
+   308→  id          String    @id @default(cuid())
+   309→  businessId  String
+   310→  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   311→  supplierId  String?
+   312→  supplier    Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+   313→  category    String
+   314→  amountMinor Int
+   315→  paidMinor   Int       @default(0)
+   316→  status      String    @default("UNPAID")
+   317→  spentAt     DateTime  @default(now())
+   318→  note        String?
+   319→  deletedAt   DateTime?
+   320→  createdAt   DateTime  @default(now())
+   321→  updatedAt   DateTime  @updatedAt
+   322→
+   323→  payments Payment[]
+   324→
+   325→  @@index([businessId, deletedAt, createdAt])
+   326→  @@index([businessId, status])
+   327→  @@index([supplierId])
+   328→}
+   329→
+   330→model Payment {
+   331→  id          String   @id @default(cuid())
+   332→  businessId  String
+   333→  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   334→  // Exactly one of saleId / expenseId (validated in the API schema)
+   335→  saleId      String?
+   336→  sale        Sale?    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+   337→  expenseId   String?
+   338→  expense     Expense? @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+   339→  direction   String // IN (customer pays us) | OUT (we pay supplier)
+   340→  amountMinor Int
+   341→  method      String // CASH | BANK_TRANSFER | CARD | OTHER
+   342→  note        String?
+   343→  paidAt      DateTime @default(now())
+   344→  actorId     String?
+   345→  actor       User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+   346→  createdAt   DateTime @default(now())
+   347→
+   348→  @@index([businessId, paidAt])
+   349→  @@index([saleId])
+   350→  @@index([expenseId])
+   351→}
+   352→
+   353→// ---------------------------------------------------------------------------
+   354→// Phase 07 — Copilot transcript persistence (r10 rec #1).
+   355→// Conversations follow the user ACROSS DEVICES: scoped per (business, user) —
+   356→// a user's questions are their own, never shared across members. The client
+   357→// localStorage store remains the offline/fallback cache; the server copy is
+   358→// NOT financial authority (answers are recomputed on every ask — A11-A13).
+   359→// Session ids are client-generated (validated format) so local↔server
+   360→// reconciliation is identity-based and idempotent.
+   361→// ---------------------------------------------------------------------------
+   362→
+   363→model ChatSession {
+   364→  id         String        @id // client-generated (s-<random>), format-validated
+   365→  businessId String
+   366→  business   Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   367→  userId     String
+   368→  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+   369→  title      String        @default("") // auto-title from first question (≤80 chars)
+   370→  // User renamed via PATCH — after this the auto-title never overwrites it.
+   371→  titleEdited Boolean      @default(false)
+   372→  // Pinned conversations sort first in the history list (UI-only affordance).
+   373→  pinned     Boolean       @default(false)
+   374→  createdAt  DateTime      @default(now())
+   375→  updatedAt  DateTime      @updatedAt
+   376→  messages   ChatMessage[]
+   377→
+   378→  @@unique([businessId, userId, id]) // defense in depth: id alone is never enough
+   379→  @@index([businessId, userId, updatedAt])
+   380→}
+   381→
+   382→model ChatMessage {
+   383→  id        String      @id @default(cuid())
+   384→  sessionId String
+   385→  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+   386→  // USER | ASSISTANT (validated in the API schema)
+   387→  role      String
+   388→  content   String      // capped at 8000 chars server-side
+   389→  failed    Boolean     @default(false) // failed attempts stay LOCAL-only (never synced)
+   390→  // Citation provenance (server-computed CopilotMeta) as JSON — answers
+   391→  // restored on another device still show WHERE their numbers came from.
+   392→  metaJson  String?
+   393→  createdAt DateTime    @default(now())
+   394→
+   395→  userId String
+   396→  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+   397→
+   398→  @@index([sessionId, createdAt])
+   399→  @@index([userId])
+   400→}
+   401→
+   402→// ---------------------------------------------------------------------------
+   403→// Prompt 20 — PLATFORM BILLING FOUNDATION (subscription + entitlement domain).
+   404→//
+   405→// SEPARATION LAW (docs/billing/platform-billing-vs-business-finance.md):
+   406→// these tables model the SaaS subscription of a business TO THIS PLATFORM.
+   407→// They must never be mixed with tenant business finance (Sale/Expense/
+   408→// Payment), which records the business's OWN customers' money.
+   409→//
+   410→// Modeling notes:
+   411→// - SQLite has no enums → status/type/period/billingPeriod are strings;
+   412→//   the authoritative value sets + transition rules live in
+   413→//   src/lib/billing/state-machine.ts and are validated at every boundary.
+   414→// - Subscription belongs to the BUSINESS (tenant), never to a User (§3).
+   415→// - One current subscription per business: unique(businessId) at the DB
+   416→//   level (§79). History is preserved via SubscriptionEvent rows; ended
+   417→//   subscriptions are never deleted (§81).
+   418→// - Plan.code / EntitlementDefinition.code are STABLE machine identifiers
+   419→//   (§7/§8) — display names are never used for authorization.
+   420→// - No pricing columns anywhere (§39/§40): plan identity is not money.
+   421→//   A future payment layer adds its own price/provider tables.
+   422→// - No provider-specific ids or secrets (§84/§85) — added by a later
+   423→//   payment phase through a dedicated mapping model if justified.
+   424→// ---------------------------------------------------------------------------
+   425→
+   426→model Plan {
+   427→  id          String   @id @default(cuid())
+   428→  // Stable machine identifier: FREE | STARTER | BUSINESS | PRO | ENTERPRISE.
+   429→  code        String   @unique
+   430→  name        String
+   431→  description String   @default("")
+   432→  // Retired plans are deactivated (active=false), never deleted (§80).
+   433→  active      Boolean  @default(true)
+   434→  isPublic    Boolean  @default(true)
+   435→  sortOrder   Int      @default(0)
+   436→  createdAt   DateTime @default(now())
+   437→  updatedAt   DateTime @updatedAt
+   438→
+   439→  planEntitlements PlanEntitlement[]
+   440→  subscriptions    Subscription[]
+   441→
+   442→  @@index([active, sortOrder])
+   443→}
+   444→
+   445→model EntitlementDefinition {
+   446→  id   String @id @default(cuid())
+   447→  // Stable machine code: CUSTOMERS_MAX | AI_COPILOT | ... (§72 — constants
+   448→  // live in src/lib/billing/catalog.ts; raw literals never scatter).
+   449→  code String @unique
+   450→  // LIMIT | BOOLEAN (validated against catalog at seed time).
+   451→  type String
+   452→  // COUNT | REQUESTS | MESSAGES | MEGABYTES | BUSINESSES | USERS (LIMIT only).
+   453→  unit String?
+   454→  description String @default("")
+   455→
+   456→  planEntitlements PlanEntitlement[]
+   457→
+   458→  // NOTE: code is @unique — SQLite already maintains a unique index (§78).
+   459→}
+   460→
+   461→model PlanEntitlement {
+   462→  id            String @id @default(cuid())
+   463→  planId        String
+   464→  plan          Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+   465→  entitlementId String
+   466→  entitlement   EntitlementDefinition @relation(fields: [entitlementId], references: [id], onDelete: Cascade)
+   467→  // LIMIT rows: the numeric limit; null = UNLIMITED (e.g. ENTERPRISE).
+   468→  // BOOLEAN rows: value stays null.
+   469→  value         Int?
+   470→  // BOOLEAN rows carry the flag; LIMIT rows are always false here.
+   471→  boolValue     Boolean @default(false)
+   472→  createdAt     DateTime @default(now())
+   473→
+   474→  @@unique([planId, entitlementId])
+   475→  @@index([entitlementId])
+   476→}
+   477→
+   478→model Subscription {
+   479→  id         String @id @default(cuid())
+   480→  // One CURRENT subscription per business (§79). History → SubscriptionEvent.
+   481→  businessId String @unique
+   482→  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   483→  // Deleting a plan that still has subscriptions is blocked (Restrict) —
+   484→  // retire via active=false instead (§80).
+   485→  planId     String
+   486→  plan       Plan @relation(fields: [planId], references: [id], onDelete: Restrict)
+   487→
+   488→  // TRIALING | ACTIVE | PAST_DUE | CANCELED | EXPIRED | PAUSED (§16/§17).
+   489→  status     String @default("ACTIVE")
+   490→  // MONTHLY | YEARLY — period duration concept only; no prices (§18).
+   491→  billingPeriod String @default("MONTHLY")
+   492→
+   493→  currentPeriodStart DateTime @default(now())
+   494→  currentPeriodEnd   DateTime?
+   495→  trialStart DateTime?
+   496→  trialEnd   DateTime?
+   497→  // Cancellation semantics (§44): keep access until period end.
+   498→  cancelAtPeriodEnd Boolean @default(false)
+   499→  canceledAt DateTime?
+   500→  endedAt    DateTime?
+   501→
+   502→  createdAt DateTime @default(now())
+   503→  updatedAt DateTime @updatedAt
+   504→
+   505→  events SubscriptionEvent[]
+   506→
+   507→  @@index([planId])
+   508→  @@index([status])
+   509→  @@index([currentPeriodEnd])
+   510→}
+   511→
+   512→model SubscriptionEvent {
+   513→  id             String @id @default(cuid())
+   514→  businessId     String
+   515→  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   516→  subscriptionId String
+   517→  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+   518→
+   519→  // CREATED | PLAN_CHANGED | TRIAL_STARTED | TRIAL_ENDED | CANCELED |
+   520→  // REACTIVATED | EXPIRED | PAUSED | RESUMED (§20) — no payment events.
+   521→  type       String
+   522→  fromStatus String?
+   523→  toStatus   String?
+   524→  fromPlanCode String?
+   525→  toPlanCode   String?
+   526→  // Small structured payload (e.g. { source: "seed-backfill" }) — never
+   527→  // payment data; the core relationships above are relational, not JSON (§17).
+   528→  dataJson   String?
+   529→  actorId    String?
+   530→  actor      User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+   531→  createdAt  DateTime @default(now())
+   532→
+   533→  @@index([businessId, createdAt])
+   534→  @@index([subscriptionId, createdAt])
+   535→}
+   536→
+   537→// ---------------------------------------------------------------------------
+   538→// Prompt 21 — USAGE METERING (consumption metrics, NOT resource limits).
+   539→//
+   540→// Separation of concepts (§4):
+   541→// - RESOURCE limits (CUSTOMERS_MAX…) are DERIVED from authoritative tables
+   542→//   at check time (Prompt 20) — never duplicated here (§5/§33).
+   543→// - CONSUMPTION metrics (AI_REQUESTS / AI_MESSAGES / AI_TOKENS) accumulate
+   544→//   over a defined USAGE PERIOD aligned with the subscription billing
+   545→//   period (§7) — no cron-based resets (§10/§43): a new billing period
+   546→//   simply resolves to a new UsagePeriod row on the next metered operation
+   547→//   (lazy, race-safe §76), and historical periods are retained (§101).
+   548→//
+   549→// Modeling notes:
+   550→// - Period identity is deterministic: (businessId, start) is UNIQUE (§8).
+   551→//   `end` mirrors the subscription's currentPeriodEnd (null-safe).
+   552→// - One counter per (period, metric) (§25/§72); `used` is an INTEGER that
+   553→//   only moves through guarded atomic updates (never floats §29/§30).
+   554→// - UsageEvent rows exist ONLY for meaningful consumption (AI usage — §26);
+   555→//   idempotencyKey uniqueness ([businessId, metric, idempotencyKey]) makes
+   556→//   a network retry NEVER double-charge (§17/§18). Status: COMMITTED
+   557→//   (counts) | RELEASED (provider failed before acceptance — reconciled).
+   558→// - No prompts/responses are ever stored here (§60); only provider/model
+   559→//   identifiers and authoritative token counts when the provider exposes
+   560→//   them (§14: never fabricated).
+   561→// - No money anywhere (§62/§104): usage is not pricing; a future payment
+   562→//   phase can interpret these quantities without altering their meaning
+   563→//   (§105).
+   564→// ---------------------------------------------------------------------------
+   565→
+   566→model UsagePeriod {
+   567→  id             String    @id @default(cuid())
+   568→  businessId     String
+   569→  business       Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   570→  // The subscription whose billing period this usage belongs to. Nullable:
+   571→  // the subscription row is never deleted, but keeping the link soft avoids
+   572→  // any cascade coupling while still identifying the alignment source.
+   573→  subscriptionId String?
+   574→  // UTC boundaries aligned with the subscription billing period (§7/§37).
+   575→  start          DateTime
+   576→  end            DateTime?
+   577→  createdAt      DateTime  @default(now())
+   578→
+   579→  counters UsageCounter[]
+   580→  events   UsageEvent[]
+   581→
+   582→  @@unique([businessId, start])
+   583→  @@index([businessId, start])
+   584→  @@index([subscriptionId])
+   585→}
+   586→
+   587→model UsageCounter {
+   588→  id            String      @id @default(cuid())
+   589→  usagePeriodId String
+   590→  usagePeriod   UsagePeriod @relation(fields: [usagePeriodId], references: [id], onDelete: Cascade)
+   591→  // AI_REQUESTS | AI_MESSAGES | AI_TOKENS (constants in src/lib/billing/usage.ts)
+   592→  metric        String
+   593→  // Integer quantity consumed in this period (COUNT/REQUESTS/MESSAGES/TOKENS
+   594→  // semantics per metric — §29/§30). Never negative: releases are guarded.
+   595→  used          Int         @default(0)
+   596→  updatedAt     DateTime    @updatedAt
+   597→
+   598→  @@unique([usagePeriodId, metric])
+   599→  @@index([metric])
+   600→}
+   601→
+   602→model UsageEvent {
+   603→  id             String      @id @default(cuid())
+   604→  businessId     String
+   605→  business       Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   606→  usagePeriodId  String
+   607→  usagePeriod    UsagePeriod @relation(fields: [usagePeriodId], references: [id], onDelete: Cascade)
+   608→  metric         String
+   609→  quantity       Int
+   610→  // COMMITTED → consumption stands; RELEASED → provider never accepted the
+   611→  // operation and the counter was reconciled back (§20/§49/§50).
+   612→  status         String      @default("COMMITTED")
+   613→  // Correlation id of the logical user operation (server-generated UUID, or
+   614→  // a client-supplied UUID validated server-side — §16). One logical user
+   615→  // operation maps to exactly one metered event per metric (§48/§116).
+   616→  requestId      String
+   617→  // Idempotency gate: a retried operation reuses the same key and is never
+   618→  // double-charged (§17/§18). Keyed per business+metric so cross-tenant
+   619→  // collisions are impossible by construction.
+   620→  idempotencyKey String
+   621→  // Small safe metadata only (§60): provider/model identifiers and
+   622→  // authoritative token counts when the provider exposes them. NEVER the
+   623→  // prompt or the response text (§60/§103).
+   624→  metaJson       String?
+   625→  createdAt      DateTime    @default(now())
+   626→
+   627→  @@unique([businessId, metric, idempotencyKey])
+   628→  @@index([businessId, createdAt])
+   629→  @@index([usagePeriodId, metric])
+   630→  @@index([requestId])
+   631→}
+   632→
+   633→// ---------------------------------------------------------------------------
+   634→// Prompt 22 — PAYMENT PROVIDER ABSTRACTION (checkout sessions & payments).
+   635→//
+   636→// Separation of concerns:
+   637→// - The PROVIDER INTERFACE lives in src/lib/payments (registry + adapters).
+   638→//   Providers are code+env driven (no provider table): the sandbox "mock"
+   639→//   provider is always available for development/testing; real providers
+   640→//   only activate when their env keys exist. Unknown → fail closed.
+   641→// - PRICES are server-authoritative (src/lib/payments/pricing.ts, EUR minor
+   642→//   units) — the browser never supplies an amount; the session snapshots
+   643→//   the charged amount at creation time.
+   644→// - FULFILLMENT is the ONLY path that changes a plan through a payment:
+   645→//   a signature-verified webhook marks the session SUCCEEDED and invokes
+   646→//   the idempotent Prompt-20 changePlan(service) — never the reverse, and
+   647→//   never any client-asserted "paid" state.
+   648→//
+   649→// Lifecycle:  PENDING → SUCCEEDED | FAILED | EXPIRED | CANCELED            (terminal)
+   650→//                      ↘ RECONCILIATION_REQUIRED                            (terminal,
+   651→//   Prompt 23: amount/currency/reference discrepancies from a REAL provider
+   652→//   verification are NEVER auto-resolved and NEVER silently "failed" — the
+   653→//   discrepancy is recorded (reconciliationReason + metaJson) and the case
+   654→//   waits for operator review. See docs/billing/payment-reconciliation.md.
+   655→// ---------------------------------------------------------------------------
+   656→
+   657→model CheckoutSession {
+   658→  id           String   @id @default(cuid())
+   659→  businessId   String
+   660→  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+   661→
+   662→  // Target plan + period SNAPSHOT at creation (plan rows may later change).
+   663→  planCode     String
+   664→  billingPeriod String  @default("MONTHLY")
+   665→
+   666→  // Provider slug: "mock" (sandbox) today; registry-gated (fail closed).
+   667→  provider     String
+   668→  // Provider-side reference (mock_… / Zarinpal Authority / cs_live_…) —
+   669→  // unique per provider.
+   670→  providerRef  String
+   671→
+   672→  // Settlement currency is the PLAN CATALOG currency (EUR), independent of
+   673→  // the business display currency; amounts are integer minor units.
+   674→  amountMinor  Int
+   675→  currency     String   @default("EUR")
+   676→
+   677→  // PENDING | SUCCEEDED | FAILED | EXPIRED | CANCELED | RECONCILIATION_REQUIRED
+   678→  status       String   @default("PENDING")
+   679→  // Prompt 23 §45 — why this session needs manual reconciliation:
+   680→  // AMOUNT_MISMATCH | CURRENCY_MISMATCH | UNKNOWN_PROVIDER_STATE | PROVIDER_TIMEOUT
+   681→  reconciliationReason String?
+   682→
+   683→  // Prompt 23 §13 — pricing snapshot reference. The exact catalog version
+   684→  // whose amountMinor/currency this session froze at creation time, so a
+   685→  // later price change can never retroactively re-price an open intent.
+   686→  // Prompt 24: new sessions store the resolving PriceBook's version here and
+   687→  // the book references below; pre-Prompt-24 sessions keep the legacy value
+   688→  // ("v1-2026-09-eur") with null book refs — never reinterpreted (§67/§68).
+   689→  pricingVersion String?
+   690→  // Prompt 24 §29/§30 — immutable price-book snapshot reference.
+   691→  priceBookId   String?
+   692→  priceBook     PriceBook? @relation(fields: [priceBookId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+   693→  // Denormalized readable code (EUR_STANDARD) — the session stays
+   694→  // interpretable even though ids are opaque.
+   695→  priceBookCode String?
+   696→  // Prompt 23 §149 — which user (owner/admin) initiated this payment.
+   697→  initiatedByUserId String?
+   698→
+   699→  expiresAt    DateTime
+   700→  completedAt  DateTime?
+   701→  // Set when fulfillment (plan change via changePlan) has been applied.
+   702→  fulfilledAt  DateTime?
+   703→
+   704→  // Small safe metadata only (never card data — the abstraction never
+   705→  // touches payment instruments; providers handle those).
+   706→  metaJson     String?
+   707→  createdAt    DateTime @default(now())
+   708→  updatedAt    DateTime @updatedAt
+   709→
+   710→  transactions PaymentTransaction[]
+   711→
+   712→  @@unique([provider, providerRef])
+   713→  @@index([businessId, createdAt])
+   714→  @@index([status, expiresAt])
+   715→}
+   716→
+   717→model PaymentTransaction {
+   718→  id                String          @id @default(cuid())
+   719→  checkoutSessionId String
+   720→  checkoutSession   CheckoutSession @relation(fields: [checkoutSessionId], references: [id], onDelete: Cascade)
+   721→  provider          String
+   722→  // Provider event id — the idempotency anchor: a retried/duplicated
+   723→  // webhook can never produce two money records for the same event.
+   724→  providerEventId   String
+   725→  // SUCCEEDED | FAILED | REFUNDED (refunds out of MVP scope — reserved).
+   726→  status            String
+   727→  amountMinor       Int
+   728→  currency          String          @default("EUR")
+   729→  processedAt       DateTime        @default(now())
+   730→  metaJson          String?
+   731→
+   732→  @@unique([provider, providerEventId])
+   733→  @@index([checkoutSessionId])
+   734→  @@index([processedAt])
+   735→}
+   736→
+   737→// Webhook replay protection: every provider event id is recorded exactly
+   738→// once, inside the same transaction as its side effects (best-effort
+   739→// insert-with-catch → duplicate deliveries short-circuit before any state
+   740→// mutation).
+   741→model ProcessedWebhookEvent {
+   742→  id         String   @id @default(cuid())
+   743→  provider   String
+   744→  eventId    String
+   745→  eventType  String
+   746→  receivedAt DateTime @default(now())
+   747→
+   748→  @@unique([provider, eventId])
+   749→  @@index([receivedAt])
+   750→}
+   751→
+   752→// ---------------------------------------------------------------------------
+   753→// Prompt 24 — currency-aware pricing (price books + versioned plan prices).
+   754→//
+   755→// A PriceBook is a complete, versioned pricing catalog for ONE settlement
+   756→// currency; PlanPrice rows are its immutable per-plan/per-period amounts.
+   757→// Rules baked into this schema (docs/billing/pricing-architecture.md):
+   758→// - Price changes create a NEW PriceBook version row — PlanPrice amounts are
+   759→//   never mutated after creation (§8/§36: no retroactive repricing).
+   760→// - A book that any CheckoutSession references can NEVER be deleted
+   761→//   (CheckoutSession.priceBookId is onDelete: Restrict) — history is kept.
+   762→// - Resolution picks the newest ACTIVE, currently-effective book per
+   763→//   currency (effectiveFrom/effectiveTo, server time only — §9/§33).
+   764→// - Amounts are INTEGER minor units in the book's currency exponent
+   765→//   (EUR=2 cents, IRR=0 rials) — never floats (§22/§23).
+   766→// ---------------------------------------------------------------------------
+   767→
+   768→model PriceBook {
+   769→  id            String   @id @default(cuid())
+   770→  // Stable commercial code — never encodes prices inside the code (§70).
+   771→  // EUR_STANDARD | IRR_IRAN | (harness-only: *_TEST books).
+   772→  code          String
+   773→  // Readable, unique version per code (§69): v1-2026-09 …
+   774→  version       String
+   775→  // ISO 4217 settlement currency — validated against the currency metadata
+   776→  // layer (src/lib/payments/currency.ts) at seed and resolution time.
+   777→  currency      String
+   778→  // Only active books participate in resolution (§10 step 4).
+   779→  active        Boolean  @default(false)
+   780→  effectiveFrom DateTime @default(now())
+   781→  // Books expire automatically after effectiveTo (§9/§33).
+   782→  effectiveTo   DateTime?
+   783→  description   String   @default("")
+   784→
+   785→  createdAt        DateTime          @default(now())
+   786→  updatedAt        DateTime          @updatedAt
+   787→  prices           PlanPrice[]
+   788→  checkoutSessions CheckoutSession[]
+   789→
+   790→  @@unique([code, version])
+   791→  @@index([currency, active])
+   792→}
+   793→
+   794→model PlanPrice {
+   795→  id            String    @id @default(cuid())
+   796→  priceBookId   String
+   797→  priceBook     PriceBook @relation(fields: [priceBookId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+   798→  // Plan identity stays FREE|STARTER|BUSINESS|PRO|ENTERPRISE — prices are
+   799→  // separate rows, never new plan codes (§6: no STARTER_EUR / STARTER_IRR).
+   800→  planCode      String
+   801→  // MONTHLY | YEARLY — explicit rows for each period; yearly amounts are
+   802→  // stored, never computed from monthly at runtime (§21/§61).
+   803→  billingPeriod String
+   804→  // Integer minor units of the book currency. Positive for purchasable
+   805→  // plans; FREE/ENTERPRISE have NO rows at all (§38/§39).
+   806→  amountMinor   Int
+   807→  // Retiring a single plan's price deactivates the row — amounts are never
+   808→  // edited (§104).
+   809→  active        Boolean   @default(true)
+   810→
+   811→  createdAt DateTime @default(now())
+   812→  updatedAt DateTime @updatedAt
+   813→
+   814→  @@unique([priceBookId, planCode, billingPeriod])
+   815→  @@index([priceBookId, active])
+   816→}
+   817→
+   818→// ---------------------------------------------------------------------------
+   819→// Prompt 25 — public commercial layer
+   820→// ---------------------------------------------------------------------------
+   821→// AnalyticsEvent (§102-§107): minimal FIRST-PARTY conversion events.
+   822→// - Only allowlisted event names are ever written (src/lib/analytics.ts);
+   823→//   the public ingest endpoint rejects anything else (§104).
+   824→// - Properties are intentionally restricted to safe funnel dimensions
+   825→//   (planCode / billingPeriod / currency / page / source / locale §103).
+   826→//   NO passwords, payment credentials, customer PII, financial amounts or
+   827→//   raw AI content is ever stored (§50/§107/§172).
+   828→// - dedupeKey (unique, nullable) makes server-authoritative lifecycle
+   829→//   events idempotent (one BUSINESS_CREATED per business, one
+   830→//   FIRST_CUSTOMER_CREATED per business, …) and gives client events
+   831→//   per-day dedupe semantics (§54).
+   832→// - Retention (§106): rows are tiny and carry no personal content; a
+   833→//   documented cleanup job can prune by createdAt (see docs/marketing/
+   834→//   conversion-funnel.md). userId/businessId are internal references for
+   835→//   abuse control — never exposed publicly.
+   836→model AnalyticsEvent {
+   837→  id            String   @id @default(cuid())
+   838→  name          String
+   839→  userId        String?
+   840→  businessId    String?
+   841→  planCode      String?
+   842→  billingPeriod String?
+   843→  currency      String?
+   844→  page          String?
+   845→  source        String?
+   846→  locale        String?
+   847→  dedupeKey     String?  @unique
+   848→  createdAt     DateTime @default(now())
+   849→
+   850→  @@index([name, createdAt])
+   851→  @@index([businessId])
+   852→}
+   853→
+   854→// ContactLead (§28/§29): the minimal Contact-Sales capture. Fields are the
+   855→// minimum needed to reply — no CRM, no business financial data, no
+   856→// unnecessary sensitive information. Retention/access/deletion are
+   857→// documented in docs/marketing/public-pricing.md.
+   858→model ContactLead {
+   859→  id        String   @id @default(cuid())
+   860→  name      String
+   861→  email     String
+   862→  company   String?
+   863→  message   String
+   864→  locale    String   @default("en")
+   865→  createdAt DateTime @default(now())
+   866→}
+   867→

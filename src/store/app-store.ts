@@ -92,6 +92,14 @@ export type AppView =
    */
   | { kind: "inventory-goods-returns" }
   | { kind: "inventory-goods-return"; id: string }
+  /**
+   * Prompt 44 — Goods dispatch views: the LIST at
+   * #/inventory/goods-dispatches and a DETAIL deep link at
+   * #/inventory/goods-dispatches/<id>. The id is validated with the same
+   * safe-ID rules as entity routes — malformed ids NEVER become state.
+   */
+  | { kind: "inventory-goods-dispatches" }
+  | { kind: "inventory-goods-dispatch"; id: string }
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
@@ -207,6 +215,12 @@ export function viewKeyOf(view: AppView): string {
       ? "inventory-goods-returns"
     : view.kind === "inventory-goods-return"
       ? `inventory-goods-return:${view.id}`
+    // Prompt 44 — goods-dispatch views: list + per-id detail keys so opening
+    // another dispatch remounts the detail view (P43 parity).
+    : view.kind === "inventory-goods-dispatches"
+      ? "inventory-goods-dispatches"
+    : view.kind === "inventory-goods-dispatch"
+      ? `inventory-goods-dispatch:${view.id}`
       : view.kind === "join"
       ? `join:${view.token}`
       : view.kind === "reset-password"
@@ -262,6 +276,10 @@ export function sameView(a: AppView, b: AppView): boolean {
   }
   // Prompt 43 — goods-return detail compares id (viewKey already carries it).
   if (a.kind === "inventory-goods-return" && b.kind === "inventory-goods-return") {
+    return a.id === b.id;
+  }
+  // Prompt 44 — goods-dispatch detail compares id (viewKey already carries it).
+  if (a.kind === "inventory-goods-dispatch" && b.kind === "inventory-goods-dispatch") {
     return a.id === b.id;
   }
   // Prompt 33 — hash query changes re-enter the store (back/forward must
@@ -344,6 +362,13 @@ export function viewToHash(view: AppView): string | null {
       // Prompt 43 (§91) — only charset-safe ids ever become a hash.
       if (!isValidEntityId(view.id)) return null;
       return `#/inventory/goods-returns/${view.id}`;
+    case "inventory-goods-dispatches":
+      // Prompt 44 — canonical list hash.
+      return "#/inventory/goods-dispatches";
+    case "inventory-goods-dispatch":
+      // Prompt 44 — only charset-safe ids ever become a hash.
+      if (!isValidEntityId(view.id)) return null;
+      return `#/inventory/goods-dispatches/${view.id}`;
     case "platform":
       // #/platform itself resolves to the overview section (§15).
       return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
@@ -505,6 +530,23 @@ export function hashToView(hash: string): AppView {
     }
     if (!isValidEntityId(id)) return { kind: "dashboard" };
     return { kind: "inventory-goods-return", id };
+  }
+  // Prompt 44 — goods-dispatch deep links, matched BEFORE the
+  // module/entity fallbacks: #/inventory/goods-dispatches opens the list;
+  // #/inventory/goods-dispatches/<id> opens the detail only when the id is
+  // charset-safe; anything else falls through to the dashboard fallback —
+  // never an arbitrary "#/anything/<id>" interpretation.
+  if (path === "inventory/goods-dispatches") return { kind: "inventory-goods-dispatches" };
+  if (path.startsWith("inventory/goods-dispatches/")) {
+    const rawId = path.slice("inventory/goods-dispatches/".length);
+    let id = rawId;
+    try {
+      id = decodeURIComponent(rawId);
+    } catch {
+      return { kind: "dashboard" };
+    }
+    if (!isValidEntityId(id)) return { kind: "dashboard" };
+    return { kind: "inventory-goods-dispatch", id };
   }
   // Prompt 34 — entity detail deep links (#/customers/<id>, §5/§6) are
   // attempted BEFORE the bare-module match: "customers" alone stays the

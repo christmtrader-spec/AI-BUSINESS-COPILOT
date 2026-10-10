@@ -282,8 +282,9 @@ eq(ENTITY_DESTINATION.LEAD, "leads", "u25 LEAD destination closed");
 eq(ENTITY_DESTINATION.OPPORTUNITY, "opportunities", "u25 OPPORTUNITY destination closed");
 // Prompt 41 (§67) — PURCHASE_ORDER joins the closed destination set.
 // Prompt 42 (§122) — GOODS_RECEIPT joins.
-// Prompt 43 (§101) — GOODS_RETURN joins: 11 destinations total.
-ok(SEARCH_DESTINATIONS.length === 11, "u25 destinations cover 11 entities (P41 purchase-orders + P42 goods-receipts + P43 goods-returns)");
+// Prompt 43 (§101) — GOODS_RETURN joins.
+// Prompt 44 — GOODS_DISPATCH joins: 12 destinations total.
+ok(SEARCH_DESTINATIONS.length === 12, "u25 destinations cover 12 entities (P41 POs + P42 receipts + P43 returns + P44 dispatches)");
 
 /* 26 — CRM tab vocabulary + default (§37) */
 // Prompt 36 (§43/§115) added the closed `tasks` tab — vocabulary extended.

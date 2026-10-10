@@ -54,6 +54,8 @@ export type ExportDatasetKey =
   | "inventory_goods_receipt_lines"
   | "inventory_goods_returns"
   | "inventory_goods_return_lines"
+  | "inventory_goods_dispatches"
+  | "inventory_goods_dispatch_lines"
   | "subscription_summary"
   | "usage_summary";
 
@@ -80,6 +82,8 @@ export const EXPORT_DATASET_KEYS = [
   "inventory_goods_receipt_lines",
   "inventory_goods_returns",
   "inventory_goods_return_lines",
+  "inventory_goods_dispatches",
+  "inventory_goods_dispatch_lines",
   "subscription_summary",
   "usage_summary",
 ] as const satisfies readonly ExportDatasetKey[];
@@ -95,6 +99,8 @@ export const DATASET_IMPLICATIONS: Partial<Record<ExportDatasetKey, ExportDatase
   inventory_goods_receipts: ["inventory_goods_receipt_lines"],
   // Prompt 43 (§113) — goods returns always carry their return lines.
   inventory_goods_returns: ["inventory_goods_return_lines"],
+  // Prompt 44 — goods dispatches always carry their dispatch lines.
+  inventory_goods_dispatches: ["inventory_goods_dispatch_lines"],
 };
 
 export type DatasetMeta = {
@@ -147,6 +153,12 @@ export const EXPORT_CATALOG: Record<ExportDatasetKey, DatasetMeta> = {
   // inventory movements.
   inventory_goods_returns: { key: "inventory_goods_returns", sensitivity: "CONFIDENTIAL", csvFile: "inventory_goods_returns.csv", labelKey: "inventoryGoodsReturns" },
   inventory_goods_return_lines: { key: "inventory_goods_return_lines", sensitivity: "CONFIDENTIAL", csvFile: "inventory_goods_return_lines.csv", labelKey: "inventoryGoodsReturnLines" },
+  // Prompt 44 — dispatch documents: CONFIDENTIAL (tenant inventory
+  // evidence). Export-ONLY — import is intentionally blocked: a generic
+  // import could replay stock decrements and duplicate negative inventory
+  // movements (the same law as P42/P43).
+  inventory_goods_dispatches: { key: "inventory_goods_dispatches", sensitivity: "CONFIDENTIAL", csvFile: "inventory_goods_dispatches.csv", labelKey: "inventoryGoodsDispatches" },
+  inventory_goods_dispatch_lines: { key: "inventory_goods_dispatch_lines", sensitivity: "CONFIDENTIAL", csvFile: "inventory_goods_dispatch_lines.csv", labelKey: "inventoryGoodsDispatchLines" },
   subscription_summary: { key: "subscription_summary", sensitivity: "CONFIDENTIAL", csvFile: "subscription.csv", labelKey: "subscriptionSummary" },
   usage_summary: { key: "usage_summary", sensitivity: "CONFIDENTIAL", csvFile: "usage.csv", labelKey: "usageSummary" },
 };
@@ -1204,6 +1216,101 @@ export const DATASET_FETCHERS: Record<ExportDatasetKey, DatasetFetcher> = {
     };
   },
 
+  // Prompt 44 — goods-dispatch datasets: export-ONLY (a generic import
+  // could replay negative inventory movements and duplicate stock
+  // decrements). Rows carry historical snapshots verbatim; there is NO
+  // money in this domain so no minor-unit conversion applies anywhere
+  // below.
+  inventory_goods_dispatches: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.goodsDispatch.findMany({
+        where: { businessId: ctx.businessId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take,
+        select: {
+          id: true,
+          reference: true,
+          status: true,
+          customerId: true,
+          customerNameAtDispatch: true,
+          notes: true,
+          createdByUserId: true,
+          postedAt: true,
+          cancelledAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((gd) => ({
+        json: {
+          id: gd.id,
+          reference: gd.reference,
+          status: gd.status,
+          customerId: gd.customerId,
+          customerNameAtDispatch: gd.customerNameAtDispatch,
+          notes: gd.notes,
+          createdByUserId: gd.createdByUserId,
+          postedAt: iso(gd.postedAt),
+          cancelledAt: iso(gd.cancelledAt),
+          createdAt: gd.createdAt.toISOString(),
+          updatedAt: gd.updatedAt.toISOString(),
+        },
+        csv: [
+          gd.id, gd.reference, gd.status, gd.customerId, gd.customerNameAtDispatch, gd.notes,
+          gd.createdByUserId, iso(gd.postedAt), iso(gd.cancelledAt),
+          gd.createdAt.toISOString(), gd.updatedAt.toISOString(),
+        ],
+      })),
+      truncated,
+    };
+  },
+
+  inventory_goods_dispatch_lines: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.goodsDispatchLine.findMany({
+        where: { goodsDispatch: { businessId: ctx.businessId } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take,
+        select: {
+          id: true,
+          goodsDispatchId: true,
+          productId: true,
+          productNameAtDispatch: true,
+          skuAtDispatch: true,
+          unitAtDispatch: true,
+          qty: true,
+          reasonCode: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((l) => ({
+        json: {
+          id: l.id,
+          goodsDispatchId: l.goodsDispatchId,
+          productId: l.productId,
+          productNameAtDispatch: l.productNameAtDispatch,
+          skuAtDispatch: l.skuAtDispatch,
+          unitAtDispatch: l.unitAtDispatch,
+          qty: l.qty,
+          reasonCode: l.reasonCode,
+          createdAt: l.createdAt.toISOString(),
+          updatedAt: l.updatedAt.toISOString(),
+        },
+        csv: [
+          l.id, l.goodsDispatchId, l.productId, l.productNameAtDispatch,
+          l.skuAtDispatch, l.unitAtDispatch, l.qty, l.reasonCode,
+          l.createdAt.toISOString(), l.updatedAt.toISOString(),
+        ],
+      })),
+      truncated,
+    };
+  },
+
 subscription_summary: async (ctx) => {
     // §51 — customer-visible subscription state ONLY. Provider verification
     // internals, webhook signatures and merchant credentials do not exist here.
@@ -1309,6 +1416,10 @@ export const DATASET_CSV_COLUMNS: Record<ExportDatasetKey, string[]> = {
   // columns (a return records quantity only, §104).
   inventory_goods_returns: ["id", "reference", "status", "goods_receipt_id", "goods_receipt_reference_at_return", "purchase_order_reference_at_return", "supplier_name_at_return", "notes", "created_by_user_id", "posted_at", "cancelled_at", "created_at", "updated_at"],
   inventory_goods_return_lines: ["id", "goods_return_id", "goods_receipt_line_id", "product_id", "product_name_at_return", "sku_at_return", "unit_at_return", "returned_qty", "reason_code", "created_at", "updated_at"],
+  // Prompt 44 — dispatch datasets: snapshot fields verbatim, NO money
+  // columns (a dispatch records quantity only).
+  inventory_goods_dispatches: ["id", "reference", "status", "customer_id", "customer_name_at_dispatch", "notes", "created_by_user_id", "posted_at", "cancelled_at", "created_at", "updated_at"],
+  inventory_goods_dispatch_lines: ["id", "goods_dispatch_id", "product_id", "product_name_at_dispatch", "sku_at_dispatch", "unit_at_dispatch", "qty", "reason_code", "created_at", "updated_at"],
   subscription_summary: ["plan_code", "plan_name", "status", "billing_period", "current_period_start", "current_period_end", "trial_start", "trial_end", "cancel_at_period_end", "canceled_at", "ended_at", "created_at"],
   usage_summary: ["metric", "used", "limit", "remaining", "percentage_used", "period_start", "period_end"],
 };

@@ -93,6 +93,8 @@ export type CustomerDetail = {
   recentSales: CustomerRecentSale[];
   /** Bounded: ≤ 10 (§12/§85). */
   recentPayments: RecentPaymentRow[];
+  /** Prompt 44 — ≤ 10 recent goods-dispatch rows (NO money). */
+  recentGoodsDispatches?: CustomerRecentDispatch[];
   /**
    * Prompt 35 (§44/§45) — CRM PIPELINE section, kept STRICTLY separate
    * from the financial summary above. Bounded ≤ 10. Forecast values only —
@@ -265,6 +267,8 @@ export type ProductDetail = {
   recentGoodsReceipts?: ProductRecentGoodsReceipt[];
   /** Prompt 43 (§99) — ≤ 10 recent goods-return lines (NO money). */
   recentGoodsReturns?: ProductRecentReturn[];
+  /** Prompt 44 — ≤ 10 recent goods-dispatch lines (NO money). */
+  recentGoodsDispatches?: ProductRecentDispatch[];
 };
 
 /** Prompt 43 (§99) — bounded goods-return row for Product detail. */
@@ -274,6 +278,27 @@ export type ProductRecentReturn = {
   status: string;
   goodsReceiptReferenceAtReturn: string;
   returnedQty: number;
+  reasonCode: string;
+  postedAt: string | null;
+};
+
+/** Prompt 44 — bounded goods-dispatch row for Customer 360. */
+export type CustomerRecentDispatch = {
+  id: string;
+  reference: string;
+  status: string;
+  customerNameAtDispatch: string;
+  postedAt: string | null;
+  totalDispatchedQty: number;
+};
+
+/** Prompt 44 — bounded goods-dispatch row for Product detail. */
+export type ProductRecentDispatch = {
+  id: string;
+  reference: string;
+  status: string;
+  customerNameAtDispatch: string;
+  qty: number;
   reasonCode: string;
   postedAt: string | null;
 };
