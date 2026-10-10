@@ -447,3 +447,72 @@ export function goodsReceiptCandidate(row: GoodsReceiptSearchRow): SearchCandida
     method: null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Prompt 43 (§101) — goods-return candidate. Search fields: return
+// reference, source receipt reference snapshot, PO reference snapshot,
+// supplier snapshot, product snapshot names/SKUs. NO money exists in this
+// domain (§4/§7) and NO stock quantities are carried in the candidate.
+// ---------------------------------------------------------------------------
+
+export type GoodsReturnSearchRow = {
+  id: string;
+  reference: string;
+  status: string;
+  supplierNameAtReturn: string;
+  goodsReceiptReferenceAtReturn: string;
+  purchaseOrderReferenceAtReturn: string;
+  createdAt: Date;
+  /** §101 — line snapshot TEXT (never money/stock qty) feeds the ranker. */
+  lines?: ReadonlyArray<{ productNameAtReturn: string; skuAtReturn: string | null }>;
+};
+
+/**
+ * §101 — closed-token guard for the return lifecycle (same safe-omission
+ * policy as the receipt candidate): an invalid persisted status is NOT
+ * mapped to Draft — the status token is omitted (null) and the document
+ * still renders under its reference.
+ */
+function goodsReturnStatusToken(status: string): SearchItemStatus | null {
+  return status === "DRAFT" || status === "POSTED" || status === "CANCELLED"
+    ? status
+    : null;
+}
+
+export function goodsReturnCandidate(row: GoodsReturnSearchRow): SearchCandidate {
+  const skuNorms = (row.lines ?? [])
+    .map((l) => l.skuAtReturn)
+    .filter((v): v is string => Boolean(v))
+    .map(normalizeSearchText);
+  const productNorms = (row.lines ?? [])
+    .flatMap((l) => [l.productNameAtReturn, l.skuAtReturn])
+    .filter((v): v is string => Boolean(v))
+    .map(normalizeSearchText);
+  return {
+    id: row.id,
+    type: "GOODS_RETURN",
+    title: row.reference,
+    titleNorm: normalizeSearchText(row.reference),
+    subtitle: row.supplierNameAtReturn || null,
+    identifierNorm: normalizeSearchText(row.reference),
+    identifierExtras: [
+      ...skuNorms,
+      normalizeSearchText(row.goodsReceiptReferenceAtReturn),
+      normalizeSearchText(row.purchaseOrderReferenceAtReturn),
+    ],
+    numericIdentifier: null,
+    secondaryNorms: [
+      row.supplierNameAtReturn,
+      row.goodsReceiptReferenceAtReturn,
+      row.purchaseOrderReferenceAtReturn,
+      ...productNorms,
+    ]
+      .filter((v): v is string => Boolean(v))
+      .map(normalizeSearchText),
+    createdAt: row.createdAt,
+    status: goodsReturnStatusToken(row.status),
+    date: row.createdAt.toISOString(),
+    direction: null,
+    method: null,
+  };
+}

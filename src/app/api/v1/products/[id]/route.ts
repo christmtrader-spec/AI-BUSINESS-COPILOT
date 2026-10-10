@@ -18,6 +18,7 @@ import { productUpdateSchema } from "@/lib/schemas";
 import { mapPurePurchaseOrderDomainError } from "@/lib/purchase-orders/service";
 import { mapProductDetail } from "@/lib/entities";
 import { listRecentReceiptsForProduct } from "@/lib/inventory/goods-receipt/service";
+import { listRecentReturnsForProduct } from "@/lib/inventory/goods-return/service";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +54,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   // §42 — parallel bounded queries, deterministic ordering, explicit select.
   // Prompt 41 (§66) — Product detail gains a bounded purchase-order history:
   // READ-ONLY (§201), historical line snapshots (§236), never stock-related.
-  const [recentAdjustments, recentSaleItems, recentStocktakeLines, recentPurchaseOrderLines, recentGoodsReceiptLines] =
+  const [recentAdjustments, recentSaleItems, recentStocktakeLines, recentPurchaseOrderLines, recentGoodsReceiptLines, recentGoodsReturnLines] =
     await Promise.all([
     db.inventoryAdjustment.findMany({
       where: { businessId: ctx.businessId, productId: id },
@@ -119,6 +120,9 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
     }),
     // Prompt 42 (§120) — ≤10 recent goods-receipt lines (NO money §120).
     listRecentReceiptsForProduct({ businessId: ctx.businessId, productId: id, take: 10 }),
+    // Prompt 43 (§99) — ≤10 recent goods-return lines (NO money; quantity
+    // + reason only — returns are inventory events, never financial ones).
+    listRecentReturnsForProduct({ businessId: ctx.businessId, productId: id, take: 10 }),
   ]);
 
   // Flatten SaleItem → Sale into the mapper's input shape (no N+1: the
@@ -158,6 +162,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         decimalPrecisionAtOrder: l.purchaseOrder.decimalPrecisionAtOrder,
       })),
       recentGoodsReceiptLines,
+      recentGoodsReturnLines,
     );
   } catch (error) {
     // §12/§13 — corrupted PO status → the SAME stable integrity code as the

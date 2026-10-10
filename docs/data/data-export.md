@@ -120,6 +120,16 @@ the CSV filters).
 
 ## Goods Receipt datasets (Prompt 42)
 
+
+### Prompt 43 — goods returns (§179)
+
+`inventory_goods_returns` and `inventory_goods_return_lines` join the export
+catalog as CONFIDENTIAL datasets (the return always implies its lines, so a
+`inventory_goods_returns` selection exports both). Rows carry the historical
+snapshots verbatim (`supplier_name_at_return`,
+`goods_receipt_reference_at_return`, `purchase_order_reference_at_return`,
+`product_name_at_return`, `sku_at_return`, `unit_at_return`, `reason_code`)
+and there are NO money columns — a return records physical quantity only.
 `inventory_goods_receipts` and `inventory_goods_receipt_lines` join the export
 catalog as CONFIDENTIAL datasets; the receipts dataset always implies its lines
 (§137). Rows carry historical snapshots verbatim (`supplierNameAtReceipt`,

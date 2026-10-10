@@ -200,7 +200,7 @@ purchase order. Replaying receipts from an import file would bypass that
 entire transactional process (double-counting stock, fabricating adjustments,
 and violating over-receipt protection), so receipt datasets are
 **export-only**. The importer's allowlist (customers / suppliers / products)
-rejects `inventory_goods_receipts` and `inventory_goods_receipt_lines`
+rejects `inventory_goods_receipts`, `inventory_goods_receipt_lines`, `inventory_goods_returns` and `inventory_goods_return_lines` (Prompt 43 §180: a generic return import could replay negative inventory movements and duplicate stock decrements — returns are export-only)
 (negative test: an import attempt naming a receipt dataset is rejected as
 unsupported and creates nothing — E2E §139/§275). Restore from backup is the
 sanctioned recovery path for receiving documents.

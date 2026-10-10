@@ -306,11 +306,11 @@ shipped and rate-limited:
 
 ## Prompt 42 — Goods Receipt restore verification
 
-`scripts/restore-drill.mjs` probes `GoodsReceipt` and `GoodsReceiptLine` with
+`scripts/restore-drill.mjs` probes `GoodsReceipt`, `GoodsReceiptLine`, `GoodsReturn` and `GoodsReturnLine` with
 read-only `SELECT COUNT(*)` smoke queries after the restore (same
 honest-absent rule as every entity: backups predating Prompt 42 are reported
 as `table absent in this backup`, never a drill failure). Expected final probe
 surface: User, Business, Subscription, Customer, Supplier, Product, Sale,
 Expense, AuditLog, UsageEvent, AiCostRecord, PlatformAuditLog,
 InventoryStocktake, InventoryStocktakeLine, PurchaseOrder, PurchaseOrderLine,
-**GoodsReceipt, GoodsReceiptLine**.
+**GoodsReceipt, GoodsReceiptLine, GoodsReturn, GoodsReturnLine**.

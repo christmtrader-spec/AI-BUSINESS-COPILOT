@@ -26,6 +26,9 @@ Entry points:
 | SALE | number (numeric + `INV-0001` display form), note, customer.name | formatted invoice number (`formatInvoiceNumber`, never duplicated) | customer name | UNPAID/PARTIAL/PAID, issue date |
 | EXPENSE | category, note, supplier.name | category | supplier name | UNPAID/PARTIAL/PAID, spent date |
 | PAYMENT | note, method, linked sale invoice number, sale.customer.name, expense.category, expense.supplier.name | localized "Payment"/"پرداخت" (server-side, user's persisted locale) | related invoice/category/name | IN/OUT, method, paid date |
+| PURCHASE_ORDER (Prompt 41) | reference, supplier name, product snapshot names/SKUs | reference | supplier name | lifecycle status, ordered date |
+| GOODS_RECEIPT (Prompt 42) | reference, PO reference snapshot, supplier snapshot, product snapshot names/SKUs | reference | supplier snapshot | lifecycle status, created date |
+| GOODS_RETURN (Prompt 43) | reference, source receipt reference snapshot, PO reference snapshot, supplier snapshot, product snapshot names/SKUs | reference | supplier snapshot | lifecycle status, created date |
 
 Deliberately NOT searched (kept concise / private): customer/supplier address
 and note (v1), product prices, all amounts, AI Copilot conversations

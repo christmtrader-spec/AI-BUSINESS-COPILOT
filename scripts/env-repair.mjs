@@ -60,6 +60,10 @@ const MIGRATIONS = [
   // leaves that migration falsely pending (a later `migrate deploy` would
   // then try to re-create existing tables and break the environment).
   "20261007090000_prompt42_goods_receipts",
+  // Prompt 43 (§117) — the P43 migration is genuinely applied (23 applied /
+  // 0 pending). Same maintenance law: keep every applied migration in this
+  // baseline list so a sandbox revert never leaves it falsely pending.
+  "20261008090000_prompt43_goods_returns",
 ];
 
 function log(step, msg) {

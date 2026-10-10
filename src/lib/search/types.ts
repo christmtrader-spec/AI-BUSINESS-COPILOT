@@ -16,7 +16,10 @@
  *  documents (reference + supplier + product snapshots; NO amounts §67).
  *  Prompt 42 (§122): GOODS_RECEIPT joins — discovery over receiving
  *  documents (reference + PO reference + supplier/product snapshots;
- *  NO money, NO stock quantities in snippets §122). */
+ *  NO money, NO stock quantities in snippets §122).
+ *  Prompt 43 (§101): GOODS_RETURN joins — discovery over return documents
+ *  (return reference + source receipt reference + PO reference snapshot +
+ *  supplier/product snapshots; NO money, NO quantities in snippets). */
 export const SEARCH_ENTITY_TYPES = [
   "CUSTOMER",
   "SUPPLIER",
@@ -28,6 +31,7 @@ export const SEARCH_ENTITY_TYPES = [
   "OPPORTUNITY",
   "PURCHASE_ORDER",
   "GOODS_RECEIPT",
+  "GOODS_RETURN",
 ] as const;
 
 export type SearchEntityType = (typeof SEARCH_ENTITY_TYPES)[number];
@@ -44,6 +48,7 @@ export const SEARCH_DESTINATIONS = [
   "opportunities",
   "purchase-orders",
   "goods-receipts",
+  "goods-returns",
 ] as const;
 
 export type SearchDestination = (typeof SEARCH_DESTINATIONS)[number];
@@ -60,12 +65,15 @@ export const ENTITY_DESTINATION: Record<SearchEntityType, SearchDestination> = {
   OPPORTUNITY: "opportunities",
   PURCHASE_ORDER: "purchase-orders",
   GOODS_RECEIPT: "goods-receipts",
+  GOODS_RETURN: "goods-returns",
 };
 
 /** Closed status tokens (client localizes; server never renders HTML).
  *  Prompt 35 (§46): CRM lead statuses + opportunity stages join.
  *  Prompt 41 (§67): the purchase-order lifecycle vocabulary joins.
- *  Prompt 42 (§122): POSTED joins for the goods-receipt lifecycle. */
+ *  Prompt 42 (§122): POSTED joins for the goods-receipt lifecycle.
+ *  Prompt 43 (§101): the goods-return lifecycle reuses DRAFT/POSTED/
+ *  CANCELLED — no new tokens. */
 export type SearchItemStatus =
   | "ACTIVE"
   | "INACTIVE"

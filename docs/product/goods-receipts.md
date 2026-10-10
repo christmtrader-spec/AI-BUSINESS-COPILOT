@@ -103,9 +103,31 @@ Every query and mutation is scoped by `businessId` from the authenticated member
 - `inventory_goods_receipts` + `inventory_goods_receipt_lines` are exportable datasets (CONFIDENTIAL); receipts always carry their lines.
 - **Import is intentionally NOT implemented** (export-only): replaying a posted receipt from import would bypass the transactional receiving process and double-count stock. The import catalog is structurally closed to customers/suppliers/products.
 
+## Returns (Prompt 43)
+
+Goods receipts are IMMUTABLE after POSTING. Physical returns are a separate
+document: the GoodsReturn (see `docs/product/goods-returns.md`). Return
+quantities never overwrite original received quantities.
+
+**Gross vs net receiving (Prompt 43 §77-§85):**
+
+- `grossReceivedQty = SUM(POSTED GoodsReceiptLine.receivedQty)` — what the
+  receipt domain always reported as `receivedQty` (meaning preserved).
+- `returnedQty = SUM(POSTED GoodsReturnLine.returnedQty)` — new, additive.
+- `netReceivedQty = grossReceivedQty − returnedQty`.
+- The over-receipt law is now return-aware:
+  `netReceivedQty + newReceivedQty ≤ orderedQty`. A replacement receipt
+  after a valid return is accepted; receiving beyond the net remainder is
+  still rejected with `409 GOODS_RECEIPT_EXCEEDS_REMAINING`.
+- The receipt detail shows ADDITIVE per-line return facts
+  (`received / returned / returnable`) and a bounded recent-returns list —
+  the receipt itself is never rewritten.
+
 ## Limitations (intentional)
 
-- No receipt reversal / returns / debit notes (future prompts).
+- Receipt reversal by editing receipts: intentionally impossible — legitimate
+  physical returns use the GoodsReturn document (Prompt 43); other inventory
+  corrections use the authorized inventory-adjustment process.
 - No lot / serial / expiry / barcode / warehouse / bin tracking.
 - No inventory valuation layers (FIFO/LIFO/weighted average) — the operational stock value derived from `stockQty × costPriceMinor` is NOT an accounting asset.
 - No financial posting of any kind; supplier statements and payables aging are untouched by receipts.

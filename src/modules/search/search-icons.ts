@@ -10,6 +10,7 @@ import {
   CreditCard,
   Package,
   PackageCheck,
+  PackageMinus,
   ShoppingCart,
   Target,
   TrendingUp,
@@ -32,6 +33,8 @@ export const SEARCH_TYPE_ICONS: Record<SearchEntityType, LucideIcon> = {
   // Prompt 41 (§152) — procurement documents in search results.
   PURCHASE_ORDER: ClipboardList,
   GOODS_RECEIPT: PackageCheck,
+  // Prompt 43 (§101) — return documents in search results.
+  GOODS_RETURN: PackageMinus,
 };
 
 /** Medium localized date for result rows (never raw ISO in the UI). */

@@ -35,6 +35,14 @@ import {
 } from "@/lib/inventory/goods-receipt/types";
 import { listRecentReceiptsForPurchaseOrder } from "@/lib/inventory/goods-receipt/service";
 import {
+  // P43 §80 — the ONE canonical POSTED-returned-quantity aggregate for PO
+  // lines + the return-history corruption mapper (net = gross − returned).
+  sumPostedReturnedQtyForPoLines,
+  mapPureGoodsReturnDomainError,
+} from "@/lib/inventory/goods-return/service";
+import { computeNetRemainingQty } from "@/lib/inventory/goods-return/types";
+import { computeNetReceivedQty } from "@/lib/inventory/goods-return/types";
+import {
   PURCHASE_ORDER_ERROR_CODES,
   PURCHASE_ORDER_INVALID_PERSISTED_STATUS,
   PURCHASE_ORDER_TRANSITION_TARGET,
@@ -155,6 +163,29 @@ export function mapPurePurchaseOrderDomainError(error: unknown): never {
 /** Server-side alias used inside this module. */
 function mapPureDomainError(error: unknown): never {
   return mapPurePurchaseOrderDomainError(error);
+}
+
+/**
+ * P43 §79/§80 — remaining-quantity computation with the corruption policy
+ * applied: net received that exceeds its order quantity throws the stable
+ * GOODS_RECEIPT_CORRUPT_RECEIVED 500 — never a clamp, never a raw error.
+ */
+function remainingQtyOrIntegrity(orderedQty: number, netReceivedQty: number): number {
+  try {
+    // computeNetRemainingQty enforces net ≥ 0 and net ≤ ordered.
+    return computeNetRemainingQty(orderedQty, netReceivedQty);
+  } catch (error) {
+    if (error instanceof Error && error.name === "GoodsReturnIntegrityError") {
+      // §283 — net > ordered is RECEIVING-history corruption: keep the P42
+      // stable code for this document.
+      throw new ApiError(
+        500,
+        GOODS_RECEIPT_ERROR_CODES.CORRUPT_RECEIVED,
+        "Receiving data is inconsistent. Please contact support.",
+      );
+    }
+    return mapPureDomainError(error);
+  }
 }
 
 async function loadSupplier(tx: Tx, businessId: string, supplierId: string) {
@@ -516,30 +547,56 @@ export async function getPurchaseOrder(input: { businessId: string; id: string }
     const receivedByLine = new Map(
       grouped.map((g) => [g.purchaseOrderLineId, g._sum.receivedQty ?? 0]),
     );
+    // P43 §77/§83 — NET receiving: sum POSTED return lines per PO line via
+    // the ONE canonical grouped aggregate (§141 — bounded batch), then
+    // derive net = gross − returned per line and for the document totals.
+    const returnedByLine = await sumPostedReturnedQtyForPoLines(
+      db,
+      poLines.map((l) => l.id),
+    );
     const receiptCount = await db.goodsReceipt.count({
       where: { purchaseOrderId: header.id, status: "POSTED" },
     });
     let orderedQty = 0;
-    let receivedQty = 0;
+    let receivedQty = 0; // §78 — GROSS received (meaning preserved)
+    let returnedQty = 0;
     const recvLines = poLines.map((l) => {
-      const lineReceived = receivedByLine.get(l.id) ?? 0;
-      const lineRemaining = computeRemainingQty(l.orderedQty, lineReceived); // §100
+      const lineReceived = receivedByLine.get(l.id) ?? 0; // gross
+      const lineReturned = returnedByLine.get(l.id) ?? 0;
+      // §79 — corruption (returned > gross, net > ordered) surfaces through
+      // the stable mappings — never clamped.
+      const lineNet = computeNetReceivedQty(lineReceived, lineReturned);
+      const lineRemaining = remainingQtyOrIntegrity(l.orderedQty, lineNet);
       orderedQty += l.orderedQty;
       receivedQty += lineReceived;
-      return { lineId: l.id, receivedQty: lineReceived, remainingQty: lineRemaining };
+      returnedQty += lineReturned;
+      return {
+        lineId: l.id,
+        receivedQty: lineReceived,
+        returnedQty: lineReturned,
+        netReceivedQty: lineNet,
+        remainingQty: lineRemaining,
+      };
     });
-    const remainingQty = computeRemainingQty(orderedQty, receivedQty);
+    const netReceivedQty = computeNetReceivedQty(receivedQty, returnedQty);
+    const remainingQty = remainingQtyOrIntegrity(orderedQty, netReceivedQty);
     receivingAgg = {
       orderedQty,
       receivedQty,
+      returnedQty,
+      netReceivedQty,
       remainingQty,
       receiptCount,
-      fullyReceived: remainingQty === 0, // §101 — derived
+      fullyReceived: remainingQty === 0, // §84 — NET-based fully received
       lines: recvLines,
     };
   } catch (error) {
-    // §283 — corrupted received history surfaces as the stable P42 code
-    // (never a silent clamp, never a generic 500).
+    // §283 / P43 §79 — corrupted RECEIVING history surfaces as the stable
+    // P42 code, corrupted RETURN history as the stable P43 code (never a
+    // silent clamp, never a generic 500).
+    if (error instanceof Error && error.name === "GoodsReturnIntegrityError") {
+      mapPureGoodsReturnDomainError(error);
+    }
     if (
       error instanceof GoodsReceiptIntegrityError ||
       (error instanceof Error && error.message === "GOODS_RECEIPT_CORRUPT_RECEIVED_HISTORY")

@@ -23,6 +23,7 @@ import {
   Wallet,
   ArrowUpRight,
   PackageCheck,
+  PackageMinus,
   Warehouse,
   type LucideIcon,
 } from "lucide-react";
@@ -59,6 +60,7 @@ type NavItem = {
     | "suppliers"
     | "purchaseOrders"
     | "goodsReceipts"
+    | "goodsReturns"
     | "products"
     | "inventory"
     | "sales"
@@ -91,6 +93,8 @@ const OPERATIONS: NavItem[] = [
   { view: { kind: "purchase-orders" }, labelKey: "purchaseOrders", icon: ClipboardList },
   // Prompt 42 (§117) — goods receipts under procurement/inventory operations.
   { view: { kind: "inventory-goods-receipts" }, labelKey: "goodsReceipts", icon: PackageCheck },
+  // Prompt 43 (§90) — goods returns join the same inventory operations group.
+  { view: { kind: "inventory-goods-returns" }, labelKey: "goodsReturns", icon: PackageMinus },
   { view: { kind: "module", module: "products" }, labelKey: "products", icon: Package },
   { view: { kind: "module", module: "inventory" }, labelKey: "inventory", icon: Warehouse },
   { view: { kind: "module", module: "sales" }, labelKey: "sales", icon: ShoppingCart },

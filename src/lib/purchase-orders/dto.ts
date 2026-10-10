@@ -55,6 +55,12 @@ export type PurchaseOrderLineDto = {
    */
   receivedQty?: number;
   remainingQty?: number;
+  /**
+   * Prompt 43 §83 — ADDITIVE net-receiving facts (quantity labels, never
+   * money; §96 — returned units are NOT expenses or credit notes).
+   */
+  returnedQty?: number;
+  netReceivedQty?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -102,6 +108,14 @@ export type PurchaseOrderDetailDto = {
     remainingQty: number;
     receiptCount: number;
     fullyReceived: boolean;
+    /**
+     * Prompt 43 §78/§83 — ADDITIVE net-receiving summary: returnedQty =
+     * SUM(POSTED GoodsReturnLine.returnedQty); netReceivedQty = gross −
+     * returned. receivedQty KEEPS its gross meaning (§78 compatibility);
+     * remainingQty is NET-derived (ordered − netReceivedQty, §79).
+     */
+    returnedQty: number;
+    netReceivedQty: number;
   };
   /**
    * Prompt 42 §104 — ADDITIVE bounded recent-receipts list (take 10,
@@ -230,7 +244,15 @@ export function purchaseOrderDetailDto(
     remainingQty: number;
     receiptCount: number;
     fullyReceived: boolean;
-    lines: ReadonlyArray<{ lineId: string; receivedQty: number; remainingQty: number }>;
+    returnedQty?: number;
+    netReceivedQty?: number;
+    lines: ReadonlyArray<{
+      lineId: string;
+      receivedQty: number;
+      remainingQty: number;
+      returnedQty?: number;
+      netReceivedQty?: number;
+    }>;
   },
   recentReceipts?: ReadonlyArray<PurchaseOrderRecentReceiptDto>,
 ): PurchaseOrderDetailDto {
@@ -274,6 +296,9 @@ export function purchaseOrderDetailDto(
       if (recv) {
         dto.receivedQty = recv.receivedQty;
         dto.remainingQty = recv.remainingQty;
+        // P43 §83 — ADDITIVE return facts (quantity labels, never money).
+        dto.returnedQty = recv.returnedQty ?? 0;
+        dto.netReceivedQty = recv.netReceivedQty ?? recv.receivedQty;
       }
       return dto;
     }),
@@ -285,6 +310,11 @@ export function purchaseOrderDetailDto(
             remainingQty: receiving.remainingQty,
             receiptCount: receiving.receiptCount,
             fullyReceived: receiving.fullyReceived,
+            // P43 §78/§83 — ADDITIVE net-receiving facts: returnedQty =
+            // SUM(POSTED returns), netReceivedQty = gross − returned.
+            // receivedQty KEEPS its gross meaning (§78 — compatibility).
+            returnedQty: receiving.returnedQty ?? 0,
+            netReceivedQty: receiving.netReceivedQty ?? receiving.receivedQty,
           },
         }
       : {}),

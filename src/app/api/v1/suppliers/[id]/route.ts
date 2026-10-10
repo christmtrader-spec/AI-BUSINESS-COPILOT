@@ -16,6 +16,7 @@ import { partyUpdateSchema } from "@/lib/schemas";
 import { purchaseOrderLineCap } from "@/lib/purchase-orders/types";
 import { mapPurePurchaseOrderDomainError } from "@/lib/purchase-orders/service";
 import { listRecentReceiptsForSupplier } from "@/lib/inventory/goods-receipt/service";
+import { listRecentReturnsForSupplier } from "@/lib/inventory/goods-return/service";
 import {
   computeSupplierSummary,
   mapSupplierDetail,
@@ -52,7 +53,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   // Prompt 41 (§65) — the Supplier 360 gains a bounded procurement section:
   // PurchaseOrder rows are READ-ONLY here (§201) and never feed the payable
   // summary below — a PO is a commitment document, not a payable (§150).
-  const [statusBuckets, recentExpenses, recentPayments, recentPurchaseOrders, recentGoodsReceipts] =
+  const [statusBuckets, recentExpenses, recentPayments, recentPurchaseOrders, recentGoodsReceipts, recentGoodsReturns] =
     await Promise.all([
     db.expense.groupBy({
       by: ["status"],
@@ -108,6 +109,10 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
     // Prompt 42 (§121) — bounded receipt history (≤10, snapshot identity,
     // NO financial statement contamination — receipts are never payables).
     listRecentReceiptsForSupplier({ businessId: ctx.businessId, supplierId: id, take: 10 }),
+    // Prompt 43 (§100) — bounded return history (≤10, snapshot identity,
+    // NO financial statement contamination — returns are never payables
+    // and never mutate the statement or aging views).
+    listRecentReturnsForSupplier({ businessId: ctx.businessId, supplierId: id, take: 10 }),
   ]);
 
   const summary = computeSupplierSummary(
@@ -128,6 +133,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
       recentPayments,
       recentPurchaseOrders,
       recentGoodsReceipts,
+      recentGoodsReturns,
     );
   } catch (error) {
     // §12/§13 — corrupted PO status → the SAME stable integrity code as the

@@ -167,6 +167,19 @@ export type SupplierDetail = {
   recentPurchaseOrders: SupplierRecentPurchaseOrder[];
   /** Prompt 42 (§121) — bounded: ≤ 10 goods receipts (snapshot identity). */
   recentGoodsReceipts?: SupplierRecentGoodsReceipt[];
+  /** Prompt 43 (§100) — bounded: ≤ 10 goods returns (snapshot identity). */
+  recentGoodsReturns?: SupplierRecentReturn[];
+};
+
+/** Prompt 43 (§100) — bounded goods-return row for Supplier 360. */
+export type SupplierRecentReturn = {
+  id: string;
+  reference: string;
+  status: string;
+  supplierNameAtReturn: string;
+  goodsReceiptReferenceAtReturn: string;
+  postedAt: string | null;
+  totalReturnedQty: number;
 };
 
 /* ------------------------------------------------------------------ */
@@ -250,6 +263,19 @@ export type ProductDetail = {
   recentPurchaseOrders: ProductRecentPurchaseOrder[];
   /** Prompt 42 (§120) — ≤ 10 recent goods-receipt lines (NO money). */
   recentGoodsReceipts?: ProductRecentGoodsReceipt[];
+  /** Prompt 43 (§99) — ≤ 10 recent goods-return lines (NO money). */
+  recentGoodsReturns?: ProductRecentReturn[];
+};
+
+/** Prompt 43 (§99) — bounded goods-return row for Product detail. */
+export type ProductRecentReturn = {
+  id: string;
+  reference: string;
+  status: string;
+  goodsReceiptReferenceAtReturn: string;
+  returnedQty: number;
+  reasonCode: string;
+  postedAt: string | null;
 };
 
 /* ------------------------------------------------------------------ */

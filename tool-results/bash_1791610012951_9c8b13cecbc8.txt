@@ -1,0 +1,1309 @@
+     1→import "server-only";
+     2→
+     3→/**
+     4→ * Prompt 42 — goods-receipt service (server-only, §169).
+     5→ *
+     6→ * LAWS:
+     7→ *  - PHYSICAL INVENTORY EVENT ONLY (§3/§4/§5): posting mutates
+     8→ *    Product.stockQty and creates one positive InventoryAdjustment per
+     9→ *    non-zero received line. It NEVER creates Expense, Payment, Sale,
+    10→ *    supplier-statement movement, payable/aging row or any accounting
+    11→ *    entry (§5/§160-§164). Draft/cancel mutate NOTHING but the receipt.
+    12→ *  - OVER-RECEIPT LAW (§15): SUM(posted received) + new quantity ≤
+    13→ *    orderedQty, enforced by the ONE pure helper at line-add (advisory,
+    14→ *    §66) AND authoritatively inside the post transaction (§39 step 8).
+    15→ *    No tolerance, no bypass, no silent overage (§15).
+    16→ *  - Every query is tenant-scoped by ctx.businessId (§89) — never a
+    17→ *    client businessId. Foreign PO/PO-line/receipt → 404, no existence
+    18→ *    leak (§90/§91).
+    19→ *  - Status transitions are server-authoritative through dedicated
+    20→ *    operations (§7); the current status is RE-CHECKED INSIDE the write
+    21→ *    transaction (§73) so concurrent posts/cancels cannot double-apply.
+    22→ *  - Snapshots (supplier name, PO reference, product name/sku/unit) are
+    23→ *    frozen at write time from ALREADY-FROZEN PO data (§24/§25/§28/§29)
+    24→ *    and NEVER overwritten from live data.
+    25→ *  - Quantities are exact integers (§18/§48); stock math is Int32-bounded
+    26→ *    (§49); corrupt persisted state is surfaced, never repaired (§46/§47).
+    27→ *  - P42-F READ-CAP LAW (§10-§14): every bounded read fetches cap+1 rows
+    28→ *    to PROVE completeness — a document holding more rows than its own cap
+    29→ *    (or a `_count` mismatch) is corruption and fails the read with the
+    30→ *    stable GOODS_RECEIPT_LINE_CAP_INVARIANT code. Read paths NEVER render
+    31→ *    a silently truncated slice or a partial total.
+    32→ *  - P42-F AGGREGATE LAW (§5-§9): POSTED received quantities are summed
+    33→ *    by the DATABASE (aggregate _sum), never by loading history into
+    34→ *    application memory. The aggregate result is re-validated (integer,
+    35→ *    ≥ 0) and ordered-remaining corruption still surfaces, never clamps.
+    36→ *  - Audit through the single sanctioned helper INSIDE the same
+    37→ *    transaction as every mutation (§154) — safe metadata only, never
+    38→ *    notes content (§155).
+    39→ */
+    40→import { randomInt } from "node:crypto";
+    41→import { Prisma } from "@prisma/client";
+    42→import { db } from "@/lib/db";
+    43→import { withWriteTransaction } from "@/lib/db/write-transaction";
+    44→import { audit } from "@/lib/audit";
+    45→import { ApiError } from "@/lib/api-helpers";
+    46→import {
+    47→  GOODS_RECEIPT_ERROR_CODES,
+    48→  GoodsReceiptIntegrityError,
+    49→  GOODS_RECEIPT_INVALID_PERSISTED_STATUS,
+    50→  GOODS_RECEIPT_LINE_CAP_INVARIANT,
+    51→  PRODUCT_STOCK_INT32_MAX,
+    52→  canTransitionGoodsReceipt,
+    53→  computeReceivedQty,
+    54→  computeRemainingQty,
+    55→  exceedsRemaining,
+    56→  generateGoodsReceiptReference,
+    57→  goodsReceiptLineCap,
+    58→  parseGoodsReceiptStatus,
+    59→  purchaseOrderIsReceivable,
+    60→  stockOverflowsInt32,
+    61→  type GoodsReceiptStatus,
+    62→} from "./types";
+    63→import { purchaseOrderLineCap } from "@/lib/purchase-orders/types";
+    64→import {
+    65→  goodsReceiptDetailDto,
+    66→  goodsReceiptLineDto,
+    67→  goodsReceiptListItemDto,
+    68→  type GoodsReceiptDetailDto,
+    69→  type GoodsReceiptListItemDto,
+    70→  type PurchaseOrderRecentReceiptDto,
+    71→} from "./dto";
+    72→
+    73→type Tx = Prisma.TransactionClient;
+    74→
+    75→/**
+    76→ * §52/§54 — the ONE shared SQLite write-transaction law (FIFO serialized
+    77→ * writes + bounded transient retry). Both the P41 procurement path and
+    78→ * this P42 receiving path run through the same helper so neither can
+    79→ * interleave with the other on the single write lock.
+    80→ */
+    81→const withWriteTx = withWriteTransaction;
+    82→
+    83→/** §41 — the adjustment reason ties every posted line to its receipt. */
+    84→const RECEIPT_ADJUSTMENT_REASON = (reference: string) =>
+    85→  `Goods receipt ${reference}: inventory receiving`;
+    86→
+    87→/** §98-analog day-window helpers on createdAt (day-precision filters). */
+    88→function dayWindow(from?: string, to?: string): { gte?: Date; lte?: Date } {
+    89→  const window: { gte?: Date; lte?: Date } = {};
+    90→  if (from) window.gte = new Date(`${from}T00:00:00.000Z`);
+    91→  if (to) window.lte = new Date(`${to}T23:59:59.999Z`);
+    92→  return window;
+    93→}
+    94→
+    95→/* ---------------------------- shared internals ----------------------------- */
+    96→
+    97→/** §96 — corrupted persisted status → controlled 500 (never Draft). */
+    98→function parseDbStatus(value: string): GoodsReceiptStatus {
+    99→  try {
+   100→    return parseGoodsReceiptStatus(value);
+   101→  } catch (error) {
+   102→    if (error instanceof Error && error.name === "GoodsReceiptStatusIntegrityError") {
+   103→      throw new ApiError(
+   104→        500,
+   105→        GOODS_RECEIPT_INVALID_PERSISTED_STATUS,
+   106→        "Goods receipt data is in an invalid state. Please contact support.",
+   107→      );
+   108→    }
+   109→    throw error;
+   110→  }
+   111→}
+   112→
+   113→/**
+   114→ * §100/§283 — map pure canonical-math integrity failures to their
+   115→ * controlled HTTP result: corrupted received history is a 500, never a
+   116→ * silent clamp to 0. Exported for the PO detail route so corrupted rows
+   117→ * surface the SAME stable code there (§283 — receiving summary included).
+   118→ */
+   119→export function mapPureGoodsReceiptDomainError(error: unknown): never {
+   120→  if (error instanceof Error && error.name === "GoodsReceiptStatusIntegrityError") {
+   121→    throw new ApiError(
+   122→      500,
+   123→      GOODS_RECEIPT_INVALID_PERSISTED_STATUS,
+   124→      "Goods receipt data is in an invalid state. Please contact support.",
+   125→    );
+   126→  }
+   127→  if (error instanceof GoodsReceiptIntegrityError) {
+   128→    throw new ApiError(
+   129→      500,
+   130→      GOODS_RECEIPT_ERROR_CODES.CORRUPT_RECEIVED,
+   131→      "Receiving data is inconsistent. Please contact support.",
+   132→    );
+   133→  }
+   134→  if (error instanceof Error && error.message === "GOODS_RECEIPT_CORRUPT_RECEIVED_HISTORY") {
+   135→    throw new ApiError(
+   136→      500,
+   137→      GOODS_RECEIPT_ERROR_CODES.CORRUPT_RECEIVED,
+   138→      "Receiving data is inconsistent. Please contact support.",
+   139→    );
+   140→  }
+   141→  throw error;
+   142→}
+   143→
+   144→/**
+   145→ * P42-F §9 — remaining-quantity computation with the corruption policy
+   146→ * applied at EVERY call site: received history that exceeds its order
+   147→ * quantity throws the stable GOODS_RECEIPT_CORRUPT_RECEIVED 500 — never a
+   148→ * raw unmapped error, never a Math.max clamp to 0.
+   149→ */
+   150→function remainingQtyOrIntegrity(orderedQty: number, receivedQty: number): number {
+   151→  try {
+   152→    return computeRemainingQty(orderedQty, receivedQty);
+   153→  } catch (error) {
+   154→    return mapPureGoodsReceiptDomainError(error);
+   155→  }
+   156→}
+   157→
+   158→/**
+   159→ * P42-F §10-§14 — the ONE read-cap invariant failure. cap+1 fetches exist
+   160→ * to prove completeness; the +1 row (or a count mismatch) is corruption.
+   161→ */
+   162→function assertLineCapInvariant(actualLines: number, cap: number): void {
+   163→  if (actualLines > cap) {
+   164→    throw new ApiError(
+   165→      500,
+   166→      GOODS_RECEIPT_LINE_CAP_INVARIANT,
+   167→      "Stored document data exceeds its configured line cap. Please contact support.",
+   168→    );
+   169→  }
+   170→}
+   171→
+   172→function requireDraft(status: GoodsReceiptStatus): void {
+   173→  if (status !== "DRAFT") {
+   174→    // §64/§68/§69 — POSTED is immutable (§8); CANCELLED is terminal (§10).
+   175→    throw new ApiError(
+   176→      409,
+   177→      GOODS_RECEIPT_ERROR_CODES.IMMUTABLE,
+   178→      "Only DRAFT goods receipts can be changed.",
+   179→    );
+   180→  }
+   181→}
+   182→
+   183→function assertTransition(from: GoodsReceiptStatus, to: GoodsReceiptStatus): void {
+   184→  if (!canTransitionGoodsReceipt(from, to)) {
+   185→    throw new ApiError(
+   186→      409,
+   187→      GOODS_RECEIPT_ERROR_CODES.INVALID_TRANSITION,
+   188→      `Cannot move a goods receipt from ${from} to ${to}.`,
+   189→    );
+   190→  }
+   191→}
+   192→
+   193→async function loadReceiptHeader(
+   194→  tx: Tx,
+   195→  businessId: string,
+   196→  id: string,
+   197→): Promise<{
+   198→  id: string;
+   199→  reference: string;
+   200→  status: GoodsReceiptStatus;
+   201→  purchaseOrderId: string;
+   202→  purchaseOrderReferenceAtReceipt: string;
+   203→  supplierNameAtReceipt: string;
+   204→  notes: string | null;
+   205→  createdByUserId: string;
+   206→  postedAt: Date | null;
+   207→  cancelledAt: Date | null;
+   208→  createdAt: Date;
+   209→}> {
+   210→  const row = await tx.goodsReceipt.findFirst({
+   211→    where: { id, businessId }, // §89 — tenant scope from auth context only
+   212→    select: {
+   213→      id: true,
+   214→      reference: true,
+   215→      status: true,
+   216→      purchaseOrderId: true,
+   217→      purchaseOrderReferenceAtReceipt: true,
+   218→      supplierNameAtReceipt: true,
+   219→      notes: true,
+   220→      createdByUserId: true,
+   221→      postedAt: true,
+   222→      cancelledAt: true,
+   223→      createdAt: true,
+   224→    },
+   225→  });
+   226→  if (!row) throw new ApiError(404, "NOT_FOUND", "Goods receipt not found.");
+   227→  // §96 — a corrupted persisted status NEVER silently becomes DRAFT.
+   228→  return { ...row, status: parseDbStatus(row.status) };
+   229→}
+   230→
+   231→/** §65 — only CONFIRMED orders may receive; any other status → 422. */
+   232→function assertPurchaseOrderReceivable(status: GoodsReceiptStatus | string): void {
+   233→  if (!purchaseOrderIsReceivable(status)) {
+   234→    throw new ApiError(
+   235→      422,
+   236→      GOODS_RECEIPT_ERROR_CODES.PO_NOT_RECEIVABLE,
+   237→      "Goods can be received only against a confirmed purchase order.",
+   238→    );
+   239→  }
+   240→}
+   241→
+   242→function auditInput(
+   243→  businessId: string,
+   244→  actorId: string,
+   245→  action: string,
+   246→  goodsReceiptId: string,
+   247→  reference: string,
+   248→  after: Record<string, unknown>,
+   249→  before?: Record<string, unknown>,
+   250→) {
+   251→  return {
+   252→    businessId,
+   253→    actorId,
+   254→    action,
+   255→    entityType: "GoodsReceipt",
+   256→    entityId: goodsReceiptId,
+   257→    ...(before ? { before } : {}),
+   258→    after: { reference, ...after }, // §155 — safe metadata; never notes content
+   259→  };
+   260→}
+   261→
+   262→/**
+   263→ * §39 steps 6-7 (shared by line-add advisory check and post-time
+   264→ * authoritative check): POSTED-only quantity sum for ONE PO line.
+   265→ * DRAFT/CANCELLED receipts never count (§99). Tenant scope is inherited
+   266→ * from the receipt→PO chain which the caller has already verified.
+   267→ *
+   268→ * P42-F §5-§7 — the sum is a DATABASE aggregate (goodsReceiptLine
+   269→ * .aggregate _sum), never a findMany of the line's whole history into
+   270→ * application memory: a successful PO line can accumulate unbounded
+   271→ * receipt rows over its lifetime and MUST NOT be materialized on every
+   272→ * remaining-check. The aggregate result is re-validated (exact integer,
+   273→ * ≥ 0); the ordered-remaining corruption policy stays with the caller's
+   274→ * computeRemainingQty — nothing is silently clamped (§6).
+   275→ */
+   276→async function sumPostedQtyForPoLine(tx: Tx, purchaseOrderLineId: string): Promise<number> {
+   277→  const agg = await tx.goodsReceiptLine.aggregate({
+   278→    where: {
+   279→      purchaseOrderLineId,
+   280→      goodsReceipt: { status: "POSTED" }, // §99 — POSTED only
+   281→    },
+   282→    _sum: { receivedQty: true },
+   283→  });
+   284→  const sum = agg._sum.receivedQty ?? 0; // §6 — no rows → exactly 0
+   285→  if (!Number.isInteger(sum) || sum < 0) {
+   286→    // §9 — a corrupted persisted history (negative/fractional aggregate)
+   287→    // is surfaced through the ONE canonical mapping, never clamped.
+   288→    return mapPureGoodsReceiptDomainError(
+   289→      new Error("GOODS_RECEIPT_CORRUPT_RECEIVED_HISTORY"),
+   290→    );
+   291→  }
+   292→  return sum;
+   293→}
+   294→
+   295→/** §71 — defensive line-count validation (add line + post). */
+   296→async function assertLineCap(tx: Tx, goodsReceiptId: string, cap: number): Promise<number> {
+   297→  const lineCount = await tx.goodsReceiptLine.count({ where: { goodsReceiptId } });
+   298→  if (lineCount >= cap) {
+   299→    throw new ApiError(
+   300→      422,
+   301→      GOODS_RECEIPT_ERROR_CODES.LINE_LIMIT,
+   302→      `A goods receipt can contain at most ${cap} lines.`,
+   303→    );
+   304→  }
+   305→  return lineCount;
+   306→}
+   307→
+   308→/**
+   309→ * §45/§46/§47 — post-time stock sanity: current stock must be a valid
+   310→ * non-negative integer. Corrupt stored stock (negative) is surfaced as a
+   311→ * controlled 500 — NEVER silently repaired (§47).
+   312→ */
+   313→function assertPersistedStockValid(stockQty: number): void {
+   314→  if (!Number.isInteger(stockQty) || stockQty < 0) {
+   315→    throw new ApiError(
+   316→      500,
+   317→      GOODS_RECEIPT_ERROR_CODES.INVALID_PERSISTED_STOCK,
+   318→      "Product stock data is in an invalid state. Please contact support.",
+   319→    );
+   320→  }
+   321→}
+   322→
+   323→/* -------------------------------- create ----------------------------------- */
+   324→
+   325→export async function createGoodsReceipt(input: {
+   326→  businessId: string;
+   327→  userId: string;
+   328→  purchaseOrderId: string;
+   329→  reference?: string;
+   330→  notes?: string | null;
+   331→  ip?: string | null;
+   332→  userAgent?: string | null;
+   333→}) {
+   334→  return withWriteTx(async (tx) => {
+   335→    // §11/§23 — the PO must be tenant-scoped and CONFIRMED.
+   336→    const po = await tx.purchaseOrder.findFirst({
+   337→      where: { id: input.purchaseOrderId, businessId: input.businessId }, // §90 — foreign PO → 404
+   338→      select: {
+   339→        id: true,
+   340→        reference: true,
+   341→        status: true,
+   342→        supplierNameAtOrder: true, // §25 — copy the ALREADY-FROZEN snapshot
+   343→      },
+   344→    });
+   345→    if (!po) throw new ApiError(404, "NOT_FOUND", "Purchase order not found.");
+   346→    assertPurchaseOrderReceivable(po.status); // §11 — DRAFT/SENT/CLOSED/CANCELLED → 422
+   347→
+   348→    // §59 — reference: user-supplied (normalized) or server-generated.
+   349→    let reference = input.reference;
+   350→    if (reference === undefined) {
+   351→      for (let attempt = 0; attempt < 5; attempt += 1) {
+   352→        const candidate = generateGoodsReceiptReference(new Date(), (max) => randomInt(max));
+   353→        const clash = await tx.goodsReceipt.findFirst({
+   354→          where: { businessId: input.businessId, reference: candidate },
+   355→          select: { id: true },
+   356→        });
+   357→        if (!clash) {
+   358→          reference = candidate;
+   359→          break;
+   360→        }
+   361→      }
+   362→      if (reference === undefined) {
+   363→        // Astronomically unlikely (31^6); fail honestly rather than loop.
+   364→        throw new ApiError(
+   365→          409,
+   366→          GOODS_RECEIPT_ERROR_CODES.DUPLICATE_REFERENCE,
+   367→          "Could not generate a unique reference. Please try again.",
+   368→        );
+   369→      }
+   370→    }
+   371→
+   372→    try {
+   373→      const row = await tx.goodsReceipt.create({
+   374→        data: {
+   375→          businessId: input.businessId, // §22 — server-derived, never client
+   376→          purchaseOrderId: po.id,
+   377→          reference,
+   378→          status: "DRAFT", // §58 — every receipt starts as preparation only
+   379→          supplierNameAtReceipt: po.supplierNameAtOrder, // §25 — frozen identity
+   380→          purchaseOrderReferenceAtReceipt: po.reference, // §24 — frozen identity
+   381→          notes: input.notes ?? null, // §62 — document data only
+   382→          createdByUserId: input.userId, // §58 — server-derived
+   383→        },
+   384→        select: { id: true, reference: true, status: true },
+   385→      });
+   386→
+   387→      await audit(
+   388→        auditInput(input.businessId, input.userId, "goods_receipt.create", row.id, row.reference, {
+   389→          purchaseOrderId: po.id,
+   390→          purchaseOrderReferenceAtReceipt: po.reference,
+   391→          supplierNameAtReceipt: po.supplierNameAtOrder,
+   392→          status: row.status,
+   393→        }),
+   394→        tx,
+   395→      );
+   396→
+   397→      return row;
+   398→    } catch (error) {
+   399→      // §61 — database uniqueness stays authoritative for duplicates.
+   400→      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+   401→        throw new ApiError(
+   402→          409,
+   403→          GOODS_RECEIPT_ERROR_CODES.DUPLICATE_REFERENCE,
+   404→          "A goods receipt with this reference already exists.",
+   405→        );
+   406→      }
+   407→      throw error;
+   408→    }
+   409→  });
+   410→}
+   411→
+   412→/* --------------------------------- list ------------------------------------ */
+   413→
+   414→export async function listGoodsReceipts(input: {
+   415→  businessId: string;
+   416→  q?: string;
+   417→  status?: string; // ALL → undefined
+   418→  purchaseOrderId?: string;
+   419→  from?: string;
+   420→  to?: string;
+   421→  page: number;
+   422→  pageSize: number;
+   423→}): Promise<{
+   424→  items: GoodsReceiptListItemDto[];
+   425→  total: number;
+   426→  page: number;
+   427→  pageSize: number;
+   428→}> {
+   429→  const cap = goodsReceiptLineCap(process.env.GOODS_RECEIPT_MAX_LINES);
+   430→  const where: Prisma.GoodsReceiptWhereInput = {
+   431→    businessId: input.businessId, // §89 — tenant scope
+   432→    ...(input.status && input.status !== "ALL" ? { status: input.status } : {}),
+   433→    ...(input.purchaseOrderId ? { purchaseOrderId: input.purchaseOrderId } : {}),
+   434→    ...(input.from || input.to ? { createdAt: dayWindow(input.from, input.to) } : {}),
+   435→    ...(input.q
+   436→      ? {
+   437→          OR: [
+   438→            { reference: { contains: input.q } }, // receipt reference (§81)
+   439→            { purchaseOrderReferenceAtReceipt: { contains: input.q } }, // PO reference
+   440→            { supplierNameAtReceipt: { contains: input.q } }, // supplier snapshot
+   441→            {
+   442→              lines: {
+   443→                some: {
+   444→                  OR: [
+   445→                    { productNameAtReceipt: { contains: input.q } }, // product snapshot
+   446→                    { skuAtReceipt: { contains: input.q } }, // SKU snapshot
+   447→                  ],
+   448→                },
+   449→              },
+   450→            },
+   451→          ],
+   452→        }
+   453→      : {}),
+   454→  };
+   455→
+   456→  const [total, rows] = await Promise.all([
+   457→    db.goodsReceipt.count({ where }),
+   458→    // §175 — DB-level pagination; never findMany + slice.
+   459→    db.goodsReceipt.findMany({
+   460→      where,
+   461→      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+   462→      skip: (input.page - 1) * input.pageSize,
+   463→      take: input.pageSize,
+   464→      select: {
+   465→        id: true,
+   466→        reference: true,
+   467→        status: true,
+   468→        purchaseOrderId: true,
+   469→        purchaseOrderReferenceAtReceipt: true,
+   470→        supplierNameAtReceipt: true,
+   471→        postedAt: true,
+   472→        cancelledAt: true,
+   473→        createdAt: true,
+   474→        lines: {
+   475→          // §180 — bounded aggregate relation, not one query per row.
+   476→          // P42-F §12 — take cap+1 PROVES the slice is the whole line set:
+   477→          // a receipt over its own cap is corruption and fails the read
+   478→          // below — never a silently truncated total.
+   479→          select: { receivedQty: true },
+   480→          take: cap + 1,
+   481→        },
+   482→        _count: { select: { lines: true } },
+   483→      },
+   484→    }),
+   485→  ]);
+   486→
+   487→  const items = rows.map((row) => {
+   488→    // P42-F §13 — the capped slice is only trustworthy when the database
+   489→    // really contains ≤ cap rows: the +1 row or a _count mismatch means
+   490→    // corruption — fail the read honestly, never compute a partial total.
+   491→    if (row.lines.length > cap || row._count.lines !== row.lines.length) {
+   492→      assertLineCapInvariant(Math.max(row.lines.length, row._count.lines), cap);
+   493→    }
+   494→    try {
+   495→      // §180 — proven-complete slice → the canonical sum is exact.
+   496→      const totalReceivedQty = computeReceivedQty(row.lines.map((l) => l.receivedQty));
+   497→      return goodsReceiptListItemDto({
+   498→        id: row.id,
+   499→        reference: row.reference,
+   500→        status: row.status,
+   501→        purchaseOrderId: row.purchaseOrderId,
+   502→        purchaseOrderReferenceAtReceipt: row.purchaseOrderReferenceAtReceipt,
+   503→        supplierNameAtReceipt: row.supplierNameAtReceipt,
+   504→        lineCount: row._count.lines,
+   505→        totalReceivedQty,
+   506→        postedAt: row.postedAt,
+   507→        cancelledAt: row.cancelledAt,
+   508→        createdAt: row.createdAt,
+   509→        createdByUserId: "",
+   510→        createdByName: null,
+   511→        notes: null,
+   512→      });
+   513→    } catch (error) {
+   514→      // §9 — a corrupted quantity inside history surfaces as the stable
+   515→      // integrity 500, never a partial row and never a generic 500.
+   516→      return mapPureGoodsReceiptDomainError(error);
+   517→    }
+   518→  });
+   519→  return { items, total, page: input.page, pageSize: input.pageSize };
+   520→}
+   521→
+   522→/* -------------------------------- detail ----------------------------------- */
+   523→
+   524→export async function getGoodsReceipt(input: {
+   525→  businessId: string;
+   526→  id: string;
+   527→}): Promise<GoodsReceiptDetailDto> {
+   528→  const cap = goodsReceiptLineCap(process.env.GOODS_RECEIPT_MAX_LINES);
+   529→  // §176 — lines are bounded by the document's own cap; one bounded read.
+   530→  // P42-F §11 — take cap+1 proves completeness: the +1 row is corruption
+   531→  // and fails the read with the stable invariant code below — never a
+   532→  // detail DTO silently rendered from only the first cap lines.
+   533→  const row = await db.goodsReceipt.findFirst({
+   534→    where: { id: input.id, businessId: input.businessId }, // §89
+   535→    select: {
+   536→      id: true,
+   537→      reference: true,
+   538→      status: true,
+   539→      notes: true,
+   540→      purchaseOrderId: true,
+   541→      purchaseOrderReferenceAtReceipt: true,
+   542→      supplierNameAtReceipt: true,
+   543→      createdByUserId: true,
+   544→      postedAt: true,
+   545→      cancelledAt: true,
+   546→      createdAt: true,
+   547→      createdByUser: { select: { name: true } }, // §88 — name only
+   548→      lines: {
+   549→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+   550→        take: cap + 1,
+   551→        select: {
+   552→          id: true,
+   553→          purchaseOrderLineId: true,
+   554→          productId: true,
+   555→          productNameAtReceipt: true,
+   556→          skuAtReceipt: true,
+   557→          unitAtReceipt: true,
+   558→          receivedQty: true,
+   559→          createdAt: true,
+   560→          updatedAt: true,
+   561→        },
+   562→      },
+   563→    },
+   564→  });
+   565→  if (!row) throw new ApiError(404, "NOT_FOUND", "Goods receipt not found.");
+   566→  // P42-F §11 — never render a partial document.
+   567→  assertLineCapInvariant(row.lines.length, cap);
+   568→
+   569→  try {
+   570→    return goodsReceiptDetailDto(
+   571→      {
+   572→        id: row.id,
+   573→        reference: row.reference,
+   574→        status: row.status,
+   575→        notes: row.notes,
+   576→        purchaseOrderId: row.purchaseOrderId,
+   577→        purchaseOrderReferenceAtReceipt: row.purchaseOrderReferenceAtReceipt,
+   578→        supplierNameAtReceipt: row.supplierNameAtReceipt,
+   579→        createdByUserId: row.createdByUserId,
+   580→        createdByName: row.createdByUser?.name ?? null,
+   581→        postedAt: row.postedAt,
+   582→        cancelledAt: row.cancelledAt,
+   583→        createdAt: row.createdAt,
+   584→      },
+   585→      row.lines,
+   586→    );
+   587→  } catch (error) {
+   588→    return mapPureGoodsReceiptDomainError(error);
+   589→  }
+   590→}
+   591→
+   592→/* ------------------------------ header patch ------------------------------- */
+   593→
+   594→export async function updateGoodsReceipt(input: {
+   595→  businessId: string;
+   596→  userId: string;
+   597→  id: string;
+   598→  reference?: string;
+   599→  notes?: string | null;
+   600→  ip?: string | null;
+   601→  userAgent?: string | null;
+   602→}) {
+   603→  return withWriteTx(async (tx) => {
+   604→    const header = await loadReceiptHeader(tx, input.businessId, input.id);
+   605→    requireDraft(header.status); // §107 — DRAFT-only edits
+   606→
+   607→    const data: Prisma.GoodsReceiptUpdateInput = {};
+   608→    if (input.reference !== undefined) data.reference = input.reference;
+   609→    if (input.notes !== undefined) data.notes = input.notes;
+   610→
+   611→    try {
+   612→      const updated = await tx.goodsReceipt.update({
+   613→        where: { id: header.id },
+   614→        data,
+   615→        select: { id: true, reference: true, status: true },
+   616→      });
+   617→
+   618→      await audit(
+   619→        auditInput(
+   620→          input.businessId,
+   621→          input.userId,
+   622→          "goods_receipt.update",
+   623→          header.id,
+   624→          updated.reference,
+   625→          {
+   626→            changed: {
+   627→              ...(input.reference !== undefined
+   628→                ? { reference: { from: header.reference, to: updated.reference } }
+   629→                : {}),
+   630→              ...(input.notes !== undefined ? { notes: { changed: true } } : {}),
+   631→            },
+   632→          },
+   633→          { reference: header.reference },
+   634→        ),
+   635→        tx,
+   636→      );
+   637→
+   638→      return updated;
+   639→    } catch (error) {
+   640→      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+   641→        throw new ApiError(
+   642→          409,
+   643→          GOODS_RECEIPT_ERROR_CODES.DUPLICATE_REFERENCE,
+   644→          "A goods receipt with this reference already exists.",
+   645→        );
+   646→      }
+   647→      throw error;
+   648→    }
+   649→  });
+   650→}
+   651→
+   652→/* -------------------------------- line add --------------------------------- */
+   653→
+   654→export async function addGoodsReceiptLine(input: {
+   655→  businessId: string;
+   656→  userId: string;
+   657→  id: string;
+   658→  purchaseOrderLineId: string;
+   659→  receivedQty: number;
+   660→  ip?: string | null;
+   661→  userAgent?: string | null;
+   662→}) {
+   663→  return withWriteTx(async (tx) => {
+   664→    const header = await loadReceiptHeader(tx, input.businessId, input.id);
+   665→    requireDraft(header.status); // §64 — DRAFT-only
+   666→
+   667→    // §35 — the PO line must belong to THIS receipt's tenant-scoped PO.
+   668→    // One tenant-scoped join validates receipt→PO→line ownership; a
+   669→    // foreign PO line is indistinguishable from an unknown one (§91 → 404).
+   670→    const poLine = await tx.purchaseOrderLine.findFirst({
+   671→      where: { id: input.purchaseOrderLineId, purchaseOrderId: header.purchaseOrderId },
+   672→      select: {
+   673→        id: true,
+   674→        productId: true,
+   675→        orderedQty: true,
+   676→        productNameAtOrder: true, // §29 — snapshots copied from the PO line
+   677→        skuAtOrder: true,
+   678→        unitAtOrder: true,
+   679→        product: { select: { id: true, businessId: true } },
+   680→      },
+   681→    });
+   682→    if (!poLine) throw new ApiError(404, "NOT_FOUND", "Purchase order line not found.");
+   683→
+   684→    // §35 — product must exist inside the SAME tenant (belt-and-braces:
+   685→    // the FK is Restrict so a hard-deleted product is nearly impossible,
+   686→    // but §33/§152 demands a safe controlled failure, never fabrication).
+   687→    if (poLine.product.businessId !== input.businessId) {
+   688→      throw new ApiError(404, "NOT_FOUND", "Product not found.");
+   689→    }
+   690→
+   691→    // §65 — the PO must STILL be CONFIRMED at line-add time (a PO that was
+   692→    // cancelled/closed after the draft was created stops accepting lines).
+   693→    const po = await tx.purchaseOrder.findFirst({
+   694→      where: { id: header.purchaseOrderId, businessId: input.businessId },
+   695→      select: { status: true },
+   696→    });
+   697→    if (!po) throw new ApiError(404, "NOT_FOUND", "Purchase order not found.");
+   698→    assertPurchaseOrderReceivable(po.status);
+   699→
+   700→    const cap = goodsReceiptLineCap(process.env.GOODS_RECEIPT_MAX_LINES);
+   701→    await assertLineCap(tx, header.id, cap); // §71 — defensive count
+   702→
+   703→    // §66 — ADVISORY remaining check at line-add time: receivedQty ≤
+   704→    // (ordered − POSTED received). Draft lines of OTHER receipts are
+   705→    // deliberately NOT subtracted — over-allocation across drafts is the
+   706→    // documented §67 stale-draft scenario and only POST is authoritative.
+   707→    // P42-F §9 — corrupted history (> ordered) surfaces as the stable
+   708→    // integrity 500, never a raw error and never a clamp.
+   709→    const alreadyPosted = await sumPostedQtyForPoLine(tx, poLine.id);
+   710→    const remaining = remainingQtyOrIntegrity(poLine.orderedQty, alreadyPosted); // §172
+   711→    if (exceedsRemaining(poLine.orderedQty, alreadyPosted, input.receivedQty)) {
+   712→      throw new ApiError(
+   713→        409,
+   714→        GOODS_RECEIPT_ERROR_CODES.EXCEEDS_REMAINING,
+   715→        `Only ${remaining} unit(s) remain to receive on this line.`,
+   716→      );
+   717→    }
+   718→
+   719→    try {
+   720→      const line = await tx.goodsReceiptLine.create({
+   721→        data: {
+   722→          goodsReceiptId: header.id,
+   723→          purchaseOrderLineId: poLine.id,
+   724→          productId: poLine.productId, // §36 — derived, never client authority
+   725→          receivedQty: input.receivedQty,
+   726→          // §28/§29 — snapshots copied from the PO LINE, not live Product.
+   727→          productNameAtReceipt: poLine.productNameAtOrder,
+   728→          skuAtReceipt: poLine.skuAtOrder,
+   729→          unitAtReceipt: poLine.unitAtOrder,
+   730→        },
+   731→        select: { id: true },
+   732→      });
+   733→
+   734→      await audit(
+   735→        auditInput(input.businessId, input.userId, "goods_receipt.line_add", header.id, header.reference, {
+   736→          lineId: line.id, // §156 — safe per-line metadata
+   737→          purchaseOrderLineId: poLine.id,
+   738→          productId: poLine.productId,
+   739→          productNameAtReceipt: poLine.productNameAtOrder,
+   740→          receivedQty: input.receivedQty,
+   741→        }),
+   742→        tx,
+   743→      );
+   744→
+   745→      return { id: line.id };
+   746→    } catch (error) {
+   747→      // §27/§209 — DB uniqueness is authoritative for duplicate lines.
+   748→      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+   749→        throw new ApiError(
+   750→          409,
+   751→          GOODS_RECEIPT_ERROR_CODES.IMMUTABLE,
+   752→          "This purchase order line is already on the receipt.",
+   753→        );
+   754→      }
+   755→      throw error;
+   756→    }
+   757→  });
+   758→}
+   759→
+   760→/* ------------------------------- line update ------------------------------- */
+   761→
+   762→export async function updateGoodsReceiptLine(input: {
+   763→  businessId: string;
+   764→  userId: string;
+   765→  id: string;
+   766→  lineId: string;
+   767→  receivedQty: number;
+   768→  ip?: string | null;
+   769→  userAgent?: string | null;
+   770→}) {
+   771→  return withWriteTx(async (tx) => {
+   772→    const header = await loadReceiptHeader(tx, input.businessId, input.id);
+   773→    requireDraft(header.status); // §68 — DRAFT-only
+   774→
+   775→    const line = await tx.goodsReceiptLine.findFirst({
+   776→      where: { id: input.lineId, goodsReceiptId: header.id }, // §89 — scoped via parent
+   777→      select: {
+   778→        id: true,
+   779→        purchaseOrderLineId: true,
+   780→        productId: true,
+   781→        productNameAtReceipt: true,
+   782→        receivedQty: true,
+   783→      },
+   784→    });
+   785→    if (!line) throw new ApiError(404, "NOT_FOUND", "Receipt line not found.");
+   786→
+   787→    // §68 — the receivedQty still respects the advisory remaining check
+   788→    // (POSTED sums only — see the §66 note in addGoodsReceiptLine).
+   789→    const poLine = await tx.purchaseOrderLine.findFirst({
+   790→      where: { id: line.purchaseOrderLineId },
+   791→      select: { orderedQty: true },
+   792→    });
+   793→    if (!poLine) throw new ApiError(404, "NOT_FOUND", "Purchase order line not found.");
+   794→    const alreadyPosted = await sumPostedQtyForPoLine(tx, line.purchaseOrderLineId);
+   795→    const remaining = remainingQtyOrIntegrity(poLine.orderedQty, alreadyPosted); // P42-F §9
+   796→    if (exceedsRemaining(poLine.orderedQty, alreadyPosted, input.receivedQty)) {
+   797→      throw new ApiError(
+   798→        409,
+   799→        GOODS_RECEIPT_ERROR_CODES.EXCEEDS_REMAINING,
+   800→        `Only ${remaining} unit(s) remain to receive on this line.`,
+   801→      );
+   802→    }
+   803→
+   804→    // §68-analog — re-read the persisted row after mutation: the response
+   805→    // carries the REAL stored snapshot fields and timestamps.
+   806→    const updated = await tx.goodsReceiptLine.update({
+   807→      where: { id: line.id },
+   808→      data: { receivedQty: input.receivedQty },
+   809→      select: {
+   810→        id: true,
+   811→        purchaseOrderLineId: true,
+   812→        productId: true,
+   813→        productNameAtReceipt: true,
+   814→        skuAtReceipt: true,
+   815→        unitAtReceipt: true,
+   816→        receivedQty: true,
+   817→        createdAt: true,
+   818→        updatedAt: true,
+   819→      },
+   820→    });
+   821→
+   822→    await audit(
+   823→      auditInput(input.businessId, input.userId, "goods_receipt.line_update", header.id, header.reference, {
+   824→        lineId: line.id, // §156 — before/after quantities only
+   825→        receivedQty: { from: line.receivedQty, to: updated.receivedQty },
+   826→      }),
+   827→      tx,
+   828→    );
+   829→
+   830→    return goodsReceiptLineDto(updated);
+   831→  });
+   832→}
+   833→
+   834→/* ------------------------------- line remove ------------------------------- */
+   835→
+   836→export async function removeGoodsReceiptLine(input: {
+   837→  businessId: string;
+   838→  userId: string;
+   839→  id: string;
+   840→  lineId: string;
+   841→  ip?: string | null;
+   842→  userAgent?: string | null;
+   843→}) {
+   844→  return withWriteTx(async (tx) => {
+   845→    const header = await loadReceiptHeader(tx, input.businessId, input.id);
+   846→    requireDraft(header.status); // §69 — DRAFT-only
+   847→
+   848→    const line = await tx.goodsReceiptLine.findFirst({
+   849→      where: { id: input.lineId, goodsReceiptId: header.id },
+   850→      select: { id: true, purchaseOrderLineId: true, productId: true, receivedQty: true },
+   851→    });
+   852→    if (!line) throw new ApiError(404, "NOT_FOUND", "Receipt line not found.");
+   853→
+   854→    await tx.goodsReceiptLine.delete({ where: { id: line.id } });
+   855→    const lineCount = await tx.goodsReceiptLine.count({ where: { goodsReceiptId: header.id } });
+   856→
+   857→    await audit(
+   858→      auditInput(input.businessId, input.userId, "goods_receipt.line_remove", header.id, header.reference, {
+   859→        lineId: line.id,
+   860→        purchaseOrderLineId: line.purchaseOrderLineId,
+   861→        productId: line.productId,
+   862→        receivedQty: line.receivedQty,
+   863→        lineCount,
+   864→      }),
+   865→      tx,
+   866→    );
+   867→
+   868→    return { removed: true, lineCount };
+   869→  });
+   870→}
+   871→
+   872→/* ---------------------------------- post ----------------------------------- */
+   873→
+   874→/**
+   875→ * §39 — THE atomic stock posting transaction. Steps 1-17 in ONE
+   876→ * database transaction (§72); a failure at ANY step rolls back EVERYTHING
+   877→ * (§40/§214) — no stock change, no adjustment, no status, no audit.
+   878→ */
+   879→export async function postGoodsReceipt(input: {
+   880→  businessId: string;
+   881→  userId: string;
+   882→  id: string;
+   883→  ip?: string | null;
+   884→  userAgent?: string | null;
+   885→}) {
+   886→  return withWriteTx(async (tx) => {
+   887→    // §39 steps 1-2 / §73 — reload receipt INSIDE the transaction; never
+   888→    // trust an earlier GET. Corrupted status is surfaced, never Draft.
+   889→    const header = await loadReceiptHeader(tx, input.businessId, input.id);
+   890→    assertTransition(header.status, "POSTED"); // §7 — only DRAFT → POSTED
+   891→
+   892→    // §39 step 3 — PO must STILL be CONFIRMED (§149/§150: a PO cancelled
+   893→    // or closed after the draft was created can never be posted).
+   894→    const po = await tx.purchaseOrder.findFirst({
+   895→      where: { id: header.purchaseOrderId, businessId: input.businessId },
+   896→      select: { id: true, reference: true, status: true, supplierNameAtOrder: true },
+   897→    });
+   898→    if (!po) throw new ApiError(404, "NOT_FOUND", "Purchase order not found.");
+   899→    assertPurchaseOrderReceivable(po.status);
+   900→
+   901→    // §39 step 4 — load the receipt's own lines (bounded by the document
+   902→    // cap, §177 — a receipt can never exceed GOODS_RECEIPT_MAX_LINES).
+   903→    const cap = goodsReceiptLineCap(process.env.GOODS_RECEIPT_MAX_LINES);
+   904→    const lines = await tx.goodsReceiptLine.findMany({
+   905→      where: { goodsReceiptId: header.id },
+   906→      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+   907→      take: cap + 1, // cap+1 proves completeness (same law as P41 export)
+   908→      select: {
+   909→        id: true,
+   910→        purchaseOrderLineId: true,
+   911→        productId: true,
+   912→        receivedQty: true,
+   913→        purchaseOrderLine: {
+   914→          select: {
+   915→            id: true,
+   916→            orderedQty: true,
+   917→            purchaseOrderId: true,
+   918→          },
+   919→        },
+   920→      },
+   921→    });
+   922→    if (lines.length > cap) {
+   923→      // Impossible by §20/§71 — if it ever happens, fail honestly.
+   924→      throw new ApiError(
+   925→        422,
+   926→        GOODS_RECEIPT_ERROR_CODES.LINE_LIMIT,
+   927→        "Goods receipt line limit exceeded.",
+   928→      );
+   929→    }
+   930→
+   931→    // §70 — a receipt with zero lines can never post.
+   932→    if (lines.length === 0) {
+   933→      throw new ApiError(
+   934→        422,
+   935→        GOODS_RECEIPT_ERROR_CODES.EMPTY,
+   936→        "Add at least one line before posting this receipt.",
+   937→      );
+   938→    }
+   939→
+   940→    const adjustmentIds: string[] = [];
+   941→    const stockChanges: { productId: string; from: number; to: number }[] = [];
+   942→
+   943→    for (const line of lines) {
+   944→      // §39 step 4 — the PO line must belong to THIS purchase order
+   945→      // (defensive re-verification of the document chain).
+   946→      if (line.purchaseOrderLine.purchaseOrderId !== po.id) {
+   947→        throw new ApiError(404, "NOT_FOUND", "Purchase order line not found.");
+   948→      }
+   949→
+   950→      // §39 steps 5-8 — product existence + authoritative remaining check.
+   951→      const product = await tx.product.findFirst({
+   952→        where: { id: line.productId, businessId: input.businessId }, // §30/§35
+   953→        select: { id: true, stockQty: true },
+   954→      });
+   955→      if (!product) {
+   956→        // §33/§152 — a hard-deleted product fails the post safely.
+   957→        throw new ApiError(
+   958→          422,
+   959→          GOODS_RECEIPT_ERROR_CODES.PRODUCT_NOT_FOUND,
+   960→          "A product on this receipt no longer exists.",
+   961→        );
+   962→      }
+   963→
+   964→      const alreadyPosted = await sumPostedQtyForPoLine(tx, line.purchaseOrderLineId);
+   965→      const remaining = remainingQtyOrIntegrity(
+   966→        line.purchaseOrderLine.orderedQty,
+   967→        alreadyPosted,
+   968→      ); // §100 — throws on corrupted over-received history (§283, P42-F §9)
+   969→      if (exceedsRemaining(line.purchaseOrderLine.orderedQty, alreadyPosted, line.receivedQty)) {
+   970→        // §15/§16/§67 — the HARD over-receipt law, final authority.
+   971→        throw new ApiError(
+   972→          409,
+   973→          GOODS_RECEIPT_ERROR_CODES.EXCEEDS_REMAINING,
+   974→          `Only ${remaining} unit(s) remain to receive on this line.`,
+   975→        );
+   976→      }
+   977→
+   978→      // §46/§47 — corrupt persisted stock is surfaced, never repaired.
+   979→      assertPersistedStockValid(product.stockQty);
+   980→
+   981→      // §49 — Int32 storage bound; overflow → 422, no partial writes.
+   982→      if (stockOverflowsInt32(product.stockQty, line.receivedQty)) {
+   983→        throw new ApiError(
+   984→          422,
+   985→          GOODS_RECEIPT_ERROR_CODES.STOCK_OVERFLOW,
+   986→          "Receiving this quantity would exceed the stock storage limit.",
+   987→        );
+   988→      }
+   989→
+   990→      // §39 steps 9-11 — exact integer arithmetic, positive delta only.
+   991→      const newStock = product.stockQty + line.receivedQty;
+   992→      await tx.product.update({
+   993→        where: { id: product.id },
+   994→        data: { stockQty: newStock },
+   995→        select: { id: true },
+   996→      });
+   997→      stockChanges.push({ productId: product.id, from: product.stockQty, to: newStock });
+   998→
+   999→      // §39 step 12 / §41-§45 — one positive InventoryAdjustment per line.
+  1000→      const adjustment = await tx.inventoryAdjustment.create({
+  1001→        data: {
+  1002→          businessId: input.businessId, // §43 — server-derived
+  1003→          productId: product.id, // §44 — derived from the PO line chain
+  1004→          delta: line.receivedQty, // §45 — always positive
+  1005→          reason: RECEIPT_ADJUSTMENT_REASON(header.reference), // §41 — stable identifier
+  1006→          actorId: input.userId, // §42 — server-derived
+  1007→        },
+  1008→        select: { id: true },
+  1009→      });
+  1010→      adjustmentIds.push(adjustment.id);
+  1011→    }
+  1012→
+  1013→    // §39 steps 14-15 — complete the posting (server timestamps only §74).
+  1014→    const postedAt = new Date();
+  1015→    const updated = await tx.goodsReceipt.update({
+  1016→      where: { id: header.id },
+  1017→      data: { status: "POSTED", postedAt },
+  1018→      select: { id: true, reference: true, status: true, postedAt: true },
+  1019→    });
+  1020→
+  1021→    // §39 step 16 / §153/§154 — ONE audit record for the posting, written
+  1022→    // in the SAME transaction; if it fails, everything above rolls back.
+  1023→    const totalReceivedQty = computeReceivedQty(lines.map((l) => l.receivedQty));
+  1024→    await audit(
+  1025→      auditInput(input.businessId, input.userId, "goods_receipt.post", header.id, header.reference, {
+  1026→        purchaseOrderId: po.id,
+  1027→        purchaseOrderReferenceAtReceipt: header.purchaseOrderReferenceAtReceipt,
+  1028→        lineCount: lines.length,
+  1029→        totalReceivedQty, // §155 — quantity facts only; never notes
+  1030→        adjustmentIds,
+  1031→        previousStatus: header.status,
+  1032→        newStatus: updated.status,
+  1033→        postedAt: updated.postedAt?.toISOString() ?? null,
+  1034→      }),
+  1035→      tx,
+  1036→    );
+  1037→
+  1038→    return {
+  1039→      id: updated.id,
+  1040→      reference: updated.reference,
+  1041→      status: updated.status,
+  1042→      postedAt: updated.postedAt,
+  1043→      lineCount: lines.length,
+  1044→      totalReceivedQty,
+  1045→      stockChanges,
+  1046→    };
+  1047→  });
+  1048→}
+  1049→
+  1050→/* --------------------------------- cancel ---------------------------------- */
+  1051→
+  1052→export async function cancelGoodsReceipt(input: {
+  1053→  businessId: string;
+  1054→  userId: string;
+  1055→  id: string;
+  1056→  ip?: string | null;
+  1057→  userAgent?: string | null;
+  1058→}) {
+  1059→  return withWriteTx(async (tx) => {
+  1060→    // §75 — reload inside the transaction; only DRAFT may cancel.
+  1061→    const header = await loadReceiptHeader(tx, input.businessId, input.id);
+  1062→    assertTransition(header.status, "CANCELLED"); // §7
+  1063→
+  1064→    // §10 — cancelling a draft is a pure document transition: NO stock
+  1065→    // mutation, NO adjustment, NO financial anything.
+  1066→    const updated = await tx.goodsReceipt.update({
+  1067→      where: { id: header.id },
+  1068→      data: { status: "CANCELLED", cancelledAt: new Date() },
+  1069→      select: { id: true, reference: true, status: true, cancelledAt: true },
+  1070→    });
+  1071→
+  1072→    await audit(
+  1073→      auditInput(input.businessId, input.userId, "goods_receipt.cancel", header.id, header.reference, {
+  1074→        previousStatus: header.status,
+  1075→        newStatus: updated.status,
+  1076→        cancelledAt: updated.cancelledAt?.toISOString() ?? null,
+  1077→      }),
+  1078→      tx,
+  1079→    );
+  1080→
+  1081→    return {
+  1082→      id: updated.id,
+  1083→      reference: updated.reference,
+  1084→      status: updated.status,
+  1085→      cancelledAt: updated.cancelledAt,
+  1086→    };
+  1087→  });
+  1088→}
+  1089→
+  1090→/* ------------------- P41 integration: receiving summary --------------------- */
+  1091→
+  1092→/**
+  1093→ * §98/§181 — the PO receiving summary in ONE consistent read (§296): a
+  1094→ * transactional read of the PO lines + the POSTED receipt-line aggregates
+  1095→ * (grouped, never one query per line). Corrupted over-received history
+  1096→ * surfaces as the stable integrity code (§283 — never clamped).
+  1097→ */
+  1098→export async function getPurchaseOrderReceivingSummary(input: {
+  1099→  businessId: string;
+  1100→  purchaseOrderId: string;
+  1101→}): Promise<{
+  1102→  orderedQty: number;
+  1103→  receivedQty: number;
+  1104→  remainingQty: number;
+  1105→  receiptCount: number;
+  1106→  fullyReceived: boolean;
+  1107→  lines: { lineId: string; orderedQty: number; receivedQty: number; remainingQty: number }[];
+  1108→}> {
+  1109→  const po = await db.purchaseOrder.findFirst({
+  1110→    where: { id: input.purchaseOrderId, businessId: input.businessId }, // §89
+  1111→    select: { id: true },
+  1112→  });
+  1113→  if (!po) throw new ApiError(404, "NOT_FOUND", "Purchase order not found.");
+  1114→
+  1115→  // §296 — one transactional read of lines + posted aggregates.
+  1116→  // P42-F §14/§16 — the PO-line read uses the P41 PO-LINE cap family
+  1117→  // (PURCHASE_ORDER_MAX_LINES) and take cap+1 proves completeness: more
+  1118→  // rows than the PO's own cap is corruption → stable invariant 500, never
+  1119→  // a partial receiving summary computed from a truncated slice.
+  1120→  const poLineCap = purchaseOrderLineCap(process.env.PURCHASE_ORDER_MAX_LINES);
+  1121→  return db.$transaction(async (tx) => {
+  1122→    const poLines = await tx.purchaseOrderLine.findMany({
+  1123→      where: { purchaseOrderId: po.id },
+  1124→      select: { id: true, orderedQty: true },
+  1125→      take: poLineCap + 1, // P42-F §14 — completeness proof
+  1126→    });
+  1127→    assertLineCapInvariant(poLines.length, poLineCap); // P42-F §16
+  1128→
+  1129→    // §178 — sum POSTED receipt lines per PO line, grouped in one query.
+  1130→    const grouped = await tx.goodsReceiptLine.groupBy({
+  1131→      by: ["purchaseOrderLineId"],
+  1132→      where: {
+  1133→        purchaseOrderLineId: { in: poLines.map((l) => l.id) },
+  1134→        goodsReceipt: { status: "POSTED" }, // §99 — POSTED only
+  1135→      },
+  1136→      _sum: { receivedQty: true },
+  1137→    });
+  1138→    const receivedByLine = new Map(
+  1139→      grouped.map((g) => [g.purchaseOrderLineId, g._sum.receivedQty ?? 0]),
+  1140→    );
+  1141→
+  1142→    // §104-analog — receipt COUNT (POSTED receipts touching this PO).
+  1143→    const receiptCount = await tx.goodsReceipt.count({
+  1144→      where: { purchaseOrderId: po.id, status: "POSTED" },
+  1145→    });
+  1146→
+  1147→    let orderedQty = 0;
+  1148→    let receivedQty = 0;
+  1149→    const lines = poLines.map((l) => {
+  1150→      const lineReceived = receivedByLine.get(l.id) ?? 0;
+  1151→      const lineRemaining = computeRemainingQty(l.orderedQty, lineReceived); // §100
+  1152→      orderedQty += l.orderedQty;
+  1153→      receivedQty += lineReceived;
+  1154→      return {
+  1155→        lineId: l.id,
+  1156→        orderedQty: l.orderedQty,
+  1157→        receivedQty: lineReceived,
+  1158→        remainingQty: lineRemaining,
+  1159→      };
+  1160→    });
+  1161→    const remainingQty = computeRemainingQty(orderedQty, receivedQty); // §100
+  1162→
+  1163→    return {
+  1164→      orderedQty,
+  1165→      receivedQty,
+  1166→      remainingQty,
+  1167→      receiptCount,
+  1168→      fullyReceived: remainingQty === 0, // §101 — derived, never stored
+  1169→      lines,
+  1170→    };
+  1171→  }).catch((error) => mapPureGoodsReceiptDomainError(error));
+  1172→}
+  1173→
+  1174→/** §104 — bounded recent receipts for the PO detail (take 10, §105). */
+  1175→export async function listRecentReceiptsForPurchaseOrder(input: {
+  1176→  businessId: string;
+  1177→  purchaseOrderId: string;
+  1178→  take?: number;
+  1179→}): Promise<PurchaseOrderRecentReceiptDto[]> {
+  1180→  const take = Math.min(Math.max(input.take ?? 10, 1), 10); // §105 — bounded
+  1181→  const cap = goodsReceiptLineCap(process.env.GOODS_RECEIPT_MAX_LINES);
+  1182→  const rows = await db.goodsReceipt.findMany({
+  1183→    where: { businessId: input.businessId, purchaseOrderId: input.purchaseOrderId },
+  1184→    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+  1185→    take,
+  1186→    select: {
+  1187→      id: true,
+  1188→      reference: true,
+  1189→      status: true,
+  1190→      postedAt: true,
+  1191→      createdAt: true,
+  1192→      // P42-F §10 — cap+1 proves completeness; a truncated slice could
+  1193→      // report a WRONG totalReceivedQty on the PO detail widget.
+  1194→      lines: { select: { receivedQty: true }, take: cap + 1 },
+  1195→    },
+  1196→  });
+  1197→  return rows.map((r) => {
+  1198→    try {
+  1199→      assertLineCapInvariant(r.lines.length, cap); // P42-F §10
+  1200→      return {
+  1201→        id: r.id,
+  1202→        reference: r.reference,
+  1203→        status: parseGoodsReceiptStatus(r.status),
+  1204→        postedAt: r.postedAt ? r.postedAt.toISOString() : null,
+  1205→        totalReceivedQty: computeReceivedQty(r.lines.map((l) => l.receivedQty)),
+  1206→      };
+  1207→    } catch (error) {
+  1208→      return mapPureGoodsReceiptDomainError(error);
+  1209→    }
+  1210→  });
+  1211→}
+  1212→
+  1213→/**
+  1214→ * §146 — PO cancel hardening helper: the number of POSTED receipts
+  1215→ * against this PO. A PO with posted receipts can never be cancelled
+  1216→ * (physical goods already exist; reversal is out of scope).
+  1217→ */
+  1218→export async function countPostedReceiptsForPurchaseOrder(
+  1219→  tx: Tx,
+  1220→  businessId: string,
+  1221→  purchaseOrderId: string,
+  1222→): Promise<number> {
+  1223→  return tx.goodsReceipt.count({
+  1224→    where: { businessId, purchaseOrderId, status: "POSTED" },
+  1225→  });
+  1226→}
+  1227→
+  1228→/** §120 — bounded recent receipts for the Product detail (take 10). */
+  1229→export async function listRecentReceiptsForProduct(input: {
+  1230→  businessId: string;
+  1231→  productId: string;
+  1232→  take?: number;
+  1233→}): Promise<
+  1234→  { id: string; reference: string; status: GoodsReceiptStatus; postedAt: string | null; receivedQty: number }[]
+  1235→> {
+  1236→  const take = Math.min(Math.max(input.take ?? 10, 1), 10); // §182 — bounded
+  1237→  const rows = await db.goodsReceiptLine.findMany({
+  1238→    where: {
+  1239→      productId: input.productId,
+  1240→      goodsReceipt: { businessId: input.businessId, status: "POSTED" },
+  1241→    },
+  1242→    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+  1243→    take,
+  1244→    select: {
+  1245→      receivedQty: true,
+  1246→      createdAt: true,
+  1247→      goodsReceipt: {
+  1248→        select: { id: true, reference: true, status: true, postedAt: true },
+  1249→      },
+  1250→    },
+  1251→  });
+  1252→  return rows.map((r) => {
+  1253→    try {
+  1254→      return {
+  1255→        id: r.goodsReceipt.id,
+  1256→        reference: r.goodsReceipt.reference,
+  1257→        status: parseGoodsReceiptStatus(r.goodsReceipt.status),
+  1258→        postedAt: r.goodsReceipt.postedAt ? r.goodsReceipt.postedAt.toISOString() : null,
+  1259→        receivedQty: r.receivedQty,
+  1260→      };
+  1261→    } catch (error) {
+  1262→      return mapPureGoodsReceiptDomainError(error);
+  1263→    }
+  1264→  });
+  1265→}
+  1266→
+  1267→/** §121 — bounded recent receipts for the Supplier 360 (take 10). */
+  1268→export async function listRecentReceiptsForSupplier(input: {
+  1269→  businessId: string;
+  1270→  supplierId: string;
+  1271→  take?: number;
+  1272→}): Promise<PurchaseOrderRecentReceiptDto[]> {
+  1273→  const take = Math.min(Math.max(input.take ?? 10, 1), 10); // §183 — bounded
+  1274→  const cap = goodsReceiptLineCap(process.env.GOODS_RECEIPT_MAX_LINES);
+  1275→  const rows = await db.goodsReceipt.findMany({
+  1276→    where: {
+  1277→      businessId: input.businessId,
+  1278→      purchaseOrder: { supplierId: input.supplierId },
+  1279→    },
+  1280→    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+  1281→    take,
+  1282→    select: {
+  1283→      id: true,
+  1284→      reference: true,
+  1285→      status: true,
+  1286→      postedAt: true,
+  1287→      // P42-F §10 — cap+1 completeness proof (same law as the PO widget).
+  1288→      lines: { select: { receivedQty: true }, take: cap + 1 },
+  1289→    },
+  1290→  });
+  1291→  return rows.map((r) => {
+  1292→    try {
+  1293→      assertLineCapInvariant(r.lines.length, cap); // P42-F §10
+  1294→      return {
+  1295→        id: r.id,
+  1296→        reference: r.reference,
+  1297→        status: parseGoodsReceiptStatus(r.status),
+  1298→        postedAt: r.postedAt ? r.postedAt.toISOString() : null,
+  1299→        totalReceivedQty: computeReceivedQty(r.lines.map((l) => l.receivedQty)),
+  1300→      };
+  1301→    } catch (error) {
+  1302→      return mapPureGoodsReceiptDomainError(error);
+  1303→    }
+  1304→  });
+  1305→}
+  1306→
+  1307→/** Total received quantity across a PO's POSTED receipts (§282 check). */
+  1308→export const PRODUCT_STOCK_LIMIT = PRODUCT_STOCK_INT32_MAX;
+  1309→

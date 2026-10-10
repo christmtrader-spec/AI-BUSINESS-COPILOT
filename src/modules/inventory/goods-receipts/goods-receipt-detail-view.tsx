@@ -20,6 +20,7 @@ import {
   Download,
   Link2,
   Loader2,
+  PackageMinus,
   Pencil,
   Plus,
   Trash2,
@@ -60,6 +61,27 @@ import {
 } from "./goods-receipts-api";
 import { GoodsReceiptLinePicker } from "./goods-receipt-line-picker";
 import { GoodsReceiptLineDialog } from "./goods-receipt-line-dialog";
+import { GoodsReturnCreateDialog } from "../goods-returns/goods-return-create-dialog";
+
+/** Prompt 43 (§86-§88) — ADDITIVE return facts on the receipt detail. */
+type ReceiptDetailWithReturns = GoodsReceiptDetailDto & {
+  returns?: {
+    returnable: boolean;
+    lines: Array<{
+      goodsReceiptLineId: string;
+      receivedQty: number;
+      returnedQty: number;
+      returnableQty: number;
+    }>;
+    recent: Array<{
+      id: string;
+      reference: string;
+      status: "DRAFT" | "POSTED" | "CANCELLED";
+      postedAt: string | null;
+      totalReturnedQty: number;
+    }>;
+  };
+};
 
 function statusBadge(status: GoodsReceiptStatus, label: string) {
   const styles: Record<GoodsReceiptStatus, string> = {
@@ -76,6 +98,8 @@ function statusBadge(status: GoodsReceiptStatus, label: string) {
 
 export function GoodsReceiptDetailView({ id, role }: { id: string; role: Role }) {
   const t = useTranslations("goodsReceipts");
+  // Prompt 43 (§86-§88) — return-fact labels come from the returns module.
+  const rt = useTranslations("goodsReturns");
   const tCommon = useTranslations("common");
   const tErrors = useTranslations("errors");
   const navigate = useAppStore((s) => s.navigate);
@@ -85,7 +109,7 @@ export function GoodsReceiptDetailView({ id, role }: { id: string; role: Role })
 
   const detail = useQuery({
     queryKey: goodsReceiptKeys.detail(businessId, id),
-    queryFn: () => fetchGoodsReceipt(businessId, id),
+    queryFn: () => fetchGoodsReceipt(businessId, id) as Promise<ReceiptDetailWithReturns>,
     retry: false,
   });
 
@@ -99,9 +123,20 @@ export function GoodsReceiptDetailView({ id, role }: { id: string; role: Role })
   const [headerReference, setHeaderReference] = useState("");
   const [headerNotes, setHeaderNotes] = useState("");
   const [postConflict, setPostConflict] = useState(false);
+  // Prompt 43 (§87) — the Create Goods Return dialog on a POSTED receipt.
+  const [returnCreateOpen, setReturnCreateOpen] = useState(false);
 
   const data = detail.data;
   const isDraft = data?.status === "DRAFT";
+
+  // Prompt 43 (§86/§87) — per-line return facts keyed by receipt line id.
+  const returnFactsById = useMemo(() => {
+    const map = new Map<string, { returnedQty: number; returnableQty: number }>();
+    for (const f of data?.returns?.lines ?? []) {
+      map.set(f.goodsReceiptLineId, { returnedQty: f.returnedQty, returnableQty: f.returnableQty });
+    }
+    return map;
+  }, [data?.returns?.lines]);
 
   // §110 — the picker needs the PO's receivable lines (remaining > 0).
   // Also fetched while editing a line so the dialog can show the current
@@ -401,6 +436,29 @@ export function GoodsReceiptDetailView({ id, role }: { id: string; role: Role })
         <p className="text-muted-foreground text-sm">{t("inventoryNote")}</p>
       )}
 
+      {/* Prompt 43 (§87) — Create Goods Return CTA: shown ONLY on a POSTED
+          receipt when at least one line still has returnableQty > 0. The
+          server revalidates availability at line-add and post time. */}
+      {writable && data.status === "POSTED" && data.returns?.returnable ? (
+        <Card className="border-emerald-500/30 bg-emerald-500/5">
+          <CardContent className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-medium">{rt("createFromReceipt")}</p>
+              <p className="text-muted-foreground text-sm">{rt("createFromReceiptDesc")}</p>
+            </div>
+            <Button
+              type="button"
+              className="shrink-0"
+              onClick={() => setReturnCreateOpen(true)}
+              data-testid="create-goods-return-cta"
+            >
+              <PackageMinus className="size-4" aria-hidden />
+              {rt("createFromReceipt")}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardContent className="pt-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -412,6 +470,8 @@ export function GoodsReceiptDetailView({ id, role }: { id: string; role: Role })
                   variant="ghost"
                   size="sm"
                   onClick={() => {
+                    setHeaderReference(data.reference);
+                    setHeaderNotes(data.notes ?? "");
                     setEditHeaderOpen(true);
                   }}
                 >
@@ -472,6 +532,31 @@ export function GoodsReceiptDetailView({ id, role }: { id: string; role: Role })
                     <span className="font-medium tabular-nums" dir="ltr">{r.receivedQty}</span>
                   ),
                 },
+                // Prompt 43 (§86) — ADDITIVE return facts: received is the
+                // IMMUTABLE gross (§78/§126); returned/returnable are derived
+                // (§36) and never rewrite the receipt (§8).
+                {
+                  id: "returned",
+                  header: rt("returnedQty"),
+                  hideBelow: "md",
+                  align: "end",
+                  cell: (r: GoodsReceiptLineDto) => (
+                    <span className="tabular-nums text-muted-foreground" dir="ltr">
+                      {returnFactsById.get(r.id)?.returnedQty ?? 0}
+                    </span>
+                  ),
+                },
+                {
+                  id: "returnable",
+                  header: rt("returnableQty"),
+                  hideBelow: "md",
+                  align: "end",
+                  cell: (r: GoodsReceiptLineDto) => (
+                    <span className="tabular-nums text-emerald-700 dark:text-emerald-400" dir="ltr">
+                      {returnFactsById.get(r.id)?.returnableQty ?? Math.max(r.receivedQty, 0)}
+                    </span>
+                  ),
+                },
                 ...(canEdit
                   ? [
                       {
@@ -511,6 +596,37 @@ export function GoodsReceiptDetailView({ id, role }: { id: string; role: Role })
           )}
         </CardContent>
       </Card>
+
+      {/* Prompt 43 (§88) — bounded return history (≤ 10). Click navigates
+          to the return's detail deep link. Quantity facts only — no money. */}
+      {data.returns?.recent && data.returns.recent.length > 0 ? (
+        <Card>
+          <CardContent className="pt-4">
+            <h2 className="mb-3 text-sm font-semibold">{rt("returnHistory")}</h2>
+            <div className="flex flex-col gap-2">
+              {data.returns.recent.map((ret) => (
+                <button
+                  key={ret.id}
+                  type="button"
+                  className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-start text-sm transition-colors hover:bg-muted/40"
+                  onClick={() => navigate({ kind: "inventory-goods-return", id: ret.id })}
+                >
+                  <span className="font-medium" dir="auto">{ret.reference}</span>
+                  <span className="text-muted-foreground flex items-center gap-3 text-xs">
+                    <span>{rt(`status_${ret.status}`)}</span>
+                    <span dir="ltr">
+                      {rt("totalReturned")}: {ret.totalReturnedQty}
+                    </span>
+                    {ret.postedAt ? (
+                      <span dir="ltr">{dateFmt.format(new Date(ret.postedAt))}</span>
+                    ) : null}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {pickerOpen ? (
         <GoodsReceiptLinePicker
@@ -715,6 +831,23 @@ export function GoodsReceiptDetailView({ id, role }: { id: string; role: Role })
             </DialogFooter>
           </DialogContent>
         </Dialog>
+      ) : null}
+
+      {/* Prompt 43 (§87) — create a return draft from THIS receipt. */}
+      {returnCreateOpen && data ? (
+        <GoodsReturnCreateDialog
+          businessId={businessId}
+          presetReceipt={{
+            id: data.id,
+            reference: data.reference,
+            supplierNameAtReceipt: data.supplierNameAtReceipt,
+          }}
+          onClose={() => setReturnCreateOpen(false)}
+          onCreated={(returnId) => {
+            setReturnCreateOpen(false);
+            navigate({ kind: "inventory-goods-return", id: returnId });
+          }}
+        />
       ) : null}
     </div>
   );

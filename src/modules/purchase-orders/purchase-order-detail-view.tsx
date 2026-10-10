@@ -420,7 +420,10 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
                 ) : null}
               </div>
             </div>
-            <div className="mt-3 grid gap-4 sm:grid-cols-3">
+            {/* Prompt 43 (§83) — Gross Received / Returned to Supplier /
+                Net Received / Remaining. Quantity labels ONLY — returned
+                units are never expenses or credit notes (§96). */}
+            <div className="mt-3 grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
               <div>
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">{tGr("orderedTotal")}</p>
                 <p className="mt-1 text-lg font-semibold tabular-nums" dir="ltr">
@@ -434,14 +437,28 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
                 </p>
               </div>
               <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">{tGr("returnedToSupplier")}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums text-amber-600 dark:text-amber-400" dir="ltr">
+                  {data.receiving.returnedQty ?? 0}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">{tGr("netReceived")}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums text-emerald-600 dark:text-emerald-400" dir="ltr">
+                  {data.receiving.netReceivedQty ?? data.receiving.receivedQty}
+                </p>
+              </div>
+              <div>
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">{tGr("remainingTotal")}</p>
                 <p className="mt-1 text-lg font-semibold tabular-nums" dir="ltr">
                   {data.receiving.remainingQty}
                 </p>
               </div>
             </div>
+            {/* Prompt 43 (§85) — a CLOSED PO stays closed even when a return
+                raises the derived remaining; receiving remains unavailable. */}
             {status === "CLOSED" && data.receiving.remainingQty > 0 ? (
-              <p className="mt-2 text-xs text-muted-foreground">{tGr("receivingBlockedClosed")}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{tGr("poClosedAfterReturn")}</p>
             ) : null}
           </CardContent>
         </Card>

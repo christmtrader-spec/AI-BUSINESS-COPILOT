@@ -60,7 +60,16 @@ import {
   stockOverflowsInt32,
   type GoodsReceiptStatus,
 } from "./types";
+import { computeNetReceivedQty } from "@/lib/inventory/goods-return/types";
 import { purchaseOrderLineCap } from "@/lib/purchase-orders/types";
+import {
+  // P43 §80 — the ONE canonical POSTED-returned-quantity aggregate for a
+  // PO line + the corruption mapper. The over-receipt law now runs on
+  // NET received (gross − returned) — never a second return calculation.
+  sumPostedReturnedQtyForPoLine,
+  sumPostedReturnedQtyForPoLines,
+  mapPureGoodsReturnDomainError,
+} from "@/lib/inventory/goods-return/service";
 import {
   goodsReceiptDetailDto,
   goodsReceiptLineDto,
@@ -153,6 +162,35 @@ function remainingQtyOrIntegrity(orderedQty: number, receivedQty: number): numbe
   } catch (error) {
     return mapPureGoodsReceiptDomainError(error);
   }
+}
+
+/**
+ * P43 §77-§82 — the ONE canonical NET receiving quantity for a PO line:
+ *   gross = SUM(POSTED GoodsReceiptLine.receivedQty)
+ *   returned = SUM(POSTED GoodsReturnLine.returnedQty)   [DB aggregate]
+ *   net = gross − returned                                [§79 pure law]
+ * returned > gross is return-history corruption (GOODS_RETURN_CORRUPT_HISTORY
+ * 500); net > ordered is receiving-history corruption
+ * (GOODS_RECEIPT_CORRUPT_RECEIVED 500). Nothing is ever clamped. Every
+ * remaining-check in this service (line add §66, line update §68, receipt
+ * POST §39 step 8) and the PO receiving summary consume THIS function —
+ * there is no second gross/return calculation anywhere (§80).
+ */
+async function netReceivedForPoLine(
+  tx: Tx,
+  purchaseOrderLineId: string,
+  orderedQty: number,
+): Promise<{ gross: number; returned: number; net: number; remaining: number }> {
+  const gross = await sumPostedQtyForPoLine(tx, purchaseOrderLineId);
+  const returned = await sumPostedReturnedQtyForPoLine(tx, purchaseOrderLineId);
+  let net: number;
+  try {
+    net = computeNetReceivedQty(gross, returned); // §79 — returned > gross throws
+  } catch (error) {
+    mapPureGoodsReturnDomainError(error); // stable GOODS_RETURN_CORRUPT_HISTORY 500
+  }
+  const remaining = remainingQtyOrIntegrity(orderedQty, net); // §100 — net > ordered throws
+  return { gross, returned, net, remaining };
 }
 
 /**
@@ -701,14 +739,15 @@ export async function addGoodsReceiptLine(input: {
     await assertLineCap(tx, header.id, cap); // §71 — defensive count
 
     // §66 — ADVISORY remaining check at line-add time: receivedQty ≤
-    // (ordered − POSTED received). Draft lines of OTHER receipts are
-    // deliberately NOT subtracted — over-allocation across drafts is the
-    // documented §67 stale-draft scenario and only POST is authoritative.
-    // P42-F §9 — corrupted history (> ordered) surfaces as the stable
-    // integrity 500, never a raw error and never a clamp.
-    const alreadyPosted = await sumPostedQtyForPoLine(tx, poLine.id);
-    const remaining = remainingQtyOrIntegrity(poLine.orderedQty, alreadyPosted); // §172
-    if (exceedsRemaining(poLine.orderedQty, alreadyPosted, input.receivedQty)) {
+    // (ordered − POSTED received + POSTED returns). Draft lines of OTHER
+    // receipts are deliberately NOT subtracted — over-allocation across
+    // drafts is the documented §67 stale-draft scenario and only POST is
+    // authoritative. P42-F §9 / P43 §79-§80 — corrupted gross/return
+    // history surfaces as the stable integrity 500, never a raw error and
+    // never a clamp. NET LAW: remaining = ordered − (gross − returned).
+    const { remaining } = await netReceivedForPoLine(tx, poLine.id, poLine.orderedQty);
+    const alreadyNet = poLine.orderedQty - remaining; // net received (gross − returned)
+    if (exceedsRemaining(poLine.orderedQty, alreadyNet, input.receivedQty)) {
       throw new ApiError(
         409,
         GOODS_RECEIPT_ERROR_CODES.EXCEEDS_REMAINING,
@@ -785,15 +824,16 @@ export async function updateGoodsReceiptLine(input: {
     if (!line) throw new ApiError(404, "NOT_FOUND", "Receipt line not found.");
 
     // §68 — the receivedQty still respects the advisory remaining check
-    // (POSTED sums only — see the §66 note in addGoodsReceiptLine).
+    // (POSTED sums only, NET of returns — see the §66 note in
+    // addGoodsReceiptLine).
     const poLine = await tx.purchaseOrderLine.findFirst({
       where: { id: line.purchaseOrderLineId },
       select: { orderedQty: true },
     });
     if (!poLine) throw new ApiError(404, "NOT_FOUND", "Purchase order line not found.");
-    const alreadyPosted = await sumPostedQtyForPoLine(tx, line.purchaseOrderLineId);
-    const remaining = remainingQtyOrIntegrity(poLine.orderedQty, alreadyPosted); // P42-F §9
-    if (exceedsRemaining(poLine.orderedQty, alreadyPosted, input.receivedQty)) {
+    const { remaining } = await netReceivedForPoLine(tx, line.purchaseOrderLineId, poLine.orderedQty); // P43 §80
+    const alreadyNet = poLine.orderedQty - remaining; // net received (gross − returned)
+    if (exceedsRemaining(poLine.orderedQty, alreadyNet, input.receivedQty)) {
       throw new ApiError(
         409,
         GOODS_RECEIPT_ERROR_CODES.EXCEEDS_REMAINING,
@@ -948,6 +988,9 @@ export async function postGoodsReceipt(input: {
       }
 
       // §39 steps 5-8 — product existence + authoritative remaining check.
+      // P43 §80 — the check is RETURN-AWARE: remaining = ordered − (gross
+      // received − POSTED returned). A replacement receipt after a valid
+      // return passes; over-receiving beyond the net remainder fails.
       const product = await tx.product.findFirst({
         where: { id: line.productId, businessId: input.businessId }, // §30/§35
         select: { id: true, stockQty: true },
@@ -961,13 +1004,14 @@ export async function postGoodsReceipt(input: {
         );
       }
 
-      const alreadyPosted = await sumPostedQtyForPoLine(tx, line.purchaseOrderLineId);
-      const remaining = remainingQtyOrIntegrity(
+      const { remaining } = await netReceivedForPoLine(
+        tx,
+        line.purchaseOrderLineId,
         line.purchaseOrderLine.orderedQty,
-        alreadyPosted,
-      ); // §100 — throws on corrupted over-received history (§283, P42-F §9)
-      if (exceedsRemaining(line.purchaseOrderLine.orderedQty, alreadyPosted, line.receivedQty)) {
-        // §15/§16/§67 — the HARD over-receipt law, final authority.
+      );
+      const alreadyNet = line.purchaseOrderLine.orderedQty - remaining; // net received
+      if (exceedsRemaining(line.purchaseOrderLine.orderedQty, alreadyNet, line.receivedQty)) {
+        // §15/§16/§67/§125 — the HARD net over-receipt law, final authority.
         throw new ApiError(
           409,
           GOODS_RECEIPT_ERROR_CODES.EXCEEDS_REMAINING,
@@ -1100,11 +1144,23 @@ export async function getPurchaseOrderReceivingSummary(input: {
   purchaseOrderId: string;
 }): Promise<{
   orderedQty: number;
+  /** §78 — gross received history keeps its meaning: SUM(POSTED received). */
   receivedQty: number;
+  /** §77 — SUM(POSTED GoodsReturnLine.returnedQty) for this PO's lines. */
+  returnedQty: number;
+  /** §77 — gross − returned (the net receiving quantity). */
+  netReceivedQty: number;
   remainingQty: number;
   receiptCount: number;
   fullyReceived: boolean;
-  lines: { lineId: string; orderedQty: number; receivedQty: number; remainingQty: number }[];
+  lines: {
+    lineId: string;
+    orderedQty: number;
+    receivedQty: number;
+    returnedQty: number;
+    netReceivedQty: number;
+    remainingQty: number;
+  }[];
 }> {
   const po = await db.purchaseOrder.findFirst({
     where: { id: input.purchaseOrderId, businessId: input.businessId }, // §89
@@ -1139,36 +1195,63 @@ export async function getPurchaseOrderReceivingSummary(input: {
       grouped.map((g) => [g.purchaseOrderLineId, g._sum.receivedQty ?? 0]),
     );
 
+    // P43 §77/§80 — sum POSTED return lines per PO line via the ONE
+    // canonical grouped aggregate (§141 — bounded batch, never the PO's
+    // whole return history in memory).
+    const returnedByLine = await sumPostedReturnedQtyForPoLines(
+      tx,
+      poLines.map((l) => l.id),
+    );
+
     // §104-analog — receipt COUNT (POSTED receipts touching this PO).
     const receiptCount = await tx.goodsReceipt.count({
       where: { purchaseOrderId: po.id, status: "POSTED" },
     });
 
     let orderedQty = 0;
-    let receivedQty = 0;
+    let receivedQty = 0; // §78 — GROSS received (meaning preserved)
+    let returnedQty = 0;
     const lines = poLines.map((l) => {
-      const lineReceived = receivedByLine.get(l.id) ?? 0;
-      const lineRemaining = computeRemainingQty(l.orderedQty, lineReceived); // §100
+      const lineReceived = receivedByLine.get(l.id) ?? 0; // gross
+      const lineReturned = returnedByLine.get(l.id) ?? 0;
+      // §79 — net = gross − returned; corruption (returned > gross, net >
+      // ordered) surfaces through the ONE mapping — never clamped.
+      const lineNet = computeNetReceivedQty(lineReceived, lineReturned);
+      const lineRemaining = remainingQtyOrIntegrity(l.orderedQty, lineNet); // §100
       orderedQty += l.orderedQty;
       receivedQty += lineReceived;
+      returnedQty += lineReturned;
       return {
         lineId: l.id,
         orderedQty: l.orderedQty,
         receivedQty: lineReceived,
+        returnedQty: lineReturned,
+        netReceivedQty: lineNet,
         remainingQty: lineRemaining,
       };
     });
-    const remainingQty = computeRemainingQty(orderedQty, receivedQty); // §100
+    // §79 — the SAME corruption law applies to the document-level totals.
+    const netReceivedQty = computeNetReceivedQty(receivedQty, returnedQty);
+    const remainingQty = remainingQtyOrIntegrity(orderedQty, netReceivedQty);
 
     return {
       orderedQty,
       receivedQty,
+      returnedQty,
+      netReceivedQty,
       remainingQty,
       receiptCount,
-      fullyReceived: remainingQty === 0, // §101 — derived, never stored
+      fullyReceived: remainingQty === 0, // §84 — NET-based fully received
       lines,
     };
-  }).catch((error) => mapPureGoodsReceiptDomainError(error));
+  }).catch((error) => {
+    // P43 §79 — corrupted RETURN history surfaces under the stable P43
+    // code; corrupted RECEIVING history keeps the stable P42 code.
+    if (error instanceof Error && error.name === "GoodsReturnIntegrityError") {
+      mapPureGoodsReturnDomainError(error);
+    }
+    return mapPureGoodsReceiptDomainError(error);
+  });
 }
 
 /** §104 — bounded recent receipts for the PO detail (take 10, §105). */

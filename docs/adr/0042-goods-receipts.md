@@ -34,7 +34,7 @@ Prompt 41 delivered procurement commitments (Purchase Orders) with the explicit 
 ## Consequences
 
 - Two write paths (P41/P42) now share one serialization utility; behavior of P41 is unchanged (regression suite re-run).
-- Posted receipts are immutable; correcting a mistake requires a NEW compensating receipt (negative adjustments remain separate manual functionality).
+- Posted receipts are immutable. A legitimate physical return uses a GoodsReturn document (Prompt 43). Other inventory corrections must use the established authorized inventory-adjustment process — a positive receipt cannot compensate for a stock overstatement (wording updated by Prompt 43 §178).
 - Receiving progress on the PO is derived data, recomputed with grouped aggregates — always consistent, no counters to maintain.
 - Corruption policy: unknown statuses, negative stock and over-received history surface controlled 500s — never silently repaired.
 

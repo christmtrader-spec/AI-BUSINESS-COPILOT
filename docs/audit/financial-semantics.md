@@ -239,3 +239,25 @@ A GoodsReceipt is a **physical inventory movement**, not a financial document. F
 **Operational stock value only:** the derived figure `stockQty × costPriceMinor` rises when goods are received because the QUANTITY rose. That figure remains operational inventory value (§2.4 of this document) — it is NOT asset recognition, NOT a balance-sheet posting, and NOT an inventory valuation layer. No costing method (FIFO/LIFO/weighted average) exists.
 
 **Wording law:** the receipt UI uses receiving vocabulary only (receive / received / remaining). Persian labels use رسید انبار / ثبت دریافت کالا / مقدار دریافت‌شده — never پرداخت / هزینه / بدهی in receipt copy (§245; static scan rule 144). The PO close warning now states the receiving consequence explicitly ("Closing prevents further goods receipt. Unreceived quantities remain unreceived. No financial payable is created.").
+
+
+---
+
+## 8. Goods Return (Prompt 43)
+
+A GoodsReturn is a **physical inventory outflow** — units physically sent back to a supplier from a POSTED receipt. Full domain review: `docs/product/goods-returns.md`.
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Physical inventory movement | **YES** (decrease, posting only) | `tx.product.update({ data: { stockQty: newStock } })` with `newStock = stockQty − returnedQty` + one `InventoryAdjustment` per posted line (`delta = -returnedQty`, reason `Goods return <reference>`) — `src/lib/inventory/goods-return/service.ts` post path |
+| Expense | **NO** | no `expense.create` anywhere in the P43 domain (static scan rule 158); E2E pins Expense count unchanged (§186) |
+| Payment | **NO** | static scan rule 158; E2E §186 |
+| Sale | **NO** | static scan rule 158; E2E §186 |
+| Credit Note | **NO** | no credit-note model or wording exists; the domain contains no money fields at all (§7) |
+| Supplier Statement | **NO** | statements derive from Expense+Payment only; returns never enter the statement pipeline (static scan rule 159) |
+| Payables Aging | **NO** | returns add no payable balance and mutate no aging input; E2E §186 |
+| Double Entry | **NO** | no journal/ledger/COGS vocabulary in P43 code (static scan rule 162-family) |
+| InventoryAdjustment | **YES** — one NEGATIVE row per posted line | `delta = -returnedQty` (§44); draft/cancelled returns create none |
+| Product.stockQty | **YES** — decreases on POST only | exact integer arithmetic; negative persisted stock is a controlled 500 (never repaired §41/§164); `newStock < 0` impossible |
+
+**Correction language (§178):** Posted receipts remain immutable. A legitimate physical return uses a GoodsReturn document. Other inventory corrections must use the established authorized inventory-adjustment process. A positive GoodsReceipt cannot compensate for a stock overstatement, and a GoodsReturn cannot reverse an arbitrary historical stock mutation — it only documents a genuine physical return against one specific posted receipt.

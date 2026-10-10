@@ -15,6 +15,7 @@ import {
   CreditCard,
   FileText,
   PackageCheck,
+  PackageMinus,
   Pencil,
   ReceiptText,
   Trash2,
@@ -60,6 +61,7 @@ export function SupplierDetailView({
   const tErrors = useTranslations("errors");
   const tPo = useTranslations("purchaseOrders");
   const tGr = useTranslations("goodsReceipts");
+  const tRt = useTranslations("goodsReturns");
   const queryClient = useQueryClient();
   const businessId = useAppStore((s) => s.activeBusinessId);
   const navigate = useAppStore((s) => s.navigate);
@@ -257,6 +259,29 @@ export function SupplierDetailView({
             trailing: `${tGr("receivedTotal")}: ${gr.totalReceivedQty}`,
           }))}
           onOpenRow={(id) => navigate({ kind: "inventory-goods-receipt", id })}
+        />
+      ) : null}
+
+      {/* Prompt 43 (§100) — bounded goods-return history (≤10). Snapshot
+          identity (supplierNameAtReturn); NO financial statement
+          contamination — returns are never payables and never mutate the
+          statement or aging views. */}
+      {data.recentGoodsReturns && data.recentGoodsReturns.length > 0 ? (
+        <RelatedRecordList
+          title={tRt("supplierHistory")}
+          entity={null}
+          emptyText={tRt("noSupplierHistory")}
+          onOpen={() => undefined}
+          items={data.recentGoodsReturns.map((ret) => ({
+            id: ret.id,
+            icon: PackageMinus,
+            primary: ret.reference,
+            secondary: ret.postedAt
+              ? `${tRt("postedAtLabel")}: ${fmtDate(business, ret.postedAt)}`
+              : tRt(`status_${ret.status}`),
+            trailing: `${tRt("totalReturned")}: ${ret.totalReturnedQty}`,
+          }))}
+          onOpenRow={(id) => navigate({ kind: "inventory-goods-return", id })}
         />
       ) : null}
 

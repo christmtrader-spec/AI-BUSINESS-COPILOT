@@ -76,6 +76,7 @@ export function ProductDetailView({
   const tStock = useTranslations("inventory.stocktakes");
   const tPo = useTranslations("purchaseOrders");
   const tGr = useTranslations("goodsReceipts");
+  const tRt = useTranslations("goodsReturns");
 
   const writable = can(role, "data:write");
   const p = data.product;
@@ -339,6 +340,46 @@ export function ProductDetailView({
                     <span className="flex items-center gap-2">
                       <span className="text-sm font-semibold tabular-nums" dir="ltr">
                         +{gr.receivedQty}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Prompt 43 (§99) — bounded goods-return history (≤10). Return
+          reference, source receipt, returned quantity, reason and date —
+          NO money (returns are inventory events, never financial ones). */}
+      <Card data-testid="product-goods-return-history">
+        <CardContent className="pt-6">
+          <h2 className="mb-3 text-base font-semibold">{tRt("productHistory")}</h2>
+          {!data.recentGoodsReturns || data.recentGoodsReturns.length === 0 ? (
+            <p className="text-muted-foreground text-sm">{tRt("noProductHistory")}</p>
+          ) : (
+            <ul className="divide-y">
+              {data.recentGoodsReturns.map((ret) => (
+                <li key={`${ret.id}`}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40"
+                    onClick={() => navigate({ kind: "inventory-goods-return", id: ret.id })}
+                    aria-label={`${tRt("productHistory")}: ${ret.reference}`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium" dir="auto">{ret.reference}</span>
+                      <span className="text-muted-foreground block truncate text-xs" dir="ltr">
+                        {ret.goodsReceiptReferenceAtReturn} · {tRt(`reason_${ret.reasonCode}`)}
+                        {ret.postedAt
+                          ? ` · ${tRt("postedAtLabel")}: ${new Date(ret.postedAt).toISOString().slice(0, 10)}`
+                          : ` · ${tRt(`status_${ret.status}`)}`}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <span className="text-sm font-semibold tabular-nums text-amber-600 dark:text-amber-400" dir="ltr">
+                        −{ret.returnedQty}
                       </span>
                     </span>
                   </button>

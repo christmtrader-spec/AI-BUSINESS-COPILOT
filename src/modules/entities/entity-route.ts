@@ -28,6 +28,8 @@ export function entityView(entity: EntityType, id: string): AppView {
  * result deep-links to the dedicated #/purchase-orders/<id> view.
  * Prompt 42 (§122/§119) — GOODS_RECEIPT likewise deep-links to the
  * dedicated #/inventory/goods-receipts/<id> view.
+ * Prompt 43 (§91/§101) — GOODS_RETURN deep-links to the dedicated
+ * #/inventory/goods-returns/<id> view.
  */
 export function entityViewFromSearchItem(item: SearchResultItem): AppView {
   if (item.type === "PURCHASE_ORDER") {
@@ -35,6 +37,9 @@ export function entityViewFromSearchItem(item: SearchResultItem): AppView {
   }
   if (item.type === "GOODS_RECEIPT") {
     return { kind: "inventory-goods-receipt", id: item.id };
+  }
+  if (item.type === "GOODS_RETURN") {
+    return { kind: "inventory-goods-return", id: item.id };
   }
   const entity = SEARCH_TYPE_TO_ENTITY[item.type];
   return { kind: "entity", entity, id: item.id };

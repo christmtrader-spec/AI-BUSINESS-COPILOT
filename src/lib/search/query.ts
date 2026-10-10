@@ -18,10 +18,12 @@ import { db } from "@/lib/db";
 import { SEARCH_PER_ENTITY_TAKE } from "./schema";
 import { purchaseOrderLineCap } from "@/lib/purchase-orders/types";
 import { goodsReceiptLineCap } from "@/lib/inventory/goods-receipt/types";
+import { goodsReturnLineCap } from "@/lib/inventory/goods-return/types";
 import {
   customerCandidate,
   expenseCandidate,
   goodsReceiptCandidate,
+  goodsReturnCandidate,
   leadCandidate,
   opportunityCandidate,
   paymentCandidate,
@@ -32,6 +34,7 @@ import {
   type ExpenseRow,
   type OpportunityRow,
   type GoodsReceiptSearchRow,
+  type GoodsReturnSearchRow,
   type PaymentRow,
   type PurchaseOrderSearchRow,
   type SaleRow,
@@ -391,6 +394,60 @@ async function searchGoodsReceipts(
 }
 
 /**
+ * Prompt 43 (§101/§102) — goods-return prefilter: return reference, source
+ * receipt reference snapshot, PO reference snapshot, supplier snapshot AND
+ * product snapshot names/SKUs. Tenant scope is absolute (§102 — businessId
+ * in every WHERE). NO money exists in this domain and NO stock quantities
+ * are selected. Draft/cancelled returns stay searchable (documents, not
+ * state).
+ */
+async function searchGoodsReturns(
+  businessId: string,
+  variants: string[],
+): Promise<SearchCandidate[]> {
+  const rows = await db.goodsReturn.findMany({
+    where: {
+      businessId, // §102 — server-derived tenant scope, never client input
+      OR: [
+        ...variants.map((v) => ({ reference: { contains: v } })),
+        ...variants.map((v) => ({ goodsReceiptReferenceAtReturn: { contains: v } })),
+        ...variants.map((v) => ({ purchaseOrderReferenceAtReturn: { contains: v } })),
+        ...variants.map((v) => ({ supplierNameAtReturn: { contains: v } })),
+        ...variants.map((v) => ({
+          lines: {
+            some: {
+              OR: [
+                { productNameAtReturn: { contains: v } },
+                { skuAtReturn: { contains: v } },
+              ],
+            },
+          },
+        })),
+      ],
+    },
+    select: {
+      id: true,
+      reference: true,
+      status: true,
+      supplierNameAtReturn: true,
+      goodsReceiptReferenceAtReturn: true,
+      purchaseOrderReferenceAtReturn: true,
+      createdAt: true,
+      // §101 — line SNAPSHOT TEXT (name/SKU) feeds the ranker's match
+      // fields; bounded by the SAME P43 line-cap law (never unbounded).
+      // No quantities and no money selected.
+      lines: {
+        select: { productNameAtReturn: true, skuAtReturn: true },
+        take: goodsReturnLineCap(process.env.GOODS_RETURN_MAX_LINES),
+      },
+    },
+    orderBy: { createdAt: "desc" as const },
+    take: SEARCH_PER_ENTITY_TAKE,
+  });
+  return rows.map((r) => goodsReturnCandidate(r as GoodsReturnSearchRow));
+}
+
+/**
  * Run all requested entity searches concurrently (§6) and return the
  * combined candidate pool (pre-dedup, pre-rank). Bounded to
  * types.length × SEARCH_PER_ENTITY_TAKE rows.
@@ -435,6 +492,9 @@ export async function fetchSearchCandidates(options: {
         break;
       case "GOODS_RECEIPT":
         tasks.push(searchGoodsReceipts(businessId, variants));
+        break;
+      case "GOODS_RETURN":
+        tasks.push(searchGoodsReturns(businessId, variants));
         break;
     }
   }

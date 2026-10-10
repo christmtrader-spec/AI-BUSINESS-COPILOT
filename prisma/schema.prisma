@@ -85,6 +85,9 @@ model User {
   // Prompt 42 — Goods Receipts (§21): creator link is Restrict — the same
   // creator-linked policy as P40/P41 (documented in the deletion matrix).
   goodsReceiptCreations       GoodsReceipt[]            @relation("GoodsReceiptCreator")
+  // Prompt 43 — Goods Returns (§24): creator link is Restrict — the same
+  // creator-linked policy as P40/P41/P42 (documented in the deletion matrix).
+  goodsReturnCreations        GoodsReturn[]             @relation("GoodsReturnCreator")
 }
 
 // ---------------------------------------------------------------------------
@@ -297,6 +300,8 @@ model Business {
   purchaseOrders       PurchaseOrder[]
   // Prompt 42 — goods receipt documents (tenant-scoped, cascade; §22).
   goodsReceipts        GoodsReceipt[]
+  // Prompt 43 — goods return documents (tenant-scoped, cascade; §25).
+  goodsReturns         GoodsReturn[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -450,6 +455,9 @@ model Product {
   // Prompt 42 — receipt lines that moved this product's stock (the line
   // keeps its own historical snapshot; §28-§30).
   goodsReceiptLines GoodsReceiptLine[]
+  // Prompt 43 — return lines that moved this product's stock back to the
+  // supplier (the line keeps its own historical snapshot; §30).
+  goodsReturnLines GoodsReturnLine[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -2014,6 +2022,9 @@ model GoodsReceipt {
   updatedAt DateTime @updatedAt
 
   lines GoodsReceiptLine[]
+  // Prompt 43 — returns created FROM this receipt (§13/§14). Cascade mirrors
+  // the tenant-deletion path: a return never outlives its source receipt.
+  returns GoodsReturn[]
 
   @@unique([businessId, reference])
   // §179 — list/filter/query indexes.
@@ -2064,4 +2075,141 @@ model GoodsReceiptLine {
   @@index([purchaseOrderLineId])
   @@index([productId])
   @@index([goodsReceiptId])
+
+  // Prompt 43 — return lines that returned units of THIS receipt line
+  // (§29 — the same receipt line may be returned across many documents).
+  returnLines GoodsReturnLine[]
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 43 — Goods Returns / Supplier Returns (§2/§24).
+// GoodsReturn = "the business has PHYSICALLY RETURNED these quantities of
+// products to the supplier, sourced from one previously POSTED receipt".
+// It is the third concept in the hierarchy PURCHASE ORDER → GOODS RECEIPT →
+// GOODS RETURN → PRODUCT STOCK → INVENTORY ADJUSTMENT HISTORY (§4/§5).
+//
+// SEMANTIC LAW (§4/§6/§7): a return is a PHYSICAL INVENTORY OUTFLOW ONLY.
+// Posting DECREASES Product.stockQty and creates ONE NEGATIVE
+// InventoryAdjustment per line (delta = -returnedQty). It NEVER creates an
+// Expense, Payment, Sale, Credit Note, supplier-statement movement,
+// payable/aging row or any accounting entry (§7). It contains NO MONEY.
+//
+// RECEIPT IMMUTABILITY (§8): a return NEVER mutates its source receipt —
+// GoodsReceipt.status, receivedQty, snapshots and lines stay frozen forever;
+// returned quantities live ONLY here (§34/§126/§130 — no PARTIALLY_RETURNED
+// receipt status, no receipt rewrite).
+//
+// LIFECYCLE (§9): DRAFT → POSTED | CANCELLED. There is deliberately NO
+// POSTED → CANCELLED — a POSTED return is immutable historical inventory
+// evidence (§11); CANCELLED is terminal (§12).
+// ---------------------------------------------------------------------------
+model GoodsReturn {
+  id String @id @default(cuid())
+
+  // §25 — tenant scope is ALWAYS the authenticated membership, never client
+  // input. Cascade mirrors every other tenant document.
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  // §13/§14 — exactly ONE source receipt per return (multiple lines from
+  // that one receipt are allowed; combining receipts is not). The receipt
+  // must be POSTED at create AND at post time. Cascade mirrors P42: the
+  // receipt is business-cascaded, so the FK only ever fires at business
+  // deletion (§120 — no user-facing delete for either document).
+  goodsReceiptId String
+  goodsReceipt   GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+
+  // §19 — business-local unique reference, DB-enforced (concurrency-safe:
+  // duplicate inserts lose the race with a constraint error → 409 §21).
+  reference String
+  // §9 — closed vocabulary DRAFT|POSTED|CANCELLED. Transitions are
+  // server-authoritative through the dedicated post/cancel endpoints.
+  status    String   @default("DRAFT")
+
+  // §16 — supplier identity snapshot copied from the receipt's
+  // ALREADY-FROZEN supplierNameAtReceipt (never the live Supplier.name —
+  // rename/soft-delete must not rewrite return history §31).
+  supplierNameAtReturn String
+  // §17 — receipt reference snapshot at return creation (historical
+  // readability must not depend exclusively on a live relation §31).
+  goodsReceiptReferenceAtReturn String
+  // §18 — PO reference snapshot copied from the receipt's
+  // purchaseOrderReferenceAtReceipt. Snapshot only — never client-authored.
+  purchaseOrderReferenceAtReturn String
+
+  // §22 — optional free text (≤2000 chars); document data only — never
+  // logged to audit bodies, never sent to AI, never indexed into search.
+  notes String?
+
+  createdByUserId String
+  createdByUser   User @relation("GoodsReturnCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  // §43 step 19 — postedAt is server-generated UTC at the post transition;
+  // never client-controlled. cancelledAt mirrors it for the cancel
+  // transition (DRAFT-only, §12).
+  postedAt    DateTime?
+  cancelledAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines GoodsReturnLine[]
+
+  @@unique([businessId, reference])
+  // §119 — list/filter/query indexes.
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+  @@index([businessId, postedAt])
+  @@index([businessId, goodsReceiptId])
+}
+
+// GoodsReturnLine = one product physically returned within a return
+// document (§27). A receipt LINE appears AT MOST ONCE per return (§29 —
+// DB-enforced) but MAY appear across many different returns (§29/§35 —
+// partial returns). returnedQty is a whole-unit integer ≥ 1 (§32);
+// a return contains NO price columns (§7). Snapshots (§30) are copied
+// from the SOURCE GoodsReceiptLine's ALREADY-FROZEN snapshot columns —
+// never from the live Product row (§30/§31).
+model GoodsReturnLine {
+  id String @id @default(cuid())
+
+  goodsReturnId String
+  goodsReturn   GoodsReturn @relation(fields: [goodsReturnId], references: [id], onDelete: Cascade)
+
+  // §28 — the source receipt line is the immutable quantity authority
+  // (receivedQty §34). Cascade mirrors GoodsReceiptLine→PurchaseOrderLine:
+  // the chain only ever fires at business deletion (§120).
+  goodsReceiptLineId String
+  goodsReceiptLine   GoodsReceiptLine @relation(fields: [goodsReceiptLineId], references: [id], onDelete: Cascade)
+
+  // §28/§47 — the product derives from GoodsReceiptLine.productId (NEVER
+  // client authority). Restrict mirrors P42: product soft-delete keeps
+  // history; a hard product delete can never silently destroy return
+  // evidence.
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  // §32 — integer 1..GOODS_RETURN_QTY_MAX whole units. No floats.
+  returnedQty Int
+
+  // §23 — closed vocabulary DAMAGED|WRONG_ITEM|QUALITY_ISSUE|EXCESS|OTHER
+  // (SQLite has no Prisma enums; validated with zod at every boundary).
+  reasonCode String
+
+  // §30 — historical product identity copied from the RECEIPT LINE
+  // snapshot (never the live Product row — silent history drift avoided,
+  // §31 — history stays readable across renames/soft-deletes).
+  productNameAtReturn String
+  skuAtReturn         String?
+  unitAtReturn        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // §29 — at most once per return document…
+  @@unique([goodsReturnId, goodsReceiptLineId])
+  // §119 — …but many returns per receipt line/product need reverse indexes.
+  @@index([goodsReceiptLineId])
+  @@index([productId])
+  @@index([goodsReturnId])
 }
