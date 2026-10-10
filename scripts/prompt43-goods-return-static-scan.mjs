@@ -219,20 +219,23 @@ record("59. NO in-memory history findMany for the single-line sum", (() => {
   return m.includes(".aggregate({") && !m.includes(".findMany(");
 })());
 record("60. grouped multi-line sums (no N+1, §141)", /sumPostedReturnedQtyForReceiptLines[\s\S]*?groupBy/.test(SERVICE_CODE) || /groupBy\(\{[\s\S]*?goodsReceiptLineId/.test(SERVICE_CODE));
-record("61. aggregate re-validated (integer, ≥0, never clamped)", (() => {
+record("61. aggregate re-validated (SAFE integer, ≥0, never clamped, §8)", (() => {
   const m = SERVICE_CODE.match(/function validateReturnedSum[\s\S]*?\n\}/)?.[0] ?? "";
-  return m.includes("Number.isInteger") && m.includes("sum < 0");
+  return m.includes("Number.isSafeInteger") && m.includes("sum < 0");
 })());
 record("62. POSTED-only aggregate filter (§9 — drafts never counted)", (SERVICE_CODE.match(/status: "POSTED"/g) ?? []).length >= 4);
 
 /* --------------------------- 12. read completeness (§76) ------------------- */
 record("63. ≥5 cap+1 completeness reads", (SERVICE_CODE.match(/cap \+ 1/g) ?? []).length >= 5);
 record("64. NO bare take:cap truncation", !/take: cap,/.test(SERVICE_CODE));
-record("65. list _count consistency invariant", /_count\.lines !== row\.lines\.length/.test(SERVICE_CODE));
-record("66. ONE cap-invariant failure helper (§76)", /function assertLineCapInvariant/.test(SERVICE_CODE));
+record("65. list _count consistency invariant (§16 — canonical validator + explicit mismatch arm)", (() => {
+  const list = SERVICE_CODE.slice(SERVICE_CODE.indexOf("export async function listGoodsReturns"), SERVICE_CODE.indexOf("/* -------------------------------- detail"));
+  return list.includes("assertGoodsReturnLineSetComplete(row.lines.length, row._count.lines, cap)");
+})());
+record("66. ONE cap-invariant law: the pure canonical validator + ONE mapper branch (§76/§15)", TYPES_CODE.includes("export function assertGoodsReturnLineSetComplete") && SERVICE_CODE.includes("error.message.includes(GOODS_RETURN_LINE_CAP_INVARIANT)"));
 record("67. detail read enforces the invariant", (() => {
   const m = SERVICE_CODE.split("export async function getGoodsReturn")[1]?.split("/* ------------------------------ header patch")[0] ?? "";
-  return m.includes("assertLineCapInvariant");
+  return m.includes("assertGoodsReturnLineSetComplete");
 })());
 record("68. canonical cap-invariant code (§76/§142)", SERVICE_CODE.includes("GOODS_RETURN_LINE_CAP_INVARIANT") && TYPES_CODE.includes('GOODS_RETURN_LINE_CAP_INVARIANT = "GOODS_RETURN_LINE_CAP_INVARIANT"'));
 
@@ -345,7 +348,11 @@ record("94. patch schema has no goodsReceiptId/status (§59)", (() => {
   const m = SCHEMA_CODE.split("export const goodsReturnUpdateSchema")[1]?.split("export const")[0] ?? "";
   return !m.includes("goodsReceiptId") && !m.includes("status:");
 })());
-record("95. strict calendar dates (§74 — no rollover)", /isValidCalendarDate/.test(SCHEMA_CODE) && /2026-02-31/.test("") === false && SCHEMA_CODE.includes("daysInMonth"));
+record("95. strict calendar dates (§74 — no rollover, ONE canonical law)", (() => {
+  // The canonical validator lives in types.ts; the schema re-exports it.
+  const t = TYPES_CODE;
+  return t.includes("export function isValidCalendarDate") && t.includes("daysInMonth") && SCHEMA_CODE.includes("export { isValidCalendarDate }") && !SCHEMA_CODE.includes("const daysInMonth");
+})());
 
 /* --------------------------- 18. DTO allowlists ---------------------------- */
 record("96. DTO mappers parse status centrally (never Draft)", (DTO_CODE.match(/parseGoodsReturnStatus/g) ?? []).length >= 1);
@@ -533,6 +540,134 @@ record("172. data-import doc documents the export-only policy (§180)", read("do
 record("173. backup-restore plan updated (§181)", read("docs/deployment/backup-restore-plan.md").includes("GoodsReturn"));
 record("174. deletion matrix updated (§120)", read("docs/legal/data-deletion-matrix.md").includes("GoodsReturn"));
 record("175. ARCHITECTURE mentions the goods-return domain (§174)", read("docs/ARCHITECTURE.md").includes("GoodsReturn") || read("docs/ARCHITECTURE.md").toLowerCase().includes("goods return"));
+
+/* ------------------ 29. P43-F correctness-hardening laws ------------------- */
+// §6 — every quantity validator requires SAFE integers.
+record("176. isValidReturnedQty requires Number.isSafeInteger (§6)", (() => {
+  const fn = TYPES_CODE.slice(TYPES_CODE.indexOf("export function isValidReturnedQty"), TYPES_CODE.indexOf("isValidPersistedReturnedQty"));
+  return fn.includes("Number.isSafeInteger") && !/Number\.isInteger\(/.test(fn);
+})());
+record("177. isValidPersistedReturnedQty exists + is safe-integer + ≥1 (§6/§7)", (() => {
+  const fn = TYPES_CODE.slice(TYPES_CODE.indexOf("export function isValidPersistedReturnedQty"), TYPES_CODE.indexOf("isSafeNonNegativeInteger"));
+  return fn.includes("Number.isSafeInteger") && fn.includes("RETURNED_QTY_MIN") && fn.includes("GOODS_RETURN_QTY_MAX");
+})());
+// §7 — the canonical sum rejects a persisted zero and proves total safety.
+record("178. computeReturnedQty rejects zero/negative summands (≥1 law, §7)", (() => {
+  const fn = TYPES_CODE.slice(TYPES_CODE.indexOf("export function computeReturnedQty"), TYPES_CODE.indexOf("assertGoodsReturnLineSetComplete"));
+  return fn.includes("isValidPersistedReturnedQty(qty)") && !fn.includes("qty < 0");
+})());
+record("179. computeReturnedQty proves the running total stays SAFE (§7)", (() => {
+  const fn = TYPES_CODE.slice(TYPES_CODE.indexOf("export function computeReturnedQty"), TYPES_CODE.indexOf("assertGoodsReturnLineSetComplete"));
+  return fn.includes("Number.isSafeInteger(total)");
+})());
+// §8 — the aggregate re-validation requires a safe integer.
+record("180. validateReturnedSum requires Number.isSafeInteger + ≥0 (§8)", (() => {
+  const fn = SERVICE_CODE.slice(SERVICE_CODE.indexOf("function validateReturnedSum"), SERVICE_CODE.indexOf("sumPostedReturnedQtyForReceiptLines"));
+  return fn.includes("Number.isSafeInteger") && fn.includes("sum < 0");
+})());
+// §10/§11 — net math rejects unsafe integers and never clamps.
+record("181. computeNetReceivedQty is safe-integer-checked (§10)", (() => {
+  const fn = TYPES_CODE.slice(TYPES_CODE.indexOf("export function computeNetReceivedQty"), TYPES_CODE.indexOf("export function computeNetRemainingQty"));
+  return (fn.match(/isSafeNonNegativeInteger/g) ?? []).length >= 2;
+})());
+record("182. computeNetRemainingQty is safe-integer-checked, NO clamp (§11)", (() => {
+  const fn = TYPES_CODE.slice(TYPES_CODE.indexOf("export function computeNetRemainingQty"), TYPES_CODE.indexOf("§41/§42 stock arithmetic"));
+  return (fn.match(/isSafeNonNegativeInteger/g) ?? []).length >= 2 && !fn.includes("Math.max(0");
+})());
+record("183. computeReturnableQty is safe-integer-checked (§6/§8)", (() => {
+  const fn = TYPES_CODE.slice(TYPES_CODE.indexOf("export function computeReturnableQty"), TYPES_CODE.indexOf("export function exceedsReturnable"));
+  return (fn.match(/Number\.isSafeInteger/g) ?? []).length >= 2;
+})());
+// §12 — exceedsReturnable enforces the canonical quantity contract.
+record("184. exceedsReturnable validates all THREE operands before comparing (§12)", (() => {
+  const fn = TYPES_CODE.slice(TYPES_CODE.indexOf("export function exceedsReturnable"), TYPES_CODE.indexOf("export function computeNetReceivedQty"));
+  return (fn.match(/GoodsReturnIntegrityError/g) ?? []).length >= 4 && fn.includes("isValidPersistedReturnedQty(newQty)") && fn.includes("Number.isSafeInteger(cumulative)");
+})());
+// §13 — post validates every persisted line BEFORE any mutation.
+record("185. postGoodsReturn validates EVERY persisted line qty pre-mutation (§13)", (() => {
+  const postSection = SERVICE_CODE.slice(SERVICE_CODE.indexOf("export async function postGoodsReturn"));
+  return postSection.includes("isValidPersistedReturnedQty(line.returnedQty)") && postSection.indexOf("isValidPersistedReturnedQty(line.returnedQty)") < postSection.indexOf("tx.product.update");
+})());
+// §14 — stock law splits the classification.
+record("186. stockAfterReturn: unsafe inputs rejected; returnedQty → CORRUPT_HISTORY; stock → INVALID_PERSISTED_STOCK (§14)", (() => {
+  const fn = TYPES_CODE.slice(TYPES_CODE.indexOf("export function stockAfterReturn"), TYPES_CODE.indexOf("export function goodsReturnDayWindow"));
+  return fn.includes("Number.isSafeInteger(currentStock)") && fn.includes("isValidPersistedReturnedQty(returnedQty)") && /\$\{GOODS_RETURN_CORRUPT_HISTORY\}: returnedQty/.test(fn) && /\$\{GOODS_RETURN_INVALID_PERSISTED_STOCK\}: currentStock/.test(fn);
+})());
+// §15/§16/§17 — the count-mismatch law is explicit and independent of cap.
+record("187. canonical assertGoodsReturnLineSetComplete enforces fetched/counted/cap invariants (§16)", (() => {
+  const fn = TYPES_CODE.slice(TYPES_CODE.indexOf("export function assertGoodsReturnLineSetComplete"), TYPES_CODE.indexOf("export function computeReturnableQty"));
+  return fn.includes("countedLines > cap") && fn.includes("countedLines !== fetchedLines") && fn.includes("GOODS_RETURN_LINE_CAP_INVARIANT");
+})());
+record("188. listGoodsReturns routes BOTH counts through the canonical validator (§15/§16)", (() => {
+  const list = SERVICE_CODE.slice(SERVICE_CODE.indexOf("export async function listGoodsReturns"), SERVICE_CODE.indexOf("/* -------------------------------- detail"));
+  return list.includes("assertGoodsReturnLineSetComplete(row.lines.length, row._count.lines, cap)") && !list.includes("Math.max(row.lines.length");
+})());
+record("189. detail read also proves completeness via the canonical validator (§54/§55)", (() => {
+  const detail = SERVICE_CODE.slice(SERVICE_CODE.indexOf("export async function getGoodsReturn"), SERVICE_CODE.indexOf("/* ------------------------------ header patch"));
+  return detail.includes("assertGoodsReturnLineSetComplete(row.lines.length, row.lines.length, cap)");
+})());
+// §18/§19/§20 — the cap-classification split.
+record("190. post-time over-cap is the 500 LINE_CAP_INVARIANT, never 422 LINE_LIMIT (§19)", (() => {
+  const postSection = SERVICE_CODE.slice(SERVICE_CODE.indexOf("export async function postGoodsReturn"), SERVICE_CODE.indexOf("export async function cancelGoodsReturn"));
+  const overCapIdx = postSection.indexOf("if (lines.length > cap)");
+  const gate = postSection.slice(overCapIdx, overCapIdx + 500);
+  return gate.includes("GOODS_RETURN_LINE_CAP_INVARIANT") && !gate.includes("GOODS_RETURN_ERROR_CODES.LINE_LIMIT");
+})());
+record("191. assertLineCap splits: count > cap → 500 INVARIANT; count === cap → 422 LINE_LIMIT (§20)", (() => {
+  const fn = SERVICE_CODE.slice(SERVICE_CODE.indexOf("async function assertLineCap"), SERVICE_CODE.indexOf("/* -------------------------------- create"));
+  return fn.includes("lineCount > cap") && fn.includes("GOODS_RETURN_LINE_CAP_INVARIANT") && fn.includes("lineCount === cap") && fn.includes("GOODS_RETURN_ERROR_CODES.LINE_LIMIT");
+})());
+// §22-§24 — business-timezone date filtering.
+record("192. NO UTC-midnight day window remains in the service (§22)", !SERVICE_CODE.includes("T00:00:00.000Z") && !SERVICE_CODE.includes("T23:59:59.999Z"));
+record("193. list route passes ctx.business.timezone into the service (§23)", read(ROUTES[0]).includes("ctx.business.timezone"));
+record("194. goodsReturnDayWindow composes the ESTABLISHED tz helpers (§23 — no second date utility)", (() => {
+  const fn = TYPES_CODE.slice(TYPES_CODE.indexOf("export function goodsReturnDayWindow"), TYPES_CODE.indexOf("/* ------------------------- §52/§74 calendar dates"));
+  return TYPES_CODE.includes('from "@/lib/crm/normalization"') && TYPES_CODE.includes('from "@/lib/statements/schema"') && fn.includes("nextCalendarDay(to)");
+})());
+record("195. the tz window rejects invalid calendar dates (never JS rollover, §24) + exclusive upper bound (§24)", (() => {
+  const fn = TYPES_CODE.slice(TYPES_CODE.indexOf("export function goodsReturnDayWindow"), TYPES_CODE.indexOf("/* ------------------------- §52/§74 calendar dates"));
+  return fn.includes("isValidCalendarDate(from)") && fn.includes("isValidCalendarDate(to)") && fn.includes("nextCalendarDay(to)");
+})());
+record("196. ONE canonical calendar validator (schema re-exports types — no second copy, §23/§52)", (() => {
+  const s = SCHEMA_CODE;
+  return s.includes('export { isValidCalendarDate }') && !s.includes("const daysInMonth");
+})());
+// §29/§30 — the E2E financial test is NON-vacuous (before/after snapshots).
+record("197. E2E financial section uses NON-ZERO fixtures + before/after exact snapshots (§29/§30)", (() => {
+  const s = read("scripts/prompt43-goods-return-check.mjs");
+  const fin = s.slice(s.indexOf("financial non-mutation — NON-VACUOUS"), s.indexOf("restore-drill — STRICT"));
+  return fin.includes("db.expense.create") && fin.includes("db.payment.create") && fin.includes("after.expenses, before.expenses") && fin.includes("before.supplierStatement") && fin.includes("before.payablesAging") && fin.includes("before.receivables");
+})());
+record("198. E2E financial snapshot proves the harness detects REAL mutations (stock −qty + 1 adjustment, §29)", (() => {
+  const s = read("scripts/prompt43-goods-return-check.mjs");
+  const fin = s.slice(s.indexOf("financial non-mutation — NON-VACUOUS"), s.indexOf("restore-drill — STRICT"));
+  return fin.includes("stockBeforeFin - 4") && fin.includes("adjBeforeFin + 1");
+})());
+// §31/§32 — strict restore-drill law.
+record("199. E2E restore-drill requires exit 0 AND both probes AND RESULT: PASS (§32)", (() => {
+  const s = read("scripts/prompt43-goods-return-check.mjs");
+  const drill = s.slice(s.indexOf("restore-drill — STRICT"), s.indexOf("34. cap/concurrency"));
+  return drill.includes("drill.status, 0") && drill.includes('rows:GoodsReturn"') && drill.includes('rows:GoodsReturnLine"') && drill.includes("RESULT:") && !/\|\|\s*\/rows:GoodsReturn/.test(drill);
+})());
+// §9 — corrupted persisted zero-qty E2E probes exist (not vacuous).
+record("200. E2E probes corrupted persisted ZERO quantity across detail/list/export/post (§9)", (() => {
+  const s = read("scripts/prompt43-goods-return-check.mjs");
+  const zero = s.slice(s.indexOf("31c. corrupted persisted ZERO quantity"), s.indexOf("32. financial NON-mutation"));
+  return zero.includes("returnedQty: 0") && zero.includes("31c.1") && zero.includes("31c.3") && zero.includes("31c.4") && zero.includes("31c.7");
+})());
+record("201. E2E business-timezone probes cover +offset/−offset/local-midnight/from-only/to-only (§25)", (() => {
+  const s = read("scripts/prompt43-goods-return-check.mjs");
+  const tz = s.slice(s.indexOf("31b. business-timezone date filtering"), s.indexOf("31c. corrupted persisted ZERO"));
+  return tz.includes("Asia/Tehran") && tz.includes("America/New_York") && tz.includes("20:45") && tz.includes("31b.3") && tz.includes("31b.4");
+})());
+record("202. unit suite behaviorally covers zero-qty rejection + safe overflow + count mismatch (§26/§17)", (() => {
+  const s = read("scripts/prompt43-unit.ts");
+  return s.includes("computeReturnedQty([0])") && s.includes("computeReturnedQty([Number.MAX_SAFE_INTEGER, 1])") && s.includes("assertGoodsReturnLineSetComplete(1, 2, 200)");
+})());
+record("203. reason codes are DTO-boundary-validated (§51 — never translated to OTHER)", (() => {
+  const dto = DTO_CODE;
+  return dto.includes("isGoodsReturnReasonCode(row.reasonCode)") && dto.includes("GoodsReturnIntegrityError");
+})());
 
 console.log(`\n=== prompt43-goods-return-static-scan: ${pass} passed, ${fail} failed ===`);
 if (fail > 0) {

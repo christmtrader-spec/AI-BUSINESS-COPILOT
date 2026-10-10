@@ -352,6 +352,35 @@ async function main() {
   } catch (error) {
     ok("7.2 corrupt over-cap list → 500 invariant", codeOf(error) === "GOODS_RETURN_LINE_CAP_INVARIANT", codeOf(error));
   }
+
+  // §18/§19/§21 — POST on a persisted over-cap document is a 500
+  // GOODS_RETURN_LINE_CAP_INVARIANT (data corruption), NEVER the 422
+  // write-time LINE_LIMIT error — and it mutates NOTHING.
+  const invStockBefore = (await db.product.findUnique({ where: { id: invSeed.productId }, select: { stockQty: true } }))!.stockQty;
+  try {
+    await postGoodsReturn({ ...actor, id: invReturn.id });
+    ok("7.4 corrupt over-cap post → 500 invariant", false, "post unexpectedly succeeded");
+  } catch (error) {
+    ok("7.4 corrupt over-cap post → 500 GOODS_RETURN_LINE_CAP_INVARIANT (§18/§19)", codeOf(error) === "GOODS_RETURN_LINE_CAP_INVARIANT", codeOf(error));
+  }
+  const invReturnAfterPost = await db.goodsReturn.findUnique({ where: { id: invReturn.id }, select: { status: true, postedAt: true } });
+  ok("7.5 corrupt post mutates NOTHING: still DRAFT, postedAt null", invReturnAfterPost?.status === "DRAFT" && invReturnAfterPost?.postedAt === null, JSON.stringify(invReturnAfterPost));
+  const invStockAfterPost = (await db.product.findUnique({ where: { id: invSeed.productId }, select: { stockQty: true } }))!.stockQty;
+  ok("7.6 corrupt post performs NO stock mutation", invStockAfterPost === invStockBefore, `stock=${invStockAfterPost}`);
+  const invAdjAfterPost = await db.inventoryAdjustment.count({ where: { businessId: ctx.businessId, reason: { contains: invReturn.reference } } });
+  ok("7.7 corrupt post creates NO adjustment for THIS document", invAdjAfterPost === 0, `adj=${invAdjAfterPost}`);
+  const invPostAudit = await db.auditLog.count({ where: { businessId: ctx.businessId, action: "goods_return.post", entityId: invReturn.id } });
+  ok("7.8 corrupt post writes NO post audit", invPostAudit === 0, `audit=${invPostAudit}`);
+
+  // §20/§21 — LINE-ADD on a persisted over-cap document is the 500
+  // integrity error, not the normal 422 LINE_LIMIT validation failure.
+  try {
+    await addGoodsReturnLine({ ...actor, id: invReturn.id, goodsReceiptLineId: invSeed.receiptLineIds[0]!, returnedQty: 1, reasonCode: "OTHER" });
+    ok("7.9 corrupt over-cap line-add → 500 invariant", false, "line-add unexpectedly succeeded");
+  } catch (error) {
+    ok("7.9 corrupt over-cap line-add → 500 GOODS_RETURN_LINE_CAP_INVARIANT (§20)", codeOf(error) === "GOODS_RETURN_LINE_CAP_INVARIANT", codeOf(error));
+  }
+
   // _count cross-check: delete one line so count(20) ≠ rows(21 is gone)... after
   // cleanup the doc must read 200 again (recovery proof).
   await db.goodsReturnLine.deleteMany({ where: { goodsReturnId: invReturn.id } });

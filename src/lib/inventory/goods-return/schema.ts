@@ -27,16 +27,9 @@ import {
   normalizeGoodsReturnReference,
 } from "./types";
 
-/** Strict calendar-date validation (no silent rollover) — P41/P42 convention. */
-const CALENDAR_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
-export function isValidCalendarDate(value: string): boolean {
-  if (!CALENDAR_DATE_PATTERN.test(value)) return false;
-  const [y, m, d] = value.split("-").map(Number);
-  if (m < 1 || m > 12 || d < 1) return false;
-  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  return d <= daysInMonth;
-}
+/** §24/§52 — the ONE canonical strict calendar-date law (types.ts). */
+import { isValidCalendarDate } from "./types";
+export { isValidCalendarDate };
 
 const calendarDate = z
   .string()

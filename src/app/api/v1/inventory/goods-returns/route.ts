@@ -53,6 +53,7 @@ export const GET = route(async (req: NextRequest) => {
     goodsReceiptId: parsed.goodsReceiptId,
     from: parsed.from,
     to: parsed.to,
+    timezone: ctx.business.timezone || "UTC", // §22-§23 — AUTH ctx only, never the client
     page: parsed.page ?? 1,
     pageSize: parsed.pageSize ?? 25,
   });

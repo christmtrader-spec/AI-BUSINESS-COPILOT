@@ -54,12 +54,18 @@ import {
   GoodsReturnIntegrityError,
   GOODS_RETURN_LINE_CAP_INVARIANT,
   GOODS_RETURN_INVALID_PERSISTED_STATUS,
+  GOODS_RETURN_QTY_MAX,
+  RETURNED_QTY_MIN,
+  assertGoodsReturnLineSetComplete,
   canTransitionGoodsReturn,
   computeReturnableQty,
   computeReturnedQty,
   exceedsReturnable,
   generateGoodsReturnReference,
+  goodsReturnDayWindow,
   goodsReturnLineCap,
+  isGoodsReturnReasonCode,
+  isValidPersistedReturnedQty,
   parseGoodsReturnStatus,
   stockAfterReturn,
   type GoodsReturnStatus,
@@ -97,14 +103,6 @@ const withWriteTx = withWriteTransaction;
 /** §44 — the adjustment reason ties every posted line to its return. */
 const RETURN_ADJUSTMENT_REASON = (reference: string) =>
   `Goods return ${reference}: inventory returned to supplier`;
-
-/** §98-analog day-window helpers on createdAt (day-precision filters). */
-function dayWindow(from?: string, to?: string): { gte?: Date; lte?: Date } {
-  const window: { gte?: Date; lte?: Date } = {};
-  if (from) window.gte = new Date(`${from}T00:00:00.000Z`);
-  if (to) window.lte = new Date(`${to}T23:59:59.999Z`);
-  return window;
-}
 
 /* ---------------------------- shared internals ----------------------------- */
 
@@ -147,6 +145,16 @@ export function mapPureGoodsReturnDomainError(error: unknown): never {
     );
   }
   if (error instanceof Error && error.name === "GoodsReturnIntegrityError") {
+    // §15/§16 — the line-set completeness invariant (over-cap document or a
+    // counted/fetched mismatch) is ITS OWN stable integrity code — never
+    // misreported as generic history corruption.
+    if (error.message.includes(GOODS_RETURN_LINE_CAP_INVARIANT)) {
+      throw new ApiError(
+        500,
+        GOODS_RETURN_LINE_CAP_INVARIANT,
+        "Stored document data exceeds its configured line cap. Please contact support.",
+      );
+    }
     const corruptStock = error.message.includes("GOODS_RETURN_INVALID_PERSISTED_STOCK");
     throw new ApiError(
       500,
@@ -162,18 +170,10 @@ export function mapPureGoodsReturnDomainError(error: unknown): never {
 }
 
 /**
- * §76/§140 — the ONE read-cap invariant failure. cap+1 fetches exist to
- * prove completeness; the +1 row (or a count mismatch) is corruption.
+ * §76/§140 — read-cap invariant mapping lives in mapPureGoodsReturnDomainError
+ * (the ONE canonical failure mapper). All read paths validate with the pure
+ * assertGoodsReturnLineSetComplete helper and map through it.
  */
-function assertLineCapInvariant(actualLines: number, cap: number): void {
-  if (actualLines > cap) {
-    throw new ApiError(
-      500,
-      GOODS_RETURN_LINE_CAP_INVARIANT,
-      "Stored document data exceeds its configured line cap. Please contact support.",
-    );
-  }
-}
 
 function requireDraft(status: GoodsReturnStatus): void {
   if (status !== "DRAFT") {
@@ -332,11 +332,11 @@ export async function sumPostedReturnedQtyForPoLine(
   return validateReturnedSum(agg._sum.returnedQty ?? 0);
 }
 
-/** §38 — aggregate result re-validation (exact integer, ≥ 0, no clamp). */
+/** §38 — aggregate result re-validation (SAFE integer, ≥ 0, no clamp, §8). */
 function validateReturnedSum(sum: number): number {
-  if (!Number.isInteger(sum) || sum < 0) {
+  if (!Number.isSafeInteger(sum) || sum < 0) {
     throw mapPureGoodsReturnDomainError(
-      new Error("GOODS_RETURN_CORRUPT_HISTORY: negative aggregate"),
+      new Error("GOODS_RETURN_CORRUPT_HISTORY: negative or unsafe aggregate"),
     );
   }
   return sum;
@@ -400,15 +400,31 @@ export async function sumPostedReturnedQtyForPoLines(
   for (const g of grouped) {
     const poLineId = poLineByReceiptLine.get(g.goodsReceiptLineId);
     if (!poLineId) continue; // defensive — FK guarantees existence
-    result.set(poLineId, (result.get(poLineId) ?? 0) + validateReturnedSum(g._sum.returnedQty ?? 0));
+    // §6 — every accumulation step stays a safe non-negative integer; the
+    // addition is re-validated, never trusted.
+    result.set(
+      poLineId,
+      validateReturnedSum((result.get(poLineId) ?? 0) + validateReturnedSum(g._sum.returnedQty ?? 0)),
+    );
   }
   return result;
 }
 
-/** §71 — defensive line-count validation (add line + post). */
+/** §71/§20 — defensive line-count validation (add line). */
 async function assertLineCap(tx: Tx, goodsReturnId: string, cap: number): Promise<number> {
   const lineCount = await tx.goodsReturnLine.count({ where: { goodsReturnId } });
-  if (lineCount >= cap) {
+  if (lineCount > cap) {
+    // §20 — an ALREADY-corrupted document (more lines than its own cap) is
+    // database corruption: 500 integrity, never disguised as the ordinary
+    // 422 user validation failure.
+    throw new ApiError(
+      500,
+      GOODS_RETURN_LINE_CAP_INVARIANT,
+      "Stored document data exceeds its configured line cap. Please contact support.",
+    );
+  }
+  if (lineCount === cap) {
+    // §20 — the NORMAL write-time rejection for a legitimately full draft.
     throw new ApiError(
       422,
       GOODS_RETURN_ERROR_CODES.LINE_LIMIT,
@@ -510,6 +526,7 @@ export async function listGoodsReturns(input: {
   goodsReceiptId?: string;
   from?: string;
   to?: string;
+  timezone?: string; // §22-§23 — AUTHENTICATED business timezone (never client authority)
   page: number;
   pageSize: number;
 }): Promise<{
@@ -523,7 +540,20 @@ export async function listGoodsReturns(input: {
     businessId: input.businessId, // §67 — tenant scope
     ...(input.status && input.status !== "ALL" ? { status: input.status } : {}),
     ...(input.goodsReceiptId ? { goodsReceiptId: input.goodsReceiptId } : {}),
-    ...(input.from || input.to ? { createdAt: dayWindow(input.from, input.to) } : {}),
+    ...(input.from || input.to
+      ? (() => {
+          // §22-§24 — the from/to calendar dates are interpreted in the
+          // AUTHENTICATED BUSINESS's timezone (inclusive local start of
+          // `from`, EXCLUSIVE local start of the day after `to`). A record
+          // at 00:15 local belongs to its local date even when its UTC
+          // date is the previous day. Unresolvable bounds → controlled 422.
+          const window = goodsReturnDayWindow(input.from, input.to, input.timezone);
+          if (!window) {
+            throw new ApiError(422, "VALIDATION_ERROR", "Invalid date filter.");
+          }
+          return { createdAt: window };
+        })()
+      : {}),
     ...(input.q
       ? {
           OR: [
@@ -579,14 +609,15 @@ export async function listGoodsReturns(input: {
   ]);
 
   const items = rows.map((row) => {
-    // §76 — the capped slice is only trustworthy when the database really
-    // contains ≤ cap rows: the +1 row or a _count mismatch means corruption
-    // — fail the read honestly, never compute a partial total.
-    if (row.lines.length > cap || row._count.lines !== row.lines.length) {
-      assertLineCapInvariant(Math.max(row.lines.length, row._count.lines), cap);
-    }
     try {
-      // §76 — proven-complete slice → the canonical sum is exact.
+      // §15/§16 — the THREE explicit completeness invariants (fetched ≤ cap,
+      // counted ≤ cap, counted === fetched) are enforced by the ONE
+      // canonical pure validator: a count mismatch fails the read EVEN WHEN
+      // both numbers are below the cap — a subset total must never
+      // masquerade as complete. Then §76 — the proven-complete slice feeds
+      // the canonical sum, which re-validates every persisted quantity
+      // (safe integer ≥ 1 — a stored zero is corruption, §7).
+      assertGoodsReturnLineSetComplete(row.lines.length, row._count.lines, cap);
       const totalReturnedQty = computeReturnedQty(row.lines.map((l) => l.returnedQty));
       return goodsReturnListItemDto({
         id: row.id,
@@ -660,10 +691,12 @@ export async function getGoodsReturn(input: {
     },
   });
   if (!row) throw new ApiError(404, "NOT_FOUND", "Goods return not found.");
-  // §76 — never render a partial document.
-  assertLineCapInvariant(row.lines.length, cap);
 
   try {
+    // §76 — never render a partial document: cap+1 rows fetched, so a
+    // fetched count above the cap proves corruption (the counted arm is
+    // identical here — no separate _count exists on this read).
+    assertGoodsReturnLineSetComplete(row.lines.length, row.lines.length, cap);
     return goodsReturnDetailDto(
       {
         id: row.id,
@@ -1025,11 +1058,16 @@ export async function postGoodsReturn(input: {
       },
     });
     if (lines.length > cap) {
-      // Impossible by §33/§71 — if it ever happens, fail honestly.
+      // §18/§19 — a PERSISTED document holding more lines than its own
+      // invariant permits is DATA CORRUPTION → 500
+      // GOODS_RETURN_LINE_CAP_INVARIANT. Never the 422 write-time
+      // LINE_LIMIT error (that classification is for a newly submitted
+      // over-limit request). No status change, no stock mutation, no
+      // adjustment, no audit.
       throw new ApiError(
-        422,
-        GOODS_RETURN_ERROR_CODES.LINE_LIMIT,
-        "Goods return line limit exceeded.",
+        500,
+        GOODS_RETURN_LINE_CAP_INVARIANT,
+        "Stored document data exceeds its configured line cap. Please contact support.",
       );
     }
 
@@ -1040,6 +1078,21 @@ export async function postGoodsReturn(input: {
         GOODS_RETURN_ERROR_CODES.EMPTY,
         "Add at least one line before posting this return.",
       );
+    }
+
+    // §13 — validate EVERY persisted line quantity BEFORE any mutation: a
+    // corrupted persisted line (zero, negative, fractional, unsafe, or over
+    // the domain max) must NEVER become a zero-delta or positive-stock
+    // adjustment. Controlled integrity error — no stock mutation, no
+    // InventoryAdjustment, no status mutation, no post audit.
+    for (const line of lines) {
+      if (!isValidPersistedReturnedQty(line.returnedQty)) {
+        throw new ApiError(
+          500,
+          GOODS_RETURN_ERROR_CODES.CORRUPT_HISTORY,
+          "Goods return data is inconsistent. Please contact support.",
+        );
+      }
     }
 
     // §43 step 9 — every line's source receipt line must belong to THIS
@@ -1251,21 +1304,19 @@ export async function getGoodsReceiptReturnFacts(input: {
   let returnable = false;
   const lines = input.receivedLines.map((l) => {
     const returnedQty = returnedByLine.get(l.id) ?? 0;
-    // §36 — returned > received is corruption; surface it, never clamp.
-    if (returnedQty > l.receivedQty) {
-      return mapPureGoodsReturnDomainError(
-        new GoodsReturnIntegrityError(
-          `${GOODS_RETURN_CORRUPT_HISTORY}: returned ${returnedQty} > received ${l.receivedQty}`,
-        ),
-      );
+    try {
+      // §36 — ONE canonical checked helper: returned > received (or any
+      // invalid operand) is corruption; surface it, never clamp.
+      const returnableQty = computeReturnableQty(l.receivedQty, returnedQty);
+      if (returnableQty > 0) returnable = true;
+      return receiptLineReturnFactsDto({
+        goodsReceiptLineId: l.id,
+        receivedQty: l.receivedQty,
+        returnedQty,
+      });
+    } catch (error) {
+      return mapPureGoodsReturnDomainError(error);
     }
-    const returnableQty = l.receivedQty - returnedQty;
-    if (returnableQty > 0) returnable = true;
-    return receiptLineReturnFactsDto({
-      goodsReceiptLineId: l.id,
-      receivedQty: l.receivedQty,
-      returnedQty,
-    });
   });
   return { returnable, lines };
 }
@@ -1294,7 +1345,9 @@ export async function listRecentReturnsForReceipt(input: {
   });
   return rows.map((r) => {
     try {
-      assertLineCapInvariant(r.lines.length, cap); // §76
+      // §76 — cap+1 completeness proof (same law as the list read), mapped
+      // through the ONE canonical validator + failure mapper.
+      assertGoodsReturnLineSetComplete(r.lines.length, r.lines.length, cap);
       return {
         id: r.id,
         reference: r.reference,
@@ -1337,15 +1390,28 @@ export async function listRecentReturnsForProduct(input: {
     },
   });
   return rows.map((r) => {
-    return {
-      id: r.goodsReturn.id,
-      reference: r.goodsReturn.reference,
-      status: parseDbStatus(r.goodsReturn.status),
-      goodsReceiptReferenceAtReturn: r.goodsReturn.goodsReceiptReferenceAtReturn,
-      returnedQty: r.returnedQty,
-      reasonCode: r.reasonCode,
-      postedAt: r.goodsReturn.postedAt ? r.goodsReturn.postedAt.toISOString() : null,
-    };
+    try {
+      // §99/§7/§51 — a persisted line quantity of zero (or any invalid
+      // value) and a corrupted reason code are NEVER treated as legitimate
+      // history: the widget fails with the stable integrity code instead.
+      computeReturnedQty([r.returnedQty]); // safe integer ≥ 1 (§7)
+      if (!isGoodsReturnReasonCode(r.reasonCode)) {
+        throw new GoodsReturnIntegrityError(
+          `${GOODS_RETURN_CORRUPT_HISTORY}: invalid persisted reason code`,
+        );
+      }
+      return {
+        id: r.goodsReturn.id,
+        reference: r.goodsReturn.reference,
+        status: parseDbStatus(r.goodsReturn.status),
+        goodsReceiptReferenceAtReturn: r.goodsReturn.goodsReceiptReferenceAtReturn,
+        returnedQty: r.returnedQty,
+        reasonCode: r.reasonCode,
+        postedAt: r.goodsReturn.postedAt ? r.goodsReturn.postedAt.toISOString() : null,
+      };
+    } catch (error) {
+      return mapPureGoodsReturnDomainError(error);
+    }
   });
 }
 
@@ -1377,7 +1443,8 @@ export async function listRecentReturnsForSupplier(input: {
   });
   return rows.map((r) => {
     try {
-      assertLineCapInvariant(r.lines.length, cap); // §76
+      // §76 — cap+1 completeness proof (same law as the list read).
+      assertGoodsReturnLineSetComplete(r.lines.length, r.lines.length, cap);
       return {
         id: r.id,
         reference: r.reference,

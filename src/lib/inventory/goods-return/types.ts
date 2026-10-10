@@ -24,8 +24,12 @@
  * — API, UI and export never re-implement them differently (§138).
  *
  * This module is pure: no Prisma, no db, no server-only imports. Safe for
- * client bundles (same server-only boundary law as P40/P41/P42).
+ * client bundles (same server-only boundary law as P40/P41/P42). The only
+ * cross-domain import is the ESTABLISHED business-timezone instant helper
+ * (§23 — no second date utility is created anywhere in P43).
  */
+import { zonedWallClockToUtc } from "@/lib/crm/normalization";
+import { nextCalendarDay } from "@/lib/statements/schema";
 
 /* ------------------------------ §9 lifecycle ------------------------------ */
 
@@ -98,13 +102,38 @@ export function canTransitionGoodsReturn(
 export const RETURNED_QTY_MIN = 1;
 export const GOODS_RETURN_QTY_MAX = 1_000_000;
 
+/**
+ * §6 — a valid returned quantity is a SAFE integer 1..1_000_000.
+ * Number.isSafeInteger (not Number.isInteger alone): an unsafe integer has
+ * already lost precision before any comparison runs, so it can never be
+ * trusted as an authoritative quantity.
+ */
 export function isValidReturnedQty(value: unknown): value is number {
   return (
     typeof value === "number" &&
-    Number.isInteger(value) &&
+    Number.isSafeInteger(value) &&
     value >= RETURNED_QTY_MIN &&
     value <= GOODS_RETURN_QTY_MAX
   );
+}
+
+/**
+ * §6/§8 — a PERSISTED returned quantity (loaded from the database) must be
+ * a safe integer in the valid domain. Shared by every path that loads
+ * actual rows (post, detail DTO, list DTO, export, history widgets).
+ */
+export function isValidPersistedReturnedQty(value: unknown): boolean {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= RETURNED_QTY_MIN &&
+    value <= GOODS_RETURN_QTY_MAX
+  );
+}
+
+/** §6 — safe non-negative integer guard for derived/persisted quantities. */
+function isSafeNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 /* ------------------------------- §33 line cap ------------------------------ */
@@ -157,13 +186,6 @@ export const GOODS_RETURN_LINE_CAP_INVARIANT = "GOODS_RETURN_LINE_CAP_INVARIANT"
 
 /* ------------------- §36/§37/§38 canonical return math --------------------- */
 
-/**
- * §37/§38 — ONE canonical returned-quantity sum. Exact integer arithmetic
- * only (no floats, no Math.round). Inputs are POSTED return quantities
- * (draft/cancelled returns are NEVER summed, §9/§10). A negative or
- * fractional persisted quantity is corruption, not a summand — the caller
- * must surface it, never clamp it.
- */
 export const GOODS_RETURN_CORRUPT_HISTORY = "GOODS_RETURN_CORRUPT_HISTORY";
 
 export class GoodsReturnIntegrityError extends Error {
@@ -174,17 +196,59 @@ export class GoodsReturnIntegrityError extends Error {
   }
 }
 
+/**
+ * §37/§38 — ONE canonical returned-quantity sum. Exact integer arithmetic
+ * only (no floats, no Math.round, no clamping). EVERY input is a PERSISTED
+ * GoodsReturnLine quantity, and every valid persisted line has
+ * returnedQty >= 1 — a stored zero is INVALID persisted state and is
+ * rejected here (§7): an empty collection still totals exactly 0 where the
+ * call contract permits emptiness, but a zero SUMMAND is never legitimate.
+ * Each addition (and the total) must remain a safe integer — silent
+ * precision loss can never fabricate a total (§7).
+ */
 export function computeReturnedQty(postedQuantities: ReadonlyArray<number>): number {
   let total = 0;
   for (const qty of postedQuantities) {
-    if (!Number.isInteger(qty) || qty < 0) {
+    if (!isValidPersistedReturnedQty(qty)) {
       throw new GoodsReturnIntegrityError(
         `${GOODS_RETURN_CORRUPT_HISTORY}: invalid returned quantity ${String(qty)}`,
       );
     }
     total += qty;
+    if (!Number.isSafeInteger(total)) {
+      throw new GoodsReturnIntegrityError(
+        `${GOODS_RETURN_CORRUPT_HISTORY}: returned total exceeded the safe integer range`,
+      );
+    }
   }
   return total;
+}
+
+/**
+ * §15/§16 — the ONE canonical list/detail line-set completeness validator.
+ * Three explicit invariants, ALL enforced:
+ *   1. fetched rows > cap           → corruption (over-cap document);
+ *   2. counted rows (_count) > cap  → corruption (over-cap document);
+ *   3. counted ≠ fetched            → corruption EVEN WHEN both are below
+ *      the cap — a subset total must never masquerade as complete.
+ * The mismatch arm exists because the old `max(fetched, counted) > cap`
+ * gate silently accepted e.g. fetched=1 / counted=2 below the cap.
+ */
+export function assertGoodsReturnLineSetComplete(
+  fetchedLines: number,
+  countedLines: number,
+  cap: number,
+): void {
+  if (fetchedLines > cap || countedLines > cap) {
+    throw new GoodsReturnIntegrityError(
+      `${GOODS_RETURN_LINE_CAP_INVARIANT}: fetched ${fetchedLines} / counted ${countedLines} exceed cap ${cap}`,
+    );
+  }
+  if (countedLines !== fetchedLines) {
+    throw new GoodsReturnIntegrityError(
+      `${GOODS_RETURN_LINE_CAP_INVARIANT}: line count ${countedLines} != fetched rows ${fetchedLines}`,
+    );
+  }
 }
 
 /**
@@ -193,12 +257,14 @@ export function computeReturnedQty(postedQuantities: ReadonlyArray<number>): num
  * clamped to zero. Negative/fractional inputs are corruption too.
  */
 export function computeReturnableQty(receivedQty: number, returnedQty: number): number {
-  if (!Number.isInteger(receivedQty) || receivedQty < 0) {
+  // §6/§8 — every operand must be a SAFE integer; unsafe integers have
+  // already lost precision and can never be authoritative quantities.
+  if (!Number.isSafeInteger(receivedQty) || receivedQty < 0) {
     throw new GoodsReturnIntegrityError(
       `${GOODS_RETURN_CORRUPT_HISTORY}: receivedQty ${String(receivedQty)}`,
     );
   }
-  if (!Number.isInteger(returnedQty) || returnedQty < 0) {
+  if (!Number.isSafeInteger(returnedQty) || returnedQty < 0) {
     throw new GoodsReturnIntegrityError(
       `${GOODS_RETURN_CORRUPT_HISTORY}: returnedQty ${String(returnedQty)}`,
     );
@@ -212,17 +278,42 @@ export function computeReturnableQty(receivedQty: number, returnedQty: number): 
 }
 
 /**
- * §35 — cumulative return cap for ONE receipt line: SUM(POSTED returned) +
- * new return quantity ≤ receivedQty. Pure, total, and the SINGLE authority
- * the line-add check (advisory, §62) and the post-time final check (§43
- * step 11) both call — there is no second tolerance implementation.
+ * §35/§12 — cumulative return cap for ONE receipt line: SUM(POSTED
+ * returned) + new return quantity ≤ receivedQty. Pure, total, and the
+ * SINGLE authority the line-add check (advisory, §62) and the post-time
+ * final check (§43 step 11) both call — there is no second tolerance
+ * implementation. Preconditions are ENFORCED, not assumed (§12): every
+ * operand is a safe integer, received/alreadyReturned are ≥ 0, and newQty
+ * is a valid return quantity (≥ 1) — a violation throws the canonical
+ * integrity error instead of silently comparing garbage.
  */
 export function exceedsReturnable(
   receivedQty: number,
   alreadyReturnedQty: number,
   newQty: number,
 ): boolean {
-  return alreadyReturnedQty + newQty > receivedQty;
+  if (!isSafeNonNegativeInteger(receivedQty)) {
+    throw new GoodsReturnIntegrityError(
+      `${GOODS_RETURN_CORRUPT_HISTORY}: receivedQty ${String(receivedQty)}`,
+    );
+  }
+  if (!isSafeNonNegativeInteger(alreadyReturnedQty)) {
+    throw new GoodsReturnIntegrityError(
+      `${GOODS_RETURN_CORRUPT_HISTORY}: alreadyReturnedQty ${String(alreadyReturnedQty)}`,
+    );
+  }
+  if (!isValidPersistedReturnedQty(newQty)) {
+    throw new GoodsReturnIntegrityError(
+      `${GOODS_RETURN_CORRUPT_HISTORY}: newQty ${String(newQty)}`,
+    );
+  }
+  const cumulative = alreadyReturnedQty + newQty;
+  if (!Number.isSafeInteger(cumulative)) {
+    throw new GoodsReturnIntegrityError(
+      `${GOODS_RETURN_CORRUPT_HISTORY}: cumulative returned total exceeded the safe integer range`,
+    );
+  }
+  return cumulative > receivedQty;
 }
 
 /**
@@ -233,12 +324,14 @@ export function exceedsReturnable(
  * validates that against the PO line's orderedQty via computeNetRemainingQty.
  */
 export function computeNetReceivedQty(grossReceivedQty: number, returnedQty: number): number {
-  if (!Number.isInteger(grossReceivedQty) || grossReceivedQty < 0) {
+  // §10 — every operand and the result must be a SAFE integer (unsafe
+  // integers silently lose precision and can never be authoritative).
+  if (!isSafeNonNegativeInteger(grossReceivedQty)) {
     throw new GoodsReturnIntegrityError(
       `${GOODS_RETURN_CORRUPT_HISTORY}: grossReceivedQty ${String(grossReceivedQty)}`,
     );
   }
-  if (!Number.isInteger(returnedQty) || returnedQty < 0) {
+  if (!isSafeNonNegativeInteger(returnedQty)) {
     throw new GoodsReturnIntegrityError(
       `${GOODS_RETURN_CORRUPT_HISTORY}: returnedQty ${String(returnedQty)}`,
     );
@@ -258,12 +351,14 @@ export function computeNetReceivedQty(grossReceivedQty: number, returnedQty: num
  * the server layer, §80). Pure and shared by API, UI and export.
  */
 export function computeNetRemainingQty(orderedQty: number, netReceivedQty: number): number {
-  if (!Number.isInteger(orderedQty) || orderedQty < 0) {
+  // §11 — every operand and the result must be a SAFE integer; a negative
+  // result is NEVER clamped to zero (that would hide receiving corruption).
+  if (!isSafeNonNegativeInteger(orderedQty)) {
     throw new GoodsReturnIntegrityError(
       `${GOODS_RETURN_CORRUPT_HISTORY}: orderedQty ${String(orderedQty)}`,
     );
   }
-  if (!Number.isInteger(netReceivedQty) || netReceivedQty < 0) {
+  if (!isSafeNonNegativeInteger(netReceivedQty)) {
     throw new GoodsReturnIntegrityError(
       `${GOODS_RETURN_CORRUPT_HISTORY}: netReceivedQty ${String(netReceivedQty)}`,
     );
@@ -287,25 +382,84 @@ export function computeNetRemainingQty(orderedQty: number, netReceivedQty: numbe
 export const GOODS_RETURN_INVALID_PERSISTED_STOCK = "GOODS_RETURN_INVALID_PERSISTED_STOCK";
 
 export function stockAfterReturn(currentStock: number, returnedQty: number): number {
-  if (!Number.isInteger(currentStock) || currentStock < 0) {
-    // §41 — already-negative persisted stock is corruption: controlled
-    // integrity failure, NEVER silently set to zero.
+  if (!Number.isSafeInteger(currentStock) || currentStock < 0) {
+    // §41/§14 — already-negative or unsafe persisted STOCK is stock
+    // corruption: controlled integrity failure, NEVER silently set to zero.
     throw new GoodsReturnIntegrityError(
       `${GOODS_RETURN_INVALID_PERSISTED_STOCK}: currentStock ${String(currentStock)}`,
     );
   }
-  if (!Number.isInteger(returnedQty) || returnedQty < RETURNED_QTY_MIN) {
+  if (!isValidPersistedReturnedQty(returnedQty)) {
+    // §14 — an invalid RETURNED quantity is RETURN-DOCUMENT corruption
+    // (CORRUPT_HISTORY), not stock corruption: the most accurate stable
+    // classification, even though both errors share this helper.
     throw new GoodsReturnIntegrityError(
-      `${GOODS_RETURN_INVALID_PERSISTED_STOCK}: returnedQty ${String(returnedQty)}`,
+      `${GOODS_RETURN_CORRUPT_HISTORY}: returnedQty ${String(returnedQty)}`,
     );
   }
   const newStock = currentStock - returnedQty; // §42 — exact integer math
-  if (newStock < 0) {
+  if (!Number.isSafeInteger(newStock) || newStock < 0) {
     throw new GoodsReturnIntegrityError(
       `${GOODS_RETURN_INVALID_PERSISTED_STOCK}: newStock ${newStock} < 0`,
     );
   }
   return newStock;
+}
+
+/**
+ * §22-§24 — the business-timezone createdAt day window for list filters.
+ * COMPOSES the established repository helpers (zonedWallClockToUtc +
+ * nextCalendarDay — the same statement/aging law, §23: no second date
+ * utility): `from` is the INCLUSIVE local start of day, `to` is the
+ * EXCLUSIVE local start of the NEXT day (never 23:59:59.999). Invalid
+ * calendar dates (2026-02-31, 2026-13-01) are rejected — never rolled over
+ * (§24); null maps to a controlled 422 at the call site. A record at 00:15
+ * local time belongs to its LOCAL calendar date even when its UTC date is
+ * the previous day (§25).
+ */
+export function goodsReturnDayWindow(
+  from: string | undefined,
+  to: string | undefined,
+  timezone: string | undefined | null,
+): { gte?: Date; lt?: Date } | null {
+  if (!from && !to) return {};
+  // §24 — strict calendar validation here too (the zod boundary rejects
+  // first; this is defense in depth — JS Date would silently roll an
+  // invalid date over into the next month).
+  if (from && !isValidCalendarDate(from)) return null;
+  if (to && !isValidCalendarDate(to)) return null;
+  const tz = timezone || "UTC";
+  const window: { gte?: Date; lt?: Date } = {};
+  if (from) {
+    const gte = zonedWallClockToUtc(`${from}T00:00`, tz);
+    if (!gte) return null;
+    window.gte = gte;
+  }
+  if (to) {
+    const lt = zonedWallClockToUtc(`${nextCalendarDay(to)}T00:00`, tz);
+    if (!lt) return null;
+    window.lt = lt;
+  }
+  return window;
+}
+
+/* ------------------------- §52/§74 calendar dates -------------------------- */
+
+const CALENDAR_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * §24/§52 — the ONE canonical strict calendar-date validator for the P43
+ * list filters (the query schema re-exports this law — no second copy):
+ * regex shape + real calendar day (leap-year aware). 2024-02-29 accepted;
+ * 2026-02-31, 2026-13-01, 2026-00-10, 2026-01-00 and any JS rollover are
+ * rejected.
+ */
+export function isValidCalendarDate(value: string): boolean {
+  if (!CALENDAR_DATE_PATTERN.test(value)) return false;
+  const [y, m, d] = value.split("-").map(Number);
+  if (m < 1 || m > 12 || d < 1) return false;
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return d <= daysInMonth;
 }
 
 /* --------------------------- §19/§20 reference ----------------------------- */

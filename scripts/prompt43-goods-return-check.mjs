@@ -27,8 +27,9 @@
  *
  * Fixtures are P43RT-prefixed and removed to ZERO residue. Prisma is used
  * ONLY for fixtures, assertions and cleanup — never to mutate domain rows
- * except the documented corruption probes (§65/§38/§164), which restore
- * what they change.
+ * except the documented corruption probes (§65/§38/§164 + §9 zero-qty +
+ * §25 date-window instants + §29 financial fixtures), which restore what
+ * they change.
  */
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -1215,31 +1216,283 @@ async function main() {
     eq(l4.status, 422, "31.8 invalid date 2026-02-31 → 422 (§74)");
     const l5 = await call(fA, `${RT(bizA.id)}?q=${encodeURIComponent(`RET-REPL-${STAMP}`)}`, { headers: B(bizA.id) });
     ok(l5.body.data.items.some((i) => i.reference === `RET-REPL-${STAMP}`), "31.9 q search over reference (§73)");
+    // §52 — the FULL invalid/edge date matrix.
+    for (const bad of ["2026-13-01", "2026-00-10", "2026-01-00", "2025-02-29"]) {
+      const r = await call(fA, `${RT(bizA.id)}?from=${bad}`, { headers: B(bizA.id) });
+      eq(r.status, 422, `31.10 invalid date ${bad} → 422 (§52)`);
+    }
+    const leapOk = await call(fA, `${RT(bizA.id)}?from=2024-02-29&to=2024-02-29`, { headers: B(bizA.id) });
+    eq(leapOk.status, 200, "31.11 leap day 2024-02-29 accepted (§52)");
+    const fromGtTo = await call(fA, `${RT(bizA.id)}?from=2026-02-10&to=2026-02-01`, { headers: B(bizA.id) });
+    eq(fromGtTo.status, 422, "31.12 from > to → 422 (§52)");
   }
 
-  /* --------------- 32. financial NON-mutation (§7/§186) -------------------- */
-  section("32. financial non-mutation (§186)");
+  /* --------- 31b. business-timezone date filters (§22-§25) ----------------- */
+  section("31b. business-timezone date filtering (§22-§25) — live API");
   {
-    const fin = {
-      expenses: await db.expense.count({ where: { businessId: bizA.id } }),
-      payments: await db.payment.count({ where: { businessId: bizA.id } }),
-      sales: await db.sale.count({ where: { businessId: bizA.id } }),
-    };
-    eq(fin.expenses, 0, "32.1 zero expenses (whole suite)");
-    eq(fin.payments, 0, "32.2 zero payments");
-    eq(fin.sales, 0, "32.3 zero sales");
-    // supplier statement untouched: no supplier-statement rows exist for these
-    ok(true, "32.4 statements/aging derive from Expense/Payment (both zero)");
+    const origTz = (await db.business.findUnique({ where: { id: bizA.id }, select: { timezone: true } })).timezone;
+    // Dedicated throwaway draft return whose createdAt is pinned to a
+    // documented probe instant (fixture-level mutation, restored implicitly
+    // by teardown): 2026-09-30T20:45Z = 00:15 Asia/Tehran on LOCAL 2026-10-01.
+    const poTz = await confirmedPO(fA, bizA.id, supAlpha.id, [{ productId: prodA.id, orderedQty: 50, unitPriceMinor: 100 }]);
+    const poTzDetail = await call(fA, `/api/v1/purchase-orders/${poTz}`, { headers: B(bizA.id) });
+    const recTz = await postedReceipt(fA, bizA.id, poTz, poTzDetail, { reference: `GR-TZ-${STAMP}`, receivedQty: 50 });
+    const retTz = await createRT(fA, bizA.id, { goodsReceiptId: recTz.receipt.id, reference: `RET-TZ-${STAMP}` });
+    await rtAddLine(fA, bizA.id, retTz.body.data.id, { goodsReceiptLineId: recTz.lineId, returnedQty: 5, reasonCode: "OTHER" });
+    const tzReturnId = retTz.body.data.id;
+    await db.goodsReturn.update({ where: { id: tzReturnId }, data: { createdAt: new Date("2026-09-30T20:45:00.000Z") } });
+
+    // +03:30 (Asia/Tehran): the record's LOCAL date is 2026-10-01 although
+    // its UTC date is 2026-09-30.
+    await db.business.update({ where: { id: bizA.id }, data: { timezone: "Asia/Tehran" } });
+    const inLocal = await call(fA, `${RT(bizA.id)}?from=2026-10-01&to=2026-10-01&pageSize=100`, { headers: B(bizA.id) });
+    ok(inLocal.body.data.items.some((i) => i.id === tzReturnId), "31b.1 a 00:15 LOCAL record appears in its local-date filter even though its UTC date is the previous day (§25)");
+    const prevLocal = await call(fA, `${RT(bizA.id)}?from=2026-09-30&to=2026-09-30&pageSize=100`, { headers: B(bizA.id) });
+    ok(!prevLocal.body.data.items.some((i) => i.id === tzReturnId), "31b.2 the same record is NOT in the previous local calendar date (§25)");
+    const fromOnly = await call(fA, `${RT(bizA.id)}?from=2026-10-01&pageSize=100`, { headers: B(bizA.id) });
+    ok(fromOnly.body.data.items.some((i) => i.id === tzReturnId), "31b.3 from-only filter is local-date aware (§25)");
+    const toOnlyBefore = await call(fA, `${RT(bizA.id)}?to=2026-09-30&pageSize=100`, { headers: B(bizA.id) });
+    ok(!toOnlyBefore.body.data.items.some((i) => i.id === tzReturnId), "31b.4 to-only EXCLUDES the next local day (§25 — exclusive upper bound)");
+    const toOnlyIncl = await call(fA, `${RT(bizA.id)}?to=2026-10-01&pageSize=100`, { headers: B(bizA.id) });
+    ok(toOnlyIncl.body.data.items.some((i) => i.id === tzReturnId), "31b.5 to-only includes the WHOLE local to-day (§25)");
+
+    // −05:00 (America/New_York, EDT in September): the SAME UTC instant
+    // (20:45Z) is 16:45 on LOCAL 2026-09-30 — the window must follow the
+    // business zone, not a fixed offset.
+    await db.business.update({ where: { id: bizA.id }, data: { timezone: "America/New_York" } });
+    const nyIn = await call(fA, `${RT(bizA.id)}?from=2026-09-30&to=2026-09-30&pageSize=100`, { headers: B(bizA.id) });
+    ok(nyIn.body.data.items.some((i) => i.id === tzReturnId), "31b.6 the same instant falls on 2026-09-30 in a −05:00 business zone (§25)");
+    const nyNext = await call(fA, `${RT(bizA.id)}?from=2026-10-01&to=2026-10-01&pageSize=100`, { headers: B(bizA.id) });
+    ok(!nyNext.body.data.items.some((i) => i.id === tzReturnId), "31b.7 −05:00 zone does NOT place the record on 2026-10-01 (§25)");
+
+    // Control: back to the business's original timezone (UTC default) the
+    // record belongs to its UTC date again — proving the TZ comes from the
+    // AUTH ctx, never the client.
+    await db.business.update({ where: { id: bizA.id }, data: { timezone: origTz || "UTC" } });
+    const utcControl = await call(fA, `${RT(bizA.id)}?from=2026-09-30&to=2026-09-30&pageSize=100`, { headers: B(bizA.id) });
+    ok(utcControl.body.data.items.some((i) => i.id === tzReturnId), "31b.8 UTC business sees the same instant on its UTC date (control, §25)");
+    const tzHeaderTry = await call(fA, `${RT(bizA.id)}?from=2026-10-01&to=2026-10-01&timezone=Asia/Tehran&pageSize=100`, { headers: B(bizA.id) });
+    ok(tzHeaderTry.body.data.items.every((i) => i.id !== tzReturnId || (origTz || "UTC") === "Asia/Tehran"), "31b.9 a client-supplied timezone parameter can NEVER override the business zone (§23)");
+    await rtCancel(fA, bizA.id, tzReturnId);
   }
 
-  /* --------------- 33. restore-drill probes (§116/§181) -------------------- */
-  section("33. restore-drill covers the new models");
+  /* --------- 31c. corrupted persisted ZERO quantity (§7/§9) ---------------- */
+  section("31c. corrupted persisted zero quantity fails safely (§7/§9)");
+  {
+    const po9 = await confirmedPO(fA, bizA.id, supAlpha.id, [{ productId: prodA.id, orderedQty: 200, unitPriceMinor: 100 }]);
+    const po9Detail = await call(fA, `/api/v1/purchase-orders/${po9}`, { headers: B(bizA.id) });
+    const rec9 = await postedReceipt(fA, bizA.id, po9, po9Detail, { reference: `GR-Z-${STAMP}`, receivedQty: 100 });
+
+    // (a) POSTED return whose line is corrupted to returnedQty = 0.
+    const retA = await createRT(fA, bizA.id, { goodsReceiptId: rec9.receipt.id, reference: `RET-Z-A-${STAMP}` });
+    await rtAddLine(fA, bizA.id, retA.body.data.id, { goodsReceiptLineId: rec9.lineId, returnedQty: 10, reasonCode: "OTHER" });
+    const postA = await rtPost(fA, bizA.id, retA.body.data.id);
+    eq(postA.status, 200, "31c.0 the return posts cleanly BEFORE corruption");
+    const stockAfterA = (await db.product.findUnique({ where: { id: prodA.id }, select: { stockQty: true } })).stockQty;
+    const lineA = await db.goodsReturnLine.findFirst({ where: { goodsReturnId: retA.body.data.id } });
+    await db.goodsReturnLine.update({ where: { id: lineA.id }, data: { returnedQty: 0 } }); // §9 corruption
+
+    // Row-materializing authoritative paths MUST fail with the stable code:
+    const d9 = await rtDetail(fA, bizA.id, retA.body.data.id);
+    eq(d9.status, 500, "31c.1 detail of a zero-qty return → 500 (§9 — never a fabricated DTO)");
+    eq(d9.body?.error?.code, "GOODS_RETURN_CORRUPT_HISTORY", "31c.2 stable CORRUPT_HISTORY code");
+    const l9 = await call(fA, `${RT(bizA.id)}?page=1&pageSize=100`, { headers: B(bizA.id) });
+    eq(l9.status, 500, "31c.3 list DTO refuses to sum corrupted history (§9)");
+    const x9 = await call(fA, `${RT(bizA.id)}/${retA.body.data.id}/export`, { headers: B(bizA.id) });
+    ok(x9.status === 403, "31c.4a export for the NO-EXPORT business still gates on CSV_EXPORT first (403 — entitlement chain intact)");
+    // §9/§67 — the same corruption on the EXPORT-ENTITLED business (bizC)
+    // fails the export with the stable integrity code, never a partial CSV.
+    // A DEDICATED probe user is used because section 26 deliberately
+    // exhausts ownerC's per-user export rate bucket (§109 limit is per-user).
+    const exportProbeEmail = `${TAG.toLowerCase()}-expz-${STAMP}@${DOMAIN}`;
+    const userZ = await db.user.create({ data: { email: exportProbeEmail, name: "Export Probe Z", passwordHash: bcrypt.hashSync(PASS, 4), emailVerifiedAt: new Date() }, select: { id: true } });
+    await db.businessMember.create({ data: { businessId: bizC.id, userId: userZ.id, role: "STAFF" } });
+    const fZ = makeClient();
+    await login(fZ, exportProbeEmail);
+    const supZ = await createSupplier(fZ, bizC.id, `${TAG}-SUP-Z-${STAMP}`);
+    const prodZ = await createProduct(fZ, bizC.id, `${TAG}-PROD-Z-${STAMP}`, `${TAG}-SKU-Z-${STAMP}`, 0);
+    const poZ = await confirmedPO(fZ, bizC.id, supZ.id, [{ productId: prodZ.id, orderedQty: 100, unitPriceMinor: 100 }]);
+    const poZDetail = await call(fZ, `/api/v1/purchase-orders/${poZ}`, { headers: B(bizC.id) });
+    const recZ = await postedReceipt(fZ, bizC.id, poZ, poZDetail, { reference: `GR-ZC-${STAMP}`, receivedQty: 100 });
+    const retZ = await createRT(fZ, bizC.id, { goodsReceiptId: recZ.receipt.id, reference: `RET-Z-C-${STAMP}` });
+    await rtAddLine(fZ, bizC.id, retZ.body.data.id, { goodsReceiptLineId: recZ.lineId, returnedQty: 9, reasonCode: "OTHER" });
+    await rtPost(fZ, bizC.id, retZ.body.data.id);
+    const lineZ = await db.goodsReturnLine.findFirst({ where: { goodsReturnId: retZ.body.data.id } });
+    await db.goodsReturnLine.update({ where: { id: lineZ.id }, data: { returnedQty: 0 } });
+    const xZ = await call(fZ, `${RT(bizC.id)}/${retZ.body.data.id}/export`, { headers: B(bizC.id) });
+    eq(xZ.status, 500, "31c.4b CSV export refuses a corrupted line with the integrity 500 (§9/§67)");
+    eq(xZ.body?.error?.code, "GOODS_RETURN_CORRUPT_HISTORY", "31c.4c stable code on export");
+    await db.goodsReturnLine.update({ where: { id: lineZ.id }, data: { returnedQty: 9 } });
+    const xZr = await call(fZ, `${RT(bizC.id)}/${retZ.body.data.id}/export`, { headers: B(bizC.id) });
+    eq(xZr.status, 200, "31c.4d export recovers after cleanup (§9)");
+    const grDetail9 = await grDetail(fA, bizA.id, rec9.receipt.id);
+    eq(grDetail9.status, 500, "31c.5 receipt detail fails LOUDLY too — its return-history widget materializes the zero row (§9 fail-safe)");
+    eq(grDetail9.body?.error?.code, "GOODS_RETURN_CORRUPT_HISTORY", "31c.6 receipt detail carries the stable code");
+
+    // (b) POST of a corrupted DRAFT: no stock mutation, no adjustment, no
+    // status change, no post audit (§13).
+    const retB = await createRT(fA, bizA.id, { goodsReceiptId: rec9.receipt.id, reference: `RET-Z-B-${STAMP}` });
+    await rtAddLine(fA, bizA.id, retB.body.data.id, { goodsReceiptLineId: rec9.lineId, returnedQty: 10, reasonCode: "OTHER" });
+    const lineB = await db.goodsReturnLine.findFirst({ where: { goodsReturnId: retB.body.data.id } });
+    await db.goodsReturnLine.update({ where: { id: lineB.id }, data: { returnedQty: 0 } });
+    const postB = await rtPost(fA, bizA.id, retB.body.data.id);
+    eq(postB.status, 500, "31c.7 corrupted DRAFT post → 500 (§13 — never a zero-delta adjustment)");
+    eq(postB.body?.error?.code, "GOODS_RETURN_CORRUPT_HISTORY", "31c.8 stable code on post");
+    const b9 = await db.goodsReturn.findUnique({ where: { id: retB.body.data.id }, select: { status: true, postedAt: true } });
+    ok(b9.status === "DRAFT" && b9.postedAt === null, "31c.9 corrupted post mutates NO status (still DRAFT, postedAt null)");
+    const stockMid9 = (await db.product.findUnique({ where: { id: prodA.id }, select: { stockQty: true } })).stockQty;
+    eq(stockMid9, stockAfterA, "31c.10 corrupted post performs NO further stock mutation (§13)");
+    const adjB = await db.inventoryAdjustment.count({ where: { businessId: bizA.id, reason: { contains: `Goods return RET-Z-B-${STAMP}` } } });
+    eq(adjB, 0, "31c.11 corrupted post creates NO adjustment (§13)");
+    const auditB = await db.auditLog.count({ where: { businessId: bizA.id, action: "goods_return.post", entityId: retB.body.data.id } });
+    eq(auditB, 0, "31c.12 corrupted post writes NO post audit (§13)");
+
+    // (c) AGGREGATE paths stay EXACT (§8 — the DB aggregate remains the
+    // production mechanism; a zero summand adds nothing, so no total is
+    // fabricated and no aggregate-only path is broken):
+    const po9After = await call(fA, `/api/v1/purchase-orders/${po9}`, { headers: B(bizA.id) });
+    eq(po9After.status, 200, "31c.13 PO receiving summary still serves (§8)");
+    eq(po9After.body.data.receiving.returnedQty, 0, "31c.14 aggregated returned is the EXACT 0 the corrupt history sums to (§8 — never fabricated, never clamped-from-below)");
+    eq(po9After.body.data.receiving.netReceivedQty, 100, "31c.15 net received exact 100 (§8)");
+    eq(po9After.body.data.receiving.remainingQty, 100, "31c.16 remaining exact (§8)");
+    const gr9 = await createGR(fA, bizA.id, { purchaseOrderId: po9, reference: `GR-Z2-${STAMP}` });
+    const add9 = await grAddLine(fA, bizA.id, gr9.body.data.id, { purchaseOrderLineId: rec9.poLineId, receivedQty: 5 });
+    eq(add9.status, 201, "31c.17 a NEW receipt still posts while the zero row exists (§8 — guard math uncorrupted)");
+    const post9 = await grPost(fA, bizA.id, gr9.body.data.id);
+    eq(post9.status, 200, "31c.18 replacement receipt post succeeds (§8)");
+
+    // (d) restore — every path recovers.
+    await db.goodsReturnLine.update({ where: { id: lineA.id }, data: { returnedQty: 10 } });
+    await db.goodsReturnLine.update({ where: { id: lineB.id }, data: { returnedQty: 10 } });
+    const d9r = await rtDetail(fA, bizA.id, retA.body.data.id);
+    eq(d9r.status, 200, "31c.19 detail recovers after cleanup (200)");
+    eq(d9r.body.data.summary.totalReturnedQty, 10, "31c.20 the total is the true 10 again (§9)");
+    const l9r = await call(fA, `${RT(bizA.id)}?page=1&pageSize=100`, { headers: B(bizA.id) });
+    eq(l9r.status, 200, "31c.21 list recovers after cleanup (200)");
+    const grDetail9r = await grDetail(fA, bizA.id, rec9.receipt.id);
+    eq(grDetail9r.status, 200, "31c.22 receipt detail recovers after cleanup (200)");
+    await rtCancel(fA, bizA.id, retA.body.data.id);
+    await rtCancel(fA, bizA.id, retB.body.data.id);
+  }
+
+  /* --------------- 32. financial NON-mutation (§7/§186/§28-§30) ------------- */
+  section("32. financial non-mutation — NON-VACUOUS before/after snapshots (§29/§30)");
+  {
+    // §29 — non-zero financial fixtures are created FIRST (fixture-level
+    // writes, never through the return domain), so the zero-count assertion
+    // of the old test could never pass vacuously: a future developer who
+    // adds Expense/Payment/statement mutation to GoodsReturn POST WILL fail
+    // this exact-equality snapshot.
+    const finExpense1 = await db.expense.create({
+      data: {
+        businessId: bizA.id,
+        supplierId: supAlpha.id,
+        category: `${TAG}-FIN-RENT`,
+        amountMinor: 50_000,
+        paidMinor: 30_000,
+        status: "PARTIAL",
+        spentAt: new Date("2026-01-10T10:00:00.000Z"),
+        dueDate: new Date("2026-02-10T12:00:00.000Z"),
+        reference: `${TAG}-BILL-1`,
+      },
+      select: { id: true },
+    });
+    await db.expense.create({
+      data: {
+        businessId: bizA.id,
+        supplierId: supAlpha.id,
+        category: `${TAG}-FIN-UTILITIES`,
+        amountMinor: 20_000,
+        paidMinor: 0,
+        status: "UNPAID",
+        spentAt: new Date("2026-01-15T10:00:00.000Z"),
+        dueDate: new Date("2026-03-15T12:00:00.000Z"),
+        reference: `${TAG}-BILL-2`,
+      },
+      select: { id: true },
+    });
+    await db.payment.create({
+      data: {
+        businessId: bizA.id,
+        expenseId: finExpense1.id,
+        direction: "OUT",
+        amountMinor: 30_000,
+        method: "BANK_TRANSFER",
+        paidAt: new Date("2026-01-20T09:00:00.000Z"),
+      },
+      select: { id: true },
+    });
+
+    /** Strip volatile report metadata (generatedAt/asOf) — everything else
+     *  must match EXACTLY before vs after the return POST (§29/§30). */
+    const normalizeFinancial = (body) => {
+      const clone = JSON.parse(JSON.stringify(body));
+      if (clone?.data) {
+        delete clone.data.generatedAt;
+        delete clone.data.asOf;
+      }
+      return JSON.stringify(clone);
+    };
+    const snapshot = async () => ({
+      expenses: JSON.stringify(
+        await db.expense.aggregate({ where: { businessId: bizA.id }, _count: { _all: true }, _sum: { amountMinor: true, paidMinor: true } }),
+      ),
+      payments: JSON.stringify(
+        await db.payment.aggregate({ where: { businessId: bizA.id }, _count: { _all: true }, _sum: { amountMinor: true } }),
+      ),
+      sales: JSON.stringify(
+        await db.sale.aggregate({ where: { businessId: bizA.id }, _count: { _all: true }, _sum: { totalMinor: true } }).catch(() => ({ _count: { _all: 0 } })),
+      ),
+      supplierStatement: normalizeFinancial((await call(fA, `/api/v1/suppliers/${supAlpha.id}/statement?from=2020-01-01&to=2030-12-31`, { headers: B(bizA.id) })).body),
+      payablesAging: normalizeFinancial((await call(fA, `/api/v1/reports/aging`, { headers: B(bizA.id) })).body),
+      receivables: normalizeFinancial((await call(fA, `/api/v1/receivables`, { headers: B(bizA.id) })).body),
+    });
+
+    const before = await snapshot();
+    ok(JSON.parse(before.expenses)._count._all >= 2, "32.0 financial fixtures are NON-ZERO (§29 — the assertion cannot pass vacuously)");
+    ok(JSON.parse(before.payments)._count._all >= 1, "32.0b payment fixture is NON-ZERO (§29)");
+
+    // A REAL return POST for the SAME supplier (the event that must not
+    // touch any financial surface):
+    const poFin = await confirmedPO(fA, bizA.id, supAlpha.id, [{ productId: prodA.id, orderedQty: 40, unitPriceMinor: 100 }]);
+    const poFinDetail = await call(fA, `/api/v1/purchase-orders/${poFin}`, { headers: B(bizA.id) });
+    const recFin = await postedReceipt(fA, bizA.id, poFin, poFinDetail, { reference: `GR-FIN-${STAMP}`, receivedQty: 40 });
+    const retFin = await createRT(fA, bizA.id, { goodsReceiptId: recFin.receipt.id, reference: `RET-FIN-${STAMP}` });
+    await rtAddLine(fA, bizA.id, retFin.body.data.id, { goodsReceiptLineId: recFin.lineId, returnedQty: 4, reasonCode: "QUALITY_ISSUE" });
+    const stockBeforeFin = (await db.product.findUnique({ where: { id: prodA.id }, select: { stockQty: true } })).stockQty;
+    const adjBeforeFin = await db.inventoryAdjustment.count({ where: { businessId: bizA.id } });
+    const postedFin = await rtPost(fA, bizA.id, retFin.body.data.id);
+    eq(postedFin.status, 200, "32.1 the return POST itself succeeds");
+
+    const after = await snapshot();
+    eq(after.expenses, before.expenses, "32.2 Expense rows EXACTLY unchanged by the return POST (§63)");
+    eq(after.payments, before.payments, "32.3 Payment rows EXACTLY unchanged (§63)");
+    eq(after.sales, before.sales, "32.4 Sale rows EXACTLY unchanged (§63)");
+    eq(after.supplierStatement, before.supplierStatement, "32.5 Supplier Statement EXACTLY unchanged — a return is NOT a payable/credit event (§64)");
+    eq(after.payablesAging, before.payablesAging, "32.6 Payables/Receivables AGING EXACTLY unchanged (§65)");
+    eq(after.receivables, before.receivables, "32.7 Receivables EXACTLY unchanged (§65)");
+
+    // Sanity: the same snapshot DID observe the sanctioned inventory changes
+    // — proving the harness detects real mutations (not a dead equality).
+    const stockAfterFin = (await db.product.findUnique({ where: { id: prodA.id }, select: { stockQty: true } })).stockQty;
+    eq(stockAfterFin, stockBeforeFin - 4, "32.8 PRODUCT STOCK did change (−4) — the snapshot harness detects real mutations (§29)");
+    const adjAfterFin = await db.inventoryAdjustment.count({ where: { businessId: bizA.id } });
+    eq(adjAfterFin, adjBeforeFin + 1, "32.9 ONE negative InventoryAdjustment created (§62) — while every financial surface stayed frozen");
+  }
+
+  /* --------------- 33. restore-drill probes (§116/§181/§31/§32) ------------ */
+  section("33. restore-drill — STRICT exit + probe + result law (§31/§32)");
   {
     const drill = spawnSync("node", ["scripts/restore-drill.mjs"], { encoding: "utf8", timeout: 240_000, env: process.env });
     const out = `${drill.stdout ?? ""}${drill.stderr ?? ""}`;
-    ok(drill.status === 0 || /rows:GoodsReturn|rows:GoodsReturnLine/.test(out), "33.1 restore-drill executed and probes GoodsReturn(±Line)");
-    ok(out.includes("rows:GoodsReturn"), "33.2 GoodsReturn probe present (§116)");
-    ok(out.includes("rows:GoodsReturnLine"), "33.3 GoodsReturnLine probe present (§116)");
+    // §32 — ALL of the following must hold; a non-zero exit (or a timeout /
+    // signal kill, either surfacing as a non-zero/null status) is a FAILURE
+    // even if partial probe output exists:
+    eq(drill.status, 0, "33.1 restore-drill exits 0 (timeout/signal → null status → also a failure)");
+    ok(out.includes("rows:GoodsReturn"), "33.2 output contains the GoodsReturn probe");
+    ok(out.includes("rows:GoodsReturnLine"), "33.3 output contains the GoodsReturnLine probe");
+    ok(/RESULT:\s+PASS/.test(out), "33.4 the drill reports successful restore validation (RESULT: PASS)");
+    ok(/integrity:\s+ok/.test(out), "33.5 the drill reports clean clone integrity (§32.4)");
   }
 
   /* --------------- 34. cap/concurrency (isolated process) ------------------ */

@@ -27,6 +27,10 @@ import {
   GOODS_RETURN_ERROR_CODES,
   parseGoodsReturnStatus,
   goodsReturnLineCap,
+  computeReturnedQty,
+  GoodsReturnIntegrityError,
+  GOODS_RETURN_CORRUPT_HISTORY,
+  GOODS_RETURN_LINE_CAP_INVARIANT,
 } from "./types";
 import { goodsReturnLineDto } from "./dto";
 
@@ -108,7 +112,36 @@ export async function buildGoodsReturnCsv(input: {
   });
 
   const truncated = lineRows.length > cap;
-  const lines = lineRows.slice(0, cap).map(goodsReturnLineDto);
+  // §67/§7/§51 — the export covers ALL lines with cap+1 completeness proof;
+  // every persisted line quantity (safe integer ≥ 1) and reason code
+  // (closed vocabulary) is validated through the canonical helpers. A
+  // corrupted row is a controlled integrity 500 — never a partial export
+  // and never a printed zero/fabricated row; over-cap persisted data
+  // returns the controlled integrity error rather than a partial CSV (§67).
+  let lines;
+  try {
+    if (truncated) {
+      // §67 — persisted data exceeding the cap is corruption: the export
+      // returns the controlled integrity error rather than a partial CSV.
+      throw new GoodsReturnIntegrityError(
+        `${GOODS_RETURN_LINE_CAP_INVARIANT}: export rows exceed the document cap`,
+      );
+    }
+    computeReturnedQty(lineRows.map((l) => l.returnedQty)); // validates EVERY row (§7)
+    lines = lineRows.slice(0, cap).map(goodsReturnLineDto); // §51 reason validation
+  } catch (error) {
+    if (error instanceof Error && error.name === "GoodsReturnIntegrityError") {
+      const capInvariant = error.message.includes(GOODS_RETURN_LINE_CAP_INVARIANT);
+      throw new ApiError(
+        500,
+        capInvariant ? GOODS_RETURN_LINE_CAP_INVARIANT : GOODS_RETURN_CORRUPT_HISTORY,
+        capInvariant
+          ? "Stored document data exceeds its configured line cap. Please contact support."
+          : "Goods return data is inconsistent. Please contact support.",
+      );
+    }
+    throw error;
+  }
 
   const m = messagesFor(input.locale).goodsReturns;
   const statusLabel = m[`status_${status}`];

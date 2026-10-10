@@ -33,6 +33,9 @@ import {
   isGoodsReturnStatus,
   isGoodsReturnReasonCode,
   isValidReturnedQty,
+  isValidPersistedReturnedQty,
+  assertGoodsReturnLineSetComplete,
+  goodsReturnDayWindow,
   goodsReturnLineCap,
   goodsReturnLinesEditable,
   goodsReturnIsReadOnly,
@@ -170,13 +173,14 @@ throws(() => computeReturnableQty(1.5, 0), "u52 fractional received is corruptio
 ok(!exceedsReturnable(100, 0, 100), "u53 full return ok");
 ok(!exceedsReturnable(100, 70, 30), "u54 exact cumulative 100 ok");
 ok(exceedsReturnable(100, 70, 31), "u55 cumulative 101 rejected (§35)");
-ok(exceedsReturnable(100, 0, 1_000_001), "u56 absurd qty rejected by cap check");
+throws(() => exceedsReturnable(100, 0, 1_000_001), "u56 absurd qty violates the canonical quantity contract (§12 — enforced preconditions)", "GoodsReturnIntegrityError");
 ok(!exceedsReturnable(1_000_000, 0, 1_000_000), "u57 max-size single return ok");
 
 /* ============ 9. returned-qty aggregation (§37/§38) ====================== */
 eq(computeReturnedQty([10, 20, 30]), 60, "u58 exact sum of posted returns");
 eq(computeReturnedQty([]), 0, "u59 empty history sums to exactly 0");
-eq(computeReturnedQty([0]), 0, "u60 zero entries are valid summands");
+throws(() => computeReturnedQty([0]), "u60 zero persisted qty is INVALID state, never a summand (§7)", "GoodsReturnIntegrityError");
+throws(() => computeReturnedQty([10, 0]), "u60b zero summand inside real history is corruption (§7)", "GoodsReturnIntegrityError");
 throws(() => computeReturnedQty([10, -5]), "u61 negative persisted qty is corruption", "GoodsReturnIntegrityError");
 throws(() => computeReturnedQty([1.5]), "u62 fractional persisted qty is corruption", "GoodsReturnIntegrityError");
 const corruptHistoryError = new GoodsReturnIntegrityError("test");
@@ -208,7 +212,8 @@ ok(!exceedsRemaining(100, 0, 100), "u80 replacement math: net 0 + 20 new ok");
 /* ============== 12. stock arithmetic (§41/§42 — Int32) =================== */
 eq(stockAfterReturn(20, 5), 15, "u81 stockAfterReturn exact decrement");
 eq(stockAfterReturn(5, 5), 0, "u82 stock can reach exactly 0");
-eq(stockAfterReturn(2_147_483_647, 2_147_483_647), 0, "u83 Int32 boundary decrement safe");
+eq(stockAfterReturn(2_147_483_647, 1_000_000), 2_146_483_647, "u83 Int32-max stock decremented by the max valid return qty (safe result)");
+throws(() => stockAfterReturn(2_147_483_647, 2_147_483_647), "u83b returnedQty beyond the domain max (1e6) is invalid persisted state (§13)", "GoodsReturnIntegrityError");
 throws(() => stockAfterReturn(10, 20), "u84 insufficient stock throws (§39)", "GoodsReturnIntegrityError");
 throws(() => stockAfterReturn(-1, 1), "u85 already-negative stock is corruption (§41 — never silently zeroed)", "GoodsReturnIntegrityError");
 throws(() => stockAfterReturn(0, 1), "u86 zero stock cannot return", "GoodsReturnIntegrityError");
@@ -584,6 +589,201 @@ ok(goodsReceiptIsReturnable("POSTED") && !goodsReceiptIsReturnable("DRAFT") && !
   ok(!service.includes("stockQty +"), "u202 no stock INCREMENT path exists in the return domain (§6 — decrement only)");
   const routeList = readFileSync(new URL("../src/app/api/v1/inventory/goods-returns/route.ts", import.meta.url), "utf8");
   ok(routeList.includes("ctx.businessId") && routeList.includes("ctx.userId"), "u203 routes derive tenant + actor from auth ctx (§67/§45)");
+  ok(routeList.includes("ctx.business.timezone"), "u204 list route passes the AUTHENTICATED business timezone (§23 — never client input)");
+  ok(!service.includes("T23:59:59.999Z") && !service.includes("T00:00:00.000Z"), "u205 no UTC-midnight day window left in the service (§22)");
+  ok(service.includes("goodsReturnDayWindow"), "u206 service composes the established business-tz window (§23 — no second date utility)");
+  ok(service.includes("isValidPersistedReturnedQty(line.returnedQty)"), "u207 post validates EVERY persisted line quantity before mutation (§13)");
+  ok(/GOODS_RETURN_LINE_CAP_INVARIANT[\s\S]{0,200} Stored document data|500,\s*\n\s*GOODS_RETURN_LINE_CAP_INVARIANT/.test(service), "u208 post-time over-cap maps to the 500 invariant code (§19)");
+}
+
+/* ========== 27. safe-integer quantity law (§6) — behavioral ============= */
+{
+  const unsafe = 2 ** 53; // first UNSAFE integer (MAX_SAFE_INTEGER + 1)
+  ok(!isValidReturnedQty(unsafe), "u209 unsafe integer is not a valid returned qty (§6)");
+  ok(!isValidReturnedQty(Number.MAX_SAFE_INTEGER), "u210 out-of-domain huge safe integer rejected by bounds (§6)");
+  ok(isValidReturnedQty(1) && isValidReturnedQty(1_000_000), "u211 domain boundaries accepted (§32)");
+  ok(!isValidReturnedQty(0) && !isValidReturnedQty(-1) && !isValidReturnedQty(1.5), "u212 zero/negative/fractional rejected (§32)");
+  ok(!isValidPersistedReturnedQty(0), "u213 persisted qty 0 is INVALID persisted state (§7)");
+  ok(!isValidPersistedReturnedQty(unsafe), "u214 persisted unsafe integer rejected (§6)");
+  ok(isValidPersistedReturnedQty(5), "u215 valid persisted qty accepted (§6)");
+  throws(() => computeReturnedQty([unsafe]), "u216 unsafe summand is corruption, never summed (§6)", "GoodsReturnIntegrityError");
+  throws(() => computeReturnedQty([Number.MAX_SAFE_INTEGER, 1]), "u217 safe-sum overflow is corruption (§7 — total must stay safe)", "GoodsReturnIntegrityError");
+  eq(computeReturnedQty([1, 2, 3]), 6, "u218 exact sum of valid rows (§7)");
+}
+
+/* ========== 28. canonical set-completeness validator (§15/§16/§17) ====== */
+{
+  throws(
+    () => assertGoodsReturnLineSetComplete(1, 2, 200),
+    "u219 counted 2 vs fetched 1 BELOW cap → integrity failure (§15 — the old silent case)",
+    "GoodsReturnIntegrityError",
+  );
+  throws(
+    () => assertGoodsReturnLineSetComplete(200, 201, 200),
+    "u220 counted cap+1 → integrity failure (§16 arm 2)",
+    "GoodsReturnIntegrityError",
+  );
+  throws(
+    () => assertGoodsReturnLineSetComplete(201, 201, 200),
+    "u221 fetched cap+1 → integrity failure (§16 arm 1)",
+    "GoodsReturnIntegrityError",
+  );
+  throws(
+    () => assertGoodsReturnLineSetComplete(2, 1, 200),
+    "u222 fetched > counted (reverse mismatch) → integrity failure (§16 arm 3)",
+    "GoodsReturnIntegrityError",
+  );
+  assertGoodsReturnLineSetComplete(200, 200, 200); // must NOT throw
+  assertGoodsReturnLineSetComplete(0, 0, 200); // must NOT throw
+  ok(true, "u223 exact-match sets (incl. empty) pass all three invariants (§16)");
+  const err = (() => {
+    try {
+      assertGoodsReturnLineSetComplete(1, 2, 200);
+      return null;
+    } catch (e) {
+      return e as Error;
+    }
+  })();
+  ok(err !== null && err.message.includes(GOODS_RETURN_LINE_CAP_INVARIANT), "u224 mismatch carries the stable LINE_CAP_INVARIANT code (§19 classification)");
+}
+
+/* ========== 29. exceedsReturnable preconditions (§12) — behavioral ====== */
+{
+  throws(() => exceedsReturnable(-1, 0, 1), "u225 negative received rejected (§12)", "GoodsReturnIntegrityError");
+  throws(() => exceedsReturnable(100, -1, 1), "u226 negative alreadyReturned rejected (§12)", "GoodsReturnIntegrityError");
+  throws(() => exceedsReturnable(100, 0, 0), "u227 newQty 0 is not a valid return quantity (§12/§32)", "GoodsReturnIntegrityError");
+  throws(() => exceedsReturnable(100, 0, 1.5), "u228 fractional newQty rejected (§12)", "GoodsReturnIntegrityError");
+  throws(() => exceedsReturnable(2 ** 53, 0, 1), "u229 unsafe received rejected (§12/§6)", "GoodsReturnIntegrityError");
+  throws(() => exceedsReturnable(Number.MAX_SAFE_INTEGER, 1, Number.MAX_SAFE_INTEGER), "u230 unsafe cumulative sum rejected (§12)", "GoodsReturnIntegrityError");
+  ok(exceedsReturnable(100, 70, 31) === true && exceedsReturnable(100, 70, 30) === false, "u231 the cap comparison itself is unchanged (§35)");
+}
+
+/* ========== 30. stock law classification split (§14) — behavioral ======= */
+{
+  throws(() => stockAfterReturn(2 ** 53, 1), "u232 unsafe current stock rejected (§14)", "GoodsReturnIntegrityError");
+  let captured: Error | null = null;
+  try {
+    stockAfterReturn(10, 0);
+  } catch (e) {
+    captured = e as Error;
+  }
+  ok(captured !== null && captured.message.includes(GOODS_RETURN_CORRUPT_HISTORY), "u233 invalid returnedQty → CORRUPT_HISTORY (not stock corruption, §14)");
+  captured = null;
+  try {
+    stockAfterReturn(-3, 2);
+  } catch (e) {
+    captured = e as Error;
+  }
+  ok(captured !== null && captured.message.includes("GOODS_RETURN_INVALID_PERSISTED_STOCK"), "u234 negative persisted STOCK → INVALID_PERSISTED_STOCK (§14/§41)");
+  captured = null;
+  try {
+    stockAfterReturn(5, 10);
+  } catch (e) {
+    captured = e as Error;
+  }
+  ok(captured !== null && captured.message.includes("GOODS_RETURN_INVALID_PERSISTED_STOCK"), "u235 underflow result → INVALID_PERSISTED_STOCK (§14/§42)");
+  throws(() => stockAfterReturn(1, 1_000_001), "u236 out-of-domain returnedQty rejected before the decrement (§13/§14)", "GoodsReturnIntegrityError");
+}
+
+/* ========== 31. net math safe-integer hardening (§10/§11) — behavioral == */
+{
+  throws(() => computeNetReceivedQty(2 ** 53, 0), "u237 unsafe gross rejected (§10)", "GoodsReturnIntegrityError");
+  throws(() => computeNetReceivedQty(100, 2 ** 53), "u238 unsafe returned rejected (§10)", "GoodsReturnIntegrityError");
+  throws(() => computeNetRemainingQty(2 ** 53, 0), "u239 unsafe ordered rejected (§11)", "GoodsReturnIntegrityError");
+  throws(() => computeNetRemainingQty(100, 2 ** 53), "u240 unsafe net rejected (§11)", "GoodsReturnIntegrityError");
+  throws(() => computeReturnableQty(2 ** 53, 0), "u241 unsafe received in returnable math rejected (§8)", "GoodsReturnIntegrityError");
+  eq(computeReturnableQty(100, 100), 0, "u242 exact exhaustion still exact (§36)");
+}
+
+/* ========== 32. business-timezone day window (§22-§25) — behavioral ===== */
+{
+  // UTC business: window is the plain UTC day.
+  const utcWin = goodsReturnDayWindow("2026-01-15", "2026-01-15", "UTC");
+  ok(utcWin !== null && utcWin.gte?.toISOString() === "2026-01-15T00:00:00.000Z", "u243 UTC window starts at UTC midnight (§24)");
+  ok(utcWin !== null && utcWin.lt?.toISOString() === "2026-01-16T00:00:00.000Z", "u244 UTC upper bound is EXCLUSIVE next-day start — never 23:59:59.999 (§24)");
+
+  // Positive offset (Asia/Tehran +03:30): local day 2026-01-15 = 2026-01-14T20:30Z → 2026-01-15T20:30Z.
+  const tehranWin = goodsReturnDayWindow("2026-01-15", "2026-01-15", "Asia/Tehran");
+  ok(tehranWin !== null && tehranWin.gte?.toISOString() === "2026-01-14T20:30:00.000Z", "u245 +03:30 window is the LOCAL day, not the UTC day (§22)");
+  ok(tehranWin !== null && tehranWin.lt?.toISOString() === "2026-01-15T20:30:00.000Z", "u246 +03:30 exclusive upper bound (§24)");
+  // A record at 00:15 local (= prev UTC day 20:45Z) falls INSIDE the window (§25).
+  const localJustAfterMidnight = new Date("2026-01-14T20:45:00.000Z").getTime();
+  ok(
+    tehranWin !== null &&
+      localJustAfterMidnight >= tehranWin.gte!.getTime() &&
+      localJustAfterMidnight < tehranWin.lt!.getTime(),
+    "u247 a 00:15 LOCAL record belongs to its local date even though its UTC date is the previous day (§25)",
+  );
+
+  // Negative offset (America/New_York, EST −05:00 in January).
+  const nyWin = goodsReturnDayWindow("2026-01-15", "2026-01-15", "America/New_York");
+  ok(nyWin !== null && nyWin.gte?.toISOString() === "2026-01-15T05:00:00.000Z", "u248 −05:00 window is the LOCAL day (§22/§25)");
+  ok(nyWin !== null && nyWin.lt?.toISOString() === "2026-01-16T05:00:00.000Z", "u249 −05:00 exclusive upper bound (§24)");
+
+  // from only / to only / neither.
+  const fromOnly = goodsReturnDayWindow("2026-01-15", undefined, "Asia/Tehran");
+  ok(fromOnly !== null && fromOnly.gte?.toISOString() === "2026-01-14T20:30:00.000Z" && fromOnly.lt === undefined, "u250 from-only window (§25)");
+  const toOnly = goodsReturnDayWindow(undefined, "2026-01-15", "Asia/Tehran");
+  ok(toOnly !== null && toOnly.lt?.toISOString() === "2026-01-15T20:30:00.000Z" && toOnly.gte === undefined, "u251 to-only window (§25)");
+  const neither = goodsReturnDayWindow(undefined, undefined, "Asia/Tehran");
+  ok(neither !== null && neither.gte === undefined && neither.lt === undefined, "u252 no bounds → empty window object (§25)");
+
+  // Leap day accepted; invalid calendar date never reaches the window (schema
+  // rejects first — this is the belt-and-braces null path).
+  const leap = goodsReturnDayWindow("2024-02-29", "2024-02-29", "UTC");
+  ok(leap !== null && leap.gte?.toISOString() === "2024-02-29T00:00:00.000Z", "u253 leap day 2024-02-29 resolves (§25/§52)");
+  ok(goodsReturnDayWindow("2026-02-31", "2026-02-31", "UTC") === null, "u254 unresolvable date → null (caller maps to 422, §24)");
+  ok(goodsReturnDayWindow("2026-01-15", "2026-01-15", "Not/AZone") !== null, "u255 invalid timezone falls back safely inside the established helper (§23)");
+}
+
+/* ========== 33. reason-code strictness at the DTO boundary (§51) ======== */
+{
+  const baseLine = {
+    id: "line-1",
+    goodsReceiptLineId: "rl-1",
+    productId: "p-1",
+    productNameAtReturn: "Widget",
+    skuAtReturn: "SKU-1",
+    unitAtReturn: "pcs",
+    returnedQty: 5,
+    reasonCode: "DAMAGED",
+    createdAt: new Date("2026-01-01T00:00:00Z"),
+    updatedAt: new Date("2026-01-01T00:00:00Z"),
+  };
+  eq(goodsReturnLineDto(baseLine).reasonCode, "DAMAGED", "u256 valid persisted reason passes the DTO boundary (§51)");
+  throws(
+    () => goodsReturnLineDto({ ...baseLine, reasonCode: "SOMETHING_ELSE" }),
+    "u257 corrupted persisted reason code rejected at the DTO boundary — never translated to OTHER (§51)",
+    "GoodsReturnIntegrityError",
+  );
+  throws(
+    () => goodsReturnDetailDto(
+      {
+        id: "r-1",
+        reference: "RET-X",
+        status: "POSTED",
+        notes: null,
+        goodsReceiptId: "gr-1",
+        goodsReceiptReferenceAtReturn: "GR-1",
+        purchaseOrderReferenceAtReturn: "PO-1",
+        supplierNameAtReturn: "Sup",
+        createdByUserId: "u-1",
+        createdByName: "U",
+        postedAt: new Date("2026-01-02T00:00:00Z"),
+        cancelledAt: null,
+        createdAt: new Date("2026-01-01T00:00:00Z"),
+      },
+      [{ ...baseLine, returnedQty: 0 }],
+    ),
+    "u258 detail DTO fails on a persisted zero-qty line (§9 — never fabricates a total)",
+    "GoodsReturnIntegrityError",
+  );
+  throws(
+    () => receiptLineReturnFactsDto({ goodsReceiptLineId: "rl-1", receivedQty: 10, returnedQty: 11 }),
+    "u259 receipt return-facts DTO routes through the canonical §36 law (returned > received → corruption)",
+    "GoodsReturnIntegrityError",
+  );
+  eq(receiptLineReturnFactsDto({ goodsReceiptLineId: "rl-1", receivedQty: 10, returnedQty: 4 }).returnableQty, 6, "u260 returnable facts stay exact (§36)");
 }
 
 console.log(`\n=== prompt43-unit: ${passed} passed, ${failed} failed ===`);

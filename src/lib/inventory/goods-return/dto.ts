@@ -12,7 +12,11 @@
  */
 import {
   computeReturnedQty,
+  computeReturnableQty,
+  isGoodsReturnReasonCode,
   parseGoodsReturnStatus,
+  GoodsReturnIntegrityError,
+  GOODS_RETURN_CORRUPT_HISTORY,
   type GoodsReturnStatus,
 } from "./types";
 
@@ -188,6 +192,14 @@ export function goodsReturnListItemDto(
 
 /** §70 — line mapper (pure projection; quantities stay exact integers). */
 export function goodsReturnLineDto(row: GoodsReturnLineRow): GoodsReturnLineDto {
+  // §51 — the DTO boundary promises the CLOSED reason vocabulary: a
+  // corrupted persisted reason code is rejected here (never silently
+  // translated to OTHER, never rendered as an unknown label).
+  if (!isGoodsReturnReasonCode(row.reasonCode)) {
+    throw new GoodsReturnIntegrityError(
+      `${GOODS_RETURN_CORRUPT_HISTORY}: invalid persisted reason code ${String(row.reasonCode)}`,
+    );
+  }
   return {
     id: row.id,
     goodsReceiptLineId: row.goodsReceiptLineId,
@@ -234,17 +246,20 @@ export function goodsReturnDetailDto(
 
 /**
  * §86 — pure projection of one receipt line's return facts. receivedQty is
- * the immutable gross source; returnable = received − returned (§36).
+ * the immutable gross source; returnable = received − returned via the ONE
+ * canonical checked helper (§36/§12 — throws on any corruption; callers
+ * map it to the stable integrity 500).
  */
 export function receiptLineReturnFactsDto(row: {
   goodsReceiptLineId: string;
   receivedQty: number;
   returnedQty: number;
 }): ReceiptLineReturnFactsDto {
+  const returnableQty = computeReturnableQty(row.receivedQty, row.returnedQty);
   return {
     goodsReceiptLineId: row.goodsReceiptLineId,
     receivedQty: row.receivedQty,
     returnedQty: row.returnedQty,
-    returnableQty: row.receivedQty - row.returnedQty, // callers pre-validate §36
+    returnableQty,
   };
 }
