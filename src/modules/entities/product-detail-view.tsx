@@ -78,6 +78,7 @@ export function ProductDetailView({
   const tGr = useTranslations("goodsReceipts");
   const tRt = useTranslations("goodsReturns");
   const tGd = useTranslations("goodsDispatches");
+  const tSo = useTranslations("salesOrders");
 
   const writable = can(role, "data:write");
   const p = data.product;
@@ -422,6 +423,45 @@ export function ProductDetailView({
                     <span className="flex items-center gap-2">
                       <span className="text-sm font-semibold tabular-nums text-amber-600 dark:text-amber-400" dir="ltr">
                         −{dsp.qty}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Prompt 45 (§72) — bounded sales-order history (≤10). Commercial
+          commitments — NOT inventory events: quantities only, NO money
+          (§72); rows deep-link to the order document
+          (#/sales-orders/<id>). */}
+      <Card data-testid="product-sales-order-history">
+        <CardContent className="pt-6">
+          <h2 className="mb-3 text-base font-semibold">{tSo("orderHistory")}</h2>
+          {!data.recentSalesOrders || data.recentSalesOrders.length === 0 ? (
+            <p className="text-muted-foreground text-sm">{tSo("noOrderHistory")}</p>
+          ) : (
+            <ul className="divide-y">
+              {data.recentSalesOrders.map((ord) => (
+                <li key={`${ord.id}`}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40"
+                    onClick={() => navigate({ kind: "sales-order", id: ord.id })}
+                    aria-label={`${tSo("orderHistory")}: ${ord.reference}`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium" dir="auto">{ord.reference}</span>
+                      <span className="text-muted-foreground block truncate text-xs" dir="auto">
+                        {ord.customerNameAtOrder || "—"} · {tSo(`status_${ord.status}`)}
+                        {ord.orderDate ? ` · ${new Date(ord.orderDate).toISOString().slice(0, 10)}` : ""}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <span className="text-muted-foreground text-sm tabular-nums" dir="ltr">
+                        {tSo("progressLabel", { dispatched: ord.dispatchedQty, ordered: ord.orderedQty })}
                       </span>
                     </span>
                   </button>

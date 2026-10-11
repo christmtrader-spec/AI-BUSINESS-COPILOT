@@ -341,6 +341,10 @@ ok(String(GOODS_DISPATCH_ERROR_CODES.LINE_LIMIT) !== String(GOODS_DISPATCH_ERROR
     notes: null,
     customerId: null,
     customerNameAtDispatch: "",
+    // Prompt 45 added the optional order-fulfillment link to the header
+    // row contract; standalone P44 fixtures keep it NULL (§32).
+    salesOrderId: null,
+    salesOrderReferenceAtDispatch: null,
     createdByUserId: "u-1",
     createdByName: "Sara",
     postedAt: null,
@@ -355,6 +359,8 @@ ok(String(GOODS_DISPATCH_ERROR_CODES.LINE_LIMIT) !== String(GOODS_DISPATCH_ERROR
     unitAtDispatch: "pcs",
     qty: 4,
     reasonCode: "SALE",
+    // Prompt 45 optional order-line link — standalone fixtures keep NULL (§33).
+    salesOrderLineId: null,
     createdAt: new Date("2026-10-10T10:00:00Z"),
     updatedAt: new Date("2026-10-10T10:00:00Z"),
   };

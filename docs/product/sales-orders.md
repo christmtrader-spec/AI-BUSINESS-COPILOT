@@ -108,9 +108,11 @@ rejected.
 `#/sales-orders` (list) and `#/sales-orders/<id>` (detail deep link).
 Actions follow status: DRAFT → Confirm/Cancel/edit; CONFIRMED → Record
 Dispatch (while remaining > 0) / Issue Invoice (when fully dispatched
-with no invoice) / Cancel (server re-validates); COMPLETED → linked
-invoice card + dispatch history; CANCELLED → read-only. Confirmation and
-posting dialogs state the inventory/financial consequences verbatim.
+with no invoice) / Cancel (hidden once posted fulfillment or an invoice
+exists — the server law re-validates inside the transaction regardless);
+COMPLETED → linked invoice card + dispatch history; CANCELLED →
+read-only. Confirmation and posting dialogs state the inventory and
+financial consequences verbatim.
 
 ## Error vocabulary
 

@@ -30,7 +30,11 @@
  * All fixtures are P45CAP-prefixed and torn down to ZERO, including
  * crashed-run recovery (pre-run sweep).
  *
- * Run: SALES_ORDER_MAX_LINES=20 npx tsx scripts/prompt45-sales-order-cap-check.ts
+ * Run: SALES_ORDER_MAX_LINES=20 bun --preload ./scripts/lib/register-server-only-shim.ts \
+ *      scripts/prompt45-sales-order-cap-check.ts
+ * (the shim neutralizes the `server-only` guard for out-of-process runs —
+ * the same harness law as the P29+ unit suites and the P42–P44 cap checks;
+ * plain tsx/node CANNOT import the server service modules).
  */
 import { PrismaClient } from "@prisma/client";
 import {
@@ -140,7 +144,7 @@ async function main() {
     }
   }
   eq2(accepted, 20, "1.1 exactly 20 lines accepted");
-  ok(limitError === "SALES_ORDER_LINE_LIMIT_REACHED", `1.2 21st line → 422 LINE_LIMIT (${limitError})`);
+  ok(`1.2 21st line → 422 LINE_LIMIT (${limitError})`, limitError === "SALES_ORDER_LINE_LIMIT_REACHED");
   const cappedCount = await db.salesOrderLine.count({ where: { salesOrderId: capped.id } });
   eq2(cappedCount, 20, "1.3 exactly 20 lines persisted");
 
@@ -185,7 +189,7 @@ async function main() {
   const dupLoses = dupResults.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
   eq2(dupWins.length, 1, "3.1 exactly ONE line created");
   eq2(dupLoses.length, 4, "3.2 four losers");
-  ok(dupLoses.every((l) => codeOf(l.reason) === "SALES_ORDER_DUPLICATE_PRODUCT"), "3.3 losers carry the stable duplicate code");
+  ok("3.3 losers carry the stable duplicate code", dupLoses.every((l) => codeOf(l.reason) === "SALES_ORDER_DUPLICATE_PRODUCT"));
   const dupCount = await db.salesOrderLine.count({ where: { salesOrderId: dupOrder.id } });
   eq2(dupCount, 1, "3.4 exactly one persisted line (DB uniqueness authoritative)");
 
@@ -198,7 +202,7 @@ async function main() {
   const refWins = refResults.filter((r) => r.status === "fulfilled");
   const refLoses = refResults.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
   eq2(refWins.length, 1, "4.1 exactly ONE order created");
-  ok(refLoses.every((l) => codeOf(l.reason) === "SALES_ORDER_DUPLICATE_REFERENCE"), "4.2 losers carry the stable duplicate-reference code");
+  ok("4.2 losers carry the stable duplicate-reference code", refLoses.every((l) => codeOf(l.reason) === "SALES_ORDER_DUPLICATE_REFERENCE"));
 
   /* ------------ 5. concurrent over-fulfillment (§103) ------------ */
   section("5. concurrent over-fulfillment (ordered 100, two × 70)");
@@ -219,17 +223,17 @@ async function main() {
   ]);
   const postWins = postResults.filter((r) => r.status === "fulfilled");
   const postLoses = postResults.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
-  ok(postWins.length === 1 && postLoses.length === 1, `5.1 exactly one post wins (${postWins.length}W/${postLoses.length}L)`);
+  ok(`5.1 exactly one post wins (${postWins.length}W/${postLoses.length}L)`, postWins.length === 1 && postLoses.length === 1);
   ok(
-    postLoses.length === 0 || postLoses.every((l) => codeOf(l.reason) === "SALES_ORDER_DISPATCH_EXCEEDS_REMAINING"),
     "5.2 loser carries the stable over-remaining code",
+    postLoses.length === 0 || postLoses.every((l) => codeOf(l.reason) === "SALES_ORDER_DISPATCH_EXCEEDS_REMAINING"),
   );
   const overDetail = await getSalesOrder({ businessId: biz.id, id: bigOrder.id });
   const postedSum = overDetail.lines[0].dispatchedQty;
-  ok(postedSum <= 100, `5.3 combined posted ≤ ordered (${postedSum} ≤ 100)`);
+  ok(`5.3 combined posted ≤ ordered (${postedSum} ≤ 100)`, postedSum <= 100);
   const stockAfterOver = (await db.product.findUnique({ where: { id: product.id }, select: { stockQty: true } }))!.stockQty;
   eq2(stockAfterOver, stockBefore - postedSum, "5.4 stock decremented by EXACTLY the posted quantity");
-  ok(stockAfterOver >= 0, "5.5 stock never negative");
+  ok("5.5 stock never negative", stockAfterOver >= 0);
   const adjForProduct = await db.inventoryAdjustment.count({ where: { businessId: biz.id, productId: product.id, delta: { lt: 0 } } });
   eq2(adjForProduct, postedSum > 0 ? 1 : 0, "5.6 ONE negative adjustment per posted line");
 
@@ -252,10 +256,10 @@ async function main() {
   ]);
   const invWins = invoiceResults.filter((r) => r.status === "fulfilled");
   const invLoses = invoiceResults.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
-  ok(invWins.length === 1 && invLoses.length === 1, `6.3 exactly one invoice wins (${invWins.length}W/${invLoses.length}L)`);
+  ok(`6.3 exactly one invoice wins (${invWins.length}W/${invLoses.length}L)`, invWins.length === 1 && invLoses.length === 1);
   ok(
-    invLoses.every((l) => codeOf(l.reason) === "SALES_ORDER_ALREADY_INVOICED"),
     `6.4 loser carries the stable already-invoiced code (${invLoses.map((l) => codeOf(l.reason)).join(",")})`,
+    invLoses.every((l) => codeOf(l.reason) === "SALES_ORDER_ALREADY_INVOICED"),
   );
   const saleCountAfter = await db.sale.count({ where: { salesOrderId: bigOrder.id } });
   eq2(saleCountAfter, 1, "6.5 EXACTLY ONE linked Sale (§52/§105)");
@@ -267,7 +271,7 @@ async function main() {
   eq2(adjPostInvoice, adjPreInvoice, "6.8 §122: NO InventoryAdjustment from either invoice request");
   const completedOrder = await db.salesOrder.findUnique({ where: { id: bigOrder.id }, select: { status: true, completedAt: true } });
   eq2(completedOrder?.status, "COMPLETED", "6.9 order COMPLETED exactly once");
-  ok(Boolean(completedOrder?.completedAt), "6.10 completedAt set");
+  ok("6.10 completedAt set", Boolean(completedOrder?.completedAt));
   const invoiceAudits = await db.auditLog.count({ where: { businessId: biz.id, entityId: bigOrder.id, action: "sales_order.invoice" } });
   eq2(invoiceAudits, 1, "6.11 exactly ONE sales_order.invoice audit event");
   const saleAudits = await db.auditLog.count({ where: { businessId: biz.id, action: "sale.create", entityId: (await db.sale.findFirst({ where: { salesOrderId: bigOrder.id } }))!.id } });
@@ -306,7 +310,7 @@ async function main() {
   eq2(postSer.lineCount, 1, "7.1 dispatch posted alongside the adjustment");
   const stockAfterSer = (await db.product.findUnique({ where: { id: product.id }, select: { stockQty: true } }))!.stockQty;
   eq2(stockAfterSer, stockBeforeSer + 3 - 6, "7.2 exact integer arithmetic (no lost update)");
-  ok(stockAfterSer >= 0, "7.3 stock never negative");
+  ok("7.3 stock never negative", stockAfterSer >= 0);
 
   /* --------------------------- 8. cancel race --------------------------- */
   section("8. concurrent cancel + dispatch post (§49/§50)");
@@ -321,13 +325,13 @@ async function main() {
   ]);
   const racePosted = raceResults[0].status === "fulfilled";
   const raceCancelled = raceResults[1].status === "fulfilled";
-  ok(!(racePosted && raceCancelled), "8.1 post and cancel can NEVER both succeed (§49/§50 invariant)");
+  ok("8.1 post and cancel can NEVER both succeed (§49/§50 invariant)", !(racePosted && raceCancelled));
   const raceDetail = await getSalesOrder({ businessId: biz.id, id: raceOrder.id });
   if (racePosted) {
     eq2(raceDetail.order.status, "CONFIRMED", "8.2 posted → order stays CONFIRMED (cancel lost)");
   } else {
     eq2(raceDetail.order.status, "CANCELLED", "8.3 cancel won → dispatch must have failed");
-    ok(raceResults[0].status === "rejected", "8.4 losing post carries a domain error");
+    ok("8.4 losing post carries a domain error", raceResults[0].status === "rejected");
   }
 
   /* ---------------------------- teardown ---------------------------- */

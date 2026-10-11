@@ -58,6 +58,7 @@ export function CustomerDetailView({
 }) {
   const t = useTranslations("entityDetail");
   const tGd = useTranslations("goodsDispatches");
+  const tSo = useTranslations("salesOrders");
   const tCommon = useTranslations("common");
   const tStatements = useTranslations("statements");
   const tSearch = useTranslations("search");
@@ -231,6 +232,32 @@ export function CustomerDetailView({
           trailingMuted: d.postedAt
             ? fmtDate(business, d.postedAt)
             : tGd(`status_${d.status}`),
+        }))}
+      />
+
+      {/* Prompt 45 (§71) — bounded sales-order history (≤10). Commercial
+          commitments — NOT financial rows; rows deep-link to the order
+          document (#/sales-orders/<id>). Quantity facts use the canonical
+          POSTED-only fulfillment aggregate. */}
+      <RelatedRecordList
+        title={tSo("orderHistory")}
+        entity={null}
+        emptyText={tSo("noOrderHistory")}
+        onOpen={() => {}}
+        onOpenRow={(id) => navigate({ kind: "sales-order", id })}
+        items={(data.recentSalesOrders ?? []).map((o) => ({
+          id: o.id,
+          icon: ShoppingCart,
+          primary: o.reference,
+          secondary: tSo(`status_${o.status}`),
+          trailing: tSo("progressLabel", {
+            dispatched: o.dispatchedQty,
+            ordered: o.orderedQty,
+          }),
+          trailingMuted:
+            typeof o.invoiceNumber === "number"
+              ? `INV-${String(o.invoiceNumber).padStart(4, "0")}`
+              : null,
         }))}
       />
 

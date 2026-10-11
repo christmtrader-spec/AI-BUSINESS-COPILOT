@@ -353,15 +353,21 @@ export function SalesOrderDetailView({ id, role }: { id: string; role: Role }) {
                   {t("issueInvoice")}
                 </Button>
               ) : null}
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setCancelOpen(true)}
-                data-testid="sales-order-cancel-confirmed"
-              >
-                {t("cancelAction")}
-              </Button>
+              {/* §49/§87 — cancel is offered only while it can actually
+                  succeed (no POSTED fulfillment, no invoice): the established
+                  hide-pattern, matching Record dispatch / Issue invoice. The
+                  server law remains the authority (defense in depth). */}
+              {data.summary.dispatchedQty === 0 && !hasInvoice ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setCancelOpen(true)}
+                  data-testid="sales-order-cancel-confirmed"
+                >
+                  {t("cancelAction")}
+                </Button>
+              ) : null}
             </>
           ) : null}
           <Button type="button" size="sm" variant="outline" onClick={exportCsv} data-testid="sales-order-export">
@@ -584,7 +590,7 @@ export function SalesOrderDetailView({ id, role }: { id: string; role: Role }) {
                   {`INV-${String(data.invoice.number).padStart(4, "0")}`}
                 </p>
                 <p className="text-muted-foreground text-xs tabular-nums" dir="ltr">
-                  {money(data.invoice.totalMinor)} · {t("dispatchedLabel")}: {data.invoice.paidMinor}/{data.invoice.totalMinor}
+                  {money(data.invoice.totalMinor)} · {t("paidLabel")}: {data.invoice.paidMinor}/{data.invoice.totalMinor}
                 </p>
               </div>
               <Button

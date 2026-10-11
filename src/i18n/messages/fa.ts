@@ -1687,7 +1687,6 @@ const fa: Messages = {
         emailLabel: "ایمیل",
         fallback: "سؤالات حقوقی: با تیم پشتیبانی ما تماس بگیرید.",
       },
-      version: "نسخه {version}",
     },
     auth: {
       acceptPrefix: "خوانده‌ام و می‌پذیرم:",
@@ -2996,6 +2995,7 @@ const fa: Messages = {
     orderedLabel: "سفارش‌داده‌شده",
     dispatchedLabel: "مقدار خارج‌شده",
     remainingLabel: "مقدار باقی‌مانده برای خروج",
+    paidLabel: "پرداخت‌شده",
     fullyDispatched: "کاملاً خارج شده",
     partiallyDispatched: "به‌صورت جزئی خارج شده",
     nothingDispatched: "هنوز هیچ خروجی ثبت نشده",

@@ -27,26 +27,31 @@
 
 ## Current Project Status (assessment)
 
-- Phase 00 (constitution) COMPLETE. Project is at clean-scaffold baseline:
-  Next.js 16.1.3 running, `GET / 200`, lint clean, full shadcn/ui set
-  present, Prisma/SQLite configured with demo `User`/`Post` models only,
-  placeholder home page. No business features yet.
-- Next milestone per roadmap: **Phase 01 — Foundation** (tenant schema,
-  NextAuth credentials auth, app shell with sidebar/theme/i18n+RTL,
-  business creation + settings).
+- PROMPT 45-F COMPLETE (2026-10-11): Sales Orders + Goods-Dispatch
+  fulfillment + linked-invoice integration audited, hardened, and closed.
+  27/27 migrations applied / 0 pending, DB integrity ok, all P45 suites
+  green (unit 224/0 · E2E 219/0 · cap/concurrency 43/0 · static 114/0),
+  full P17–P44 dependent regression green, browser QA matrix EN/FA ×
+  light/dark × desktop/mobile verified with zero console errors.
+- Key round fixes: invoice-race loser code (ALREADY_INVOICED always),
+  13 vacuous cap-suite assertions now live, cancel-button visibility on
+  partially-dispatched orders, Customer-360 + Product-detail sales-order
+  widgets wired, fa.ts duplicate key removed, paidLabel fix, P44/P45
+  harness type drift fixed.
+- Known limitations (documented in the 45-F worklog entry): pre-existing
+  2026-09-25-era tsc errors in pricing/legal/public-commerce files;
+  legacy duplicate P26 migrations block full-chain shadow replay
+  (ledger-baseline discipline); `bun run build` not executed (sandbox).
 
 ## Next-Phase Priorities
 
-1. Phase 01: replace demo schema with tenant core (User, Business,
-   BusinessMember, AuditLog; money-ready Int columns) + `bun run db:push`.
-2. Phase 01: NextAuth credentials auth (bcrypt), session with
-   `activeBusinessId`, API pipeline helpers (`lib/api-helpers`,
-   `lib/tenant`, `lib/rbac`).
-3. Phase 01: app shell (responsive sidebar layout, light/dark/system theme,
-   en/fa dictionaries with RTL, sticky-footer-safe layout), onboarding +
-   settings.
-4. Then Phase 02 (Customers/Suppliers/Products) per
-   `docs/ARCHITECTURE.md §6`.
+1. Prompt 45 is CLOSED per its stop conditions — do NOT start Prompt 46
+   unless the user explicitly requests it.
+2. If a future round is authorized: the pre-existing 09-25-era
+   pricing/legal/public-commerce type errors are the largest outstanding
+   hygiene item (they need product-intent decisions, not blind fixes).
+3. Keep the env-repair baseline law: every applied migration stays in
+   scripts/env-repair.mjs (currently through 20261011090000_prompt45).
 
 ## Open Issues / Risks
 
@@ -3865,3 +3870,84 @@ NOT EXECUTED: `bun run build` — environment restriction (build execution prohi
 KNOWN LIMITATIONS (documented, intentional): aggregate-stock authority at POST (no lot/batch provenance — same trade-off as P40/P42/P43); dispatches are not chained to Sales invoices (customer link is optional metadata; a future sales-order pipeline could consume this document); no POSTED-reversal (correction = new document where lawful / authorized adjustments otherwise); import remains structurally blocked for the P44 datasets.
 
 FINAL STATUS: **PROMPT 44 = COMPLETE** — the outbound inventory document ships with the full audited law set, 24/24 migrations, all suites green in this environment, browser-verified EN+FA / light+dark / desktop+mobile, docs + ADR + Worklog synchronized. STOP — no further scope (no sales orders, no warehouse/lot/valuation, no financial posting) was started.
+
+---
+Task ID: 45-F
+Agent: Z.ai Code (finalization round)
+Task: PROMPT 45-F — Sales Orders Finalization, Correctness Hardening, Deep Regression, Browser QA, and Release Closure
+
+Work Log:
+
+1. EXECUTIVE SUMMARY
+- Prompt 45 was found IMPLEMENTED (code, migration, docs, 4 suites) but with its Worklog entry MISSING entirely (the implementing session never appended one — the only P45 traces were file mtimes 2026-10-11 06:25–07:44 and the static scanner's claimed 114/0). This round audited the real repository end-to-end, reconciled the migration ledger against the live database, ran every suite that the environment permits, found and fixed 9 real defects (D-1..D-10 minus one non-bug), re-verified all four P45 suites plus the full dependent regression chain, and performed real agent-browser QA across the required EN/FA × light/dark × desktop/mobile matrix with journeys A–O. Final status: PROMPT 45-F COMPLETE (all release gates evaluated; see §29 statuses below).
+
+2. INITIAL REPOSITORY STATE
+- 27 migration.sql directories (0_init + 26 dated), latest 20261011090000_prompt45_sales_orders; `prisma migrate status`: "Database schema is up to date!"; raw `_prisma_migrations` ledger: 27 applied / 0 pending. `PRAGMA quick_check` = ok; `PRAGMA foreign_key_check` = 0 rows. Live DB contains SalesOrder, SalesOrderLine (with SalesOrder_businessId_reference_key, SalesOrderLine_salesOrderId_productId_key, status/date/customer indexes), Sale.salesOrderId + UNIQUE Sale_salesOrderId_key, GoodsDispatch.salesOrderId + salesOrderReferenceAtDispatch, GoodsDispatchLine.salesOrderLineId — the migration is additive-only (verified by reading the SQL: two CREATE TABLEs + five ADD COLUMNs + nine CREATE INDEXes; no existing column redefined).
+- P45 implementation surfaces audited line-by-line: src/lib/sales-orders/{types,integration,dto,service,schema,export}.ts (service 1698 lines), 9 API route files, 7 UI module files, goods-dispatch linked-fulfillment branch (line-add derivation + authoritative in-tx POST gate), Sale DELETE guard, search SALES_ORDER join, entities mappers, export-catalog CONFIDENTIAL datasets, restore-drill probes, env-repair baseline, 5 P45 scripts, 3 P45 docs + financial-semantics + deletion-matrix.
+- No prior P45 worklog entry existed (documentation gap fixed by this entry).
+
+3. DEFECT MATRIX (found → fixed → regression-proven)
+- D-1 (doc defect, scripts/prompt45-sales-order-cap-check.ts header): documented invocation `npx tsx …` CANNOT run — the service modules import `server-only`; out-of-process runs need the established bun preload shim (same law as P29+ unit suites and P42–P44 cap checks). FIXED: header now documents `SALES_ORDER_MAX_LINES=20 bun --preload ./scripts/lib/register-server-only-shim.ts scripts/prompt45-sales-order-cap-check.ts`. Regression: the suite ran green under the documented command.
+- D-2 (test defect — 13 vacuous assertions, prompt45-sales-order-cap-check.ts): `ok(cond, message)` calls reversed against the `ok(name, cond)` signature — the boolean landed in `name`, the always-truthy message string in `cond`, so 13 concurrency/invariant checks printed "✓ true" and could NEVER fail (exactly the §2.6 weakening class). FIXED: all 13 call sites reordered. This fix IMMEDIATELY exposed D-5 (the vacuous 6.4 had been hiding a real contract violation).
+- D-3 (type drift, scripts/prompt44-unit.ts): P45 extended GoodsDispatchHeaderRow/GoodsDispatchLineRow with salesOrderId/salesOrderReferenceAtDispatch/salesOrderLineId; the P44 DTO fixtures were not updated → 11 tsc errors. FIXED: fixtures carry the new fields as NULL (standalone law §32/§33); P44 unit re-ran 256/0.
+- D-4 (i18n corruption, src/i18n/messages/fa.ts): `legal.doc.version` key DUPLICATED in the same object literal (line 1669 "نسخهٔ {version}" vs line 1690 "نسخه {version}") — TS1117 + runtime last-wins hazard. FIXED: stray duplicate removed; parity re-verified.
+- D-5 (REAL domain contract bug, src/lib/sales-orders/service.ts issueOrderInvoice): the one-invoice existence check ran AFTER the status gate. In the concurrent issuance race the winner commits Sale + order→COMPLETED; the loser then re-loaded the header as COMPLETED and failed with 409 SALES_ORDER_INVALID_STATUS instead of the documented stable 409 SALES_ORDER_ALREADY_INVOICED (§105: "every losing request must produce the documented stable behavior"). The vacuous D-2 assertion masked it. FIXED: relation check moved BEFORE the status gate (with a law comment); status law unchanged for every non-invoiced state. Proven live: cap-check 6.4 now genuinely passes (43/0); E2E 13.14/13.15 stable conflict still green; unique-constraint fallback mapping (P2002→ALREADY_INVOICED) retained as the final authority.
+- D-6 (investigated, verified NOT a bug): after posting a linked dispatch via the dispatch page, the order detail's fulfillment widget briefly served cached data — react-query stale-while-revalidate converges within the normal navigation window (measured: correct 5/12 after refetch; reload shows truth). Established pattern; recorded as verified-correct behavior.
+- D-7 (UI law defect, sales-order-detail-view.tsx): "Cancel order" rendered unconditionally on CONFIRMED orders, and the cancel dialog claimed "No stock has moved and nothing was invoiced, so there is nothing to reverse." — FACTUALLY WRONG on a partially-dispatched order (4/10 posted) and the server would 409 HAS_FULFILLMENT. FIXED per the established hide-pattern (same as Record dispatch / Issue invoice): cancel is offered only while dispatchedQty === 0 && !hasInvoice; the dialog wording is now accurate in every reachable state; server law unchanged (defense in depth). Browser-verified on the PARTIAL fixture order.
+- D-8 (missing UI integration, customer-detail-view.tsx): the customers API computed and returned `recentSalesOrders` (§71) and the i18n keys existed (orderHistory/noOrderHistory/progressLabel) but the Customer 360 NEVER rendered the widget. FIXED: RelatedRecordList added (≤10 rows, snapshot statuses, canonical "X of Y dispatched" progress from the POSTED-only aggregate, INV chip, deep links via `navigate({kind:"sales-order"})`). Browser-verified against the 6-order fixture.
+- D-9 (missing UI integration, product-detail-view.tsx): same gap on Product detail (§72 — quantities only, NO money). FIXED: bounded list card added with per-order-line fulfillment numbers and order deep links; §72 money ban respected. Browser-verified (Widget Pro shows DONE 8/8 and DRAFT 5/5 rows).
+- D-10 (contradictory financial label, sales-order-detail-view.tsx line 593): the Linked-invoice card rendered the PAID progress as "Dispatched: 0/4000" (t("dispatchedLabel") on paidMinor/totalMinor) — exactly the §23 forbidden-label class. FIXED: new `paidLabel` key (en "Paid" / fa "پرداخت‌شده") in BOTH message files; browser-verified ("$40 · Paid: 0/4000").
+- (invocation note) scripts/prompt42-unit.ts header said `bun scripts/…` — post-P45 shared imports pull `server-only` transitively; documented the shim requirement in its header (P42 unit runs green under it).
+
+4. MIGRATION RECONCILIATION (from the REAL database, not messages)
+- Repository migration count: 27 migration.sql files. Chronological sequence verified (0_init, P20–P45; the two P26-era "legacy duplicate directories" 20260924130000/20260924140000 ship as documented in scripts/env-repair.mjs).
+- `bunx prisma migrate status` → "Database schema is up to date!" (27 found). Raw ledger query → 27 applied / 0 pending. `prisma validate` ✓; `prisma generate` ✓.
+- Live schema spot-audit (raw SQLite): all P45 tables/columns/uniques/indexes present (listed in §2). quick_check ok; foreign_key_check 0 rows.
+- Full-chain shadow replay (`migrate diff --from-migrations`) fails at the legacy duplicate P26 migration ("AiCostRate already exists") — PRE-EXISTING, documented environmental characteristic (those two legacy migrations are ledger-baselined via `migrate resolve --applied`, never replayed; env-repair.mjs documents this law). NOT a P45 regression.
+- DISCREPANCY documented: migration 20260924130000_prompt25_public_commercial's SQL creates AnalyticsEvent/ContactLead/Business.onboardingDismissedAt, but the live DB never received them (that migration was resolve-baselined without execution in an early sandbox repair) and the current schema does not declare them. Consequence: four 09-25-era src files (public analytics/contact, onboarding/dismiss, lib/analytics) reference non-existent models and fail tsc, together with the other pre-existing 09-25-era files (pricing-view, legal-view, content/legal, public-pricing). This predates Prompt 45 (file mtimes 2026-09-25; untouched this round), is outside the P45 gates, and "fixing" it would mean deciding product intent for half-finished public-commerce/legal features — recorded as a known limitation instead of silently patched. P45's OWN migration integrity is fully verified.
+- env-repair baseline includes the P45 migration (25th→27th ledger era) ✓; restore-drill probes SalesOrder + SalesOrderLine ✓.
+
+5–12. TEST RESULTS (all EXECUTED this round unless marked)
+- Prompt 45 unit (scripts/prompt45-unit.ts): 224 passed / 0 failed — run 3× (before fixes, after service fix, after UI fixes).
+- Prompt 45 E2E (scripts/prompt45-sales-order-check.mjs, live server + real DB): 219/0 — run 3× (incl. after the D-5/D-7 changes).
+- Prompt 45 cap/concurrency (isolated SALES_ORDER_MAX_LINES=20 + shim): 43/0 — run 4×; the FIRST post-D-2 run failed 1 (caught D-5), all subsequent runs 43/0 with every assertion live. Recorded facts: 20-line cap + 21st→422; over-cap corruption → 500 invariant, zero mutation, recovery; 5-way duplicate-line race (1 winner/4×409); 5-way duplicate-reference race (1 winner/4×409); ordered 100 vs two concurrent 70s → one winner, loser 409 DISPATCH_EXCEEDS_REMAINING, stock exactly 100−winners, ONE adjustment per posted line; concurrent invoice race → exactly one Sale, loser 409 ALREADY_INVOICED, zero stock/adjustment delta, ONE audit pair; post+manual-adjustment serialization exact (no lost update, never negative); cancel-vs-post race never both succeed; teardown to ZERO.
+- Prompt 45 static scan: 114/0 — run 3× (still green after all source edits).
+- Cross-prompt regression (EXECUTED): P35 unit 104/0 + prompt35-crm-check 148/148 · P40 unit 209/209 + E2E 133/133 · P41 unit 233/233 + static 145/145 + E2E 218/218 · P42 unit 237/0 (shim) + static 188/0 + E2E 273/0 · P43 unit 286/0 + static 203/0 + E2E 293/0 · P44 unit 256/0 + static 150/0 + E2E 158/0 + cap 40/0. Cross-cutting static scans: entity-detail 20/20, crm 20/20, notification 28/28.
+- TypeScript (`bunx tsc --noEmit`): ALL P45-owned and P44-owned files 0 errors (after D-3 fixes + fixture fields). Remaining 164 errors are confined to the pre-existing 2026-09-25-era set (pricing-view, legal-view, content/legal, lib/analytics, public analytics/contact, onboarding/dismiss, public-pricing) + P26-era report scripts — documented above; none introduced or touched by P45. The historical "tsc 0 errors" claim from P44 could not be reproduced against today's tree for that pre-existing set; recorded honestly.
+- ESLint: 0 errors (after fixing a require() in this round's own scratch script).
+- Prisma: validate ✓, generate ✓.
+- SQLite: quick_check ok; foreign_key_check 0 violations.
+- i18n: en/fa key parity 1237/1237, 0 missing either direction (after D-4 removal + paidLabel addition). Persian terms verified in-app: سفارش فروش، تأییدشده، تکمیلشده، لغوشده، ثبت خروج کالا، صدور فاکتور، مقدار خارج‌شده، مقدار باقی‌مانده برای خروج.
+- Backup/restore (EXECUTED): backup-db PASS (sha256 sidecar, migrations=27), verify-backup PASS (verified=true), restore-drill PASS (integrity ok, migrations UP_TO_DATE, 23 entities probed incl. SalesOrder/SalesOrderLine).
+- NOT EXECUTED: `bun run build` — sandbox restriction (build execution prohibited in this environment; recorded honestly, not converted to a pass). Performance percentiles — not claimed (bounded reads, DB pagination, cap+1 completeness proven instead).
+
+13. BROWSER QA (real Chrome via agent-browser, P45SO-BROWSE fixture created fresh — verified NO prior fixture residue existed in the DB before creation)
+- Viewport/language/theme matrix, ALL with real screenshots and horizontal-overflow measurement (scrollWidth vs clientWidth — FALSE at every size):
+  1. 1920×1080 EN light: list (5 orders, statuses, "4 of 10 dispatched" aggregates, INV chips, honest subtitle) → qa-p45-sales-orders-en-light.png; DRAFT detail (snapshots, no-reservation wording, line table) → qa-p45-sales-order-detail-en-light.png.
+  2. 1366×768 EN dark: list + detail → qa-p45-sales-orders-en-dark.png, qa-p45-sales-order-detail-en-dark.png.
+  3. 1920×1080 FA RTL light: order detail → qa-p45-sales-order-fa-light-rtl.png.
+  4. 1920×1080 FA RTL dark: order detail + list → qa-p45-sales-order-fa-dark-rtl.png, qa-p45-sales-orders-fa-dark.png (Persian terms verified: سفارش فروش/تأییدشده/تکمیلشده/لغوشده).
+  5. 390×844 FA RTL dark: list + detail + dispatch dialog → qa-p45-sales-orders-mobile-fa-dark.png, qa-p45-sales-order-mobile-fa-detail.png, qa-p45-dispatch-dialog-mobile-fa.png.
+  6. 360×640 FA dark: qa-p45-mobile-360x640-fa-dark.png (no overflow).
+  7. 412×915 FA dark: list + completed-order detail → qa-p45-mobile-412x915-fa-dark.png, qa-p45-sales-order-mobile-412-fa-dark.png (clipped-element audit: only intentional sr-only/truncate nodes).
+- Journeys (UI + persisted-DB assertions):
+  A create/draft detail ✓ (snapshots, totals, no invoice) · B edit draft ✓ (add line via picker with duplicate-product disable; qty 0 → Save disabled; remove line; totals recalculated; qa-p45-line-qty-zero-validation.png, qa-p45-draft-after-line-ops-en.png) · C confirm ✓ (dialog carries the verbatim no-reservation law; NON-ZERO before/after stock snapshot byte-identical 500/54/76/192; zero adjustments added; no Sale; order CONFIRMED; qa-p45-confirm-dialog-en.png) · D partial fulfillment ✓ (linked draft DSP-…-ARP8XK created from the order dialog — customer/order context derived; line-add from ORDER LINE with "Ordered/Already dispatched/Remaining"; posted via dispatch detail → Cable 500→495, ONE −5 adjustment, order CONFIRMED, no invoice; qa-p45-dispatch-dialog-en.png, qa-p45-dispatch-post-confirm.png) · E multiple dispatches ✓ (second dispatch 7/7 → 488 cumulative −12; third dispatch Widget 5 → 187; 17/17 "Fully dispatched"; still CONFIRMED) · F over-dispatch ✓ (line-add capped by remaining in dialog; authoritative gate proven in cap-check 5.x; UI max bound) · G invoice ✓ (confirmation states the no-second-decrement law verbatim; stock byte-identical after; adjustment count unchanged; ONE linked Sale INV-0002 UNPAID paidMinor=0; SaleItems from order snapshots 2500+3000=5500; order COMPLETED atomically; qa-p45-invoice-confirm.png, qa-p45-sales-order-invoice-flow.png) · H partial invoicing blocked ✓ (PARTIAL order shows no Issue invoice action; API-level 409 NOT_FULLY_DISPATCHED proven in E2E) · I duplicate invoicing ✓ (COMPLETED order hides the action; cap-check 6.x proves the concurrent + repeat API law after D-5) · J payment compatibility ✓ (existing Record payment flow on INV-0002 → paidMinor 5500, status PAID, one CASH Payment row, order stays COMPLETED, stock untouched) · K cancellation ✓ (cancel-confirm dialog verified; blocked-cancel wording defect D-7 found+fixed; COMPLETED/CANCELLED terminal read-only in UI; CANCELLED fixture intact) · L legacy regression ✓ (legacy Sale created via Sales UI → stock 187→185 with −2 "Sale INV-0003" adjustment, salesOrderId NULL; UI delete → stock restored 187 + "+2 (reversal)" adjustment; delete of LINKED INV-0002 → dev.log shows DELETE 409 SALE_LINKED_TO_SALES_ORDER, stock unchanged, sale alive, zero reversal adjustments; qa-p45-sales-list-en.png) · M tenant isolation ✓ (second real business owner opens the foreign deep link → safe not-found fallback, zero reference leakage, no mutation) · N export ✓ (per-order CSV: BOM + CRLF verified byte-level, exact snapshots, fulfillment + invoice columns; 200 via entitlement+rate-limit stack; qa-p45-search-deeplink.png covers O) · O search/navigation ✓ (⌘K search by reference → SALES_ORDER result → #/sales-orders/<id> renders directly; Customer 360 verified incl. the NEW D-8 widget; Product history verified incl. the NEW D-9 widget) · P stale state ✓ (post-post cache convergence measured; no silent rebase).
+- Console/page errors: 0 across the whole session (checked after each major step).
+
+14. FIXTURE CLEANUP (EXECUTED, verified)
+- Pre-existing var/p45so-browser-* stamp/JSON was stale metadata only (DB had ZERO P45SO residue) — no duplicate fixture was created; fresh fixture used for QA, then `--teardown` run.
+- Post-QA residue scan (raw SQLite): P45SO/P45CAP/P42GR/P43RT/P44DS/P41PO → 0 businesses, 0 users. Sara's persistent baseline businesses intact. Stale credential metadata files removed; no fixture credentials in this report.
+
+15. REMAINING KNOWN LIMITATIONS (honest)
+- Pre-existing 09-25-era type errors + dead-reference routes (see §4 discrepancy) — outside P45 scope, documented, not silently "fixed".
+- Full-chain shadow replay blocked by the documented legacy duplicate P26 migrations (ledger-baseline discipline) — pre-existing environmental characteristic.
+- `bun run build` and performance percentiles NOT EXECUTED (sandbox).
+- The dev server was killed twice by the sandbox mid-E2E (P42/P43 first attempts) — purely environmental; both suites re-ran clean to 0 failures.
+
+16. EXPLICIT FINAL STATUS
+- GATE A domain correctness: PASS (suites + terminal immutability verified). GATE B inventory: PASS (single decrement at POST proven with non-zero fixtures; invoice issued with byte-identical stock). GATE C financial: PASS (existing Sale/Payment/receivables authority intact; D-10 label fixed). GATE D legacy compatibility: PASS (journey L). GATE E transaction integrity: PASS (cap suite + E2E rollback probes). GATE F tenant/RBAC: PASS (E2E §69 both directions + journey M). GATE G data integrity: PASS (caps, corruption probes, snapshot law). GATE H migration integrity: PASS for P45 (27/0, integrity ok, additive-only verified) with the documented pre-existing P25-public limitation. GATE I regression: PASS (all suites above EXECUTED). GATE J browser QA: PASS (matrix + journeys A–O). GATE K portability/backup: PASS (CSV stack, business export, import rejection, restore-drill). GATE L docs/worklog: PASS (this entry + doc precision update). GATE M fixture cleanup: PASS (zero residue).
+- **PROMPT 45-F = COMPLETE.** STOP — Prompt 46 not started; no unrelated features implemented.
+
+FILES CHANGED THIS ROUND (all minimal, audited):
+- MODIFIED: src/lib/sales-orders/service.ts (D-5 guard order + law comment) · src/modules/sales-orders/sales-order-detail-view.tsx (D-7 cancel visibility gate, D-10 paidLabel) · src/modules/entities/customer-detail-view.tsx (D-8 widget) · src/modules/entities/product-detail-view.tsx (D-9 widget) · src/i18n/messages/en.ts + fa.ts (D-4 duplicate removed, paidLabel added) · scripts/prompt45-sales-order-cap-check.ts (D-1 header, D-2 13 assertions) · scripts/prompt44-unit.ts (D-3 fixtures) · scripts/prompt42-unit.ts (header invocation note) · docs/product/sales-orders.md (cancel-visibility precision).
+- DELETED: none. MIGRATIONS: none added (P45 migration already correct; 27/0 verified).

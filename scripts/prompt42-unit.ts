@@ -3,7 +3,9 @@
  *
  * Pure laws are tested WITHOUT Prisma/db (§228 — no live database). Server
  * transactional behavior is covered by scripts/prompt42-goods-receipt-check.mjs.
- * Run: bun scripts/prompt42-unit.ts
+ * Run: bun --preload ./scripts/lib/register-server-only-shim.ts scripts/prompt42-unit.ts
+ * (the shim is REQUIRED since the P45-era shared imports pull `server-only`
+ * transitively — plain bun cannot import the server service modules).
  */
 import {
   GOODS_RECEIPT_ERROR_CODES,

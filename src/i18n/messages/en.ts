@@ -2995,6 +2995,7 @@ const en = {
     orderedLabel: "Ordered",
     dispatchedLabel: "Dispatched",
     remainingLabel: "Remaining to dispatch",
+    paidLabel: "Paid",
     fullyDispatched: "Fully dispatched",
     partiallyDispatched: "Partially dispatched",
     nothingDispatched: "Nothing dispatched yet",

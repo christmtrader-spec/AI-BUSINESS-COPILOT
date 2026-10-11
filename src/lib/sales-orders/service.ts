@@ -1383,18 +1383,13 @@ export async function issueOrderInvoice(input: {
   return withWriteTx(async (tx) => {
     const cap = salesOrderLineCap(process.env.SALES_ORDER_MAX_LINES);
     const header = await loadOrderHeader(tx, input.businessId, input.id);
-    if (header.status !== "CONFIRMED") {
-      // §54 — only CONFIRMED orders can be invoiced (COMPLETED/CANCELLED
-      // orders are terminal; DRAFT orders are not yet commitments).
-      throw new ApiError(
-        409,
-        SALES_ORDER_ERROR_CODES.INVALID_STATUS,
-        "Only CONFIRMED sales orders can be invoiced.",
-      );
-    }
 
-    // §52/§105 — ONE invoice per order: relation check inside the tx AND
-    // the database unique constraint as the concurrency authority.
+    // §52/§105 — ONE invoice per order: the relation check runs BEFORE the
+    // status gate so that EVERY loser of the issuance path — including the
+    // concurrent race where the winner already moved the order to
+    // COMPLETED — receives the ONE documented stable conflict code
+    // (SALES_ORDER_ALREADY_INVOICED), never a state-dependent code. The
+    // database unique constraint remains the final concurrency authority.
     const existing = await tx.sale.findFirst({
       where: { salesOrderId: header.id },
       select: { id: true, number: true },
@@ -1404,6 +1399,16 @@ export async function issueOrderInvoice(input: {
         409,
         SALES_ORDER_ERROR_CODES.ALREADY_INVOICED,
         "This sales order already has an invoice.",
+      );
+    }
+
+    if (header.status !== "CONFIRMED") {
+      // §54 — only CONFIRMED orders can be invoiced (COMPLETED/CANCELLED
+      // orders are terminal; DRAFT orders are not yet commitments).
+      throw new ApiError(
+        409,
+        SALES_ORDER_ERROR_CODES.INVALID_STATUS,
+        "Only CONFIRMED sales orders can be invoiced.",
       );
     }
 
