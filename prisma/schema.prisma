@@ -89,6 +89,9 @@ model User {
   // creator-linked policy as P40/P41/P42 (documented in the deletion matrix).
   goodsReturnCreations        GoodsReturn[]             @relation("GoodsReturnCreator")
   goodsDispatchCreations      GoodsDispatch[]           @relation("GoodsDispatchCreator")
+  // Prompt 45 — Sales Orders (§6/§68): creator link is Restrict — the same
+  // creator-linked policy as P40–P44 (documented in the deletion matrix).
+  salesOrderCreations         SalesOrder[]              @relation("SalesOrderCreator")
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +308,8 @@ model Business {
   goodsReturns         GoodsReturn[]
   // Prompt 44 — goods dispatch documents (tenant-scoped, cascade).
   goodsDispatches      GoodsDispatch[]
+  // Prompt 45 — commercial customer orders (tenant-scoped, cascade; §10).
+  salesOrders          SalesOrder[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -404,6 +409,10 @@ model Customer {
   // Prompt 44 — dispatch history rows pointing at this customer. SetNull:
   // deleting the customer detaches the link but never destroys history.
   goodsDispatches GoodsDispatch[]
+  // Prompt 45 (§11/§12) — commercial orders for this customer. SetNull:
+  // the frozen customerNameAtOrder snapshot keeps every order readable
+  // even when the live relation later detaches.
+  salesOrders SalesOrder[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -467,6 +476,9 @@ model Product {
   // Prompt 44 — dispatch lines that moved this product's stock out (the
   // line keeps its own historical snapshot).
   goodsDispatchLines GoodsDispatchLine[]
+  // Prompt 45 (§20) — order lines that commit to this product (the line
+  // keeps its own historical snapshot; Restrict mirrors P41–P44).
+  salesOrderLines SalesOrderLine[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -599,6 +611,13 @@ model Sale {
 
   items    SaleItem[]
   payments Payment[]
+
+  // Prompt 45 (§52) — the ONE order-linked invoice (one-to-one; nullable
+  // for every legacy direct sale). Unique constraint is the DATABASE
+  // authority behind "one invoice per order" (§52/§105). SetNull: removing
+  // the order (business cascade) must never destroy invoice evidence.
+  salesOrderId String?     @unique
+  salesOrder   SalesOrder? @relation(fields: [salesOrderId], references: [id], onDelete: SetNull)
 
   @@unique([businessId, number])
   @@index([businessId, deletedAt, createdAt])
@@ -2259,6 +2278,18 @@ model GoodsDispatch {
   // logged to audit bodies, never sent to AI, never indexed into search.
   notes String?
 
+  // Prompt 45 (§32/§35) — OPTIONAL order-fulfillment link. SetNull: the
+  // dispatch document outlives its sales order (tenant cascade only).
+  // A standalone P44 dispatch keeps salesOrderId NULL — the two paths stay
+  // explicit (P45 §7), and a linked dispatch is the ONLY document whose
+  // POST decrements stock against the order's remaining quantity.
+  // NOT unique: §3/§39 — ONE order is fulfilled by MANY dispatches.
+  salesOrderId String?
+  salesOrder   SalesOrder? @relation(fields: [salesOrderId], references: [id], onDelete: SetNull)
+  // §35 — order reference snapshot at dispatch creation (historical
+  // readability must not depend exclusively on a live relation).
+  salesOrderReferenceAtDispatch String?
+
   createdByUserId String
   createdByUser   User @relation("GoodsDispatchCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
@@ -2277,6 +2308,8 @@ model GoodsDispatch {
   @@index([businessId, createdAt])
   @@index([businessId, postedAt])
   @@index([businessId, customerId])
+  // Prompt 45 — order-fulfillment lookups (§90 dispatch history).
+  @@index([salesOrderId])
 }
 
 // GoodsDispatchLine = one product physically dispatched within a dispatch
@@ -2308,12 +2341,152 @@ model GoodsDispatchLine {
   skuAtDispatch         String?
   unitAtDispatch        String?
 
+  // Prompt 45 (§32/§41) — OPTIONAL source-order line for ORDER-BASED
+  // fulfillment. SetNull mirrors the dispatch→order link. For a linked
+  // line the PRODUCT derives from this SalesOrderLine (never client
+  // authority §41) and the snapshots above are copied from the ORDER
+  // LINE's frozen snapshot (§33) instead of the live Product row.
+  // NOT unique: §39 — one order line is fulfilled across MANY dispatches.
+  salesOrderLineId String?
+  salesOrderLine   SalesOrderLine? @relation(fields: [salesOrderLineId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // §line-law — at most one line per product per dispatch document…
   @@unique([goodsDispatchId, productId])
   // §indexes — …but many dispatch lines per product need reverse indexes.
+  // Prompt 45 — fulfillment lookups aggregate POSTED quantities per order
+  // line and per order (§36/§40), so both link columns are indexed.
   @@index([productId])
   @@index([goodsDispatchId])
+  @@index([salesOrderLineId])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 45 — Sales Orders / Order-Based Fulfillment (§3/§8).
+// SalesOrder = "the customer committed to buying these quantities at these
+// prices". It is a COMMERCIAL document: NOT revenue, NOT an invoice, NOT a
+// payment, NOT a stock movement (§4). Confirming an order mutates NOTHING
+// but the order itself (§30) — no stock reservation exists (§101).
+//
+// ORDER-TO-CASH LAW (§5): in the order-based path the inventory decrement
+// authority is the linked GoodsDispatch POST (exactly once, §45) and the
+// financial/receivable authority is the ONE linked Sale invoice (§52/§57),
+// which must NEVER decrement stock a second time (§58).
+//
+// LIFECYCLE (§15/§16): DRAFT → CONFIRMED → COMPLETED, with DRAFT/CONFIRMED
+// → CANCELLED. COMPLETED and CANCELLED are terminal. Status is the
+// commercial lifecycle only — Sale.status (payment state) stays a
+// separate concept (§15/§64).
+// ---------------------------------------------------------------------------
+model SalesOrder {
+  id String @id @default(cuid())
+
+  // §10 — tenant scope is ALWAYS the authenticated membership, never
+  // client input. Cascade mirrors every other tenant document.
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  // §11 — OPTIONAL customer (cash/anonymous orders allowed, mirroring the
+  // Sale convention). SetNull: the frozen customerNameAtOrder snapshot
+  // keeps the order readable after the live relation detaches (§12).
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  // §12 — customer identity frozen at creation (empty string when the
+  // order has no customer). Renames/soft-deletes never rewrite it.
+  customerNameAtOrder String @default("")
+
+  // §13/§14 — business-local unique reference, DB-enforced (concurrency
+  // safe: duplicate inserts lose the race with a constraint error → 409).
+  reference String
+  // §15 — closed vocabulary DRAFT|CONFIRMED|COMPLETED|CANCELLED. This is
+  // the commercial-order lifecycle, NEVER the Sale payment status.
+  status    String   @default("DRAFT")
+
+  // §25 — currency snapshot from the business at creation (never client
+  // input); historical order display always uses this snapshot.
+  currencyCodeAtOrder     String
+  currencySymbolAtOrder   String
+  decimalPrecisionAtOrder Int
+
+  // §8/§26 — orderDate is calendar-date semantics normalized with the
+  // established UTC-midnoon rule; expectedDate is optional and calendar
+  // scoped. Both are validated strict calendar dates at the boundary.
+  orderDate    DateTime
+  expectedDate DateTime?
+
+  // §23 — order-level discount, integer minor units 0..subtotalMinor.
+  // No tax engine, no shipping charges, no payment fields (§23).
+  discountMinor Int @default(0)
+
+  // §26 — optional free text (≤2000 chars); document data only — never
+  // logged to audit bodies, never sent to AI, never indexed into search.
+  notes String?
+
+  createdByUserId String
+  createdByUser   User @relation("SalesOrderCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  // §16 — lifecycle timestamps are server-generated inside the write
+  // transaction; never client-controlled.
+  confirmedAt DateTime?
+  completedAt DateTime?
+  cancelledAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines SalesOrderLine[]
+  // Prompt 45 (§32) — fulfillment dispatches recorded against this order.
+  goodsDispatches GoodsDispatch[]
+  // §52 — the ONE order-linked invoice (one-to-one, unique on Sale side).
+  sale Sale?
+
+  @@unique([businessId, reference])
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+  @@index([businessId, orderDate])
+  @@index([customerId])
+}
+
+// SalesOrderLine = one product commitment within an order (§9). A product
+// appears AT MOST ONCE per order (§19 — DB-enforced). orderedQty is an
+// integer 1..1,000,000 (§18); unitPriceMinor is the AGREED order price
+// (§21 — persisted once, never silently re-derived from the live Product).
+// Snapshots (§9/§20) are copied from the tenant-scoped Product at line-add
+// time and never overwritten; the client can never author them.
+model SalesOrderLine {
+  id String @id @default(cuid())
+
+  salesOrderId String
+  salesOrder   SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+
+  // §20 — Restrict mirrors P41–P44: product soft-delete keeps history; a
+  // hard product delete can never silently destroy order evidence.
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  // §18/§21 — integer 1..1_000_000 whole units; integer 0..9_000_000_000
+  // minor units (zero allowed: free/promotional items). No floats, ever.
+  orderedQty     Int
+  unitPriceMinor Int
+
+  // §9 — historical product identity (never overwritten from live data;
+  // the client never submits these as authoritative values §20).
+  productNameAtOrder String
+  skuAtOrder         String?
+  unitAtOrder        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // §19 — at most one line per product per order…
+  @@unique([salesOrderId, productId])
+  // §indexes — …but many order lines per product need the reverse index.
+  @@index([salesOrderId])
+  @@index([productId])
+
+  // Prompt 45 (§32) — dispatch lines fulfilling THIS order line (the
+  // dispatch→order-line link; SetNull mirrors the document chain).
+  goodsDispatchLines GoodsDispatchLine[]
 }

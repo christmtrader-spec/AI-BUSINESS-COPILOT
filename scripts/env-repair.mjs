@@ -34,6 +34,12 @@ const prisma = new PrismaClient();
 const MIGRATIONS = [
   "0_init",
   "20260923075730_prompt20_billing_foundation",
+  // Legacy duplicate directories that HAVE ALWAYS shipped in this repo and
+  // were applied in every real environment ledger (their tables exist).
+  // They must stay baselined or a sandbox revert leaves them falsely
+  // pending (they carry no new schema — resolve is ledger-writes-only).
+  "20260924130000_prompt25_public_commercial",
+  "20260924140000_prompt26_ai_cost_governance",
   "20260923091927_prompt21_usage_metering",
   "20260924061428_prompt22_payment_providers",
   "20260924073654_prompt23_real_provider",
@@ -67,6 +73,11 @@ const MIGRATIONS = [
   // Prompt 44 — the P44 Goods Dispatch migration is genuinely applied (24
   // applied / 0 pending). Same maintenance law.
   "20261010090000_prompt44_goods_dispatches",
+  // Prompt 45 (§118/§142) — the P45 Sales Order migration is genuinely
+  // applied (25 applied / 0 pending). Same maintenance law: keep every
+  // applied migration in this baseline list so a sandbox revert never
+  // leaves it falsely pending.
+  "20261011090000_prompt45_sales_orders",
 ];
 
 function log(step, msg) {

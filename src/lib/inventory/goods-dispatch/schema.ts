@@ -96,25 +96,61 @@ export const goodsDispatchUpdateSchema = z
   });
 
 /**
- * Line create: productId + qty + reasonCode. The product IS the
- * authoritative outbound source (unlike P43); snapshots still derive
- * server-side from the tenant-scoped Product row. Strict — no extra
- * authoritative fields (goodsDispatchId, snapshots, status) are accepted.
+ * Line create — TWO explicit source modes (Prompt 45 §41):
+ *  - STANDALONE (P44 contract): productId + qty + reasonCode;
+ *  - ORDER-BASED (Prompt 45): salesOrderLineId + qty ONLY — the product,
+ *    snapshots, customer and reason derive from the order (server-controlled;
+ *    injecting productId/reasonCode with a salesOrderLineId is rejected).
+ * Strict — no extra authoritative fields (goodsDispatchId, snapshots,
+ * status, businessId) are accepted.
  */
 export const goodsDispatchLineCreateSchema = z
   .object({
-    productId: z.string().trim().min(1).max(64),
+    productId: z.string().trim().min(1).max(64).optional(),
+    salesOrderLineId: z.string().trim().min(1).max(64).optional(),
     qty: qtySchema,
-    reasonCode: reasonCodeSchema,
+    reasonCode: reasonCodeSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.salesOrderLineId) {
+      if (v.productId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "Provide either productId (standalone) or salesOrderLineId (order-based), not both.",
+          path: ["salesOrderLineId"],
+        });
+      }
+      if (v.reasonCode !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "The dispatch reason is server-controlled for order fulfillment.",
+          path: ["reasonCode"],
+        });
+      }
+    } else if (!v.productId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "A dispatch line requires productId or salesOrderLineId.",
+        path: ["productId"],
+      });
+    } else if (!v.reasonCode) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "reasonCode is required.",
+        path: ["reasonCode"],
+      });
+    }
+  });
 
-/** Line update: ONLY qty + reasonCode. No product reassignment, no
- * snapshot mutation (snapshots are historical, frozen at add time). */
+/** Line update: ONLY qty (+ reasonCode on STANDALONE dispatches — order
+ *  lines keep the server-controlled SALE reason). No product reassignment,
+ *  no snapshot mutation (snapshots are historical, frozen at add time). */
 export const goodsDispatchLineUpdateSchema = z
   .object({
     qty: qtySchema,
-    reasonCode: reasonCodeSchema,
+    reasonCode: reasonCodeSchema.optional(),
   })
   .strict();
 

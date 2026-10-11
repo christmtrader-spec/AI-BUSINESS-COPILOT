@@ -573,3 +573,63 @@ export function goodsDispatchCandidate(row: GoodsDispatchSearchRow): SearchCandi
   };
 }
 
+
+// ---------------------------------------------------------------------------
+// Prompt 45 (§70) — sales-order candidate. Search fields: order reference,
+// customer snapshot, product snapshot names/SKUs. NO amounts and NO
+// fulfillment quantities are carried in the candidate (the established
+// search contract — discovery only, never financial disclosure).
+// ---------------------------------------------------------------------------
+
+export type SalesOrderSearchRow = {
+  id: string;
+  reference: string;
+  status: string;
+  customerNameAtOrder: string;
+  createdAt: Date;
+  /** Line snapshot TEXT (never money/quantities) feeds the ranker. */
+  lines?: ReadonlyArray<{ productNameAtOrder: string; skuAtOrder: string | null }>;
+};
+
+/**
+ * Closed-token guard for the sales-order lifecycle: an invalid persisted
+ * status is NOT mapped to Draft — the status token is omitted (null) and
+ * the order still renders under its reference (same safe-omission policy
+ * as the receipt/return/dispatch candidates).
+ */
+function salesOrderStatusToken(status: string): SearchItemStatus | null {
+  return status === "DRAFT" ||
+    status === "CONFIRMED" ||
+    status === "COMPLETED" ||
+    status === "CANCELLED"
+    ? status
+    : null;
+}
+
+export function salesOrderCandidate(row: SalesOrderSearchRow): SearchCandidate {
+  const skuNorms = (row.lines ?? [])
+    .map((l) => l.skuAtOrder)
+    .filter((v): v is string => Boolean(v))
+    .map(normalizeSearchText);
+  const productNorms = (row.lines ?? [])
+    .map((l) => l.productNameAtOrder)
+    .filter((v): v is string => Boolean(v));
+  return {
+    id: row.id,
+    type: "SALES_ORDER",
+    title: row.reference,
+    titleNorm: normalizeSearchText(row.reference),
+    subtitle: row.customerNameAtOrder || null,
+    identifierNorm: normalizeSearchText(row.reference),
+    identifierExtras: skuNorms,
+    numericIdentifier: null,
+    secondaryNorms: [row.customerNameAtOrder, ...productNorms]
+      .filter((v): v is string => Boolean(v))
+      .map(normalizeSearchText),
+    createdAt: row.createdAt,
+    status: salesOrderStatusToken(row.status),
+    date: row.createdAt.toISOString(),
+    direction: null,
+    method: null,
+  };
+}

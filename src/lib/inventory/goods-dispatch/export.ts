@@ -105,6 +105,7 @@ export async function buildGoodsDispatchCsv(input: {
       unitAtDispatch: true,
       qty: true,
       reasonCode: true,
+      salesOrderLineId: true,
       createdAt: true,
       updatedAt: true,
     },

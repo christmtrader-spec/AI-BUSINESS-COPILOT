@@ -46,6 +46,10 @@ export function entityViewFromSearchItem(item: SearchResultItem): AppView {
   if (item.type === "GOODS_DISPATCH") {
     return { kind: "inventory-goods-dispatch", id: item.id };
   }
+  if (item.type === "SALES_ORDER") {
+    // Prompt 45 (§70/§88) — sales orders route to their own detail view.
+    return { kind: "sales-order", id: item.id };
+  }
   const entity = SEARCH_TYPE_TO_ENTITY[item.type];
   return { kind: "entity", entity, id: item.id };
 }

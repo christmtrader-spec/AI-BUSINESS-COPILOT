@@ -95,6 +95,9 @@ export type CustomerDetail = {
   recentPayments: RecentPaymentRow[];
   /** Prompt 44 — ≤ 10 recent goods-dispatch rows (NO money). */
   recentGoodsDispatches?: CustomerRecentDispatch[];
+  /** Prompt 45 (§71) — ≤ 10 recent sales orders (order-currency totals;
+   *  commitment data — never added to receivables §92). */
+  recentSalesOrders?: CustomerRecentSalesOrder[];
   /**
    * Prompt 35 (§44/§45) — CRM PIPELINE section, kept STRICTLY separate
    * from the financial summary above. Bounded ≤ 10. Forecast values only —
@@ -269,6 +272,8 @@ export type ProductDetail = {
   recentGoodsReturns?: ProductRecentReturn[];
   /** Prompt 44 — ≤ 10 recent goods-dispatch lines (NO money). */
   recentGoodsDispatches?: ProductRecentDispatch[];
+  /** Prompt 45 (§72) — ≤ 10 recent sales-order lines (NO money). */
+  recentSalesOrders?: ProductRecentSalesOrder[];
 };
 
 /** Prompt 43 (§99) — bounded goods-return row for Product detail. */
@@ -301,6 +306,36 @@ export type ProductRecentDispatch = {
   qty: number;
   reasonCode: string;
   postedAt: string | null;
+};
+
+/** Prompt 45 (§71) — bounded sales-order row for the Customer 360 (≤10).
+ *  Historical snapshots stay authoritative; the order total uses the
+ *  order's OWN currency snapshot (never mixed into receivable math §92). */
+export type CustomerRecentSalesOrder = {
+  id: string;
+  reference: string;
+  status: "DRAFT" | "CONFIRMED" | "COMPLETED" | "CANCELLED";
+  orderDate: string;
+  currencyCodeAtOrder: string;
+  currencySymbolAtOrder: string;
+  decimalPrecisionAtOrder: number;
+  totalMinor: number;
+  orderedQty: number;
+  dispatchedQty: number;
+  invoiceNumber: number | null;
+  invoiceStatus: string | null;
+};
+
+/** Prompt 45 (§72) — bounded sales-order row for the Product detail (≤10). */
+export type ProductRecentSalesOrder = {
+  id: string;
+  reference: string;
+  customerNameAtOrder: string;
+  status: "DRAFT" | "CONFIRMED" | "COMPLETED" | "CANCELLED";
+  orderDate: string;
+  orderedQty: number;
+  dispatchedQty: number;
+  remainingToDispatchQty: number;
 };
 
 /* ------------------------------------------------------------------ */

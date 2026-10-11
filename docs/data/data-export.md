@@ -138,3 +138,18 @@ catalog as CONFIDENTIAL datasets; the receipts dataset always implies its lines
 domain, so no minor-unit conversion applies anywhere. **Import is intentionally
 NOT implemented** (see data-import.md); restore from backup is the sanctioned
 recovery path for receiving documents.
+
+### Prompt 45 — sales orders (§116)
+
+`sales_orders` and `sales_order_lines` join the export catalog as
+CONFIDENTIAL datasets; the orders dataset always implies its lines (parent
+→ child implication, §116). Rows carry the frozen historical snapshots
+verbatim (`customer_name_at_order`, currency triple,
+`product_name_at_order`, `sku_at_order`, `unit_at_order`) and the agreed
+money columns as integer minor units (`discount_minor`,
+`unit_price_minor`) — the commercial contract, never re-derived from live
+product prices. Lifecycle columns (`confirmed_at`, `completed_at`,
+`cancelled_at`) export as recorded. **Import remains intentionally NOT
+implemented** (§117): importing confirmed/completed operational orders
+could create dispatch-eligibility or invoice/fulfillment inconsistencies
+— restore from backup is the sanctioned recovery path.

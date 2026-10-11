@@ -2,6 +2,7 @@
 
 import {
   BarChart3,
+  FileText,
   Bot,
   ClipboardList,
   CreditCard,
@@ -63,6 +64,7 @@ type NavItem = {
     | "goodsReceipts"
     | "goodsReturns"
     | "goodsDispatches"
+    | "salesOrders"
     | "products"
     | "inventory"
     | "sales"
@@ -98,6 +100,8 @@ const OPERATIONS: NavItem[] = [
   // Prompt 43 (§90) — goods returns join the same inventory operations group.
   { view: { kind: "inventory-goods-returns" }, labelKey: "goodsReturns", icon: PackageMinus },
   { view: { kind: "inventory-goods-dispatches" }, labelKey: "goodsDispatches", icon: PackageOpen },
+  // Prompt 45 (§74) — sales orders join the business-operations group.
+  { view: { kind: "sales-orders" }, labelKey: "salesOrders", icon: FileText },
   { view: { kind: "module", module: "products" }, labelKey: "products", icon: Package },
   { view: { kind: "module", module: "inventory" }, labelKey: "inventory", icon: Warehouse },
   { view: { kind: "module", module: "sales" }, labelKey: "sales", icon: ShoppingCart },

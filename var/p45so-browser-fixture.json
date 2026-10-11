@@ -1,0 +1,20 @@
+{
+  "email": "p45so-owner-mv3it5uj@p45so.test",
+  "password": "testpass123",
+  "businessId": "cmv3it5wg0002qr9b9t9rixfl",
+  "customerId": "cmv3it5wk0006qr9bw51rzu26",
+  "products": {
+    "widget": "cmv3it5wm0008qr9bnoatgnp3",
+    "gadget": "cmv3it5wn000aqr9bqksqs5p1",
+    "cable": "cmv3it5wo000cqr9b1b2cvufd",
+    "case": "cmv3it5wp000eqr9b8u8l53ge"
+  },
+  "orders": {
+    "draft": "cmv3it77f000bqr732r4tpkrd",
+    "partial": "cmv3it7x7000nqr731e5xhxcg",
+    "ready": "cmv3ita86001bqr734whcu0fn",
+    "done": "cmv3itar8001zqr73u17xern1",
+    "cancelled": "cmv3itchb002vqr73ejl6kp1m"
+  },
+  "invoiceNumber": 1
+}

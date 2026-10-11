@@ -421,7 +421,9 @@ record("161. no price columns in GoodsReceipt (§37)", (() => {
   return !/(totalMinor|subtotalMinor|unitPriceMinor|lineTotalMinor)/.test(m);
 })());
 record("162. no price columns in GoodsReceiptLine (§38)", (() => {
-  const m = schema.split("model GoodsReceiptLine {")[1] ?? "";
+  // Bound the slice to THIS model: later models (e.g. Prompt 45
+  // SalesOrderLine) legitimately carry price fields.
+  const m = (schema.split("model GoodsReceiptLine {")[1] ?? "").split("\nmodel ")[0];
   return !/(unitPriceMinor|lineTotalMinor)/.test(m);
 })());
 record("163. §179 indexes present", /@@index\(\[businessId, status\]\)/.test(schema.split("model GoodsReceipt {")[1]?.split("model GoodsReceiptLine")[0] ?? "") && /@@index\(\[purchaseOrderLineId\]\)/.test(schema.split("model GoodsReceiptLine {")[1] ?? ""));

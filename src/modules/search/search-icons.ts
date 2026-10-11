@@ -8,6 +8,7 @@
 import {
   ClipboardList,
   CreditCard,
+  FileText,
   Package,
   PackageCheck,
   PackageMinus,
@@ -38,6 +39,8 @@ export const SEARCH_TYPE_ICONS: Record<SearchEntityType, LucideIcon> = {
   GOODS_RETURN: PackageMinus,
   // Prompt 44 — outbound dispatch documents in search results.
   GOODS_DISPATCH: PackageOpen,
+  // Prompt 45 (§70) — commercial customer orders in search results.
+  SALES_ORDER: FileText,
 };
 
 /** Medium localized date for result rows (never raw ISO in the UI). */

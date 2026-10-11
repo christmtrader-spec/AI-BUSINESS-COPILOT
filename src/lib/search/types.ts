@@ -22,7 +22,10 @@
  *  supplier/product snapshots; NO money, NO quantities in snippets).
  *  Prompt 44: GOODS_DISPATCH joins — discovery over outbound documents
  *  (dispatch reference + customer snapshot + product snapshots; NO money,
- *  NO stock quantities in snippets). */
+ *  NO stock quantities in snippets).
+ *  Prompt 45 (§70): SALES_ORDER joins — discovery over commercial customer
+ *  orders (order reference + customer snapshot + product/SKU snapshots;
+ *  NO amounts, NO fulfillment quantities in snippets). */
 export const SEARCH_ENTITY_TYPES = [
   "CUSTOMER",
   "SUPPLIER",
@@ -36,6 +39,7 @@ export const SEARCH_ENTITY_TYPES = [
   "GOODS_RECEIPT",
   "GOODS_RETURN",
   "GOODS_DISPATCH",
+  "SALES_ORDER",
 ] as const;
 
 export type SearchEntityType = (typeof SEARCH_ENTITY_TYPES)[number];
@@ -54,6 +58,7 @@ export const SEARCH_DESTINATIONS = [
   "goods-receipts",
   "goods-returns",
   "goods-dispatches",
+  "sales-orders",
 ] as const;
 
 export type SearchDestination = (typeof SEARCH_DESTINATIONS)[number];
@@ -72,6 +77,7 @@ export const ENTITY_DESTINATION: Record<SearchEntityType, SearchDestination> = {
   GOODS_RECEIPT: "goods-receipts",
   GOODS_RETURN: "goods-returns",
   GOODS_DISPATCH: "goods-dispatches",
+  SALES_ORDER: "sales-orders",
 };
 
 /** Closed status tokens (client localizes; server never renders HTML).
@@ -79,7 +85,10 @@ export const ENTITY_DESTINATION: Record<SearchEntityType, SearchDestination> = {
  *  Prompt 41 (§67): the purchase-order lifecycle vocabulary joins.
  *  Prompt 42 (§122): POSTED joins for the goods-receipt lifecycle.
  *  Prompt 43 (§101): the goods-return lifecycle reuses DRAFT/POSTED/
- *  CANCELLED — no new tokens. */
+ *  CANCELLED — no new tokens.
+ *  Prompt 45 (§70): the sales-order lifecycle joins DRAFT/CONFIRMED/
+ *  CANCELLED and adds COMPLETED (a commercial-order token, distinct from
+ *  the Sale payment statuses). */
 export type SearchItemStatus =
   | "ACTIVE"
   | "INACTIVE"
@@ -101,7 +110,8 @@ export type SearchItemStatus =
   | "CONFIRMED"
   | "CLOSED"
   | "CANCELLED"
-  | "POSTED";
+  | "POSTED"
+  | "COMPLETED";
 
 /** Closed payment direction tokens (tenant Payment domain only — §42). */
 export type SearchItemDirection = "IN" | "OUT";

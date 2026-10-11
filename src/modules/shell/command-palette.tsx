@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { signOutWithRevoke } from "@/lib/sign-out-with-revoke";
 import { useTheme } from "next-themes";
 import {
+  FileText,
   AlertTriangle,
   ArrowUpRight,
   BarChart3,
@@ -66,6 +67,7 @@ type PaletteNavKey =
   | "goodsReceipts"
   | "goodsReturns"
   | "goodsDispatches"
+  | "salesOrders"
   | "products"
   | "inventory"
   | "sales"
@@ -97,6 +99,8 @@ const NAV_ITEMS: PaletteItem[] = [
   // Prompt 43 (§90) — Goods Returns reachable through the SAME palette.
   { view: { kind: "inventory-goods-returns" }, labelKey: "goodsReturns", icon: PackageMinus },
   { view: { kind: "inventory-goods-dispatches" }, labelKey: "goodsDispatches", icon: PackageOpen },
+  // Prompt 45 (§88) — Sales Orders reachable through the SAME palette.
+  { view: { kind: "sales-orders" }, labelKey: "salesOrders", icon: FileText },
   { view: { kind: "module", module: "products" }, labelKey: "products", icon: Package },
   { view: { kind: "module", module: "inventory" }, labelKey: "inventory", icon: Warehouse },
   { view: { kind: "module", module: "sales" }, labelKey: "sales", icon: ShoppingCart },

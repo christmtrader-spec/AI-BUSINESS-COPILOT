@@ -261,3 +261,49 @@ A GoodsReturn is a **physical inventory outflow** — units physically sent back
 | Product.stockQty | **YES** — decreases on POST only | exact integer arithmetic; negative persisted stock is a controlled 500 (never repaired §41/§164); `newStock < 0` impossible |
 
 **Correction language (§178):** Posted receipts remain immutable. A legitimate physical return uses a GoodsReturn document. Other inventory corrections must use the established authorized inventory-adjustment process. A positive GoodsReceipt cannot compensate for a stock overstatement, and a GoodsReturn cannot reverse an arbitrary historical stock mutation — it only documents a genuine physical return against one specific posted receipt.
+
+---
+
+## 9. Sales Orders (Prompt 45)
+
+A SalesOrder is a **commercial commitment** — "the customer committed to
+buying these quantities at these prices". It sits OUTSIDE every financial
+authority until its two successor documents act. Full domain review:
+`docs/product/sales-orders.md`.
+
+| Question | SalesOrder create/confirm | Linked GoodsDispatch POST | Linked Sale invoice | Payment |
+|---|---|---|---|---|
+| Physical stock (Product.stockQty) | **NO change** | **YES — decreases exactly once** | **NO change** (§58/§122) | NO change |
+| InventoryAdjustment | **NO** | **YES — one NEGATIVE row per line** | **NO** (§58) | NO |
+| Sale / receivable | **NO** | **NO** | **YES — the ONE linked invoice (§52)** | NO |
+| Payment | **NO** | **NO** | **NO** | **YES — existing pipeline on the Sale** |
+| Customer Statement | **NO** | **NO** | via the EXISTING Sale statement law | via Payment |
+| Receivables / Aging | **NO** (§92/§94) | **NO** | via the EXISTING Sale law | via Payment |
+| Revenue | **NO** (the order is not revenue) | NO | YES — Sale.totalMinor as usual | — |
+
+**Two explicit sales paths (§7):**
+
+- **PATH A — legacy direct sale** (unchanged §120): `POST /api/v1/sales`
+  decrements stock + writes the negative adjustment exactly as before.
+- **PATH B — order-based sale** (new): SalesOrder → linked GoodsDispatch
+  POST (the ONLY decrement) → linked Sale invoice (receivable authority,
+  NO second decrement). The authoritative discriminator between the paths
+  is the `Sale.salesOrderId` relation — never notes or reference text.
+
+**No double-counting (§138):** a linked SalesOrder invoice must never
+perform the inventory decrement already performed by the linked
+GoodsDispatch documents (E2E §122/§124 verifies stock + adjustment
+invariants around issuance against non-zero baselines). Legacy direct
+sales remain separately supported; users must not record one physical
+outbound movement through both paths.
+
+**Linked-invoice deletion (§62/§121):** deleting a linked Sale is
+rejected (`409 SALE_LINKED_TO_SALES_ORDER`) before any restock mutation —
+the legacy delete-with-restock path applies ONLY to unlinked sales.
+
+**Wording law (§139):** the UI uses order vocabulary — EN "Sales Order /
+Confirm Order / Dispatched / Remaining to dispatch / Issue Invoice", FA
+سفارش فروش / تأیید سفارش / مقدار خارج‌شده / مقدار باقی‌مانده برای خروج /
+صدور فاکتور — never پرداخت/بدهی in order copy. COMPLETED means "fully
+dispatched AND invoiced", never "paid": the linked invoice follows the
+existing UNPAID → PARTIAL → PAID pipeline (§64).

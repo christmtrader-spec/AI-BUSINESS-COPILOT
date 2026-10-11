@@ -17,6 +17,7 @@ import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { partyUpdateSchema } from "@/lib/schemas";
 import { listRecentDispatchesForCustomer } from "@/lib/inventory/goods-dispatch/service";
+import { listRecentOrdersForCustomer } from "@/lib/sales-orders/service";
 import {
   compute360Summary,
   mapCustomerCrm,
@@ -51,7 +52,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   // §40 — independent bounded queries in parallel; aggregates via groupBy
   // (one round trip, no N+1); recent lists take ≤10 with deterministic
   // ordering; explicit select everywhere (§86).
-  const [statusBuckets, recentSales, recentPayments, openOppCount, recentOpps, leadOrigin, recentGoodsDispatches] = await Promise.all([
+  const [statusBuckets, recentSales, recentPayments, openOppCount, recentOpps, leadOrigin, recentGoodsDispatches, recentSalesOrders] = await Promise.all([
     db.sale.groupBy({
       by: ["status"],
       where: { businessId: ctx.businessId, customerId: id, deletedAt: null },
@@ -116,6 +117,9 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
     // Prompt 44 — ≤10 recent goods-dispatch documents for this customer
     // (NO money; quantity only — dispatches are inventory events).
     listRecentDispatchesForCustomer({ businessId: ctx.businessId, customerId: id, take: 10 }),
+    // Prompt 45 (§71) — ≤10 recent sales orders (commitment data, never
+    // added to receivables — §92).
+    listRecentOrdersForCustomer({ businessId: ctx.businessId, customerId: id, take: 10 }),
   ]);
 
   const summary = compute360Summary(
@@ -139,6 +143,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         leadOrigin,
       }),
       recentGoodsDispatches,
+      recentSalesOrders,
     ),
   );
 });

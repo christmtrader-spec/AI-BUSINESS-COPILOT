@@ -100,6 +100,13 @@ export type AppView =
    */
   | { kind: "inventory-goods-dispatches" }
   | { kind: "inventory-goods-dispatch"; id: string }
+  /**
+   * Prompt 45 — Sales order views: the LIST at #/sales-orders and a DETAIL
+   * deep link at #/sales-orders/<id>. The id is validated with the same
+   * safe-ID rules as entity routes — malformed ids NEVER become state.
+   */
+  | { kind: "sales-orders" }
+  | { kind: "sales-order"; id: string }
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
@@ -221,6 +228,11 @@ export function viewKeyOf(view: AppView): string {
       ? "inventory-goods-dispatches"
     : view.kind === "inventory-goods-dispatch"
       ? `inventory-goods-dispatch:${view.id}`
+    // Prompt 45 — sales-order views: list + per-id detail keys (§36 parity).
+    : view.kind === "sales-orders"
+      ? "sales-orders"
+    : view.kind === "sales-order"
+      ? `sales-order:${view.id}`
       : view.kind === "join"
       ? `join:${view.token}`
       : view.kind === "reset-password"
@@ -369,6 +381,13 @@ export function viewToHash(view: AppView): string | null {
       // Prompt 44 — only charset-safe ids ever become a hash.
       if (!isValidEntityId(view.id)) return null;
       return `#/inventory/goods-dispatches/${view.id}`;
+    case "sales-orders":
+      // Prompt 45 (§88) — canonical list hash.
+      return "#/sales-orders";
+    case "sales-order":
+      // Prompt 45 (§88) — only charset-safe ids ever become a hash.
+      if (!isValidEntityId(view.id)) return null;
+      return `#/sales-orders/${view.id}`;
     case "platform":
       // #/platform itself resolves to the overview section (§15).
       return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
@@ -547,6 +566,23 @@ export function hashToView(hash: string): AppView {
     }
     if (!isValidEntityId(id)) return { kind: "dashboard" };
     return { kind: "inventory-goods-dispatch", id };
+  }
+  // Prompt 45 — sales-order deep links, matched BEFORE the
+  // module/entity fallbacks: #/sales-orders opens the list;
+  // #/sales-orders/<id> opens the detail only when the id is charset-safe;
+  // anything else falls through to the dashboard fallback — never an
+  // arbitrary "#/anything/<id>" interpretation.
+  if (path === "sales-orders") return { kind: "sales-orders" };
+  if (path.startsWith("sales-orders/")) {
+    const rawId = path.slice("sales-orders/".length);
+    let id = rawId;
+    try {
+      id = decodeURIComponent(rawId);
+    } catch {
+      return { kind: "dashboard" };
+    }
+    if (!isValidEntityId(id)) return { kind: "dashboard" };
+    return { kind: "sales-order", id };
   }
   // Prompt 34 — entity detail deep links (#/customers/<id>, §5/§6) are
   // attempted BEFORE the bare-module match: "customers" alone stays the

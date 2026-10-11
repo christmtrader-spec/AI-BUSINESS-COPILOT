@@ -150,3 +150,27 @@ Stable error codes: `GOODS_DISPATCH_DUPLICATE_REFERENCE`,
 - `GOODS_DISPATCH_MAX_LINES` (default 200, clamp 20..500) — document
   line cap. NEVER change the project default for tests; isolated suites
   run with their own value.
+
+
+## Order fulfillment linkage (Prompt 45)
+
+A dispatch can optionally fulfill a SalesOrder (`salesOrderId` +
+per-line `salesOrderLineId`, both nullable — standalone P44 dispatches
+keep them NULL). The two paths stay explicit:
+
+- **Standalone dispatch** — the product IS the source; snapshots copy
+  from the Product row at line-add time (unchanged P44 behavior).
+- **Order-linked dispatch** — created from the order context
+  (`POST /api/v1/sales-orders/[id]/dispatches`); the customer context
+  derives from the ORDER's frozen snapshot; lines are added with
+  `{ salesOrderLineId, qty }` only (product/snapshots/`SALE` reason
+  derive from the order line; `productId`/`reasonCode` injection is
+  rejected); the dispatch keeps its OWN business-unique reference plus
+  the `salesOrderReferenceAtDispatch` snapshot.
+
+POST re-validates inside the transaction that the linked order is still
+CONFIRMED and that the requested quantities fit the remaining order
+quantities (the authoritative over-dispatch gate). A CANCELLED order's
+stale draft can never post; a COMPLETED order accepts no new dispatches.
+The dispatch detail exposes the linked order (§89); the order detail
+lists recent linked dispatches (≤ 10).

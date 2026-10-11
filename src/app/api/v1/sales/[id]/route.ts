@@ -75,6 +75,21 @@ export const DELETE = route(async (req: NextRequest, { params }: RouteParams) =>
     include: { items: true },
   });
   if (!sale) throw new ApiError(404, "NOT_FOUND", "Invoice not found.");
+
+  // Prompt 45 (§62/§121) — a SalesOrder-linked invoice must NEVER restore
+  // product stock: the linked GoodsDispatch documents already own that
+  // inventory movement, and a legacy-style deletion would fabricate a
+  // false stock increase. Prompt 45 has no invoice-void workflow, so the
+  // safest correct behavior is to REJECT user-facing deletion of a linked
+  // invoice (the authoritative relation decides — never notes text).
+  if (sale.salesOrderId) {
+    throw new ApiError(
+      409,
+      "SALE_LINKED_TO_SALES_ORDER",
+      "This invoice belongs to a sales order. Its inventory movement is owned by the linked goods dispatches, so the legacy delete-with-restock path does not apply. Voiding a linked invoice is not yet supported.",
+    );
+  }
+
   const paymentCount = await db.payment.count({ where: { saleId: sale.id, businessId: ctx.businessId } });
   if (paymentCount > 0 || sale.paidMinor !== 0) {
     throw new ApiError(

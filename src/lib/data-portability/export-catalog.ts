@@ -56,6 +56,8 @@ export type ExportDatasetKey =
   | "inventory_goods_return_lines"
   | "inventory_goods_dispatches"
   | "inventory_goods_dispatch_lines"
+  | "sales_orders"
+  | "sales_order_lines"
   | "subscription_summary"
   | "usage_summary";
 
@@ -84,6 +86,8 @@ export const EXPORT_DATASET_KEYS = [
   "inventory_goods_return_lines",
   "inventory_goods_dispatches",
   "inventory_goods_dispatch_lines",
+  "sales_orders",
+  "sales_order_lines",
   "subscription_summary",
   "usage_summary",
 ] as const satisfies readonly ExportDatasetKey[];
@@ -101,6 +105,8 @@ export const DATASET_IMPLICATIONS: Partial<Record<ExportDatasetKey, ExportDatase
   inventory_goods_returns: ["inventory_goods_return_lines"],
   // Prompt 44 — goods dispatches always carry their dispatch lines.
   inventory_goods_dispatches: ["inventory_goods_dispatch_lines"],
+  // Prompt 45 (§116) — sales orders always carry their order lines.
+  sales_orders: ["sales_order_lines"],
 };
 
 export type DatasetMeta = {
@@ -159,6 +165,13 @@ export const EXPORT_CATALOG: Record<ExportDatasetKey, DatasetMeta> = {
   // movements (the same law as P42/P43).
   inventory_goods_dispatches: { key: "inventory_goods_dispatches", sensitivity: "CONFIDENTIAL", csvFile: "inventory_goods_dispatches.csv", labelKey: "inventoryGoodsDispatches" },
   inventory_goods_dispatch_lines: { key: "inventory_goods_dispatch_lines", sensitivity: "CONFIDENTIAL", csvFile: "inventory_goods_dispatch_lines.csv", labelKey: "inventoryGoodsDispatchLines" },
+  // Prompt 45 (§116) — sales orders + lines: CONFIDENTIAL BUSINESS DATA
+  // (commercial agreements with customer identity + agreed prices).
+  // Export-ONLY — import is intentionally blocked (§117): importing
+  // confirmed/completed operational orders could create dispatch
+  // eligibility or invoice/fulfillment inconsistencies.
+  sales_orders: { key: "sales_orders", sensitivity: "CONFIDENTIAL", csvFile: "sales_orders.csv", labelKey: "salesOrders" },
+  sales_order_lines: { key: "sales_order_lines", sensitivity: "CONFIDENTIAL", csvFile: "sales_order_lines.csv", labelKey: "salesOrderLines" },
   subscription_summary: { key: "subscription_summary", sensitivity: "CONFIDENTIAL", csvFile: "subscription.csv", labelKey: "subscriptionSummary" },
   usage_summary: { key: "usage_summary", sensitivity: "CONFIDENTIAL", csvFile: "usage.csv", labelKey: "usageSummary" },
 };
@@ -1311,6 +1324,112 @@ export const DATASET_FETCHERS: Record<ExportDatasetKey, DatasetFetcher> = {
     };
   },
 
+  sales_orders: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.salesOrder.findMany({
+        where: { businessId: ctx.businessId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take,
+        select: {
+          id: true,
+          reference: true,
+          status: true,
+          customerId: true,
+          customerNameAtOrder: true,
+          currencyCodeAtOrder: true,
+          currencySymbolAtOrder: true,
+          decimalPrecisionAtOrder: true,
+          orderDate: true,
+          expectedDate: true,
+          discountMinor: true,
+          notes: true,
+          createdByUserId: true,
+          confirmedAt: true,
+          completedAt: true,
+          cancelledAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((so) => ({
+        json: {
+          id: so.id,
+          reference: so.reference,
+          status: so.status,
+          customerId: so.customerId,
+          customerNameAtOrder: so.customerNameAtOrder,
+          currencyCodeAtOrder: so.currencyCodeAtOrder,
+          currencySymbolAtOrder: so.currencySymbolAtOrder,
+          decimalPrecisionAtOrder: so.decimalPrecisionAtOrder,
+          orderDate: iso(so.orderDate),
+          expectedDate: iso(so.expectedDate),
+          discountMinor: so.discountMinor,
+          notes: so.notes,
+          createdByUserId: so.createdByUserId,
+          confirmedAt: iso(so.confirmedAt),
+          completedAt: iso(so.completedAt),
+          cancelledAt: iso(so.cancelledAt),
+          createdAt: so.createdAt.toISOString(),
+          updatedAt: so.updatedAt.toISOString(),
+        },
+        csv: [
+          so.id, so.reference, so.status, so.customerId, so.customerNameAtOrder,
+          so.currencyCodeAtOrder, so.currencySymbolAtOrder, so.decimalPrecisionAtOrder,
+          iso(so.orderDate), iso(so.expectedDate), so.discountMinor, so.notes,
+          so.createdByUserId, iso(so.confirmedAt), iso(so.completedAt), iso(so.cancelledAt),
+          so.createdAt.toISOString(), so.updatedAt.toISOString(),
+        ],
+      })),
+      truncated,
+    };
+  },
+
+  sales_order_lines: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.salesOrderLine.findMany({
+        where: { salesOrder: { businessId: ctx.businessId } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take,
+        select: {
+          id: true,
+          salesOrderId: true,
+          productId: true,
+          productNameAtOrder: true,
+          skuAtOrder: true,
+          unitAtOrder: true,
+          orderedQty: true,
+          unitPriceMinor: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((l) => ({
+        json: {
+          id: l.id,
+          salesOrderId: l.salesOrderId,
+          productId: l.productId,
+          productNameAtOrder: l.productNameAtOrder,
+          skuAtOrder: l.skuAtOrder,
+          unitAtOrder: l.unitAtOrder,
+          orderedQty: l.orderedQty,
+          unitPriceMinor: l.unitPriceMinor,
+          createdAt: l.createdAt.toISOString(),
+          updatedAt: l.updatedAt.toISOString(),
+        },
+        csv: [
+          l.id, l.salesOrderId, l.productId, l.productNameAtOrder,
+          l.skuAtOrder, l.unitAtOrder, l.orderedQty, l.unitPriceMinor,
+          l.createdAt.toISOString(), l.updatedAt.toISOString(),
+        ],
+      })),
+      truncated,
+    };
+  },
+
 subscription_summary: async (ctx) => {
     // §51 — customer-visible subscription state ONLY. Provider verification
     // internals, webhook signatures and merchant credentials do not exist here.
@@ -1420,6 +1539,10 @@ export const DATASET_CSV_COLUMNS: Record<ExportDatasetKey, string[]> = {
   // columns (a dispatch records quantity only).
   inventory_goods_dispatches: ["id", "reference", "status", "customer_id", "customer_name_at_dispatch", "notes", "created_by_user_id", "posted_at", "cancelled_at", "created_at", "updated_at"],
   inventory_goods_dispatch_lines: ["id", "goods_dispatch_id", "product_id", "product_name_at_dispatch", "sku_at_dispatch", "unit_at_dispatch", "qty", "reason_code", "created_at", "updated_at"],
+  // Prompt 45 (§116) — sales-order datasets: historical snapshots verbatim;
+  // money columns stay integer minor units (the agreed commercial contract).
+  sales_orders: ["id", "reference", "status", "customer_id", "customer_name_at_order", "currency_code_at_order", "currency_symbol_at_order", "decimal_precision_at_order", "order_date", "expected_date", "discount_minor", "notes", "created_by_user_id", "confirmed_at", "completed_at", "cancelled_at", "created_at", "updated_at"],
+  sales_order_lines: ["id", "sales_order_id", "product_id", "product_name_at_order", "sku_at_order", "unit_at_order", "ordered_qty", "unit_price_minor", "created_at", "updated_at"],
   subscription_summary: ["plan_code", "plan_name", "status", "billing_period", "current_period_start", "current_period_end", "trial_start", "trial_end", "cancel_at_period_end", "canceled_at", "ended_at", "created_at"],
   usage_summary: ["metric", "used", "limit", "remaining", "percentage_used", "period_start", "period_end"],
 };

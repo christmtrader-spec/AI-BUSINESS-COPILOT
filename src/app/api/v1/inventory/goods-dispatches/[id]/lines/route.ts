@@ -1,10 +1,15 @@
 /**
  * Prompt 44 — POST /api/v1/inventory/goods-dispatches/[id]/lines (data:write)
  *
- * Line create: productId + qty + reasonCode. The product IS the
- * authoritative outbound source; snapshots derive server-side from the
- * tenant-scoped Product row. DRAFT-only; duplicate product → 409;
- * advisory availability check (only POST is authoritative).
+ * Line create — TWO explicit source modes:
+ *  - STANDALONE (P44): productId + qty + reasonCode; snapshots derive from
+ *    the tenant-scoped Product row.
+ *  - ORDER-BASED (Prompt 45 §41): salesOrderLineId + qty ONLY — the
+ *    product, snapshots, customer context and SALE reason derive from the
+ *    linked sales order (server-controlled; injected productId/reasonCode
+ *    is rejected).
+ * DRAFT-only; duplicate product → 409; advisory remaining/availability
+ * checks (only POST is authoritative).
  */
 import { NextRequest } from "next/server";
 import { ok, parseBody, route } from "@/lib/api-helpers";
@@ -27,6 +32,7 @@ export const POST = route(async (req: NextRequest, { params }: RouteParams) => {
     userId: ctx.userId,
     id,
     productId: input.productId,
+    salesOrderLineId: input.salesOrderLineId,
     qty: input.qty,
     reasonCode: input.reasonCode,
     ip: req.headers.get("x-forwarded-for"),

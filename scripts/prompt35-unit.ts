@@ -284,7 +284,8 @@ eq(ENTITY_DESTINATION.OPPORTUNITY, "opportunities", "u25 OPPORTUNITY destination
 // Prompt 42 (§122) — GOODS_RECEIPT joins.
 // Prompt 43 (§101) — GOODS_RETURN joins.
 // Prompt 44 — GOODS_DISPATCH joins: 12 destinations total.
-ok(SEARCH_DESTINATIONS.length === 12, "u25 destinations cover 12 entities (P41 POs + P42 receipts + P43 returns + P44 dispatches)");
+// Prompt 45 (§70) — SALES_ORDER joins: 13 destinations total.
+ok(SEARCH_DESTINATIONS.length === 13, "u25 destinations cover 13 entities (P41 POs + P42 receipts + P43 returns + P44 dispatches + P45 sales orders)");
 
 /* 26 — CRM tab vocabulary + default (§37) */
 // Prompt 36 (§43/§115) added the closed `tasks` tab — vocabulary extended.

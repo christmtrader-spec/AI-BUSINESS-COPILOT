@@ -203,4 +203,9 @@ and violating over-receipt protection), so receipt datasets are
 rejects `inventory_goods_receipts`, `inventory_goods_receipt_lines`, `inventory_goods_returns` and `inventory_goods_return_lines` (Prompt 43 §180: a generic return import could replay negative inventory movements and duplicate stock decrements — returns are export-only)
 (negative test: an import attempt naming a receipt dataset is rejected as
 unsupported and creates nothing — E2E §139/§275). Restore from backup is the
-sanctioned recovery path for receiving documents.
+sanctioned recovery path for receiving documents. Sales-order datasets join the
+blocked set (Prompt 45 §117): importing confirmed/completed operational
+orders could create dispatch eligibility or invoice/fulfillment
+inconsistencies, so `sales_orders` and `sales_order_lines` are
+**export-only** (negative test: an import attempt naming a sales-order
+dataset is rejected before any mutation — E2E 21.1–21.3).

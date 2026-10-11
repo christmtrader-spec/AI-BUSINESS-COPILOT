@@ -313,4 +313,13 @@ as `table absent in this backup`, never a drill failure). Expected final probe
 surface: User, Business, Subscription, Customer, Supplier, Product, Sale,
 Expense, AuditLog, UsageEvent, AiCostRecord, PlatformAuditLog,
 InventoryStocktake, InventoryStocktakeLine, PurchaseOrder, PurchaseOrderLine,
-**GoodsReceipt, GoodsReceiptLine, GoodsReturn, GoodsReturnLine**.
+**GoodsReceipt, GoodsReceiptLine, GoodsReturn, GoodsReturnLine, GoodsDispatch, GoodsDispatchLine, SalesOrder, SalesOrderLine**.
+
+
+### Prompt 45 — sales orders in the restore surface
+
+`restore-drill.mjs` probes `SalesOrder` and `SalesOrderLine` alongside all
+earlier domains (honest-absent rule preserved: older backups predate the
+tables and are reported, never a drill failure). `env-repair.mjs`
+baselines the `20261011090000_prompt45_sales_orders` migration so a sandbox
+ledger revert can never leave it falsely pending.

@@ -120,6 +120,9 @@ export function mapProductDetail(
   // Prompt 44 — bounded dispatch-line history passes through verbatim
   // (already mapped by the goods-dispatch service).
   recentGoodsDispatches: ProductDetail["recentGoodsDispatches"] = [],
+  // Prompt 45 (§72) — bounded sales-order history passes through verbatim
+  // (already mapped by the sales-order service).
+  recentSalesOrders: ProductDetail["recentSalesOrders"] = [],
 ): ProductDetail {
   return {
     product: {
@@ -145,6 +148,7 @@ export function mapProductDetail(
     recentGoodsReceipts,
     recentGoodsReturns,
     recentGoodsDispatches,
+    recentSalesOrders,
   };
 }
 

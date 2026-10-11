@@ -66,6 +66,19 @@ import {
   type GoodsDispatchStatus,
 } from "./types";
 import {
+  exceedsRemainingToDispatch,
+  computeRemainingToDispatchQty,
+  isValidPersistedOrderQty,
+  isValidOrderPrice,
+  parseSalesOrderStatus as parseSalesOrderStatusLink,
+  SalesOrderIntegrityError,
+  SALES_ORDER_ERROR_CODES,
+} from "@/lib/sales-orders/types";
+import {
+  mapPureSalesOrderDomainError,
+  sumPostedDispatchedQtyBySalesOrderLines,
+} from "@/lib/sales-orders/integration";
+import {
   customerRecentDispatchDto,
   goodsDispatchDetailDto,
   goodsDispatchLineDto,
@@ -94,6 +107,9 @@ const withWriteTx = withWriteTransaction;
 /** The adjustment reason ties every posted line to its dispatch. */
 const DISPATCH_ADJUSTMENT_REASON = (reference: string) =>
   `Goods dispatch ${reference}: inventory dispatched out of stock`;
+
+/** Prompt 45 (§41) — the SERVER-CONTROLLED reason for linked fulfillment. */
+export const SALES_ORDER_LINE_REASON = "SALE" as const;
 
 /* ---------------------------- shared internals ----------------------------- */
 
@@ -182,6 +198,8 @@ async function loadDispatchHeader(
   status: GoodsDispatchStatus;
   customerId: string | null;
   customerNameAtDispatch: string;
+  salesOrderId: string | null;
+  salesOrderReferenceAtDispatch: string | null;
   notes: string | null;
   createdByUserId: string;
   postedAt: Date | null;
@@ -196,6 +214,8 @@ async function loadDispatchHeader(
       status: true,
       customerId: true,
       customerNameAtDispatch: true,
+      salesOrderId: true,
+      salesOrderReferenceAtDispatch: true,
       notes: true,
       createdByUserId: true,
       postedAt: true,
@@ -252,6 +272,40 @@ function auditInput(
   };
 }
 
+/** Corrupted persisted ORDER status inside the fulfillment chain → the
+ *  SAME stable sales-order integrity code (never Draft, never generic). */
+function parseLinkedOrderStatus(status: string) {
+  try {
+    return parseSalesOrderStatusLink(status);
+  } catch (error) {
+    mapPureSalesOrderDomainError(error);
+  }
+}
+
+/**
+ * Prompt 45 (§44) — load the LINKED order for a fulfillment dispatch.
+ * A missing order (corrupted link) is an integrity failure, never a 404
+ * that would leak existence or silently detach the dispatch.
+ */
+async function loadLinkedOrder(
+  tx: Tx,
+  businessId: string,
+  salesOrderId: string,
+): Promise<{ id: string; reference: string; status: ReturnType<typeof parseLinkedOrderStatus> }> {
+  const order = await tx.salesOrder.findFirst({
+    where: { id: salesOrderId, businessId }, // tenant scope
+    select: { id: true, reference: true, status: true },
+  });
+  if (!order) {
+    throw new ApiError(
+      500,
+      SALES_ORDER_ERROR_CODES.FOREIGN_ENTITY,
+      "Linked order data is inconsistent. Please contact support.",
+    );
+  }
+  return { ...order, status: parseLinkedOrderStatus(order.status) };
+}
+
 /**
  * The ONE canonical POSTED dispatched-quantity sum for ONE product.
  * DRAFT/CANCELLED dispatches never count. Database aggregate (_sum),
@@ -305,6 +359,76 @@ async function assertLineCap(tx: Tx, goodsDispatchId: string, cap: number): Prom
     );
   }
   return lineCount;
+}
+
+/* ------------------------- linked fulfillment context ---------------------- */
+
+/**
+ * Prompt 45 (§41/§42) — advisory remaining check for ONE linked order
+ * line at draft time: qty ≤ orderedQty − POSTED dispatched. The
+ * authoritative gate re-runs INSIDE the post transaction (§44).
+ */
+async function linkedOrderLineWithRemaining(
+  tx: Tx,
+  header: { id: string; salesOrderId: string | null },
+  salesOrderLineId: string,
+): Promise<{
+  orderLine: {
+    id: string;
+    productId: string;
+    orderedQty: number;
+    unitPriceMinor: number;
+    productNameAtOrder: string;
+    skuAtOrder: string | null;
+    unitAtOrder: string | null;
+  };
+  remainingToDispatchQty: number;
+}> {
+  if (!header.salesOrderId) {
+    throw new ApiError(
+      500,
+      SALES_ORDER_ERROR_CODES.FOREIGN_ENTITY,
+      "Linked dispatch data is inconsistent. Please contact support.",
+    );
+  }
+  const orderLine = await tx.salesOrderLine.findFirst({
+    where: { id: salesOrderLineId, salesOrderId: header.salesOrderId },
+    select: {
+      id: true,
+      productId: true,
+      orderedQty: true,
+      unitPriceMinor: true,
+      productNameAtOrder: true,
+      skuAtOrder: true,
+      unitAtOrder: true,
+    },
+  });
+  if (!orderLine) {
+    // A foreign/misrouted order-line id is indistinguishable from unknown
+    // (404, no leak) — and can only arise from a client bug or corruption.
+    throw new ApiError(
+      404,
+      SALES_ORDER_ERROR_CODES.FOREIGN_ENTITY,
+      "Order line not found on the linked sales order.",
+    );
+  }
+  if (!isValidPersistedOrderQty(orderLine.orderedQty) || !isValidOrderPrice(orderLine.unitPriceMinor)) {
+    mapPureSalesOrderDomainError(
+      new SalesOrderIntegrityError(
+        `${SALES_ORDER_ERROR_CODES.CORRUPT_HISTORY}: invalid persisted order line`,
+      ),
+    );
+  }
+  const dispatched = await sumPostedDispatchedQtyBySalesOrderLines(tx, [orderLine.id]);
+  try {
+    const remaining = computeRemainingToDispatchQty(
+      orderLine.orderedQty,
+      dispatched.get(orderLine.id) ?? 0,
+    );
+    return { orderLine, remainingToDispatchQty: remaining.remainingToDispatchQty };
+  } catch (error) {
+    return mapPureSalesOrderDomainError(error);
+  }
 }
 
 /* -------------------------------- create ----------------------------------- */
@@ -463,6 +587,8 @@ export async function listGoodsDispatches(input: {
         status: true,
         customerId: true,
         customerNameAtDispatch: true,
+        salesOrderId: true,
+        salesOrderReferenceAtDispatch: true,
         postedAt: true,
         cancelledAt: true,
         createdAt: true,
@@ -496,6 +622,8 @@ export async function listGoodsDispatches(input: {
         status: row.status,
         customerId: row.customerId,
         customerNameAtDispatch: row.customerNameAtDispatch,
+        salesOrderId: row.salesOrderId,
+        salesOrderReferenceAtDispatch: row.salesOrderReferenceAtDispatch,
         lineCount: row._count.lines,
         totalDispatchedQty,
         postedAt: row.postedAt,
@@ -534,6 +662,8 @@ export async function getGoodsDispatch(input: {
       notes: true,
       customerId: true,
       customerNameAtDispatch: true,
+      salesOrderId: true,
+      salesOrderReferenceAtDispatch: true,
       createdByUserId: true,
       postedAt: true,
       cancelledAt: true,
@@ -550,6 +680,7 @@ export async function getGoodsDispatch(input: {
           unitAtDispatch: true,
           qty: true,
           reasonCode: true,
+          salesOrderLineId: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -571,6 +702,8 @@ export async function getGoodsDispatch(input: {
         notes: row.notes,
         customerId: row.customerId,
         customerNameAtDispatch: row.customerNameAtDispatch,
+        salesOrderId: row.salesOrderId,
+        salesOrderReferenceAtDispatch: row.salesOrderReferenceAtDispatch,
         createdByUserId: row.createdByUserId,
         createdByName: row.createdByUser?.name ?? null,
         postedAt: row.postedAt,
@@ -650,9 +783,10 @@ export async function addGoodsDispatchLine(input: {
   businessId: string;
   userId: string;
   id: string;
-  productId: string;
+  productId?: string; // STANDALONE source (P44 contract)
+  salesOrderLineId?: string; // ORDER-BASED source (Prompt 45 §41)
   qty: number;
-  reasonCode: string;
+  reasonCode?: string;
   ip?: string | null;
   userAgent?: string | null;
 }) {
@@ -660,12 +794,130 @@ export async function addGoodsDispatchLine(input: {
     const header = await loadDispatchHeader(tx, input.businessId, input.id);
     requireDraft(header.status); // DRAFT-only
 
+    // Prompt 45 — ORDER-BASED fulfillment branch (§41): the ORDER LINE is
+    // the source. The client cannot inject productId, a different customer
+    // or an arbitrary reasonCode — everything derives from the order.
+    if (header.salesOrderId) {
+      if (!input.salesOrderLineId) {
+        throw new ApiError(
+          422,
+          SALES_ORDER_ERROR_CODES.FOREIGN_ENTITY,
+          "Order-linked dispatch lines require a salesOrderLineId.",
+        );
+      }
+      if (input.productId) {
+        throw new ApiError(
+          422,
+          SALES_ORDER_ERROR_CODES.FOREIGN_ENTITY,
+          "The product derives from the sales order line — productId cannot be submitted.",
+        );
+      }
+      if (input.reasonCode !== undefined) {
+        throw new ApiError(
+          422,
+          SALES_ORDER_ERROR_CODES.FOREIGN_ENTITY,
+          "The dispatch reason is server-controlled for order fulfillment.",
+        );
+      }
+      // The linked order must STILL be CONFIRMED to extend its drafts.
+      const linkedOrder = await loadLinkedOrder(tx, input.businessId, header.salesOrderId);
+      if (linkedOrder.status !== "CONFIRMED") {
+        throw new ApiError(
+          409,
+          SALES_ORDER_ERROR_CODES.INVALID_STATUS,
+          "The linked sales order is not in a dispatchable state.",
+        );
+      }
+      const { orderLine, remainingToDispatchQty } = await linkedOrderLineWithRemaining(
+        tx,
+        header,
+        input.salesOrderLineId,
+      );
+      // §42 — ADVISORY remaining check at line-add time (POST is the
+      // authority; stale drafts are the documented scenario).
+      if (exceedsRemainingToDispatch(remainingToDispatchQty, input.qty)) {
+        throw new ApiError(
+          409,
+          SALES_ORDER_ERROR_CODES.DISPATCH_EXCEEDS_REMAINING,
+          `Only ${remainingToDispatchQty} remain to dispatch for ${orderLine.productNameAtOrder}.`,
+        );
+      }
+
+      const cap = goodsDispatchLineCap(process.env.GOODS_DISPATCH_MAX_LINES);
+      await assertLineCap(tx, header.id, cap); // defensive count
+
+      try {
+        const line = await tx.goodsDispatchLine.create({
+          data: {
+            goodsDispatchId: header.id,
+            // §41 — the product DERIVES from the order line (never client).
+            productId: orderLine.productId,
+            qty: input.qty,
+            reasonCode: SALES_ORDER_LINE_REASON, // server-controlled (§41)
+            // §33 — snapshots copied from the ORDER LINE's frozen snapshot
+            // (not the live Product row) for order-based fulfillment.
+            productNameAtDispatch: orderLine.productNameAtOrder,
+            skuAtDispatch: orderLine.skuAtOrder,
+            unitAtDispatch: orderLine.unitAtOrder,
+            salesOrderLineId: orderLine.id,
+          },
+          select: { id: true },
+        });
+
+        await audit(
+          auditInput(
+            input.businessId,
+            input.userId,
+            "goods_dispatch.line_add",
+            header.id,
+            header.reference,
+            {
+              lineId: line.id,
+              salesOrderLineId: orderLine.id,
+              productId: orderLine.productId,
+              productNameAtDispatch: orderLine.productNameAtOrder,
+              qty: input.qty,
+              reasonCode: SALES_ORDER_LINE_REASON,
+            },
+          ),
+          tx,
+        );
+
+        return { id: line.id };
+      } catch (error) {
+        // DB uniqueness is authoritative for duplicate lines (§43).
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+          throw new ApiError(
+            409,
+            GOODS_DISPATCH_ERROR_CODES.DUPLICATE_LINE,
+            "This product is already on the dispatch.",
+          );
+        }
+        throw error;
+      }
+    }
+
+    // ----- STANDALONE P44 branch (unchanged contract) -----
+    if (input.salesOrderLineId) {
+      // A standalone dispatch can never be grafted onto an order.
+      throw new ApiError(
+        422,
+        SALES_ORDER_ERROR_CODES.FOREIGN_ENTITY,
+        "Only order-linked dispatches accept a salesOrderLineId.",
+      );
+    }
+    if (!input.productId || !input.reasonCode) {
+      throw new ApiError(422, "VALIDATION_ERROR", "A dispatch line requires productId and reasonCode.");
+    }
+    const productId = input.productId;
+    const reasonCode = input.reasonCode;
+
     // The product IS the authoritative outbound source: it must exist
     // inside the SAME tenant and be ACTIVE (a new dispatch line cannot
     // target a soft-deleted product). A foreign product is
     // indistinguishable from an unknown one (404, no existence leak).
     const product = await tx.product.findFirst({
-      where: { id: input.productId, businessId: input.businessId, deletedAt: null },
+      where: { id: productId, businessId: input.businessId, deletedAt: null },
       select: {
         id: true,
         name: true,
@@ -704,7 +956,7 @@ export async function addGoodsDispatchLine(input: {
           goodsDispatchId: header.id,
           productId: product.id,
           qty: input.qty,
-          reasonCode: input.reasonCode, // closed vocabulary (zod)
+          reasonCode, // closed vocabulary (zod)
           // Snapshots copied from the PRODUCT at add time, then frozen —
           // never re-read live afterwards.
           productNameAtDispatch: product.name,
@@ -726,7 +978,7 @@ export async function addGoodsDispatchLine(input: {
             productId: product.id,
             productNameAtDispatch: product.name,
             qty: input.qty,
-            reasonCode: input.reasonCode,
+            reasonCode,
           },
         ),
         tx,
@@ -756,7 +1008,7 @@ export async function updateGoodsDispatchLine(input: {
   id: string;
   lineId: string;
   qty: number;
-  reasonCode: string;
+  reasonCode?: string;
   ip?: string | null;
   userAgent?: string | null;
 }) {
@@ -771,9 +1023,95 @@ export async function updateGoodsDispatchLine(input: {
         productId: true,
         qty: true,
         reasonCode: true,
+        salesOrderLineId: true,
       },
     });
     if (!line) throw new ApiError(404, "NOT_FOUND", "Dispatch line not found.");
+
+    // Prompt 45 — ORDER-BASED branch: the quantity stays bounded by the
+    // order's remaining quantity (advisory at draft; POST is the
+    // authority §42/§44) and the server-controlled SALE reason can never
+    // be client-rewritten (§41).
+    if (header.salesOrderId) {
+      if (!line.salesOrderLineId) {
+        // A linked dispatch holding a standalone line is corruption.
+        throw new ApiError(
+          500,
+          SALES_ORDER_ERROR_CODES.FOREIGN_ENTITY,
+          "Linked dispatch data is inconsistent. Please contact support.",
+        );
+      }
+      if (input.reasonCode !== undefined) {
+        throw new ApiError(
+          422,
+          SALES_ORDER_ERROR_CODES.FOREIGN_ENTITY,
+          "The dispatch reason is server-controlled for order fulfillment.",
+        );
+      }
+      // The linked order must STILL be CONFIRMED to edit its drafts.
+      const linkedOrder = await loadLinkedOrder(tx, input.businessId, header.salesOrderId);
+      if (linkedOrder.status !== "CONFIRMED") {
+        throw new ApiError(
+          409,
+          SALES_ORDER_ERROR_CODES.INVALID_STATUS,
+          "The linked sales order is not in a dispatchable state.",
+        );
+      }
+      const { orderLine, remainingToDispatchQty } = await linkedOrderLineWithRemaining(
+        tx,
+        header,
+        line.salesOrderLineId,
+      );
+      if (exceedsRemainingToDispatch(remainingToDispatchQty, input.qty)) {
+        throw new ApiError(
+          409,
+          SALES_ORDER_ERROR_CODES.DISPATCH_EXCEEDS_REMAINING,
+          `Only ${remainingToDispatchQty} remain to dispatch for ${orderLine.productNameAtOrder}.`,
+        );
+      }
+
+      // Re-read the persisted row after mutation: the response carries the
+      // REAL stored snapshot fields and timestamps (snapshots stay frozen).
+      const updated = await tx.goodsDispatchLine.update({
+        where: { id: line.id },
+        data: { qty: input.qty }, // qty only — reason is server-owned
+        select: {
+          id: true,
+          productId: true,
+          productNameAtDispatch: true,
+          skuAtDispatch: true,
+          unitAtDispatch: true,
+          qty: true,
+          reasonCode: true,
+          salesOrderLineId: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      await audit(
+        auditInput(
+          input.businessId,
+          input.userId,
+          "goods_dispatch.line_update",
+          header.id,
+          header.reference,
+          {
+            lineId: line.id,
+            salesOrderLineId: line.salesOrderLineId,
+            qty: { from: line.qty, to: updated.qty },
+          },
+        ),
+        tx,
+      );
+
+      return goodsDispatchLineDto(updated);
+    }
+
+    if (input.reasonCode === undefined) {
+      throw new ApiError(422, "VALIDATION_ERROR", "A dispatch line update requires reasonCode.");
+    }
+    const reasonCode = input.reasonCode;
 
     // The qty still respects the advisory availability check (POSTED sums
     // are not subtracted — see the note in addGoodsDispatchLine; only
@@ -801,7 +1139,7 @@ export async function updateGoodsDispatchLine(input: {
     // REAL stored snapshot fields and timestamps (snapshots stay frozen).
     const updated = await tx.goodsDispatchLine.update({
       where: { id: line.id },
-      data: { qty: input.qty, reasonCode: input.reasonCode },
+      data: { qty: input.qty, reasonCode },
       select: {
         id: true,
         productId: true,
@@ -810,6 +1148,7 @@ export async function updateGoodsDispatchLine(input: {
         unitAtDispatch: true,
         qty: true,
         reasonCode: true,
+        salesOrderLineId: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -914,6 +1253,7 @@ export async function postGoodsDispatch(input: {
         qty: true,
         reasonCode: true,
         productNameAtDispatch: true,
+        salesOrderLineId: true,
       },
     });
     if (lines.length > cap) {
@@ -957,6 +1297,86 @@ export async function postGoodsDispatch(input: {
           GOODS_DISPATCH_ERROR_CODES.CORRUPT_HISTORY,
           "Goods dispatch data is inconsistent. Please contact support.",
         );
+      }
+    }
+
+    // Prompt 45 (§44) — ORDER-BASED fulfillment validations INSIDE the
+    // transaction, BEFORE any stock mutation: the linked order must be
+    // CONFIRMED (never CANCELLED §50, never COMPLETED §51), every line
+    // must reference a source line of THAT order, and the requested
+    // quantities must fit within the remaining order quantities (§37 —
+    // the authoritative over-dispatch gate; concurrent posts serialize on
+    // the shared write transaction so exactly one wins, §103).
+    if (header.salesOrderId) {
+      const linkedOrder = await loadLinkedOrder(tx, input.businessId, header.salesOrderId);
+      if (linkedOrder.status !== "CONFIRMED") {
+        // CANCELLED order → its drafts can never post (§50); COMPLETED
+        // order → no additional dispatch after invoicing (§51).
+        throw new ApiError(
+          409,
+          SALES_ORDER_ERROR_CODES.INVALID_STATUS,
+          "The linked sales order is not in a dispatchable state.",
+        );
+      }
+      const linkedLineIds = lines.map((l) => l.salesOrderLineId);
+      if (linkedLineIds.some((id) => id === null)) {
+        // A linked dispatch holding a standalone line is corruption.
+        throw new ApiError(
+          500,
+          SALES_ORDER_ERROR_CODES.FOREIGN_ENTITY,
+          "Linked dispatch data is inconsistent. Please contact support.",
+        );
+      }
+      const ids = linkedLineIds as string[];
+      const orderLines = await tx.salesOrderLine.findMany({
+        where: { id: { in: ids }, salesOrderId: header.salesOrderId },
+        select: { id: true, productId: true, orderedQty: true },
+      });
+      if (orderLines.length !== ids.length) {
+        // A source line from ANOTHER order (or a deleted line) is data
+        // corruption — surfaced, never silently fulfilled.
+        throw new ApiError(
+          500,
+          SALES_ORDER_ERROR_CODES.FOREIGN_ENTITY,
+          "Linked dispatch data is inconsistent. Please contact support.",
+        );
+      }
+      const orderLineById = new Map(orderLines.map((ol) => [ol.id, ol]));
+      // §36 — POSTED-only aggregate for ALL lines of THIS dispatch.
+      const posted = await sumPostedDispatchedQtyBySalesOrderLines(tx, ids);
+      for (const line of lines) {
+        const orderLine = orderLineById.get(line.salesOrderLineId as string);
+        if (!orderLine) {
+          throw new ApiError(
+            500,
+            SALES_ORDER_ERROR_CODES.FOREIGN_ENTITY,
+            "Linked dispatch data is inconsistent. Please contact support.",
+          );
+        }
+        // §44 — the product MUST derive from the source order line.
+        if (line.productId !== orderLine.productId) {
+          throw new ApiError(
+            500,
+            SALES_ORDER_ERROR_CODES.FOREIGN_ENTITY,
+            "Linked dispatch data is inconsistent. Please contact support.",
+          );
+        }
+        try {
+          const remaining = computeRemainingToDispatchQty(
+            orderLine.orderedQty,
+            posted.get(orderLine.id) ?? 0,
+          );
+          if (exceedsRemainingToDispatch(remaining.remainingToDispatchQty, line.qty)) {
+            throw new ApiError(
+              409,
+              SALES_ORDER_ERROR_CODES.DISPATCH_EXCEEDS_REMAINING,
+              `Only ${remaining.remainingToDispatchQty} remain to dispatch for ${line.productNameAtDispatch}.`,
+            );
+          }
+        } catch (error) {
+          if (error instanceof ApiError) throw error;
+          mapPureSalesOrderDomainError(error);
+        }
       }
     }
 

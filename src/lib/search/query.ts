@@ -19,6 +19,7 @@ import { SEARCH_PER_ENTITY_TAKE } from "./schema";
 import { purchaseOrderLineCap } from "@/lib/purchase-orders/types";
 import { goodsReceiptLineCap } from "@/lib/inventory/goods-receipt/types";
 import { goodsDispatchLineCap } from "@/lib/inventory/goods-dispatch/types";
+import { salesOrderLineCap } from "@/lib/sales-orders/types";
 import { goodsReturnLineCap } from "@/lib/inventory/goods-return/types";
 import {
   customerCandidate,
@@ -26,6 +27,7 @@ import {
   goodsReceiptCandidate,
   goodsReturnCandidate,
   goodsDispatchCandidate,
+  salesOrderCandidate,
   leadCandidate,
   opportunityCandidate,
   paymentCandidate,
@@ -38,6 +40,7 @@ import {
   type GoodsReceiptSearchRow,
   type GoodsReturnSearchRow,
   type GoodsDispatchSearchRow,
+  type SalesOrderSearchRow,
   type PaymentRow,
   type PurchaseOrderSearchRow,
   type SaleRow,
@@ -497,6 +500,54 @@ async function searchGoodsDispatches(
   return rows.map((r) => goodsDispatchCandidate(r as GoodsDispatchSearchRow));
 }
 
+/**
+ * Prompt 45 (§70) — sales-order search. Tenant-scoped at every level; the
+ * line-cap law bounds the snapshot text fetch. NO amounts and NO
+ * fulfillment quantities are selected (discovery only — §70).
+ * DRAFT/CANCELLED orders stay searchable (documents, not state).
+ */
+async function searchSalesOrders(
+  businessId: string,
+  variants: string[],
+): Promise<SearchCandidate[]> {
+  const rows = await db.salesOrder.findMany({
+    where: {
+      businessId, // server-derived tenant scope, never client input
+      OR: [
+        ...variants.map((v) => ({ reference: { contains: v } })),
+        ...variants.map((v) => ({ customerNameAtOrder: { contains: v } })),
+        ...variants.map((v) => ({
+          lines: {
+            some: {
+              OR: [
+                { productNameAtOrder: { contains: v } },
+                { skuAtOrder: { contains: v } },
+              ],
+            },
+          },
+        })),
+      ],
+    },
+    select: {
+      id: true,
+      reference: true,
+      status: true,
+      customerNameAtOrder: true,
+      createdAt: true,
+      // Line SNAPSHOT TEXT (name/SKU) feeds the ranker's match fields;
+      // bounded by the SAME sales-order line-cap law (never unbounded).
+      // No quantities and no money selected.
+      lines: {
+        select: { productNameAtOrder: true, skuAtOrder: true },
+        take: salesOrderLineCap(process.env.SALES_ORDER_MAX_LINES),
+      },
+    },
+    orderBy: { createdAt: "desc" as const },
+    take: SEARCH_PER_ENTITY_TAKE,
+  });
+  return rows.map((r) => salesOrderCandidate(r as SalesOrderSearchRow));
+}
+
 
 /**
  * Run all requested entity searches concurrently (§6) and return the
@@ -549,6 +600,9 @@ export async function fetchSearchCandidates(options: {
         break;
       case "GOODS_DISPATCH":
         tasks.push(searchGoodsDispatches(businessId, variants));
+        break;
+      case "SALES_ORDER":
+        tasks.push(searchSalesOrders(businessId, variants));
         break;
     }
   }

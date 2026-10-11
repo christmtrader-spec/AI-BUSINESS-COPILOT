@@ -48,6 +48,9 @@ export type GoodsDispatchLineDto = {
   unitAtDispatch: string | null;
   qty: number;
   reasonCode: string;
+  /** Prompt 45 — source-order line for ORDER-BASED fulfillment (null on
+   *  standalone dispatches). The authoritative linkage for §41/§44. */
+  salesOrderLineId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -59,7 +62,11 @@ export type GoodsDispatchDetailDto = {
   status: GoodsDispatchStatus;
   notes: string | null;
   customer: { id: string | null; nameAtDispatch: string };
-  createdBy: { id: string; name: string | null } | null; // id/name only
+  createdBy: { id: string; name: string | null } | null;
+  /** Prompt 45 (§89) — the order context for LINKED fulfillment dispatches
+   *  (null on standalone P44 dispatches). Deriving identity from the
+   *  ORDER-CONTEXT relation, never from notes/reference text (§58). */
+  salesOrder: { id: string; reference: string } | null;
   createdAt: string;
   postedAt: string | null;
   cancelledAt: string | null;
@@ -118,6 +125,8 @@ export type GoodsDispatchHeaderRow = {
   notes: string | null;
   customerId: string | null;
   customerNameAtDispatch: string;
+  salesOrderId: string | null;
+  salesOrderReferenceAtDispatch: string | null;
   createdByUserId: string;
   createdByName: string | null;
   postedAt: DateLike | null;
@@ -133,6 +142,7 @@ export type GoodsDispatchLineRow = {
   unitAtDispatch: string | null;
   qty: number;
   reasonCode: string;
+  salesOrderLineId: string | null;
   createdAt: DateLike;
   updatedAt: DateLike;
 };
@@ -175,6 +185,7 @@ export function goodsDispatchLineDto(row: GoodsDispatchLineRow): GoodsDispatchLi
     unitAtDispatch: row.unitAtDispatch,
     qty: row.qty,
     reasonCode: row.reasonCode,
+    salesOrderLineId: row.salesOrderLineId ?? null,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };
@@ -194,6 +205,12 @@ export function goodsDispatchDetailDto(
       id: row.customerId,
       nameAtDispatch: row.customerNameAtDispatch,
     },
+    salesOrder: row.salesOrderId
+      ? {
+          id: row.salesOrderId,
+          reference: row.salesOrderReferenceAtDispatch ?? "",
+        }
+      : null,
     createdBy: row.createdByUserId
       ? { id: row.createdByUserId, name: row.createdByName }
       : null,
