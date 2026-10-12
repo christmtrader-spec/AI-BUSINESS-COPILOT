@@ -282,7 +282,19 @@ section("DTO");
   const { res, data } = await call(fA, `/api/v1/customers/${customerId}`);
   check("C customer detail 200", res.status === 200);
   // Prompt 35 (§123): the customer 360 now carries a bounded `crm` section.
-  check("C customer exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["customer", "summary", "recentSales", "recentPayments", "crm"]), JSON.stringify(data && Object.keys(data)));
+  // Prompt 44 added `recentGoodsDispatches`; Prompt 45 added `recentSalesOrders`;
+  // Prompt 47 (§19) adds `recentSalesQuotations` (bounded ≤10, snapshot-faithful,
+  // quantities + status only — offer references, never revenue) — keyed per the
+  // authoritative src/lib/entities/customer.ts payload order.
+  check("C customer exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["customer", "summary", "recentSales", "recentPayments", "recentGoodsDispatches", "recentSalesOrders", "recentSalesQuotations", "crm"]), JSON.stringify(data && Object.keys(data)));
+  check("C recentGoodsDispatches array", Array.isArray(data?.recentGoodsDispatches));
+  check("C recentSalesOrders array", Array.isArray(data?.recentSalesOrders));
+  check("C recentSalesQuotations array", Array.isArray(data?.recentSalesQuotations));
+  const rq = data?.recentSalesQuotations?.[0];
+  if (rq) {
+    // Prompt 47 (§19): quotation ref keys — no notes, no customer identity fields.
+    check("C recentSalesQuotation keys", JSON.stringify(Object.keys(rq)) === JSON.stringify(["id", "reference", "persistedStatus", "effectiveStatus", "quotationDate", "currencyCodeAtQuotation", "currencySymbolAtQuotation", "decimalPrecisionAtQuotation", "totalMinor", "totalQty", "convertedOrderReference"]), JSON.stringify(Object.keys(rq)));
+  }
   check("C customer sub keys", data && JSON.stringify(Object.keys(data.customer)) === JSON.stringify(["id", "name", "phone", "email", "address", "note", "createdAt"]));
   check("C summary keys", data && JSON.stringify(Object.keys(data.summary)) === JSON.stringify(["totalSalesMinor", "paidSalesMinor", "receivableMinor", "invoiceCount", "paidInvoiceCount", "openInvoiceCount"]));
   const rs = data?.recentSales?.[0];
@@ -304,8 +316,18 @@ section("DTO");
   check("E product detail 200", res.status === 200);
   // Prompt 41 added the read-only `recentPurchaseOrders` section (≤10, bounded).
   // Prompt 42 (§120) added `recentGoodsReceipts`; Prompt 43 (§99) adds `recentGoodsReturns` (≤10,
-  // NO money) — appended last.
-  check("E product exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["product", "inventory", "recentAdjustments", "recentSales", "recentStocktakes", "recentPurchaseOrders", "recentGoodsReceipts", "recentGoodsReturns"]));
+  // NO money); Prompt 44 added `recentGoodsDispatches`; Prompt 45 added `recentSalesOrders`;
+  // Prompt 47 (§19) adds `recentSalesQuotations` (bounded ≤10, quantities only — a
+  // commercial-document reference, NEVER in the stock-movement list) — keyed per the
+  // authoritative src/lib/entities/product.ts payload order.
+  check("E product exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["product", "inventory", "recentAdjustments", "recentSales", "recentStocktakes", "recentPurchaseOrders", "recentGoodsReceipts", "recentGoodsReturns", "recentGoodsDispatches", "recentSalesOrders", "recentSalesQuotations"]));
+  check("E recentGoodsDispatches array", Array.isArray(data?.recentGoodsDispatches));
+  check("E recentSalesOrders array", Array.isArray(data?.recentSalesOrders));
+  check("E recentSalesQuotations array", Array.isArray(data?.recentSalesQuotations));
+  const pq = data?.recentSalesQuotations?.[0];
+  if (pq) {
+    check("E recentSalesQuotation keys", JSON.stringify(Object.keys(pq)) === JSON.stringify(["id", "reference", "customerNameAtQuotation", "persistedStatus", "effectiveStatus", "quotationDate", "qty"]), JSON.stringify(Object.keys(pq)));
+  }
   check("E inventory keys", data && JSON.stringify(Object.keys(data.inventory)) === JSON.stringify(["stockQty", "lowStockAt", "state"]));
   check("E inventory.state closed token", ["OUT_OF_STOCK", "LOW_STOCK", "HEALTHY"].includes(data?.inventory?.state), String(data?.inventory?.state));
   const ps = data?.recentSales?.[0];

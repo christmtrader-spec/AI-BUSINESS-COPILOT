@@ -1,0 +1,27 @@
+{
+  "email": "p47q-owner-mv5b01mh@p47q.test",
+  "password": "testpass123",
+  "businessId": "cmv5b01p80002r3bncue5vva9",
+  "customers": {
+    "aria": "cmv5b01p90006r3bnjo2cvz9m",
+    "parse": "cmv5b01pb0008r3bn373xuc9y"
+  },
+  "products": {
+    "lamp": "cmv5b01pc000ar3bnitheqrkj",
+    "wire": "cmv5b01pe000cr3bnv040vqsu",
+    "switch": "cmv5b01pf000er3bn19h089fd",
+    "socket": "cmv5b01pf000gr3bncutnyvf7"
+  },
+  "quotations": {
+    "draft": "cmv5b01wo01ger3v6a97ch2s6",
+    "sent": "cmv5b024n01gqr3v6fvwrsmme",
+    "accepted": "cmv5b02dz01h0r3v6kqo49bgh",
+    "rejected": "cmv5b032f01her3v6f5boya5e",
+    "expired": "cmv5b03hy01hqr3v6jmrcqr0v",
+    "cancelled": "cmv5b053801i2r3v6priyjg2g",
+    "converted": "cmv5b061301icr3v6a7hlxuw1"
+  },
+  "convertedOrder": "cmv5b077n01isr3v6astccfhy",
+  "convertedOrderReference": "SO-20261012-S4KYSS",
+  "convertedOrderStatus": "CONFIRMED"
+}

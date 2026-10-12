@@ -171,10 +171,14 @@ export function SalesQuotationPrintDialog({
                   <span className="text-muted-foreground">{t("subtotal")}</span>
                   <span className="tabular-nums" dir="ltr">{formatMinor(data.subtotalMinor)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t("discount")}</span>
-                  <span className="tabular-nums" dir="ltr">-{formatMinor(data.discountMinor)}</span>
-                </div>
+                {/* A zero discount line would render as "‑0" on a customer-facing
+                    offer — the row is only meaningful when a discount exists. */}
+                {data.discountMinor > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t("discount")}</span>
+                    <span className="tabular-nums" dir="ltr">-{formatMinor(data.discountMinor)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between border-t pt-1 font-semibold">
                   <span>{t("total")}</span>
                   <span className="tabular-nums" dir="ltr">{formatMinor(data.totalMinor)}</span>
