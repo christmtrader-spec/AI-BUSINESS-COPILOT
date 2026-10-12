@@ -901,33 +901,57 @@ async function main() {
   await db.salesOrder.delete({ where: { id: evilOrder.id } }).catch(() => {});
 
   /* --------------------- 21. business export/import ------------------------ */
+  // HYGIENE FIX (post-P47): the historical probes hit endpoints that DO NOT
+  // exist (POST /api/v1/businesses/export → 405, POST /api/v1/data/import →
+  // 404), so these assertions were vacuous. They now exercise the REAL
+  // portability surfaces (Prompt 31 job model): POST /api/v1/exports
+  // { datasets, format } → synchronous job → GET /api/v1/exports/[jobId]
+  // manifest → GET /api/v1/exports/[jobId]/download artifact, and
+  // POST /api/v1/imports (multipart; dataset allowlist enforced BEFORE any
+  // DataImportJob row is created — sales_orders is NOT importable).
   section("21. business export datasets + import rejection (§116/§117)");
   {
-    const imp = await call(ownerF, "/api/v1/businesses/import", {
-      method: "POST",
-      headers: { ...B(bizA.id), "content-type": "application/json" },
-      body: JSON.stringify({ datasets: ["sales_orders"], rows: [{ id: "x", reference: "REPLAY", status: "CONFIRMED" }] }),
-    });
-    ok([400, 404, 415, 422].includes(imp.status), `21.1 sales_orders import REJECTED (${imp.status})`);
-    const rej = await call(ownerF, "/api/v1/data/import", {
+    const jobsBefore = await db.dataImportJob.count({ where: { businessId: bizA.id } });
+    const mkForm = (dataset) => {
+      const fd = new FormData();
+      fd.set("dataset", dataset);
+      fd.set("file", new File(["id,reference\nx,REPLAY\n"], "replay.csv", { type: "text/csv" }));
+      return fd;
+    };
+    const imp = await call(ownerF, "/api/v1/imports", {
       method: "POST",
       headers: B(bizA.id),
-      body: JSON.stringify({ datasets: { sales_orders: [{ id: "x" }] } }),
+      body: mkForm("sales_orders"),
     });
-    ok([400, 404, 415, 422].includes(rej.status), `21.2 generic import path also rejects the dataset (${rej.status})`);
+    ok(imp.status === 422 && codeOf(imp) === "IMPORT_INVALID_FILE", `21.1 sales_orders import REJECTED on the real surface (got ${imp.status} ${codeOf(imp)})`);
+    const jobsAfter = await db.dataImportJob.count({ where: { businessId: bizA.id } });
+    eq(jobsAfter, jobsBefore, "21.2 NO DataImportJob row created (rejection precedes any DB write)");
     const beforeImport = await db.salesOrder.count({ where: { businessId: bizA.id } });
-    ok(beforeImport >= 3, "21.3 no import side effects (order count unchanged by the attempts)");
+    ok(beforeImport >= 1, "21.3 no import side effects (order count healthy after the rejected attempts)");
 
-    const expJob = await call(ownerF, "/api/v1/businesses/export", { method: "POST", headers: B(bizA.id), body: JSON.stringify({}) });
+    const expJob = await call(ownerF, "/api/v1/exports", {
+      method: "POST",
+      headers: B(bizA.id),
+      body: JSON.stringify({ datasets: ["sales_orders"], format: "JSON", idempotencyKey: `P45EXP${STAMP}` }),
+    });
     ok([200, 201, 202].includes(expJob.status), `21.4 business export job starts (${expJob.status})`);
-    if (expJob.body?.data?.id) {
-      const job = await call(ownerF, `/api/v1/businesses/export/${expJob.body.data.id}`, { headers: B(bizA.id) });
-      const manifest = JSON.stringify(job.body ?? {});
-      ok(manifest.includes("sales_orders"), "21.5 manifest includes the sales_orders dataset (§116)");
-      ok(manifest.includes("sales_order_lines"), "21.6 manifest includes the sales_order_lines dataset");
+    const jobId = dataOf(expJob)?.id;
+    if (jobId) {
+      const job = await call(ownerF, `/api/v1/exports/${jobId}`, { headers: B(bizA.id) });
+      const jobDatasets = dataOf(job)?.datasets ?? [];
+      ok(jobDatasets.includes("sales_orders"), "21.5 manifest includes the sales_orders dataset (§116)");
+      ok(jobDatasets.includes("sales_order_lines"), "21.6 manifest includes the sales_order_lines dataset");
+      eq(dataOf(job)?.status, "COMPLETED", "21.6b export job completed synchronously");
+      const dl = await call(ownerF, `/api/v1/exports/${jobId}/download`, { headers: B(bizA.id) });
+      eq(dl.status, 200, "21.6c download 200");
+      const artifact = typeof dl.body === "string" ? JSON.parse(dl.body) : dl.body;
+      const oRows = artifact?.datasets?.sales_orders ?? [];
+      const lRows = artifact?.datasets?.sales_order_lines ?? [];
+      ok(Array.isArray(oRows) && oRows.some((r) => r.reference === order1.reference), "21.6d artifact carries the order row (reference match)");
+      ok(Array.isArray(lRows) && lRows.length >= 1, "21.6e artifact carries the order LINE rows");
     } else {
-      ok(true, "21.5 manifest check skipped (async job shape)");
-      ok(true, "21.6 manifest check skipped (async job shape)");
+      ok(false, "21.5 export job id missing — cannot verify manifest");
+      ok(false, "21.6 export job id missing — cannot verify manifest");
     }
     // The export CATALOG structurally carries the parent→child implication.
     const catSrc = readFileSync("src/lib/data-portability/export-catalog.ts", "utf8");

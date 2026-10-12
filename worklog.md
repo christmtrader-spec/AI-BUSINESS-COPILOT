@@ -27,6 +27,19 @@
 
 ## Current Project Status (assessment)
 
+- POST-P47 FULL RE-VERIFICATION COMPLETE (2026-10-12, round 48-round-1):
+  every suite re-run on fresh evidence — 20 unit + 20 static + 41 E2E/check
+  + 6 cap/concurrency ALL GREEN; 3 real defects fixed (P45 E2E §21 vacuous
+  stale-endpoint probes → repointed to the real /api/v1/exports + /api/v1/
+  imports surfaces; P28 stranded `p28-v-*` price books from crashed runs →
+  prefix-scoped self-heal, caught by the P24 Q15.5 exactly-one-book canary;
+  new scripts/session-guard.sh session-start guard per Next-Phase Priority
+  #3). Real browser QA re-proven (full quotation lifecycle incl. convert →
+  CONFIRMED order deep link, print privacy law, FA/RTL, dark, 390px zero
+  overflow, palette search deep link) with exact fixture teardown to zero
+  residue. Baseline: 28/0 migrations, quick_check ok, foreign_key_check 0,
+  tsc 0 errors, lint 0 problems. Prompt 48 NOT started (awaiting the
+  user's explicit spec/authorization).
 - PROMPT 47 COMPLETE (2026-10-12): Sales Quotations & Customer Price Offers —
   full-stack implementation, test suites, cross-prompt regression, real
   browser QA, documentation set, and the 16 final gates all verified this
@@ -68,15 +81,17 @@
 ## Next-Phase Priorities
 
 1. Prompt 47 is CLOSED per its stop conditions — do NOT start Prompt 48
-   unless the user explicitly requests it.
+   unless the user explicitly requests it (a candidate menu was offered in
+   the round-48-round-1 report: supplier bills, statements/aging depth,
+   reporting depth — awaiting the user's spec).
 2. Keep the env-repair baseline law: every applied migration stays in
    scripts/env-repair.mjs (currently through 20261012090000_prompt47).
-3. If a future round is authorized: the sandbox-revert disease keeps
-   recurring — consider a session-start guard that runs env-repair +
-   ensure-dev automatically before any suite.
-4. P45 E2E §21 still probes stale endpoint paths (POST /api/v1/businesses/
-   export etc. → 405) — flagged in 47-tests; a future hygiene pass should
-   repoint it to the real /api/v1/exports + /api/v1/imports surfaces.
+3. DONE (48-round-1): session-start guard shipped as
+   scripts/session-guard.sh — run `bash scripts/session-guard.sh 28`
+   before any suite; it probes DB integrity/ledger/server and escalates to
+   env-repair + ensure-dev only when a probe fails.
+4. DONE (48-round-1): P45 E2E §21 repointed to the real /api/v1/exports +
+   /api/v1/imports surfaces with artifact-level assertions (223/0).
 
 ## Open Issues / Risks
 
@@ -4434,3 +4449,126 @@ Stage Summary:
   re-verified, and the quotation UI is browser-proven end-to-end in both
   locales and themes. STOP: Prompt 48 NOT implemented, per the stop
   conditions.
+
+---
+Task ID: 48-round-1
+Agent: Z.ai Code (main orchestrator)
+Task: Post-P47 verification round — user-directed full-project scan, deep
+re-testing of every suite, bug identification and repair, next-step guard
+tooling. (User: "ادامه ساخت گام بعدی … تمام پروژه رو اسکن کن و باگها رو
+شناسایی و درست کن".) Prompt 48 NOT started — no new product module; this
+round is verification + hygiene + repair per the P47 stop conditions.
+
+Work Log:
+- Baseline re-established from scratch (not trusted from P47's entry):
+  tsc 0 errors · lint 0 problems · ledger 28 applied / 0 pending ·
+  quick_check ok · foreign_key_check 0 · P47 tables present · 0 quotation
+  rows (clean baseline) · dev server health 200.
+- UNIT battery re-run (20 suites, ALL GREEN): prompt47 338/0 · prompt45
+  224/0 · prompt44 256/0 · prompt43 286/0 · prompt42 ALL PASS (shim) ·
+  prompt41 233/233 (shim) · prompt40 209/209 · prompt39 164/164 · prompt38
+  GREEN (shim) · prompt37 GREEN · prompt36 95/0 · prompt35 104/0 ·
+  prompt34 139/0 · prompt33 64/0 · prompt31 71/71 · prompt30 54/54 ·
+  prompt29 PASS · aging 39/0 · exports-round-unit 20/0 · i18n-audit 0
+  missing / 0 parity gaps (2,504+ usages).
+- STATIC battery re-run (20 scans, ALL GREEN): prompt47 122/0 · prompt45
+  114/0 · prompt44 150/0 · prompt43 203/0 · prompt42 ALL RULES · prompt41
+  145/145 · crm 20/20 · crm-activity 21/21 · crm-reminder 26/26 ·
+  entity-detail 20/20 · identity-security 20/0 · inventory-low-stock GREEN
+  · inventory-stocktake GREEN · notification GREEN · exports-round 40/0 ·
+  search 67/67 · statement GREEN · ai-context-secret 11/0 ·
+  audit-usage exit 0 · prompt26-rate-literal CLEAN.
+- E2E / check battery re-run (41 runs, ALL GREEN): prompt47 263/0 ·
+  prompt45 223/0 (after the §21 fix below — was 219 with 4 vacuous) ·
+  prompt44 158/0 · prompt43 293/0 · prompt42 273/0 · prompt41 218/218 ·
+  prompt40 133/133 · prompt39 117/117 · prompt38 124/124 · prompt37
+  149/149 · prompt36 161/161 · prompt35 148/148 · prompt34 117/117 ·
+  prompt33 76/76 · prompt32 102/102 · prompt31 106/106 · prompt30 93/93 ·
+  prompt29 105/105 · prompt28 86/0 (after self-heal fix below) ·
+  prompt27-legal 37/0 · prompt26-ai-cost 108/0 · prompt26-cost 111/0
+  (shim) · prompt25-commercial 68/0 · prompt25-pricing-ui 68/0 ·
+  prompt24 67/0 (after residue fix below) · prompt23-api PASS ·
+  prompt23-contract 45/0 · prompt22 72/0 · prompt21 76/0 · prompt20 56/0 ·
+  prompt19 ALL · prompt18 ALL · prompt17 ALL · exports-round 65/0 ·
+  payables-aging 39/0 · privacy-deletion 32/0 · notification-catalog
+  473/473 · public-legal-links 37/0 · public-trust-config OK ·
+  data-portability-audit exit 0 · e2e-smoke 90/90.
+- CAP/CONCURRENCY battery re-run (6 suites, ALL GREEN, MAX_LINES=20 +
+  shim): prompt47 77/0 · prompt45 43/0 · prompt44 40/0 · prompt43 32/0 ·
+  prompt42 ALL PASS · prompt41 20/20.
+- Environmental incidents during the battery (root-caused, NOT code bugs,
+  each re-run clean): dev server killed mid-P43 and mid-P28 ("other side
+  closed" / ConnectionRefused) — restarted via ensure-dev.sh; transient
+  Prisma SQLite socket timeouts caused one P21 uncaught BILLING_UNAVAILABLE
+  and one P20 J1 500 (durationMs 5013) — both suites re-ran to 0 failures
+  on an unloaded DB. Recorded honestly as the standing sandbox disease.
+- FIX #1 (hygiene defect, worklog Next-Phase Priorities #4): P45 E2E §21
+  probed endpoints that DO NOT exist (POST /api/v1/businesses/export →
+  405, POST /api/v1/businesses/import, POST /api/v1/data/import → 404) so
+  its import-rejection + manifest assertions were vacuous/loose
+  (405/404 were accepted as "rejected"). Repointed to the REAL Prompt 31
+  surfaces (POST /api/v1/exports {datasets,format} → job → manifest →
+  download artifact with order-row/line-row value assertions; POST
+  /api/v1/imports multipart with sales_orders → 422 IMPORT_INVALID_FILE +
+  zero DataImportJob rows). 219 → 223 counted assertions, all real.
+- FIX #2 (real fixture-residue defect caught by the P24 Q15.5 canary:
+  "exactly ONE price book remains — got 2"): a P28 run killed between
+  section E and cleanup strands its `p28-v-<stamp>` EUR_STANDARD book (the
+  STAMP-scoped cleanup of the NEXT run cannot match a PRIOR run's stamp).
+  Fixed scripts/prompt28-platform-check.mjs: (a) self-heal sweep at start
+  deletes version-startsWith-"p28-" price books + aiCostRates (every
+  harness version carries the p28- prefix; seeded books use v1-2026-09, so
+  the sweep can never touch seeded pricing; PlanPrice cascades), (b)
+  cleanup deleteMany broadened to the same prefix scope. Verified live:
+  P28 re-run printed "swept … 1 leftover price book(s) from a crashed
+  run" and P24 re-ran 67/0.
+- FIX #3 (worklog Next-Phase Priorities #3): new scripts/session-guard.sh —
+  session-start guard that runs the cheap probes first (node:sqlite
+  quick_check + foreign_key_check + ledger count) and escalates ONLY on
+  failure (env-repair.mjs when the ledger differs from $1; ensure-dev.sh
+  when the server is down). GUARD-OK verified (health=200 ledger=28
+  quick=ok fk=0). Usage: bash scripts/session-guard.sh [expected-count].
+- Not-a-bug investigated and closed: `ls`/node output rendered
+  src/app/api/v1/businesses/[id]/members/[memberId] as "emberId]" —
+  suspected mangled route dir. Char-code proof (5b 6d 65 6d…) showed the
+  directory name is exactly "[memberId]"; it was a terminal-render
+  artifact (the tool output stripter treats "[m" as an ANSI escape). No
+  defect; file system intact.
+- REAL browser QA (agent-browser, fresh P47 browser fixture, zero console
+  / page errors): login → sidebar "Sales Quotations" → list renders all 7
+  lifecycle states (QT-QA47{DRAFT,SENT,ACCEPT,REJECT,EXPIRE,CANCEL,CONVRT})
+  → DRAFT detail fully actionable (Edit / Print / Export CSV / Mark as
+  sent / Cancel / Add product / per-line edit+remove) → ACCEPTED detail →
+  Convert dialog carries the verbatim law ("Creates exactly ONE confirmed
+  sales order … No invoice, payment, receivable or stock change happens
+  now") → confirmed → "This quotation produced order SO-20261012-UAB95H.
+  The order is the fulfillment authority." → "Open sales order" deep link
+  lands on the CONFIRMED order page. Byte-law probe after the UI
+  conversion: stock 400/120/75/210 unchanged, adjustments 0, invoices 0,
+  payments 0, orders +1 CONFIRMED only. Print overlay privacy law
+  re-verified programmatically: hasInternal=false, hasLongId=false
+  (no cuids), hasTaxRow=false, "SALES QUOTATION — Price offer — this is
+  not an invoice…" banner present. FA/RTL: dir=rtl lang=fa h1=استعلام
+  قیمت (no English leakage); dark theme (html.dark=true); mobile 390px
+  zero horizontal scroll; command palette "QT-QA47" → 7 results → Enter
+  deep-links to the converted quotation detail.
+- Fixture hygiene: P47 browser fixture created for QA, then --teardown →
+  zero-residue probe (0 quotations / 0 orphan lines / 0 businesses / 0
+  users / 0 foreign orders / 0 stray sales_quotation audits), quick_check
+  ok, foreign_key_check 0, ledger 28. Persistent dev fixtures (sara/eve/
+  ali/rep16007, dev-baseline) untouched. Screenshots written to /tmp
+  (not committed): qa-p47-accept-before-convert.png, qa-p47-converted-
+  card.png, qa-p47-list-fa-rtl.png, qa-p47-mobile-fa-dark.png.
+- Final state: tsc 0 errors · lint 0 problems · session-guard GUARD-OK.
+
+Stage Summary:
+- ALL 60+ suites re-verified green this round on fresh runs; 3 real
+  defects/hygiene items fixed (P45 §21 vacuous endpoints, P28 stranded
+  price books caught by the P24 canary, missing session-start guard);
+  every failure was either root-caused+fixed or proven transient with a
+  clean re-run — nothing papered over. The project remains at the P47
+  closed state: 28/0 migrations, clean baseline, zero fixture residue.
+- Candidate next-step items recorded for the user (see the round's final
+  report): Prompt 48 candidates include supplier-bill (payables document)
+  workflow, customer statements/aging enhancements, or reporting depth —
+  awaiting the user's spec/authorization; do NOT start without it.

@@ -255,7 +255,17 @@ async function main() {
     for (const u of staleUsers) {
       await prisma.user.delete({ where: { id: u.id } }).catch(() => undefined);
     }
-    if (leftovers.length > 0) console.log(`  (swept ${leftovers.length} leftover fixture business(es) from a crashed run)`);
+    // Crashed-run recovery for PRICING rows too (defect found post-P47: a
+    // run killed between section E and cleanup left a `p28-v-<stamp>`
+    // EUR_STANDARD book behind, and the P24 Q15.5 exactly-one-book canary
+    // then failed). Every harness book/rate version carries the `p28-`
+    // prefix (newVersion/p28-missing/p28-free/p28-cur/p28-test-v1/p28-prod*)
+    // while seeded books use `v1-2026-09` — the prefix sweep can never
+    // touch seeded pricing data. PlanPrice rows cascade (schema). The
+    // STAMP-scoped cleanup below is kept as-is for belt-and-braces.
+    const sweptBooks = await prisma.priceBook.deleteMany({ where: { version: { startsWith: "p28-" } } });
+    await prisma.aiCostRate.deleteMany({ where: { version: { startsWith: "p28-" } } });
+    if (leftovers.length > 0 || sweptBooks.count > 0) console.log(`  (swept ${leftovers.length} leftover fixture business(es) + ${sweptBooks.count} leftover price book(s) from a crashed run)`);
   }
   const opEmail = `p28op-${STAMP}@harness.local`;
   const roEmail = `p28ro-${STAMP}@harness.local`;
@@ -818,8 +828,10 @@ async function main() {
   console.log("\n== Cleanup (temporary fixtures removed) ==");
   await prisma.platformAuditLog.deleteMany({ where: { OR: [{ operatorId: opRow.id }, { operatorId: roRow.id }, { operatorId: secRow.id }] } });
   await prisma.platformOperator.deleteMany({ where: { userId: { in: [opUser.id, roUser.id, secUser.id, tenantUser.id] } } });
-  await prisma.aiCostRate.deleteMany({ where: { version: { contains: String(STAMP) } } });
-  await prisma.priceBook.deleteMany({ where: { version: { contains: String(STAMP) } } });
+  // Prefix-scoped (all harness versions start with `p28-`): also removes
+  // rows a mid-run crash would otherwise strand for the next run's canary.
+  await prisma.aiCostRate.deleteMany({ where: { version: { startsWith: "p28-" } } });
+  await prisma.priceBook.deleteMany({ where: { version: { startsWith: "p28-" } } });
   await prisma.business.delete({ where: { id: biz.id } });
   for (const u of [opUser, roUser, secUser, tenantUser, ownerUser]) {
     await prisma.user.delete({ where: { id: u.id } }).catch(() => undefined);
