@@ -206,6 +206,10 @@ try {
     // Prompt 45 (§118/§141) — sales orders + lines join the restore
     // verification surface (same honest-absent rule).
     "SalesOrder", "SalesOrderLine",
+    // Prompt 47 — sales quotations + lines join the restore verification
+    // surface (same honest-absent rule: older backups may predate the
+    // models — reported, never a drill failure).
+    "SalesQuotation", "SalesQuotationLine",
   ];
   const counts = {};
   for (const entity of ENTITIES) {

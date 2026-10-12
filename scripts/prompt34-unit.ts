@@ -185,7 +185,10 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
     [{ id: "s1", number: 1, issueDate: base, totalMinor: 10, paidMinor: 10, status: "PAID" }],
     [{ id: "p1", amountMinor: 10, method: "CASH", paidAt: base, note: null }],
   );
-  eq(Object.keys(cust), ["customer", "summary", "recentSales", "recentPayments", "crm"], "v14 CustomerDetail top-level keys (P35 adds crm section — §123)");
+  // P44/P45/P47 — the DTO grew lawfully: dispatch history (P44), sales-order
+  // history (P45 §71) and quotation history (P47 §19). Stale expectation
+  // updated to the CURRENT canonical key set (was failing since P44).
+  eq(Object.keys(cust), ["customer", "summary", "recentSales", "recentPayments", "recentGoodsDispatches", "recentSalesOrders", "recentSalesQuotations", "crm"], "v14 CustomerDetail top-level keys (P35 crm §123 + P44 dispatches + P45 orders + P47 quotations)");
   eq(Object.keys(cust.customer), ["id", "name", "phone", "email", "address", "note", "createdAt"], "v14 customer sub-object keys");
   eq(cust.customer.createdAt, "2026-01-02T03:04:05.000Z", "v14 dates serialized as ISO");
 
@@ -207,7 +210,10 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
   );
   // Prompt 41 added the read-only `recentPurchaseOrders` section (≤10, bounded).
   // Prompt 42 (§120) added `recentGoodsReceipts`; Prompt 43 (§99) appends `recentGoodsReturns`.
-  eq(Object.keys(prod), ["product", "inventory", "recentAdjustments", "recentSales", "recentStocktakes", "recentPurchaseOrders", "recentGoodsReceipts", "recentGoodsReturns"], "v14 ProductDetail top-level keys (P43 §99 adds recentGoodsReturns)");
+  // P44/P45/P47 — dispatch lines (P44), order lines (P45 §72) and
+  // quotation lines (P47 §19) joined lawfully. Stale expectation updated
+  // to the CURRENT canonical key set (was failing since P44).
+  eq(Object.keys(prod), ["product", "inventory", "recentAdjustments", "recentSales", "recentStocktakes", "recentPurchaseOrders", "recentGoodsReceipts", "recentGoodsReturns", "recentGoodsDispatches", "recentSalesOrders", "recentSalesQuotations"], "v14 ProductDetail top-level keys (P43 returns + P44 dispatches + P45 orders + P47 quotations)");
   eq(Object.keys(prod.product), ["id", "name", "sku", "unit", "salePriceMinor", "costPriceMinor", "isActive", "createdAt", "updatedAt"], "v14 product sub-object keys");
 
   const sale = mapSaleDetail(

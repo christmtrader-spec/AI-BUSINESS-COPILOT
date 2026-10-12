@@ -98,6 +98,9 @@ export type CustomerDetail = {
   /** Prompt 45 (§71) — ≤ 10 recent sales orders (order-currency totals;
    *  commitment data — never added to receivables §92). */
   recentSalesOrders?: CustomerRecentSalesOrder[];
+  /** Prompt 47 (§19) — ≤10 recent quotations for this customer (bounded,
+   *  snapshot statuses; commercial offers — never financial records). */
+  recentSalesQuotations?: CustomerRecentSalesQuotation[];
   /**
    * Prompt 35 (§44/§45) — CRM PIPELINE section, kept STRICTLY separate
    * from the financial summary above. Bounded ≤ 10. Forecast values only —
@@ -274,6 +277,9 @@ export type ProductDetail = {
   recentGoodsDispatches?: ProductRecentDispatch[];
   /** Prompt 45 (§72) — ≤ 10 recent sales-order lines (NO money). */
   recentSalesOrders?: ProductRecentSalesOrder[];
+  /** Prompt 47 (§19) — ≤10 recent quotation lines (NO money — commercial
+   *  offers, never inventory or financial events). */
+  recentSalesQuotations?: ProductRecentSalesQuotation[];
 };
 
 /** Prompt 43 (§99) — bounded goods-return row for Product detail. */
@@ -324,6 +330,35 @@ export type CustomerRecentSalesOrder = {
   dispatchedQty: number;
   invoiceNumber: number | null;
   invoiceStatus: string | null;
+};
+
+/** Prompt 47 (§19) — bounded quotation row for Product detail. Quantities
+ *  only — NO money on product surfaces (the established §72 law). */
+export type ProductRecentSalesQuotation = {
+  id: string;
+  reference: string;
+  customerNameAtQuotation: string;
+  status: "DRAFT" | "SENT" | "ACCEPTED" | "REJECTED" | "EXPIRED" | "CANCELLED" | "CONVERTED";
+  effectiveStatus: "DRAFT" | "SENT" | "ACCEPTED" | "REJECTED" | "EXPIRED" | "CANCELLED" | "CONVERTED";
+  quotationDate: string;
+  qty: number;
+};
+
+/** Prompt 47 (§19) — bounded quotation row for the Customer 360. */
+export type CustomerRecentSalesQuotation = {
+  id: string;
+  reference: string;
+  /** Persisted status (§9) — never silently normalized. */
+  status: "DRAFT" | "SENT" | "ACCEPTED" | "REJECTED" | "EXPIRED" | "CANCELLED" | "CONVERTED";
+  /** Effective status (§9) — SENT past validity renders EXPIRED. */
+  effectiveStatus: "DRAFT" | "SENT" | "ACCEPTED" | "REJECTED" | "EXPIRED" | "CANCELLED" | "CONVERTED";
+  quotationDate: string;
+  currencyCodeAtQuotation: string;
+  currencySymbolAtQuotation: string;
+  decimalPrecisionAtQuotation: number;
+  totalMinor: number;
+  totalQty: number;
+  convertedOrderReference: string | null;
 };
 
 /** Prompt 45 (§72) — bounded sales-order row for the Product detail (≤10). */

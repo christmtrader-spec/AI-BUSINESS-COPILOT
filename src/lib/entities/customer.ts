@@ -125,6 +125,9 @@ export function mapCustomerDetail(
   // (already mapped by the sales-order service; commitment data that is
   // NEVER mixed into the financial summary §92).
   recentSalesOrders: CustomerDetail["recentSalesOrders"] = [],
+  // Prompt 47 (§19) — bounded quotation history passes through verbatim
+  // (already mapped by the sales-quotation service).
+  recentSalesQuotations: CustomerDetail["recentSalesQuotations"] = [],
 ): CustomerDetail {
   return {
     customer: {
@@ -141,6 +144,7 @@ export function mapCustomerDetail(
     recentPayments: mapRecentPayments(recentPayments),
     recentGoodsDispatches,
     recentSalesOrders,
+    recentSalesQuotations,
     // §44 — present but EMPTY for legacy callers; the detail route always
     // supplies the real bounded section.
     crm: crm ?? {

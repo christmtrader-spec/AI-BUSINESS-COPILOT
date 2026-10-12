@@ -902,11 +902,32 @@ try {
     headers: ctxHeader(bizA.id),
     body: { action: "start", days: 14 },
   });
-  check(
-    "J1. trial endpoint disabled without BILLING_TRIALS_ENABLED → 422 BUSINESS_NOT_ELIGIBLE",
-    jTrial.status === 422 && jTrial.json?.error?.code === "BUSINESS_NOT_ELIGIBLE",
-    jTrial.text?.slice(0, 120),
-  );
+  // J1 is STATE-CONDITIONAL: the deployment's operator contract decides.
+  // BILLING_TRIALS_ENABLED=true (the sanctioned env baseline) enables the
+  // trial capability → 200; without it → 422 BUSINESS_NOT_ELIGIBLE. The
+  // gate itself (one canonical trial config) is what the check verifies —
+  // the enabled-path lifecycle is exercised in prompt25-pricing-ui-check Q10.
+  const trialsEnabled = (process.env.BILLING_TRIALS_ENABLED ?? "").trim().toLowerCase() === "true";
+  if (trialsEnabled) {
+    check(
+      "J1. trial endpoint enabled by the operator contract → 200 (canonical trial config)",
+      jTrial.status === 200,
+      jTrial.text?.slice(0, 120),
+    );
+    // Restore the standing state so later sections see an unchanged business.
+    await api("/api/v1/billing/trial", {
+      method: "POST",
+      jar: ownerJar,
+      headers: ctxHeader(bizA.id),
+      body: { action: "end" },
+    });
+  } else {
+    check(
+      "J1. trial endpoint disabled without BILLING_TRIALS_ENABLED → 422 BUSINESS_NOT_ELIGIBLE",
+      jTrial.status === 422 && jTrial.json?.error?.code === "BUSINESS_NOT_ELIGIBLE",
+      jTrial.text?.slice(0, 120),
+    );
+  }
   const jTrialViewer = await api("/api/v1/billing/trial", {
     method: "POST",
     jar: viewerJar,

@@ -5,8 +5,9 @@
 
 The public Privacy Policy lives in the structured content layer
 (`src/content/legal/privacy.ts`, explicit `en` + `fa` variants) and is
-rendered at `#/privacy` by `src/modules/legal/legal-view.tsx`. This file is
-the internal record of WHAT it claims and WHY each claim is true.
+rendered at `/privacy` by the public legal document pages
+(`src/components/legal/legal-doc-view.tsx` + `src/content/legal/registry.ts`).
+This file is the internal record of WHAT it claims and WHY each claim is true.
 
 ## Claim → evidence mapping
 
@@ -17,15 +18,15 @@ the internal record of WHAT it claims and WHY each claim is true.
 | Security data (audit with actor/IP/user-agent) | `AuditLog` model; `src/lib/audit.ts` |
 | AI data (conversations + token metadata when reported) | `ChatSession`/`ChatMessage`; `AiProviderUsage` (`src/lib/ai/provider.ts` — usage never fabricated) |
 | Billing data (subscription, usage counters, checkout metadata) | `Subscription`, `UsageCounter`, `CheckoutSession`, `PaymentTransaction` |
-| Platform operational data (first-party analytics, rate limits, logs, contact messages) | `AnalyticsEvent`, `ContactLead`, in-memory limiter |
+| Platform operational data (first-party funnel events, rate limits, logs) | `CommercialEvent` (`src/lib/billing/events.ts` — fixed event directory, allowlisted dimensions only, served via `POST /api/public/events`), in-memory rate limiters; no contact-lead storage exists (no contact form) |
 | AI processed by "AI service providers configured by the platform" | `src/lib/ai/provider.ts` (§25 — no provider named publicly) |
 | Conversations deletable by the user | `DELETE /api/v1/copilot/sessions/[id]` (owner-scoped, audited) |
-| Analytics never store raw prompts/responses | `src/lib/analytics.ts` — allowlisted properties only |
+| Funnel events never store raw prompts/responses | `src/lib/billing/events.ts` — fixed event directory, allowlisted dimensions only |
 | Essential cookie + local storage only; no ads, no third-party scripts | `cookie-assessment.md` |
 | No data sale; sharing only as listed | No outbound integrations beyond AI/email/payment-when-enabled |
 | Soft-deleted business records persist until business deletion | `deletedAt` columns; no purge job exists |
 | Audit records live for the business lifetime, removed with the business | `businesses/[id]/route.ts` DELETE + schema cascade |
-| Contact/analytics retention "not yet configured" | No retention mechanism in code (§57 honest wording) |
+| Funnel-event retention "not yet configured" | No retention mechanism in code (§57 honest wording); no contact-lead storage exists |
 | Account deletion blocked while owning a business; sessions die immediately | `me/route.ts` DELETE (`OWNED_BUSINESS_BLOCKED`) |
 | Business deletion irreversible; counts shown before delete | `businesses/[id]/route.ts` DELETE |
 | Payments: tenant-finance vs platform-billing distinction; no live payments claim | `docs/billing/platform-billing-vs-business-finance.md`; `PAYMENTS_ENABLED` unset |

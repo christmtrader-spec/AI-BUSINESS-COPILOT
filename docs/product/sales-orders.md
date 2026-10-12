@@ -58,6 +58,17 @@ cancel.
 `COMPLETED` says nothing about payment: the linked Sale follows the
 existing `UNPAID → PARTIAL → PAID` payment pipeline independently.
 
+## Source quotations (Prompt 47)
+
+An order MAY carry a `sourceQuotationId`: the ONE quotation it was
+converted from (DB-unique — a quotation can produce at most one order,
+and conversion copies the quotation's FROZEN snapshots/prices and
+`internalNotes` → order `notes`). This is an optional, inert relation:
+every legacy/direct order keeps it NULL, no order behavior changes, and
+the quotation is never a second authority — fulfillment, invoicing and
+payment still follow this document's laws exactly. See
+`docs/product/sales-quotations.md`.
+
 ## Fulfillment law
 
 Per line: `dispatchedQty = Σ POSTED linked GoodsDispatchLine.qty`

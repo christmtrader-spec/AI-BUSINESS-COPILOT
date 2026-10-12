@@ -194,6 +194,31 @@
   }
 }
 
+/* Prompt 47 — printable customer quotation: same law as the invoice sheet.
+   Strip app chrome (sidebar, overlays, navigation, buttons) and let only
+   the quotation sheet through; page breaks stay readable. */
+@media print {
+  .quotation-print-sheet,
+  .quotation-print-sheet * {
+    visibility: visible;
+  }
+  .quotation-print-sheet {
+    position: absolute;
+    inset-inline-start: 0;
+    top: 0;
+    width: 100%;
+  }
+  .quotation-print-sheet table {
+    break-inside: auto;
+  }
+  .quotation-print-sheet tr {
+    break-inside: avoid;
+  }
+  .quotation-print-avoid-break {
+    break-inside: avoid;
+  }
+}
+
 /* Phase 06 polish — active nav accent: a small brand-colored indicator on
    the start edge of the active sidebar item (mirrors automatically in RTL
    thanks to inset-inline-start). Decorative only; the accessible state

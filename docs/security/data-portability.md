@@ -59,7 +59,11 @@ It is explicitly **NOT**:
 
 - **Datasets**: explicit allowlist (`EXPORT_DATASET_KEYS`, §5/§239). Unknown
   keys → 422. Selecting `sales` implies `sale_items` (relationships never
-  flattened, §46/§54).
+  flattened, §46/§54). Later catalogs follow the same law: `sales_orders`
+  imply `sales_order_lines` (P45), and `sales_quotations` imply
+  `sales_quotation_lines` (Prompt 47 — both pairs CONFIDENTIAL,
+  export-only; the quotation rows carry frozen snapshots verbatim and
+  have NO `internalNotes` column, ever).
 - **Sensitivity** (§6): `business` = PUBLIC_BUSINESS; every other dataset =
   CONFIDENTIAL. No dataset touches identity/security tables (§12-§19) —
   enforced structurally and re-checked by `scripts/data-portability-audit.mjs`.
@@ -103,7 +107,11 @@ It is explicitly **NOT**:
 - **Datasets** (§59): customers, suppliers, products ONLY. Financial history
   (sales/expenses/payments/receivables/payables) is **NOT importable** —
   documented, intentional (§116-§118/§221). Imports create no users,
-  members, credentials or billing state (§107-§110/§288-§296).
+  members, credentials or billing state (§107-§110/§288-§296). The
+  operational document datasets added by P41–P47 (purchase orders,
+  goods receipts/returns/dispatches, sales orders AND
+  `sales_quotations`/`sales_quotation_lines`) are structurally rejected
+  by the same closed allowlist BEFORE any job row or business write.
 - **Upload** (§57/§62/§65): multipart, bounded by `IMPORT_MAX_BYTES`
   (default 10 MiB; content-length pre-check + full cap). Extension AND MIME
   AND content signature must agree; NUL-byte/binary payloads rejected; SQL

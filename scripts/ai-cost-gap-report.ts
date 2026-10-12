@@ -2,6 +2,13 @@
 /**
  * scripts/ai-cost-gap-report.ts — Prompt 26 (§65).
  *
+ * P46-API RECOVERY NOTE: rewritten against the CURRENT src/lib/ai/cost API.
+ * utcLastDays is no longer exported from "@/lib/ai/cost" → a local, pure UTC
+ * helper provides the bounded window. The ledger's unknown-reason vocabulary
+ * was renamed in the current API (NO_TOKEN_USAGE → TOKENS_MISSING,
+ * NO_VERIFIED_RATE → RATE_NOT_FOUND) — the gap counters match the CURRENT
+ * vocabulary (model UNKNOWN is exported as UNKNOWN_MODEL, same string).
+ *
  * DIAGNOSTIC report of every cost-attribution gap. It MUST NOT fabricate
  * corrections (§65): it only makes the gaps visible so an operator can act
  * (configure a verified rate, investigate token-usage absence, or run the
@@ -20,7 +27,14 @@
  */
 
 import { db } from "@/lib/db";
-import { utcLastDays } from "@/lib/ai/cost";
+import { UNKNOWN_MODEL } from "@/lib/ai/cost/rates";
+
+/** Local pure UTC window (module no longer exports utcLastDays): [today-N
+ *  days 00:00 UTC, tomorrow 00:00 UTC) — inclusive of today, bounded. */
+function utcLastDays(days: number, now = new Date()): { from: Date; to: Date } {
+  const tomorrowStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) + 86_400_000;
+  return { from: new Date(tomorrowStart - days * 86_400_000), to: new Date(tomorrowStart) };
+}
 
 async function main() {
   const daysIdx = process.argv.indexOf("--days");
@@ -81,10 +95,12 @@ async function main() {
       anchoredToRequestsInsteadOfTokens += 1; // tokens exist now; the record predates them
     }
     if (r.costStatus !== "KNOWN") {
-      if (r.unknownReason === "NO_TOKEN_USAGE" || r.tokenStatus === "NONE") noTokenUsage += 1;
-      else if (r.unknownReason === "NO_VERIFIED_RATE") noVerifiedRate += 1;
+      // Current reason vocabulary (TOKENS_MISSING / RATE_NOT_FOUND); the old
+      // NO_TOKEN_USAGE / NO_VERIFIED_RATE names no longer exist in the ledger.
+      if (r.unknownReason === "TOKENS_MISSING" || r.tokenStatus === "NONE") noTokenUsage += 1;
+      else if (r.unknownReason === "RATE_NOT_FOUND") noVerifiedRate += 1;
     }
-    if (r.model === "UNKNOWN") unknownModel += 1;
+    if (r.model === UNKNOWN_MODEL) unknownModel += 1;
     if (!r.provider || r.provider.trim() === "") unknownProvider += 1;
     if (r.costStatus === "KNOWN" && !r.currency) unknownCurrency += 1;
   }

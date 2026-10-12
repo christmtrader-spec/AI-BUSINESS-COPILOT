@@ -209,3 +209,22 @@ orders could create dispatch eligibility or invoice/fulfillment
 inconsistencies, so `sales_orders` and `sales_order_lines` are
 **export-only** (negative test: an import attempt naming a sales-order
 dataset is rejected before any mutation — E2E 21.1–21.3).
+
+## Sales Quotation datasets (Prompt 47)
+
+**Sales quotation import: NOT IMPLEMENTED — deliberately blocked.**
+Quotations are offer documents with server-frozen historical snapshots
+(customer/product identity, currency), a business-unique reference
+sequence (`QT-…`), a closed lifecycle state machine
+(DRAFT→SENT→ACCEPTED→CONVERTED/REJECTED/EXPIRED/CANCELLED) and an
+exactly-once conversion link into SalesOrder enforced by a DB unique
+constraint. An importer could only bypass all of that: fabricating
+snapshot history, forging declaration timestamps (`sentAt`/`acceptedAt`),
+or creating quotation rows whose conversion accounting (one order per
+quotation) could never be validated. `sales_quotations` and
+`sales_quotation_lines` are therefore **export-only**; the importer's
+allowlist (customers / suppliers / products) rejects both BEFORE any
+`DataImportJob` row or business write (negative test: an import attempt
+naming a quotation dataset is rejected as unsupported and creates
+nothing — Prompt 47 E2E import-rejection section). Restore from backup
+is the sanctioned recovery path for offer documents.

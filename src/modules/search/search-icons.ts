@@ -7,6 +7,7 @@
  */
 import {
   ClipboardList,
+  FileSignature,
   CreditCard,
   FileText,
   Package,
@@ -41,6 +42,8 @@ export const SEARCH_TYPE_ICONS: Record<SearchEntityType, LucideIcon> = {
   GOODS_DISPATCH: PackageOpen,
   // Prompt 45 (§70) — commercial customer orders in search results.
   SALES_ORDER: FileText,
+  // Prompt 47 — commercial price offers in search results.
+  SALES_QUOTATION: FileSignature,
 };
 
 /** Medium localized date for result rows (never raw ISO in the UI). */

@@ -154,7 +154,21 @@ export type SubscriptionEventDto = {
 // ---------------------------------------------------------------------------
 
 const CACHE_TTL_MS = 15_000;
-const cache = new Map<string, { at: number; ctx: EntitlementContext }>();
+/**
+ * The cache MUST be a process-global singleton (globalThis-backed): the
+ * fulfillment path (payments service) and the read routes can load this
+ * module as DISTINCT module instances in the Next dev/runtime graph, and
+ * two Maps would make invalidateBillingCache() a silent no-op for the
+ * instance the GET reads — the stale plan would then serve for the whole
+ * TTL window (observed live: checkout→SUCCEEDED left the GET on FREE for
+ * 15s while the DB row was already STARTER). One globalThis store makes
+ * the invalidation law (§111) hold regardless of module duplication.
+ */
+const billingCacheGlobal = globalThis as typeof globalThis & {
+  __billingEntitlementCache?: Map<string, { at: number; ctx: EntitlementContext }>;
+};
+const cache: Map<string, { at: number; ctx: EntitlementContext }> =
+  (billingCacheGlobal.__billingEntitlementCache ??= new Map());
 
 export function invalidateBillingCache(businessId?: string): void {
   if (businessId) cache.delete(businessId);

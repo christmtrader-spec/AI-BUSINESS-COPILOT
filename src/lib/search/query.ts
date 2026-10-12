@@ -20,6 +20,7 @@ import { purchaseOrderLineCap } from "@/lib/purchase-orders/types";
 import { goodsReceiptLineCap } from "@/lib/inventory/goods-receipt/types";
 import { goodsDispatchLineCap } from "@/lib/inventory/goods-dispatch/types";
 import { salesOrderLineCap } from "@/lib/sales-orders/types";
+import { salesQuotationLineCap } from "@/lib/sales-quotations/types";
 import { goodsReturnLineCap } from "@/lib/inventory/goods-return/types";
 import {
   customerCandidate,
@@ -28,6 +29,7 @@ import {
   goodsReturnCandidate,
   goodsDispatchCandidate,
   salesOrderCandidate,
+  salesQuotationCandidate,
   leadCandidate,
   opportunityCandidate,
   paymentCandidate,
@@ -41,6 +43,7 @@ import {
   type GoodsReturnSearchRow,
   type GoodsDispatchSearchRow,
   type SalesOrderSearchRow,
+  type SalesQuotationSearchRow,
   type PaymentRow,
   type PurchaseOrderSearchRow,
   type SaleRow,
@@ -548,6 +551,55 @@ async function searchSalesOrders(
   return rows.map((r) => salesOrderCandidate(r as SalesOrderSearchRow));
 }
 
+/**
+ * Prompt 47 — sales-quotation search. Tenant-scoped at every level; the
+ * line-cap law bounds the snapshot text fetch. NO amounts and NO notes
+ * are selected (discovery only — §18; customerNotes/internalNotes are
+ * never indexed §10). All lifecycle states stay searchable (documents,
+ * not state) — status tokens are safe-omitted when invalid.
+ */
+async function searchSalesQuotations(
+  businessId: string,
+  variants: string[],
+): Promise<SearchCandidate[]> {
+  const rows = await db.salesQuotation.findMany({
+    where: {
+      businessId, // server-derived tenant scope, never client input
+      OR: [
+        ...variants.map((v) => ({ reference: { contains: v } })),
+        ...variants.map((v) => ({ customerNameAtQuotation: { contains: v } })),
+        ...variants.map((v) => ({
+          lines: {
+            some: {
+              OR: [
+                { productNameAtQuotation: { contains: v } },
+                { skuAtQuotation: { contains: v } },
+              ],
+            },
+          },
+        })),
+      ],
+    },
+    select: {
+      id: true,
+      reference: true,
+      status: true,
+      customerNameAtQuotation: true,
+      createdAt: true,
+      // Line SNAPSHOT TEXT (name/SKU) feeds the ranker's match fields;
+      // bounded by the SAME quotation line-cap law (never unbounded).
+      // No quantities and no money selected.
+      lines: {
+        select: { productNameAtQuotation: true, skuAtQuotation: true },
+        take: salesQuotationLineCap(process.env.SALES_QUOTATION_MAX_LINES),
+      },
+    },
+    orderBy: { createdAt: "desc" as const },
+    take: SEARCH_PER_ENTITY_TAKE,
+  });
+  return rows.map((r) => salesQuotationCandidate(r as SalesQuotationSearchRow));
+}
+
 
 /**
  * Run all requested entity searches concurrently (§6) and return the
@@ -603,6 +655,9 @@ export async function fetchSearchCandidates(options: {
         break;
       case "SALES_ORDER":
         tasks.push(searchSalesOrders(businessId, variants));
+        break;
+      case "SALES_QUOTATION":
+        tasks.push(searchSalesQuotations(businessId, variants));
         break;
     }
   }

@@ -1,0 +1,597 @@
+     1→#!/usr/bin/env bun
+     2→/**
+     3→ * Prompt 26 — AI COST GOVERNANCE test harness (§135–§152).
+     4→ *
+     5→ * Run: PRISMA_QUIET=1 bun scripts/prompt26-cost-check.ts
+     6→ *
+     7→ * Layers:
+     8→ *  A. PURE unit tests — exact nano-minor arithmetic, ppm margins, formatting,
+     9→ *     parse round-trips (no DB).
+    10→ *  B. Rate service — versioning, effective windows, overlap rejection,
+    11→ *     duplicate-version rejection, exact-model preference, environment isolation.
+    12→ *  C. Ledger integration — real UsageEvent rows (created through the REAL
+    13→ *     Prompt-21 metering service) → attribution: KNOWN math, UNKNOWN reasons
+    14→ *     (no tokens / no rate / partial / total-only), idempotency, released
+    15→ *     usage skip, historical rate versions.
+    16→ *  D. Economics — coverage, observed known costs, plan economics statuses
+    17→ *     (FREE / ENTERPRISE / currency mismatch / insufficient sample),
+    18→ *     simulation + breakeven.
+    19→ *  E. Governance — anomaly report shape, guard states (DISABLED / UNAVAILABLE /
+    20→ *     UNKNOWN), observability.
+    21→ *  F. Security & isolation — tenant scoping, no cost fields in customer usage
+    22→ *     payloads, tamper rejection, TEST/PRODUCTION rate isolation.
+    23→ *
+    24→ * FIXTURE HYGIENE (worklog invariant): every fixture lives under dedicated
+    25→ * TEST businesses deleted in `finally`; the fixture subscription is switched
+    26→ * to STARTER only to exercise planCodeAtUsage and is DELETED afterwards, so
+    27→ * no business ever remains upgraded. All rates/records use environment=TEST
+    28→ * — production attribution can never resolve them (§92/§93).
+    29→ */
+    30→
+    31→import { db } from "@/lib/db";
+    32→import {
+    33→  NANO_PER_MINOR,
+    34→  addNanoMinor,
+    35→  assertNanoMinor,
+    36→  formatNanoMinor,
+    37→  marginPpm,
+    38→  minorToNanoMinor,
+    39→  nanoMinorToMajorString,
+    40→  nanoMinorToMinor,
+    41→  parseMinorStringToNanoMinor,
+    42→  subtractNanoMinor,
+    43→  tokensTimesRate,
+    44→  CostMathError,
+    45→} from "@/lib/ai/cost/money";
+    46→import {
+    47→  createAiCostRate,
+    48→  resolveAiCostRate,
+    49→  DEFAULT_MODEL_ALIAS,
+    50→  type AiCostEnvironment,
+    51→} from "@/lib/ai/cost/rates";
+    52→import { attributeAiCost, attributeAiCostSafe } from "@/lib/ai/cost/ledger";
+    53→import {
+    54→  aggregateAiCost,
+    55→  getPlanUnitEconomics,
+    56→  simulatePlanScenario,
+    57→  utcDayBounds,
+    58→} from "@/lib/ai/cost/economics";
+    59→import {
+    60→  detectAiCostAnomalies,
+    61→  evaluateAiCostGuard,
+    62→  getAiCostObservability,
+    63→} from "@/lib/ai/cost/governance";
+    64→import {
+    65→  meterAiOperation,
+    66→  releaseAiOperation,
+    67→  recordAiTokenUsage,
+    68→  getUsageSummary,
+    69→} from "@/lib/billing/usage";
+    70→
+    71→let passed = 0;
+    72→const failures: string[] = [];
+    73→function check(name: string, cond: boolean, detail = "") {
+    74→  if (cond) {
+    75→    passed++;
+    76→    console.log(`  ✓ ${name}`);
+    77→  } else {
+    78→    failures.push(name + (detail ? ` — ${detail}` : ""));
+    79→    console.error(`  ✗ ${name}${detail ? ` — ${detail}` : ""}`);
+    80→  }
+    81→}
+    82→function section(name: string) {
+    83→  console.log(`\n[${name}]`);
+    84→}
+    85→/** BigInt-safe stringify for failure details. */
+    86→const j = (o: unknown) => JSON.stringify(o, (_k, v) => (typeof v === "bigint" ? v.toString() : v));
+    87→
+    88→const ENV: AiCostEnvironment = "TEST";
+    89→const STAMP = Date.now();
+    90→const OWNER_PREFIX = `p26-cost-owner-${STAMP}`;
+    91→
+    92→let businessId = "";
+    93→const fixtureUsers: string[] = []; // owner ids, deleted individually (prefix-wide deletes hit not-yet-cleaned fixtures)
+    94→
+    95→async function createFixtureBusiness(): Promise<string> {
+    96→  const owner = await db.user.create({
+    97→    data: { email: `${OWNER_PREFIX}-${Math.random().toString(36).slice(2)}@t.dev`, passwordHash: "x", name: "P26 Fixture" },
+    98→  });
+    99→  fixtureUsers.push(owner.id);
+   100→  const business = await db.business.create({
+   101→    data: {
+   102→      ownerId: owner.id,
+   103→      name: `p26-cost-biz-${STAMP}-${Math.random().toString(36).slice(2, 6)}`,
+   104→      slug: `p26-cost-${STAMP}-${Math.random().toString(36).slice(2, 8)}`,
+   105→      currencyCode: "EUR",
+   106→      currencySymbol: "€",
+   107→      decimalPrecision: 2,
+   108→      locale: "en",
+   109→    },
+   110→  });
+   111→  fixtureBusinesses.push(business.id); // tracked for unconditional cleanup
+   112→  return business.id;
+   113→}
+   114→
+   115→async function deleteBusinessFixtures(businessIdToDelete: string) {
+   116→  await db.aiCostRecord.deleteMany({ where: { businessId: businessIdToDelete } });
+   117→  await db.usageEvent.deleteMany({ where: { businessId: businessIdToDelete } });
+   118→  await db.usagePeriod.deleteMany({ where: { businessId: businessIdToDelete } });
+   119→  await db.subscription.deleteMany({ where: { businessId: businessIdToDelete } });
+   120→  await db.business.deleteMany({ where: { id: businessIdToDelete } });
+   121→}
+   122→
+   123→async function deleteFixtureUsers() {
+   124→  // Individually (never prefix-wide): a prefix delete would touch users whose
+   125→  // businesses are not cleaned yet and violate their FKs.
+   126→  for (const userId of fixtureUsers) {
+   127→    await db.user.deleteMany({ where: { id: userId } });
+   128→  }
+   129→}
+   130→
+   131→async function main() {
+   132→  // Self-heal: remove leftovers from a crashed previous run (generic prefixes).
+   133→  const stale = await db.business.findMany({ where: { name: { startsWith: "p26-cost-biz-" } }, select: { id: true } });
+   134→  for (const s of stale) {
+   135→    await db.aiCostRecord.deleteMany({ where: { businessId: s.id } });
+   136→    await db.usageEvent.deleteMany({ where: { businessId: s.id } });
+   137→    await db.usagePeriod.deleteMany({ where: { businessId: s.id } });
+   138→    await db.subscription.deleteMany({ where: { businessId: s.id } });
+   139→    await db.business.deleteMany({ where: { id: s.id } });
+   140→  }
+   141→  await db.user.deleteMany({ where: { email: { startsWith: "p26-cost-owner-" } } });
+   142→  // Stale TEST rates from a crashed run would poison section B (duplicate
+   143→  // versions / overlap conflicts) — clear them as part of self-heal.
+   144→  await db.aiCostRate.deleteMany({ where: { environment: "TEST", version: { startsWith: "P26-TEST" } } });
+   145→
+   146→  // =====================================================================
+   147→  section("A. exact money arithmetic (§7/§8/§21/§42/§107)");
+   148→  check("NANO_PER_MINOR = 1e6", NANO_PER_MINOR === 1_000_000n);
+   149→  check("tokens × rate exact", tokensTimesRate(1_000_000, 15n) === 15_000_000n);
+   150→  check("BigInt survives huge products", tokensTimesRate(10_000_000, 1_000_000n) === 10_000_000_000_000n);
+   151→  let threw = false;
+   152→  try {
+   153→    tokensTimesRate(-1, 5n);
+   154→  } catch (e) {
+   155→    threw = e instanceof CostMathError;
+   156→  }
+   157→  check("negative tokens rejected (§127)", threw);
+   158→  threw = false;
+   159→  try {
+   160→    assertNanoMinor(-1n);
+   161→  } catch {
+   162→    threw = true;
+   163→  }
+   164→  check("negative cost rejected (§127)", threw);
+   165→  threw = false;
+   166→  try {
+   167→    // @ts-expect-error floats are forbidden by the API contract
+   168→    assertNanoMinor(1.5);
+   169→  } catch {
+   170→    threw = true;
+   171→  }
+   172→  check("float is rejected (§8)", threw);
+   173→  check("add exact", addNanoMinor(1n, 2n, 3n) === 6n);
+   174→  check("subtract exact (may be negative)", subtractNanoMinor(3n, 5n) === -2n);
+   175→  check("minor→nano exact", minorToNanoMinor(1900) === 1_900_000_000n);
+   176→  check("nano→minor floor + remainder", nanoMinorToMinor(2_500_000n).minor === 2n && nanoMinorToMinor(2_500_000n).remainderNano === 500_000n);
+   177→  check("format 6 decimals with code (§109)", formatNanoMinor(2341n, "EUR", 6) === "EUR 0.000023");
+   178→  check("format 4 decimals", formatNanoMinor(234_567_890n, "EUR", 4) === "EUR 2.3456");
+   179→  check("parse minor string exact", parseMinorStringToNanoMinor("1.5") === 1_500_000n);
+   180→  check("parse nano-resolution", parseMinorStringToNanoMinor("0.000002") === 2n);
+   181→  check("parse rejects 7th fractional digit", parseMinorStringToNanoMinor("0.0000001") === null);
+   182→  check("parse rejects negative", parseMinorStringToNanoMinor("-1") === null);
+   183→  check("margin ppm exact (§42)", marginPpm(minorToNanoMinor(100), minorToNanoMinor(25)) === 750_000);
+   184→  check("margin ppm negative (loss)", marginPpm(minorToNanoMinor(100), minorToNanoMinor(125)) === -250_000);
+   185→  check("margin null at zero revenue (FREE, §83)", marginPpm(0n, 5n) === null);
+   186→  check("major string round-trip", nanoMinorToMajorString(2_345_678_901n) === "23.45678901");
+   187→
+   188→  // =====================================================================
+   189→  section("B. rate service — versioning/windows/conflicts (§12/§13/§28/§29)");
+   190→  const t0 = new Date("2026-01-01T00:00:00Z");
+   191→  const v1Input = {
+   192→    provider: "z-ai",
+   193→    model: DEFAULT_MODEL_ALIAS,
+   194→    currency: "EUR",
+   195→    inputRateNanoMinorPerToken: 15n,
+   196→    outputRateNanoMinorPerToken: 60n,
+   197→    version: "P26-TEST-v1",
+   198→    effectiveFrom: t0,
+   199→    environment: ENV,
+   200→    verifiedAt: t0,
+   201→    verifiedBy: "p26-harness",
+   202→    sourceReference: "TEST ONLY synthetic rate (§90)",
+   203→  } as const;
+   204→  const rateV1 = await createAiCostRate(v1Input);
+   205→  check("v1 created", rateV1.ok === true);
+   206→  const dup = await createAiCostRate({ ...v1Input });
+   207→  check("duplicate version rejected (§12)", dup.ok === false && dup.code === "DUPLICATE_VERSION");
+   208→  const conflict = await createAiCostRate({
+   209→    ...v1Input,
+   210→    version: "P26-TEST-v1-conflict",
+   211→    effectiveFrom: new Date("2026-06-01T00:00:00Z"),
+   212→    inputRateNanoMinorPerToken: 99n,
+   213→    outputRateNanoMinorPerToken: 99n,
+   214→  });
+   215→  check("overlapping active rate rejected (§29)", conflict.ok === false && conflict.code === "RATE_CONFLICT");
+   216→  const negRate = await createAiCostRate({ ...v1Input, version: "P26-TEST-neg", inputRateNanoMinorPerToken: -1n });
+   217→  check("negative rate rejected (§127)", negRate.ok === false && negRate.code === "INVALID_INPUT");
+   218→  const badCur = await createAiCostRate({ ...v1Input, version: "P26-TEST-badcur", currency: "EURO!" });
+   219→  check("bad currency rejected", badCur.ok === false && badCur.code === "INVALID_INPUT");
+   220→  const badWin = await createAiCostRate({
+   221→    ...v1Input,
+   222→    version: "P26-TEST-badwin",
+   223→    effectiveFrom: new Date("2026-02-01T00:00:00Z"),
+   224→    effectiveTo: new Date("2026-01-01T00:00:00Z"),
+   225→  });
+   226→  check("invalid effective window rejected", badWin.ok === false && badWin.code === "INVALID_INPUT");
+   227→
+   228→  const beforeWindow = await resolveAiCostRate("z-ai", null, new Date("2025-12-31T23:59:59Z"), ENV);
+   229→  check("rate not active before effectiveFrom (§28)", beforeWindow === null);
+   230→  const atV1 = await resolveAiCostRate("z-ai", null, new Date("2026-03-01T00:00:00Z"), ENV);
+   231→  check("v1 resolves in window", atV1?.version === "P26-TEST-v1" && atV1.currency === "EUR");
+   232→
+   233→  // Exact-model preference over DEFAULT (§11).
+   234→  const irrRate = await createAiCostRate({
+   235→    provider: "z-ai",
+   236→    model: "p26-glm-x",
+   237→    currency: "IRR",
+   238→    inputRateNanoMinorPerToken: 1n,
+   239→    outputRateNanoMinorPerToken: 2n,
+   240→    version: "P26-TEST-irr-v1",
+   241→    effectiveFrom: t0,
+   242→    environment: ENV,
+   243→    verifiedAt: t0,
+   244→  });
+   245→  check("exact-model rate created", irrRate.ok === true);
+   246→  const exact = await resolveAiCostRate("z-ai", "p26-glm-x", new Date("2026-03-01T00:00:00Z"), ENV);
+   247→  check("exact-model beats DEFAULT alias (§11)", exact?.version === "P26-TEST-irr-v1" && exact.currency === "IRR");
+   248→
+   249→  // v2 handover (v1 window explicitly closed — never rewritten, closed forward).
+   250→  await db.aiCostRate.updateMany({
+   251→    where: { version: "P26-TEST-v1" },
+   252→    data: { effectiveTo: new Date("2026-04-01T00:00:00Z") },
+   253→  });
+   254→  const rateV2 = await createAiCostRate({
+   255→    ...v1Input,
+   256→    version: "P26-TEST-v2",
+   257→    effectiveFrom: new Date("2026-04-01T00:00:00Z"),
+   258→    inputRateNanoMinorPerToken: 20n,
+   259→    outputRateNanoMinorPerToken: 80n,
+   260→  });
+   261→  check("v2 created after v1 window closed", rateV2.ok === true);
+   262→  const midV1 = await resolveAiCostRate("z-ai", null, new Date("2026-03-31T23:59:59Z"), ENV);
+   263→  const earlyV2 = await resolveAiCostRate("z-ai", null, new Date("2026-04-01T00:00:00Z"), ENV);
+   264→  check("historical window uses v1 (§13/§63)", midV1?.version === "P26-TEST-v1");
+   265→  check("new window uses v2 (§120)", earlyV2?.version === "P26-TEST-v2");
+   266→
+   267→  // Environment isolation (§92/§93).
+   268→  const prodProbe = await resolveAiCostRate("z-ai", null, new Date("2026-04-02T00:00:00Z"), "PRODUCTION");
+   269→  check("TEST rates invisible in PRODUCTION", prodProbe === null);
+   270→
+   271→  // =====================================================================
+   272→  section("C. ledger — real metering → attribution (§15–§24/§61–§69)");
+   273→  businessId = await createFixtureBusiness();
+   274→  const NOW_WINDOW = { from: new Date(Date.UTC(2020, 0, 1)), to: new Date(Date.UTC(2100, 0, 1)) };
+   275→
+   276→  // C1: KNOWN cost from genuine usage + TEST rate (v2 window at usage time).
+   277→  const req1 = `p26-req-${STAMP}-1`;
+   278→  await meterAiOperation(businessId, req1, { meta: { transport: "chat" } });
+   279→  await recordAiTokenUsage(businessId, req1, { inputTokens: 1000, outputTokens: 500 }, { provider: "z-ai" });
+   280→  const att1 = await attributeAiCost({
+   281→    businessId,
+   282→    requestId: req1,
+   283→    provider: "z-ai",
+   284→    at: new Date("2026-04-02T10:00:00Z"), // inside P26-TEST-v2
+   285→    environment: ENV,
+   286→  });
+   287→  check("attributed KNOWN", att1.attributed && att1.created && att1.costStatus === "KNOWN", j(att1));
+   288→  check("exact cost in+out (§21): 1000×20 + 500×80", att1.costNanoMinor === 60_000n, String(att1.costNanoMinor));
+   289→  check("rate version snapshotted (§14)", att1.rateVersion === "P26-TEST-v2");
+   290→  check("token status COMPLETE", att1.tokenStatus === "COMPLETE");
+   291→
+   292→  // C2: idempotency — same logical operation twice → ONE record (§20).
+   293→  const att1b = await attributeAiCost({
+   294→    businessId,
+   295→    requestId: req1,
+   296→    provider: "z-ai",
+   297→    at: new Date("2026-04-02T10:00:00Z"),
+   298→    environment: ENV,
+   299→  });
+   300→  check("replay does not recreate (§20)", att1b.attributed && !att1b.created && att1b.costNanoMinor === 60_000n);
+   301→  const records1 = await db.aiCostRecord.findMany({ where: { businessId, requestId: req1 } });
+   302→  check("exactly one record for the operation (§114/§117)", records1.length === 1);
+   303→  const tokenEvent1 = await db.usageEvent.findFirst({ where: { businessId, requestId: req1, metric: "AI_TOKENS" } });
+   304→  check("anchored to the AI_TOKENS event (§19)", records1[0] !== undefined && tokenEvent1 !== null && records1[0]!.usageEventId === tokenEvent1!.id);
+   305→
+   306→  // C3: unknown rate → UNKNOWN / NO_VERIFIED_RATE (§17), never zero.
+   307→  const req3 = `p26-req-${STAMP}-3`;
+   308→  await meterAiOperation(businessId, req3);
+   309→  await recordAiTokenUsage(businessId, req3, { inputTokens: 10, outputTokens: 10 }, { provider: "unverified-provider" });
+   310→  const att3 = await attributeAiCost({ businessId, requestId: req3, provider: "unverified-provider", environment: ENV });
+   311→  check("no rate → UNKNOWN (§17)", att3.costStatus === "UNKNOWN" && att3.unknownReason === "NO_VERIFIED_RATE");
+   312→  const rec3 = await db.aiCostRecord.findFirstOrThrow({ where: { businessId, requestId: req3 } });
+   313→  check("UNKNOWN carries NO amount and NO currency (§18)", rec3.costNanoMinor === null && rec3.currency === null);
+   314→
+   315→  // C4: no token usage → UNKNOWN / NO_TOKEN_USAGE (§65-1).
+   316→  const req4 = `p26-req-${STAMP}-4`;
+   317→  await meterAiOperation(businessId, req4);
+   318→  const att4 = await attributeAiCost({ businessId, requestId: req4, provider: "z-ai", environment: ENV });
+   319→  check("no tokens → UNKNOWN / NO_TOKEN_USAGE", att4.costStatus === "UNKNOWN" && att4.unknownReason === "NO_TOKEN_USAGE");
+   320→
+   321→  // C5: partial tokens → UNKNOWN / PARTIAL_TOKEN_DATA (§22 — output NOT assumed 0).
+   322→  // NOTE: the usage layer does not persist partial token sets (it requires a
+   323→  // total), so the ledger falls back to the caller-provided genuine usage —
+   324→  // exactly the real route behavior when the provider reports in/out gaps.
+   325→  const req5 = `p26-req-${STAMP}-5`;
+   326→  await meterAiOperation(businessId, req5);
+   327→  const att5 = await attributeAiCost({
+   328→    businessId,
+   329→    requestId: req5,
+   330→    provider: "z-ai",
+   331→    usage: { inputTokens: 100, outputTokens: null, totalTokens: null },
+   332→    environment: ENV,
+   333→  });
+   334→  check("partial tokens → UNKNOWN (§22)", att5.costStatus === "UNKNOWN" && att5.unknownReason === "PARTIAL_TOKEN_DATA", j(att5));
+   335→  const rec5 = await db.aiCostRecord.findFirstOrThrow({ where: { businessId, requestId: req5 } });
+   336→  check("partial: missing dimension NOT fabricated (§22)", rec5.inputTokens === 100 && rec5.outputTokens === 0 && rec5.tokenStatus === "PARTIAL" && rec5.costNanoMinor === null);
+   337→
+   338→  // C6: total-only → UNKNOWN / TOTAL_TOKEN_ONLY (§23 — no invented split).
+   339→  const req6 = `p26-req-${STAMP}-6`;
+   340→  await meterAiOperation(businessId, req6);
+   341→  await recordAiTokenUsage(businessId, req6, { totalTokens: 900 }, { provider: "z-ai" });
+   342→  const att6 = await attributeAiCost({ businessId, requestId: req6, provider: "z-ai", environment: ENV });
+   343→  check("total-only → UNKNOWN (§23)", att6.costStatus === "UNKNOWN" && att6.unknownReason === "TOTAL_TOKEN_ONLY");
+   344→
+   345→  // C7: planCodeAtUsage + IRR exact-model rate (model preference in attribution).
+   346→  const starterPlan = await db.plan.findUniqueOrThrow({ where: { code: "STARTER" }, select: { id: true } });
+   347→  await db.subscription.update({ where: { businessId }, data: { planId: starterPlan.id, status: "ACTIVE" } });
+   348→  const req7 = `p26-req-${STAMP}-7`;
+   349→  await meterAiOperation(businessId, req7);
+   350→  await recordAiTokenUsage(businessId, req7, { inputTokens: 100, outputTokens: 100 }, { provider: "z-ai" });
+   351→  const att7 = await attributeAiCost({
+   352→    businessId,
+   353→    requestId: req7,
+   354→    provider: "z-ai",
+   355→    model: "p26-glm-x",
+   356→    environment: ENV,
+   357→  });
+   358→  check("exact-model rate applied (IRR)", att7.costStatus === "KNOWN" && att7.currency === "IRR" && att7.costNanoMinor === 300n, j(att7));
+   359→  const rec7 = await db.aiCostRecord.findFirstOrThrow({ where: { businessId, requestId: req7 } });
+   360→  check("planCodeAtUsage = STARTER (§53/§54)", rec7.planCodeAtUsage === "STARTER");
+   361→  check("model recorded as provided, not UNKNOWN", rec7.model === "p26-glm-x");
+   362→
+   363→  // C8: historical rate version honored (usage time inside v1 window).
+   364→  const req8 = `p26-req-${STAMP}-8`;
+   365→  await meterAiOperation(businessId, req8);
+   366→  await recordAiTokenUsage(businessId, req8, { inputTokens: 1000, outputTokens: 500 }, { provider: "z-ai" });
+   367→  const att8 = await attributeAiCost({
+   368→    businessId,
+   369→    requestId: req8,
+   370→    provider: "z-ai",
+   371→    at: new Date("2026-03-31T12:00:00Z"), // inside P26-TEST-v1
+   372→    environment: ENV,
+   373→  });
+   374→  check("historical usage priced with v1 (§14/§63)", att8.rateVersion === "P26-TEST-v1");
+   375→  check("v1 math exact: 1000×15 + 500×60", att8.costNanoMinor === 45_000n, String(att8.costNanoMinor));
+   376→
+   377→  // C9: released usage → SKIPPED, no cost record (§20).
+   378→  const req9 = `p26-req-${STAMP}-9`;
+   379→  await meterAiOperation(businessId, req9);
+   380→  await releaseAiOperation(businessId, req9, { reason: "provider-unavailable" });
+   381→  const att9 = await attributeAiCost({ businessId, requestId: req9, provider: "z-ai", environment: ENV });
+   382→  check("released usage → skipped (nothing consumed)", att9.skipped && att9.costStatus === "SKIPPED");
+   383→  check("no record for released usage", (await db.aiCostRecord.count({ where: { businessId, requestId: req9 } })) === 0);
+   384→
+   385→  // C10: attribution is fail-safe (§67) — the Safe wrapper never throws, even
+   386→  // for an operation that does not exist (skipped) or on infrastructure errors.
+   387→  const safe = await attributeAiCostSafe({
+   388→    businessId: "no-such-business",
+   389→    requestId: "no-such-request",
+   390→    provider: "z-ai",
+   391→    environment: ENV,
+   392→  });
+   393→  check("Safe wrapper never throws on unusable input (§67)", safe !== undefined && (safe === null || safe.skipped === true), j(safe));
+   394→
+   395→  // Restore fixture to FREE (worklog invariant: no business left upgraded).
+   396→  await deleteBusinessFixtures(businessId);
+   397→  businessId = await createFixtureBusiness();
+   398→  await meterAiOperation(businessId, `p26-req-${STAMP}-warmup`); // ensures the FREE subscription exists
+   399→
+   400→  // =====================================================================
+   401→  section("D. economics — coverage, plan statuses, simulation (§36–§44/§79–§87)");
+   402→  // Deterministic fixture set under the second fixture business:
+   403→  //   K1: FREE   + EUR(v2) 1000in/500out → 60,000 nano EUR
+   404→  //   U1: FREE   + no tokens             → UNKNOWN (NO_TOKEN_USAGE)
+   405→  //   K3: STARTER+ EUR(v2) 200in/100out  → 12,000 nano EUR
+   406→  //   K2: STARTER+ IRR (exact model)     → 300 nano IRR (NO FX bucket)
+   407→  // planCodeAtUsage is captured per record at attribution time, so the
+   408→  // subscription is switched only to WRITE history, then restored to FREE
+   409→  // (worklog invariant: no business left upgraded).
+   410→  const k1 = `p26-req-${STAMP}-k1`;
+   411→  await meterAiOperation(businessId, k1);
+   412→  await recordAiTokenUsage(businessId, k1, { inputTokens: 1000, outputTokens: 500 }, { provider: "z-ai" });
+   413→  const aK1 = await attributeAiCost({ businessId, requestId: k1, provider: "z-ai", at: new Date("2026-04-02T10:00:00Z"), environment: ENV });
+   414→  check("fixture K1 KNOWN/EUR 60,000 (FREE bucket)", aK1.costStatus === "KNOWN" && aK1.costNanoMinor === 60_000n);
+   415→
+   416→  const u1 = `p26-req-${STAMP}-u1`;
+   417→  await meterAiOperation(businessId, u1);
+   418→  const aU1 = await attributeAiCost({ businessId, requestId: u1, provider: "z-ai", environment: ENV });
+   419→  check("fixture U1 UNKNOWN (no tokens)", aU1.costStatus === "UNKNOWN");
+   420→
+   421→  const starterPlanRow = await db.plan.findUniqueOrThrow({ where: { code: "STARTER" }, select: { id: true } });
+   422→  const freePlanRow = await db.plan.findUniqueOrThrow({ where: { code: "FREE" }, select: { id: true } });
+   423→  await db.subscription.update({ where: { businessId }, data: { planId: starterPlanRow.id, status: "ACTIVE" } });
+   424→
+   425→  const k3 = `p26-req-${STAMP}-k3`;
+   426→  await meterAiOperation(businessId, k3);
+   427→  await recordAiTokenUsage(businessId, k3, { inputTokens: 200, outputTokens: 100 }, { provider: "z-ai" });
+   428→  const aK3 = await attributeAiCost({ businessId, requestId: k3, provider: "z-ai", at: new Date("2026-04-02T10:00:00Z"), environment: ENV });
+   429→  check("fixture K3 KNOWN/EUR 12,000 (STARTER bucket)", aK3.costStatus === "KNOWN" && aK3.costNanoMinor === 12_000n);
+   430→
+   431→  const k2 = `p26-req-${STAMP}-k2`;
+   432→  await meterAiOperation(businessId, k2);
+   433→  await recordAiTokenUsage(businessId, k2, { inputTokens: 100, outputTokens: 100 }, { provider: "z-ai" });
+   434→  const aK2 = await attributeAiCost({ businessId, requestId: k2, provider: "z-ai", model: "p26-glm-x", environment: ENV });
+   435→  check("fixture K2 KNOWN/IRR 300 (exact model)", aK2.costStatus === "KNOWN" && aK2.currency === "IRR" && aK2.costNanoMinor === 300n);
+   436→
+   437→  // Restore FREE immediately (invariant); stored planCodeAtUsage is preserved.
+   438→  await db.subscription.update({ where: { businessId }, data: { planId: freePlanRow.id, status: "ACTIVE" } });
+   439→
+   440→  const agg = await aggregateAiCost(NOW_WINDOW, { businessId });
+   441→  check("coverage counts only KNOWN (§37)", agg.knownCostRecords === 3 && agg.unknownCostRecords === 1, `k=${agg.knownCostRecords} u=${agg.unknownCostRecords}`);
+   442→  check("EUR known cost exact (60,000+12,000)", agg.knownCostNanoByCurrency["EUR"] === 72_000n);
+   443→  check("IRR cost reported in its OWN currency (no FX, §32)", agg.knownCostNanoByCurrency["IRR"] === 300n);
+   444→  check("observed per request = total/known (§38)", agg.observedKnownCostPerRequestNano["EUR"] === 36_000n);
+   445→  check("coverage = 3 known / 5 requests = 60% (§37)", agg.costCoveragePercent === 60);
+   446→  check("pendingAttribution counts committed-but-unattributed (warmup)", agg.pendingAttribution === 1);
+   447→
+   448→  // FREE plan (§83) — revenue 0, margin N/A, contribution negative.
+   449→  const free = await getPlanUnitEconomics("FREE", "MONTHLY", "EUR", { window: NOW_WINDOW, minKnownCostRequests: 1 });
+   450→  check("FREE price known at 0 (§83)", free.price.priceKind === "FREE" && free.price.amountMinor === 0);
+   451→  check("FREE margin percent N/A (no divide-by-zero)", free.marginStatus === "COMPARABLE" && free.aiContributionMarginPercent === null);
+   452→  check("FREE contribution = −EUR cost (§83)", free.aiContributionNano === -60_000n);
+   453→  check("AI-only label present (§43)", free.label.startsWith("AI contribution margin"));
+   454→
+   455→  // ENTERPRISE (§84) — PRICE_UNKNOWN.
+   456→  const ent = await getPlanUnitEconomics("ENTERPRISE", "MONTHLY", "EUR", { window: NOW_WINDOW });
+   457→  check("ENTERPRISE → PRICE_UNKNOWN (§84)", ent.marginStatus === "PRICE_UNKNOWN");
+   458→
+   459→  // STARTER — authoritative EUR book price (900 minor), same-currency cost present.
+   460→  const starter = await getPlanUnitEconomics("STARTER", "MONTHLY", "EUR", { window: NOW_WINDOW, minKnownCostRequests: 1 });
+   461→  check("STARTER price from authoritative book (§34)", starter.price.priceKind === "PRICEBOOK" && starter.price.amountMinor === 900);
+   462→  check("same-currency → COMPARABLE", starter.marginStatus === "COMPARABLE");
+   463→  check("EUR known cost on plan (K3)", starter.knownAiCostNano === 12_000n);
+   464→  check("exact contribution: 900 minor − 12,000 nano", starter.aiContributionNano === 899_988_000n);
+   465→  check("exact margin ppm → 99.9987%", starter.aiContributionMarginPercent === 999_986);
+   466→  check("IRR cost bucketed separately, NO FX (§32)", starter.knownAiCostNanoOtherCurrencies["IRR"] === 300n && starter.knownAiCostNanoOtherCurrencies["USD"] === undefined);
+   467→  check("observed known cost/request (STARTER, §38)", starter.observedKnownCostPerRequestNano === 12_000n);
+   468→
+   469→  // Insufficient sample (§82) — threshold above the KNOWN count.
+   470→  const starterSmall = await getPlanUnitEconomics("STARTER", "MONTHLY", "EUR", { window: NOW_WINDOW, minKnownCostRequests: 30 });
+   471→  check("below min sample → INSUFFICIENT_SAMPLE (§82)", starterSmall.marginStatus === "INSUFFICIENT_SAMPLE" && starterSmall.minSampleRequired === 30);
+   472→
+   473→  // Currency mismatch (§85) — remove the EUR KNOWN records; the IRR KNOWN record stays.
+   474→  await db.aiCostRecord.deleteMany({ where: { businessId, currency: "EUR", costStatus: "KNOWN" } });
+   475→  const mismatch = await getPlanUnitEconomics("STARTER", "MONTHLY", "EUR", { window: NOW_WINDOW, minKnownCostRequests: 1 });
+   476→  check("EUR revenue + IRR-only cost → NOT_COMPARABLE_CURRENCY (§85)", mismatch.marginStatus === "NOT_COMPARABLE_CURRENCY");
+   477→  check("no FX conversion happened (§32)", mismatch.knownAiCostNano === null && mismatch.aiContributionNano === null);
+   478→
+   479→  // Simulation (§103/§104/§105) — pure, labeled, never persisted.
+   480→  const sim = simulatePlanScenario({
+   481→    revenueMinor: 1900,
+   482→    currency: "EUR",
+   483→    aiRequests: 150,
+   484→    tokensPerRequest: 2000,
+   485→    inputSharePpm: 800_000,
+   486→    inputRateNanoMinorPerToken: 15n,
+   487→    outputRateNanoMinorPerToken: 60n,
+   488→  });
+   489→  check("scenario labeled ANALYTICAL (§104)", sim.scenario.startsWith("ANALYTICAL SCENARIO"));
+   490→  check("scenario cost exact: 150×(1600×15+400×60)", sim.scenarioAiCostNanoMinor === 7_200_000n);
+   491→  check("breakeven = revenue (§105)", sim.aiOnlyBreakevenNanoMinor === minorToNanoMinor(1900));
+   492→  check("breakeven requests floor-exact", sim.breakevenRequests === minorToNanoMinor(1900) / 48_000n);
+   493→
+   494→  // =====================================================================
+   495→  section("E. governance — anomalies + guard (§46–§48/§97–§102)");
+   496→  const anomalies = await detectAiCostAnomalies(new Date("2026-04-02T12:00:00Z"));
+   497→  check("detector returns report without acting (§97)", Array.isArray(anomalies.anomalies) && anomalies.insufficientHistoryBusinesses >= 0);
+   498→  // NOTE: the EUR KNOWN records were deleted by the currency-mismatch check;
+   499→  // only K2 (IRR, 200 tokens) remains KNOWN at this point. Scoped to the
+   500→  // fixture business — the platform-wide view legitimately includes the
+   501→  // reconciled historical records of OTHER businesses (shared dev DB).
+   502→  const obs = await getAiCostObservability(NOW_WINDOW, { businessId });
+   503→  check("observability aggregates present (§96)", obs.aiTokensKnown === 200 && obs.aiTokensUnknown === 0, `known=${obs.aiTokensKnown} unknownTokens=${obs.aiTokensUnknown}`);
+   504→  const obsPlatform = await getAiCostObservability(NOW_WINDOW);
+   505→  check("platform observability ≥ scoped (§96)", obsPlatform.aiTokensKnown >= obs.aiTokensKnown && obsPlatform.aiTokensUnknown >= obs.aiTokensUnknown);
+   506→
+   507→  const savedEnv = { ...process.env };
+   508→  try {
+   509→    delete process.env.AI_COST_CIRCUIT_BREAKER_ENABLED;
+   510→    const guardDisabled = await evaluateAiCostGuard();
+   511→    check("guard DISABLED by default (§46)", guardDisabled.status === "DISABLED");
+   512→
+   513→    process.env.AI_COST_CIRCUIT_BREAKER_ENABLED = "true";
+   514→    const guardUnconf = await evaluateAiCostGuard();
+   515→    check("enabled without config → UNAVAILABLE (§47)", guardUnconf.status === "UNAVAILABLE");
+   516→
+   517→    process.env.AI_COST_LIMIT_CURRENCY = "USD";
+   518→    process.env.AI_DAILY_COST_LIMIT_NANO = "1";
+   519→    // Far-past day with zero records → UNKNOWN (no data, no false trigger, §48).
+   520→    const guardEmptyDay = await evaluateAiCostGuard(new Date("2001-01-01T12:00:00Z"));
+   521→    check("empty day → UNKNOWN, no false trigger (§48)", guardEmptyDay.status === "UNKNOWN");
+   522→
+   523→    // Today: unknown-cost records dominate (no production rate configured) →
+   524→    // the guard must refuse a monetary decision (§48) — never TRIGGERED.
+   525→    const guardToday = await evaluateAiCostGuard(new Date());
+   526→    check("unknown-dominated day → UNKNOWN, never false-triggered (§48)", guardToday.status === "UNKNOWN" || guardToday.status === "ACTIVE");
+   527→  } finally {
+   528→    Object.assign(process.env, savedEnv);
+   529→    delete process.env.AI_COST_LIMIT_CURRENCY;
+   530→    delete process.env.AI_DAILY_COST_LIMIT_NANO;
+   531→    delete process.env.AI_COST_CIRCUIT_BREAKER_ENABLED;
+   532→    if (savedEnv.AI_COST_CIRCUIT_BREAKER_ENABLED !== undefined) {
+   533→      process.env.AI_COST_CIRCUIT_BREAKER_ENABLED = savedEnv.AI_COST_CIRCUIT_BREAKER_ENABLED;
+   534→    }
+   535→  }
+   536→
+   537→  // =====================================================================
+   538→  section("F. security & isolation (§73/§76/§77/§130/§145/§146/§147/§148)");
+   539→  const otherBiz = await createFixtureBusiness();
+   540→  const leak = await db.aiCostRecord.findMany({ where: { businessId: otherBiz } });
+   541→  check("Business B sees none of Business A's cost records (§145)", leak.length === 0);
+   542→  const usageSummary = await getUsageSummary(businessId);
+   543→  const summaryJson = JSON.stringify(usageSummary);
+   544→  check("customer usage payload exposes NO cost fields (§77/§78)", !summaryJson.toLowerCase().includes("cost") && !summaryJson.toLowerCase().includes("rate"));
+   545→  check("usage summary keeps Prompt-21 metrics (§148)", "AI_REQUESTS" in usageSummary.metrics && "AI_TOKENS" in usageSummary.metrics);
+   546→
+   547→  // Tampering — implausible token values are rejected at recording (§147).
+   548→  const reqTamper = `p26-req-${STAMP}-t1`;
+   549→  await meterAiOperation(businessId, reqTamper);
+   550→  const recorded = await recordAiTokenUsage(businessId, reqTamper, { inputTokens: -50, outputTokens: 999_999_999 }, { provider: "z-ai" });
+   551→  check("implausible token values rejected at recording (§147)", recorded === false);
+   552→  const attTamper = await attributeAiCost({ businessId, requestId: reqTamper, provider: "z-ai", environment: ENV });
+   553→  check("tampered operation → UNKNOWN, never fabricated", attTamper.costStatus === "UNKNOWN");
+   554→
+   555→  // TEST rates never leak into the PRODUCTION attribution path (§92).
+   556→  const prodRates = await db.aiCostRate.count({ where: { environment: "PRODUCTION", version: { startsWith: "P26-TEST" } } });
+   557→  check("no TEST rates leaked into PRODUCTION (§92)", prodRates === 0);
+   558→
+   559→  await deleteBusinessFixtures(otherBiz);
+   560→}
+   561→
+   562→// ---------------------------------------------------------------------------
+   563→// Runner — cleanup ALWAYS wins over reporting.
+   564→// (Declared before use at runtime: main() is invoked below, after this
+   565→// module has fully evaluated.)
+   566→// ---------------------------------------------------------------------------
+   567→const fixtureBusinesses: string[] = [];
+   568→
+   569→main()
+   570→  .catch(async (error) => {
+   571→    console.error("harness crashed:", error);
+   572→    process.exitCode = 1;
+   573→  })
+   574→  .finally(async () => {
+   575→    try {
+   576→      for (const id of fixtureBusinesses) await deleteBusinessFixtures(id);
+   577→      await deleteFixtureUsers();
+   578→      await db.aiCostRate.deleteMany({ where: { environment: "TEST", version: { startsWith: "P26-TEST" } } });
+   579→      const leftover = await db.business.count({ where: { name: { startsWith: "p26-cost-biz-" } } });
+   580→      check("fixture hygiene: zero leftover P26 businesses", leftover === 0, String(leftover));
+   581→      const leftoverUsers = await db.user.count({ where: { email: { startsWith: "p26-cost-owner-" } } });
+   582→      check("fixture hygiene: zero leftover P26 users", leftoverUsers === 0, String(leftoverUsers));
+   583→      const leftoverRates = await db.aiCostRate.count({ where: { environment: "TEST", version: { startsWith: "P26-TEST" } } });
+   584→      check("fixture hygiene: zero leftover P26 rates", leftoverRates === 0, String(leftoverRates));
+   585→    } catch (e) {
+   586→      console.error("cleanup failed:", e);
+   587→      process.exitCode = 1;
+   588→    }
+   589→    console.log(`\n============================`);
+   590→    console.log(`PROMPT 26 HARNESS: ${passed} passed, ${failures.length} failed`);
+   591→    if (failures.length > 0) {
+   592→      for (const f of failures) console.error(`  ✗ ${f}`);
+   593→      process.exitCode = 1;
+   594→    }
+   595→    await db.$disconnect().catch(() => {});
+   596→  });
+   597→

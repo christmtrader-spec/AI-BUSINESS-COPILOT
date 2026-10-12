@@ -1,0 +1,1899 @@
+     1→import "server-only";
+     2→
+     3→/**
+     4→ * Prompt 47 — sales-quotation service (server-only).
+     5→ *
+     6→ * LAWS:
+     7→ *  - COMMERCIAL OFFER ONLY (§1): every quotation operation (create, edit,
+     8→ *    mark-sent, accept, reject, cancel, expire, convert) mutates NOTHING
+     9→ *    but the quotation itself (and, for conversion, the ONE legitimate
+    10→ *    linked SalesOrder §13). No stock change, no reservation, no Sale, no
+    11→ *    Payment, no Expense, no receivable, no statement, no aging, no
+    12→ *    InventoryAdjustment, no notification falsely claiming an invoice or
+    13→ *    payment — for ANY lifecycle action.
+    14→ *  - CONVERSION LAW (§13): ACCEPTED → exactly ONE CONFIRMED SalesOrder.
+    15→ *    ONE atomic transaction: quotation reload + status re-check (inside
+    16→ *    the tx), already-converted guard BEFORE the status gate (every loser
+    17→ *    gets the ONE stable conflict code), complete-line proof, canonical
+    18→ *    totals recomputed from persisted lines, snapshot validation, order +
+    19→ *    lines copied from the FROZEN quotation snapshots (never re-priced
+    20→ *    from live Products), quotation → CONVERTED + convertedAt, two audit
+    21→ *    events, commit together. The DB UNIQUE constraint on
+    22→ *    SalesOrder.sourceQuotationId is the final race authority (§7).
+    23→ *  - CONVERSION PRODUCES NO FINANCIAL/INVENTORY RECORDS: no Sale invoice,
+    24→ *    no Payment, no receivable, no InventoryAdjustment, no stock
+    25→ *    reservation, no Product.stockQty change (§13 invariants).
+    26→ *  - STATUS LAW (§8): closed vocabulary, canonical transition matrix,
+    27→ *    status RE-CHECKED INSIDE the write transaction; corrupted persisted
+    28→ *    status is a controlled 500 — never DRAFT.
+    29→ *  - VALIDITY LAW (§9): accept/reject require the offer to still be
+    30→ *    within validity in the AUTHENTICATED business timezone (server
+    31→ *    clock). expire requires the offer to ACTUALLY be past validity.
+    32→ *    ACCEPTED never expires.
+    33→ *  - TENANT LAW (§2.4): every query is scoped by ctx.businessId; foreign
+    34→ *    ids are indistinguishable from unknown ones (404).
+    35→ *  - SNAPSHOT LAW (§12): customer/product identity frozen at write time
+    36→ *    from verified rows; conversion copies the FROZEN values; corrupted
+    37→ *    snapshots surface, never silently substituted.
+    38→ *  - NOTES LAW (§10): customerNotes/internalNotes never enter audit
+    39→ *    payloads (changed-flag only), never the search index, and
+    40→ *    internalNotes never the print view (§16).
+    41→ *  - Every mutation writes its audit INSIDE the same transaction.
+    42→ *  - READ-CAP LAW (§11): every bounded read fetches cap+1 rows to prove
+    43→ *    completeness; over-cap documents fail with the stable invariant code.
+    44→ *  - NO quotation delete API exists (§14/§15): history is preserved;
+    45→ *    traceability of a converted offer can never be destroyed.
+    46→ */
+    47→import { randomInt } from "node:crypto";
+    48→import { Prisma } from "@prisma/client";
+    49→import { db } from "@/lib/db";
+    50→import { withWriteTransaction } from "@/lib/db/write-transaction";
+    51→import { audit } from "@/lib/audit";
+    52→import { ApiError } from "@/lib/api-helpers";
+    53→import {
+    54→  generateSalesOrderReference,
+    55→  computeOrderSubtotalMinor,
+    56→} from "@/lib/sales-orders/types";
+    57→import {
+    58→  assertSalesQuotationLineSetComplete,
+    59→  businessLocalCalendarDate,
+    60→  canTransitionSalesQuotation,
+    61→  computeQuotationLineTotalMinor,
+    62→  computeQuotationSubtotalMinor,
+    63→  computeQuotationTotalMinor,
+    64→  effectiveQuotationStatus,
+    65→  generateSalesQuotationReference,
+    66→  isQuotationDateRangeValid,
+    67→  isQuotationExpiredInBusinessTz,
+    68→  isValidQuotationPrice,
+    69→  isValidPersistedQuotationQty,
+    70→  midnoonDateToCalendarDate,
+    71→  normalizeSalesQuotationReference,
+    72→  parseSalesQuotationStatus,
+    73→  salesQuotationDayWindow,
+    74→  salesQuotationLineCap,
+    75→  validateQuotationDiscount,
+    76→  SalesQuotationIntegrityError,
+    77→  SALES_QUOTATION_ERROR_CODES,
+    78→  type SalesQuotationStatus,
+    79→} from "./types";
+    80→import { mapPureSalesQuotationDomainError } from "./integration";
+    81→import {
+    82→  salesQuotationDetailDto,
+    83→  salesQuotationLineDto,
+    84→  salesQuotationPrintDto,
+    85→  customerRecentSalesQuotationDto,
+    86→  productRecentSalesQuotationDto,
+    87→  type SalesQuotationDetailDto,
+    88→  type SalesQuotationPrintDto,
+    89→  type CustomerRecentSalesQuotationDto,
+    90→  type ProductRecentSalesQuotationDto,
+    91→} from "./dto";
+    92→
+    93→type Tx = Prisma.TransactionClient;
+    94→
+    95→/**
+    96→ * The ONE shared SQLite write-transaction law (FIFO serialized writes +
+    97→ * bounded transient retry) — the same helper every P41–P45 write path
+    98→ * uses, so quotation lifecycle writes and conversion can never interleave
+    99→ * on the single write lock.
+   100→ */
+   101→const withWriteTx = withWriteTransaction;
+   102→
+   103→/* ------------------------- shared quotation internals ------------------------ */
+   104→
+   105→/** Corrupted persisted status → controlled 500 (never Draft, §8). */
+   106→function parseDbStatus(value: string): SalesQuotationStatus {
+   107→  try {
+   108→    return parseSalesQuotationStatus(value);
+   109→  } catch (error) {
+   110→    mapPureSalesQuotationDomainError(error);
+   111→  }
+   112→}
+   113→
+   114→function auditInput(
+   115→  businessId: string,
+   116→  actorId: string,
+   117→  action: string,
+   118→  salesQuotationId: string,
+   119→  reference: string,
+   120→  after: Record<string, unknown>,
+   121→  before?: Record<string, unknown>,
+   122→) {
+   123→  return {
+   124→    businessId,
+   125→    actorId,
+   126→    action,
+   127→    entityType: "SalesQuotation",
+   128→    entityId: salesQuotationId,
+   129→    ...(before ? { before } : {}),
+   130→    after: { reference, ...after }, // safe metadata; NEVER note contents (§10)
+   131→  };
+   132→}
+   133→
+   134→async function loadQuotationHeader(
+   135→  tx: Tx,
+   136→  businessId: string,
+   137→  id: string,
+   138→): Promise<{
+   139→  id: string;
+   140→  reference: string;
+   141→  status: SalesQuotationStatus;
+   142→  customerId: string | null;
+   143→  customerNameAtQuotation: string;
+   144→  currencyCodeAtQuotation: string;
+   145→  currencySymbolAtQuotation: string;
+   146→  decimalPrecisionAtQuotation: number;
+   147→  quotationDate: Date;
+   148→  validUntilDate: Date;
+   149→  expectedDeliveryDate: Date | null;
+   150→  discountMinor: number;
+   151→  customerNotes: string | null;
+   152→  internalNotes: string | null;
+   153→  createdByUserId: string;
+   154→  createdByName: string | null;
+   155→  sentAt: Date | null;
+   156→  acceptedAt: Date | null;
+   157→  rejectedAt: Date | null;
+   158→  cancelledAt: Date | null;
+   159→  convertedAt: Date | null;
+   160→  createdAt: Date;
+   161→  updatedAt: Date;
+   162→}> {
+   163→  const row = await tx.salesQuotation.findFirst({
+   164→    where: { id, businessId }, // tenant scope from auth context only
+   165→    select: {
+   166→      id: true,
+   167→      reference: true,
+   168→      status: true,
+   169→      customerId: true,
+   170→      customerNameAtQuotation: true,
+   171→      currencyCodeAtQuotation: true,
+   172→      currencySymbolAtQuotation: true,
+   173→      decimalPrecisionAtQuotation: true,
+   174→      quotationDate: true,
+   175→      validUntilDate: true,
+   176→      expectedDeliveryDate: true,
+   177→      discountMinor: true,
+   178→      customerNotes: true,
+   179→      internalNotes: true,
+   180→      createdByUserId: true,
+   181→      createdByUser: { select: { name: true } },
+   182→      sentAt: true,
+   183→      acceptedAt: true,
+   184→      rejectedAt: true,
+   185→      cancelledAt: true,
+   186→      convertedAt: true,
+   187→      createdAt: true,
+   188→      updatedAt: true,
+   189→    },
+   190→  });
+   191→  if (!row) throw new ApiError(404, SALES_QUOTATION_ERROR_CODES.NOT_FOUND, "Sales quotation not found.");
+   192→  return {
+   193→    ...row,
+   194→    status: parseDbStatus(row.status), // INVALID PERSISTED STATUS ≠ DRAFT
+   195→    createdByName: row.createdByUser?.name ?? null,
+   196→  };
+   197→}
+   198→
+   199→/** Tenant-scoped, active (not soft-deleted) customer snapshot source. */
+   200→async function loadActiveCustomer(
+   201→  tx: Tx,
+   202→  businessId: string,
+   203→  customerId: string,
+   204→): Promise<{ id: string; name: string }> {
+   205→  const customer = await tx.customer.findFirst({
+   206→    where: { id: customerId, businessId, deletedAt: null },
+   207→    select: { id: true, name: true },
+   208→  });
+   209→  if (!customer) {
+   210→    throw new ApiError(
+   211→      404,
+   212→      SALES_QUOTATION_ERROR_CODES.CUSTOMER_NOT_FOUND,
+   213→      "Customer not found.",
+   214→    );
+   215→  }
+   216→  return customer;
+   217→}
+   218→
+   219→/** Load a PROVEN-COMPLETE, validated line set for one quotation (§11). */
+   220→async function loadCompleteLines(
+   221→  tx: Tx,
+   222→  salesQuotationId: string,
+   223→  cap: number,
+   224→): Promise<
+   225→  Array<{
+   226→    id: string;
+   227→    productId: string;
+   228→    productNameAtQuotation: string;
+   229→    skuAtQuotation: string | null;
+   230→    unitAtQuotation: string | null;
+   231→    qty: number;
+   232→    unitPriceMinor: number;
+   233→  }>
+   234→> {
+   235→  const lines = await tx.salesQuotationLine.findMany({
+   236→    where: { salesQuotationId },
+   237→    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+   238→    take: cap + 1, // cap+1 proves completeness
+   239→    select: {
+   240→      id: true,
+   241→      productId: true,
+   242→      productNameAtQuotation: true,
+   243→      skuAtQuotation: true,
+   244→      unitAtQuotation: true,
+   245→      qty: true,
+   246→      unitPriceMinor: true,
+   247→    },
+   248→  });
+   249→  const counted = await tx.salesQuotationLine.count({ where: { salesQuotationId } });
+   250→  // THREE explicit invariants (§11): fetched ≤ cap, counted ≤ cap,
+   251→  // counted === fetched — a mismatch below the cap NEVER passes.
+   252→  assertSalesQuotationLineSetComplete(lines.length, counted, cap);
+   253→  // Every persisted line must be materially valid BEFORE use (§6/§11/§12).
+   254→  for (const line of lines) {
+   255→    if (!isValidPersistedQuotationQty(line.qty) || !isValidQuotationPrice(line.unitPriceMinor)) {
+   256→      mapPureSalesQuotationDomainError(
+   257→        new SalesQuotationIntegrityError(
+   258→          `${SALES_QUOTATION_ERROR_CODES.CORRUPT_HISTORY}: invalid persisted line quantities`,
+   259→        ),
+   260→      );
+   261→    }
+   262→    if (typeof line.productNameAtQuotation !== "string" || line.productNameAtQuotation.length === 0) {
+   263→      mapPureSalesQuotationDomainError(
+   264→        new SalesQuotationIntegrityError(
+   265→          `${SALES_QUOTATION_ERROR_CODES.CORRUPT_HISTORY}: missing product snapshot`,
+   266→        ),
+   267→      );
+   268→    }
+   269→  }
+   270→  return lines;
+   271→}
+   272→
+   273→/** Defensive line-count validation for line writes (§11). */
+   274→async function assertLineCap(tx: Tx, salesQuotationId: string, cap: number): Promise<number> {
+   275→  const lineCount = await tx.salesQuotationLine.count({ where: { salesQuotationId } });
+   276→  if (lineCount > cap) {
+   277→    // An ALREADY-corrupted over-cap quotation is database corruption: 500
+   278→    // integrity, never disguised as the ordinary 422 user failure.
+   279→    throw new ApiError(
+   280→      500,
+   281→      SALES_QUOTATION_ERROR_CODES.LINE_CAP_INVARIANT,
+   282→      "Stored document data exceeds its configured line cap. Please contact support.",
+   283→    );
+   284→  }
+   285→  if (lineCount === cap) {
+   286→    // The NORMAL write-time rejection for a legitimately full draft.
+   287→    throw new ApiError(
+   288→      422,
+   289→      SALES_QUOTATION_ERROR_CODES.LINE_LIMIT,
+   290→      `A sales quotation can contain at most ${cap} lines.`,
+   291→    );
+   292→  }
+   293→  return lineCount;
+   294→}
+   295→
+   296→/** Current canonical subtotal of a quotation (validated complete lines). */
+   297→async function currentSubtotalMinor(tx: Tx, salesQuotationId: string, cap: number): Promise<number> {
+   298→  const lines = await loadCompleteLines(tx, salesQuotationId, cap);
+   299→  try {
+   300→    return computeQuotationSubtotalMinor(lines).subtotalMinor;
+   301→  } catch (error) {
+   302→    mapPureSalesQuotationDomainError(error);
+   303→  }
+   304→}
+   305→
+   306→/** Business-local unique reference generation (§10 — never MAX+1). */
+   307→async function generateUniqueQuotationReference(
+   308→  tx: Tx,
+   309→  businessId: string,
+   310→): Promise<string> {
+   311→  for (let attempt = 0; attempt < 5; attempt += 1) {
+   312→    const candidate = generateSalesQuotationReference(new Date(), (max) => randomInt(max));
+   313→    const clash = await tx.salesQuotation.findFirst({
+   314→      where: { businessId, reference: candidate },
+   315→      select: { id: true },
+   316→    });
+   317→    if (!clash) return candidate;
+   318→  }
+   319→  // Astronomically unlikely (31^6); fail honestly rather than loop.
+   320→  throw new ApiError(
+   321→    409,
+   322→    SALES_QUOTATION_ERROR_CODES.DUPLICATE_REFERENCE,
+   323→    "Could not generate a unique reference. Please try again.",
+   324→  );
+   325→}
+   326→
+   327→/** Header snapshot validation (§12) — shared by read/convert/export. */
+   328→function validateHeaderSnapshots(header: {
+   329→  currencyCodeAtQuotation: string;
+   330→  currencySymbolAtQuotation: string;
+   331→  decimalPrecisionAtQuotation: number;
+   332→  customerId: string | null;
+   333→  customerNameAtQuotation: string;
+   334→}): void {
+   335→  if (
+   336→    typeof header.currencyCodeAtQuotation !== "string" ||
+   337→    header.currencyCodeAtQuotation.length === 0 ||
+   338→    typeof header.currencySymbolAtQuotation !== "string" ||
+   339→    header.currencySymbolAtQuotation.length === 0 ||
+   340→    !Number.isInteger(header.decimalPrecisionAtQuotation)
+   341→  ) {
+   342→    mapPureSalesQuotationDomainError(
+   343→      new SalesQuotationIntegrityError(
+   344→        `${SALES_QUOTATION_ERROR_CODES.CORRUPT_HISTORY}: missing currency snapshot`,
+   345→      ),
+   346→    );
+   347→  }
+   348→  // A customer-linked quotation must carry its frozen identity snapshot;
+   349→  // an anonymous quotation legitimately carries "".
+   350→  if (header.customerId !== null && header.customerNameAtQuotation.length === 0) {
+   351→    mapPureSalesQuotationDomainError(
+   352→      new SalesQuotationIntegrityError(
+   353→        `${SALES_QUOTATION_ERROR_CODES.CORRUPT_HISTORY}: missing customer snapshot`,
+   354→      ),
+   355→    );
+   356→  }
+   357→}
+   358→
+   359→/** Lifecycle-timestamp consistency law (§8): a persisted timestamp must
+   360→ *  never contradict its persisted status — contradictions are corruption. */
+   361→function validateLifecycleConsistency(header: {
+   362→  status: SalesQuotationStatus;
+   363→  sentAt: Date | null;
+   364→  acceptedAt: Date | null;
+   365→  rejectedAt: Date | null;
+   366→  cancelledAt: Date | null;
+   367→  convertedAt: Date | null;
+   368→}): void {
+   369→  const corrupt = (what: string) =>
+   370→    mapPureSalesQuotationDomainError(
+   371→      new SalesQuotationIntegrityError(
+   372→        `${SALES_QUOTATION_ERROR_CODES.CORRUPT_HISTORY}: ${what}`,
+   373→      ),
+   374→    );
+   375→  const needs = (t: Date | null, s: SalesQuotationStatus[]) => {
+   376→    const required = s.includes(header.status);
+   377→    if (required && !t) corrupt(`status ${header.status} without its transition timestamp`);
+   378→    if (!required && t) corrupt(`timestamp present for status ${header.status}`);
+   379→  };
+   380→  needs(header.sentAt, ["SENT", "ACCEPTED", "REJECTED", "EXPIRED", "CANCELLED", "CONVERTED"]);
+   381→  needs(header.acceptedAt, ["ACCEPTED", "CONVERTED"]);
+   382→  needs(header.rejectedAt, ["REJECTED"]);
+   383→  needs(header.cancelledAt, ["CANCELLED"]);
+   384→  needs(header.convertedAt, ["CONVERTED"]);
+   385→}
+   386→
+   387→/* -------------------------------- create ---------------------------------- */
+   388→
+   389→export async function createSalesQuotation(input: {
+   390→  businessId: string;
+   391→  userId: string;
+   392→  timezone: string; // AUTHENTICATED business timezone (server clock law §9)
+   393→  customerId?: string;
+   394→  reference?: string;
+   395→  quotationDate?: string; // calendar date (strict, zod) — default business-local today
+   396→  validUntilDate: string;
+   397→  expectedDeliveryDate?: string;
+   398→  discountMinor?: number;
+   399→  customerNotes?: string | null;
+   400→  internalNotes?: string | null;
+   401→  ip?: string | null;
+   402→  userAgent?: string | null;
+   403→}) {
+   404→  return withWriteTx(async (tx) => {
+   405→    // §10 — currency snapshot comes from the BUSINESS configuration
+   406→    // (server-derived); the client can never select a different currency.
+   407→    const business = await tx.business.findUnique({
+   408→      where: { id: input.businessId },
+   409→      select: { currencyCode: true, currencySymbol: true, decimalPrecision: true },
+   410→    });
+   411→    if (!business) throw new ApiError(404, "NOT_FOUND", "Business not found.");
+   412→
+   413→    // §10 — optional customer: tenant-scoped, not soft-deleted; the name
+   414→    // snapshot is frozen at creation (§12).
+   415→    let customerNameAtQuotation = "";
+   416→    if (input.customerId) {
+   417→      const customer = await loadActiveCustomer(tx, input.businessId, input.customerId);
+   418→      customerNameAtQuotation = customer.name;
+   419→    }
+   420→
+   421→    // §9 — dates: quotationDate defaults to the SERVER's business-local
+   422→    // today (never the browser clock); validUntilDate is required and
+   423→    // must not precede quotationDate (inclusive-until law).
+   424→    const quotationDate = input.quotationDate ?? businessLocalCalendarDate(new Date(), input.timezone);
+   425→    if (!isQuotationDateRangeValid(quotationDate, input.validUntilDate)) {
+   426→      throw new ApiError(
+   427→        422,
+   428→        SALES_QUOTATION_ERROR_CODES.INVALID_DATE_RANGE,
+   429→        "The validity date cannot be earlier than the quotation date.",
+   430→      );
+   431→    }
+   432→
+   433→    // §11 — a quotation with no lines has subtotal 0: a non-zero creation
+   434→    // discount would violate the discount law on day one (mirrors P45).
+   435→    if ((input.discountMinor ?? 0) > 0) {
+   436→      throw new ApiError(
+   437→        422,
+   438→        SALES_QUOTATION_ERROR_CODES.INVALID_DISCOUNT,
+   439→        "Add lines first — an empty quotation cannot carry a discount.",
+   440→      );
+   441→    }
+   442→
+   443→    // Reference: user-supplied (normalized) or server-generated (§10).
+   444→    let reference = input.reference;
+   445→    if (reference === undefined) {
+   446→      reference = await generateUniqueQuotationReference(tx, input.businessId);
+   447→    }
+   448→
+   449→    try {
+   450→      const row = await tx.salesQuotation.create({
+   451→        data: {
+   452→          businessId: input.businessId, // server-derived, never client (§2.4)
+   453→          customerId: input.customerId ?? null,
+   454→          customerNameAtQuotation, // frozen snapshot ("" when no customer)
+   455→          reference,
+   456→          status: "DRAFT", // commercial preparation only (§8)
+   457→          currencyCodeAtQuotation: business.currencyCode,
+   458→          currencySymbolAtQuotation: business.currencySymbol,
+   459→          decimalPrecisionAtQuotation: business.decimalPrecision,
+   460→          quotationDate: new Date(`${quotationDate}T12:00:00.000Z`),
+   461→          validUntilDate: new Date(`${input.validUntilDate}T12:00:00.000Z`),
+   462→          expectedDeliveryDate: input.expectedDeliveryDate
+   463→            ? new Date(`${input.expectedDeliveryDate}T12:00:00.000Z`)
+   464→            : null,
+   465→          discountMinor: 0,
+   466→          customerNotes: input.customerNotes ?? null, // document data only
+   467→          internalNotes: input.internalNotes ?? null, // staff-only document data
+   468→          createdByUserId: input.userId, // server-derived
+   469→        },
+   470→        select: { id: true, reference: true, status: true },
+   471→      });
+   472→
+   473→      await audit(
+   474→        auditInput(input.businessId, input.userId, "sales_quotation.create", row.id, row.reference, {
+   475→          customerId: input.customerId ?? null,
+   476→          customerNameAtQuotation,
+   477→          status: row.status,
+   478→          quotationDate,
+   479→          validUntilDate: input.validUntilDate,
+   480→        }),
+   481→        tx,
+   482→      );
+   483→
+   484→      return row;
+   485→    } catch (error) {
+   486→      // Database uniqueness stays authoritative for duplicates (§10).
+   487→      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+   488→        throw new ApiError(
+   489→          409,
+   490→          SALES_QUOTATION_ERROR_CODES.DUPLICATE_REFERENCE,
+   491→          "A sales quotation with this reference already exists.",
+   492→        );
+   493→      }
+   494→      throw error;
+   495→    }
+   496→  });
+   497→}
+   498→
+   499→/* --------------------------------- list ----------------------------------- */
+   500→
+   501→export async function listSalesQuotations(input: {
+   502→  businessId: string;
+   503→  q?: string;
+   504→  status?: string; // ALL → undefined (persisted-status filter, §15)
+   505→  customerId?: string;
+   506→  from?: string;
+   507→  to?: string;
+   508→  timezone: string; // AUTHENTICATED business timezone (never client authority)
+   509→  page: number;
+   510→  pageSize: number;
+   511→}): Promise<{
+   512→  items: Array<{
+   513→    id: string;
+   514→    reference: string;
+   515→    persistedStatus: SalesQuotationStatus;
+   516→    effectiveStatus: SalesQuotationStatus;
+   517→    customerId: string | null;
+   518→    customerNameAtQuotation: string;
+   519→    quotationDate: string;
+   520→    validUntilDate: string;
+   521→    lineCount: number;
+   522→    totalQty: number;
+   523→    subtotalMinor: number;
+   524→    discountMinor: number;
+   525→    totalMinor: number;
+   526→    convertedOrderReference: string | null;
+   527→    createdAt: string;
+   528→  }>;
+   529→  total: number;
+   530→  page: number;
+   531→  pageSize: number;
+   532→}> {
+   533→  const cap = salesQuotationLineCap(process.env.SALES_QUOTATION_MAX_LINES);
+   534→  const now = new Date();
+   535→  const where: Prisma.SalesQuotationWhereInput = {
+   536→    businessId: input.businessId, // tenant scope
+   537→    ...(input.status && input.status !== "ALL" ? { status: input.status } : {}),
+   538→    ...(input.customerId ? { customerId: input.customerId } : {}),
+   539→    ...(input.from || input.to
+   540→      ? (() => {
+   541→          // from/to are interpreted in the AUTHENTICATED business timezone
+   542→          // (inclusive local start of `from`, EXCLUSIVE local start of the
+   543→          // day after `to`) — the ONE canonical window law (§types).
+   544→          const window = salesQuotationDayWindow(input.from, input.to, input.timezone);
+   545→          if (!window) {
+   546→            throw new ApiError(422, "VALIDATION_ERROR", "Invalid date filter.");
+   547→          }
+   548→          return { quotationDate: window };
+   549→        })()
+   550→      : {}),
+   551→    ...(input.q
+   552→      ? {
+   553→          OR: [
+   554→            { reference: { contains: input.q } }, // quotation reference
+   555→            { customerNameAtQuotation: { contains: input.q } }, // customer snapshot
+   556→            {
+   557→              lines: {
+   558→                some: {
+   559→                  OR: [
+   560→                    { productNameAtQuotation: { contains: input.q } }, // product snapshot
+   561→                    { skuAtQuotation: { contains: input.q } }, // SKU snapshot
+   562→                  ],
+   563→                },
+   564→              },
+   565→            },
+   566→          ],
+   567→        }
+   568→      : {}),
+   569→  };
+   570→
+   571→  const [total, rows] = await Promise.all([
+   572→    db.salesQuotation.count({ where }),
+   573→    // DB-level pagination; never findMany + slice.
+   574→    db.salesQuotation.findMany({
+   575→      where,
+   576→      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+   577→      skip: (input.page - 1) * input.pageSize,
+   578→      take: input.pageSize,
+   579→      select: {
+   580→        id: true,
+   581→        reference: true,
+   582→        status: true,
+   583→        customerId: true,
+   584→        customerNameAtQuotation: true,
+   585→        quotationDate: true,
+   586→        validUntilDate: true,
+   587→        discountMinor: true,
+   588→        createdAt: true,
+   589→        convertedSalesOrder: { select: { reference: true } }, // §7 — link presence
+   590→        lines: {
+   591→          // Bounded per-quotation aggregate relation, not one query per row.
+   592→          // take cap+1 PROVES the slice is the whole line set (§11).
+   593→          select: { id: true, qty: true, unitPriceMinor: true },
+   594→          take: cap + 1,
+   595→        },
+   596→        _count: { select: { lines: true } },
+   597→      },
+   598→    }),
+   599→  ]);
+   600→
+   601→  const items = rows.map((row) => {
+   602→    try {
+   603→      assertSalesQuotationLineSetComplete(row.lines.length, row._count.lines, cap);
+   604→      let totalQty = 0;
+   605→      let subtotalMinor = 0;
+   606→      for (const line of row.lines) {
+   607→        if (!isValidPersistedQuotationQty(line.qty) || !isValidQuotationPrice(line.unitPriceMinor)) {
+   608→          mapPureSalesQuotationDomainError(
+   609→            new SalesQuotationIntegrityError(
+   610→              `${SALES_QUOTATION_ERROR_CODES.CORRUPT_HISTORY}: invalid persisted line`,
+   611→            ),
+   612→          );
+   613→        }
+   614→        totalQty += line.qty;
+   615→        subtotalMinor += computeQuotationLineTotalMinor(line.qty, line.unitPriceMinor);
+   616→      }
+   617→      if (!Number.isSafeInteger(subtotalMinor)) {
+   618→        mapPureSalesQuotationDomainError(
+   619→          new SalesQuotationIntegrityError(
+   620→            `${SALES_QUOTATION_ERROR_CODES.TOTAL_OVERFLOW}: list subtotal overflow`,
+   621→          ),
+   622→        );
+   623→      }
+   624→      const totalMinor = computeQuotationTotalMinor(subtotalMinor, row.discountMinor);
+   625→      const persistedStatus = parseDbStatus(row.status);
+   626→      // §9 — persisted vs effective are EXPLICIT and distinct.
+   627→      const effectiveStatus = effectiveQuotationStatus(
+   628→        persistedStatus,
+   629→        row.validUntilDate,
+   630→        now,
+   631→        input.timezone,
+   632→      );
+   633→      return {
+   634→        id: row.id,
+   635→        reference: row.reference,
+   636→        persistedStatus,
+   637→        effectiveStatus,
+   638→        customerId: row.customerId,
+   639→        customerNameAtQuotation: row.customerNameAtQuotation,
+   640→        quotationDate: row.quotationDate.toISOString(),
+   641→        validUntilDate: row.validUntilDate.toISOString(),
+   642→        lineCount: row._count.lines,
+   643→        totalQty,
+   644→        subtotalMinor,
+   645→        discountMinor: row.discountMinor,
+   646→        totalMinor,
+   647→        convertedOrderReference: row.convertedSalesOrder?.reference ?? null, // ONLY when the relation exists (§7)
+   648→        createdAt: row.createdAt.toISOString(),
+   649→      };
+   650→    } catch (error) {
+   651→      return mapPureSalesQuotationDomainError(error);
+   652→    }
+   653→  });
+   654→  return { items, total, page: input.page, pageSize: input.pageSize };
+   655→}
+   656→
+   657→/* -------------------------------- detail ---------------------------------- */
+   658→
+   659→export async function getSalesQuotation(input: {
+   660→  businessId: string;
+   661→  id: string;
+   662→  timezone: string;
+   663→}): Promise<SalesQuotationDetailDto> {
+   664→  const cap = salesQuotationLineCap(process.env.SALES_QUOTATION_MAX_LINES);
+   665→  const row = await db.salesQuotation.findFirst({
+   666→    where: { id: input.id, businessId: input.businessId }, // tenant scope
+   667→    select: {
+   668→      id: true,
+   669→      reference: true,
+   670→      status: true,
+   671→      customerId: true,
+   672→      customerNameAtQuotation: true,
+   673→      currencyCodeAtQuotation: true,
+   674→      currencySymbolAtQuotation: true,
+   675→      decimalPrecisionAtQuotation: true,
+   676→      quotationDate: true,
+   677→      validUntilDate: true,
+   678→      expectedDeliveryDate: true,
+   679→      discountMinor: true,
+   680→      customerNotes: true,
+   681→      internalNotes: true,
+   682→      createdByUserId: true,
+   683→      createdByUser: { select: { name: true } },
+   684→      sentAt: true,
+   685→      acceptedAt: true,
+   686→      rejectedAt: true,
+   687→      cancelledAt: true,
+   688→      convertedAt: true,
+   689→      createdAt: true,
+   690→      updatedAt: true,
+   691→      convertedSalesOrder: {
+   692→        select: { id: true, reference: true, status: true },
+   693→      },
+   694→      lines: {
+   695→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+   696→        take: cap + 1, // cap+1 proves completeness (§11)
+   697→        select: {
+   698→          id: true,
+   699→          productId: true,
+   700→          productNameAtQuotation: true,
+   701→          skuAtQuotation: true,
+   702→          unitAtQuotation: true,
+   703→          qty: true,
+   704→          unitPriceMinor: true,
+   705→          createdAt: true,
+   706→          updatedAt: true,
+   707→        },
+   708→      },
+   709→      _count: { select: { lines: true } },
+   710→    },
+   711→  });
+   712→  if (!row) throw new ApiError(404, SALES_QUOTATION_ERROR_CODES.NOT_FOUND, "Sales quotation not found.");
+   713→
+   714→  try {
+   715→    assertSalesQuotationLineSetComplete(row.lines.length, row._count.lines, cap);
+   716→    const persistedStatus = parseDbStatus(row.status);
+   717→    const effectiveStatus = effectiveQuotationStatus(
+   718→      persistedStatus,
+   719→      row.validUntilDate,
+   720→      new Date(),
+   721→      input.timezone,
+   722→    );
+   723→    validateHeaderSnapshots(row);
+   724→    validateLifecycleConsistency({ ...row, status: persistedStatus });
+   725→    const lines = row.lines.map((l) => salesQuotationLineDto(l));
+   726→    const subtotalMinor = computeQuotationSubtotalMinor(
+   727→      lines.map((l) => ({ qty: l.qty, unitPriceMinor: l.unitPriceMinor })),
+   728→    ).subtotalMinor;
+   729→    const totalMinor = computeQuotationTotalMinor(subtotalMinor, row.discountMinor);
+   730→    return salesQuotationDetailDto(
+   731→      {
+   732→        id: row.id,
+   733→        reference: row.reference,
+   734→        persistedStatus,
+   735→        effectiveStatus,
+   736→        validUntilCalendarDate: midnoonDateToCalendarDate(row.validUntilDate),
+   737→        isExpired: isQuotationExpiredInBusinessTz(row.validUntilDate, new Date(), input.timezone),
+   738→        customerId: row.customerId,
+   739→        customerNameAtQuotation: row.customerNameAtQuotation,
+   740→        currencyCodeAtQuotation: row.currencyCodeAtQuotation,
+   741→        currencySymbolAtQuotation: row.currencySymbolAtQuotation,
+   742→        decimalPrecisionAtQuotation: row.decimalPrecisionAtQuotation,
+   743→        quotationDate: row.quotationDate,
+   744→        validUntilDate: row.validUntilDate,
+   745→        expectedDeliveryDate: row.expectedDeliveryDate,
+   746→        discountMinor: row.discountMinor,
+   747→        customerNotes: row.customerNotes,
+   748→        internalNotes: row.internalNotes,
+   749→        createdBy: { id: row.createdByUserId, name: row.createdByUser?.name ?? null },
+   750→        sentAt: row.sentAt,
+   751→        acceptedAt: row.acceptedAt,
+   752→        rejectedAt: row.rejectedAt,
+   753→        cancelledAt: row.cancelledAt,
+   754→        convertedAt: row.convertedAt,
+   755→        createdAt: row.createdAt,
+   756→        updatedAt: row.updatedAt,
+   757→      },
+   758→      {
+   759→        lineCount: row._count.lines,
+   760→        totalQty: lines.reduce((acc, l) => acc + l.qty, 0),
+   761→        subtotalMinor,
+   762→        discountMinor: row.discountMinor,
+   763→        totalMinor,
+   764→      },
+   765→      lines,
+   766→      // §7 — the converted-order DTO appears ONLY when the relation exists.
+   767→      row.convertedSalesOrder
+   768→        ? {
+   769→            id: row.convertedSalesOrder.id,
+   770→            reference: row.convertedSalesOrder.reference,
+   771→            status: row.convertedSalesOrder.status,
+   772→          }
+   773→        : null,
+   774→    );
+   775→  } catch (error) {
+   776→    return mapPureSalesQuotationDomainError(error);
+   777→  }
+   778→}
+   779→
+   780→/**
+   781→ * §16 — the customer-facing PRINT payload: an explicitly REDUCED
+   782→ * projection of the SAME validated detail data. internalNotes are
+   783→ * structurally absent (never rendered, never leaked); no database ids, no
+   784→ * audit metadata, no raw technical statuses. Tenant-authorized reads only.
+   785→ */
+   786→export async function getSalesQuotationPrintView(input: {
+   787→  businessId: string;
+   788→  id: string;
+   789→  timezone: string;
+   790→}): Promise<SalesQuotationPrintDto> {
+   791→  const detail = await getSalesQuotation({ businessId: input.businessId, id: input.id, timezone: input.timezone });
+   792→  return salesQuotationPrintDto({
+   793→    reference: detail.quotation.reference,
+   794→    quotationDate: detail.quotation.quotationDate,
+   795→    validUntilDate: detail.quotation.validUntilDate,
+   796→    customerNameAtQuotation: detail.quotation.customerNameAtQuotation,
+   797→    currencyCodeAtQuotation: detail.quotation.currencyCodeAtQuotation,
+   798→    currencySymbolAtQuotation: detail.quotation.currencySymbolAtQuotation,
+   799→    decimalPrecisionAtQuotation: detail.quotation.decimalPrecisionAtQuotation,
+   800→    expectedDeliveryDate: detail.quotation.expectedDeliveryDate,
+   801→    customerNotes: detail.quotation.customerNotes,
+   802→    lines: detail.lines.map((l) => ({
+   803→      productNameAtQuotation: l.productNameAtQuotation,
+   804→      skuAtQuotation: l.skuAtQuotation,
+   805→      unitAtQuotation: l.unitAtQuotation,
+   806→      qty: l.qty,
+   807→      unitPriceMinor: l.unitPriceMinor,
+   808→      lineTotalMinor: l.lineTotalMinor,
+   809→    })),
+   810→    subtotalMinor: detail.summary.subtotalMinor,
+   811→    discountMinor: detail.summary.discountMinor,
+   812→    totalMinor: detail.summary.totalMinor,
+   813→  });
+   814→}
+   815→
+   816→/* ------------------------------ header patch ------------------------------ */
+   817→
+   818→export async function updateSalesQuotation(input: {
+   819→  businessId: string;
+   820→  userId: string;
+   821→  id: string;
+   822→  customerId?: string | null;
+   823→  reference?: string;
+   824→  quotationDate?: string;
+   825→  validUntilDate?: string;
+   826→  expectedDeliveryDate?: string | null;
+   827→  discountMinor?: number;
+   828→  customerNotes?: string | null;
+   829→  internalNotes?: string | null;
+   830→  ip?: string | null;
+   831→  userAgent?: string | null;
+   832→}) {
+   833→  return withWriteTx(async (tx) => {
+   834→    const cap = salesQuotationLineCap(process.env.SALES_QUOTATION_MAX_LINES);
+   835→    const header = await loadQuotationHeader(tx, input.businessId, input.id);
+   836→    if (header.status !== "DRAFT") {
+   837→      // §8 — SENT and later are immutable (no silent correction).
+   838→      throw new ApiError(
+   839→        409,
+   840→        SALES_QUOTATION_ERROR_CODES.IMMUTABLE,
+   841→        "Only DRAFT sales quotations can be changed.",
+   842→      );
+   843→    }
+   844→
+   845→    const data: Prisma.SalesQuotationUpdateInput = {};
+   846→    let quotationDate = midnoonDateToCalendarDate(header.quotationDate);
+   847→    let validUntilDate = midnoonDateToCalendarDate(header.validUntilDate);
+   848→
+   849→    if (input.customerId !== undefined) {
+   850→      if (input.customerId === null) {
+   851→        data.customer = { disconnect: true };
+   852→        data.customerNameAtQuotation = "";
+   853→      } else {
+   854→        const customer = await loadActiveCustomer(tx, input.businessId, input.customerId);
+   855→        data.customer = { connect: { id: customer.id } };
+   856→        data.customerNameAtQuotation = customer.name; // snapshot refrozen (§12)
+   857→      }
+   858→    }
+   859→    if (input.reference !== undefined) data.reference = input.reference;
+   860→    if (input.quotationDate !== undefined) {
+   861→      data.quotationDate = new Date(`${input.quotationDate}T12:00:00.000Z`);
+   862→      quotationDate = input.quotationDate;
+   863→    }
+   864→    if (input.validUntilDate !== undefined) {
+   865→      data.validUntilDate = new Date(`${input.validUntilDate}T12:00:00.000Z`);
+   866→      validUntilDate = input.validUntilDate;
+   867→    }
+   868→    // §9 — the validity ORDERING holds against the PATCHED pair (a partial
+   869→    // patch can never dodge the law).
+   870→    if (!isQuotationDateRangeValid(quotationDate, validUntilDate)) {
+   871→      throw new ApiError(
+   872→        422,
+   873→        SALES_QUOTATION_ERROR_CODES.INVALID_DATE_RANGE,
+   874→        "The validity date cannot be earlier than the quotation date.",
+   875→      );
+   876→    }
+   877→    if (input.expectedDeliveryDate !== undefined) {
+   878→      data.expectedDeliveryDate =
+   879→        input.expectedDeliveryDate === null
+   880→          ? null
+   881→          : new Date(`${input.expectedDeliveryDate}T12:00:00.000Z`);
+   882→    }
+   883→    if (input.customerNotes !== undefined) data.customerNotes = input.customerNotes;
+   884→    if (input.internalNotes !== undefined) data.internalNotes = input.internalNotes;
+   885→
+   886→    if (input.discountMinor !== undefined) {
+   887→      // §11 — discount law against the CURRENT canonical subtotal.
+   888→      const subtotalMinor = await currentSubtotalMinor(tx, header.id, cap);
+   889→      try {
+   890→        validateQuotationDiscount(input.discountMinor, subtotalMinor);
+   891→      } catch {
+   892→        throw new ApiError(
+   893→          422,
+   894→          SALES_QUOTATION_ERROR_CODES.INVALID_DISCOUNT,
+   895→          "Discount cannot exceed the quotation subtotal.",
+   896→        );
+   897→      }
+   898→      data.discountMinor = input.discountMinor;
+   899→    }
+   900→
+   901→    try {
+   902→      const updated = await tx.salesQuotation.update({
+   903→        where: { id: header.id },
+   904→        data,
+   905→        select: { id: true, reference: true, status: true },
+   906→      });
+   907→
+   908→      await audit(
+   909→        auditInput(
+   910→          input.businessId,
+   911→          input.userId,
+   912→          "sales_quotation.update",
+   913→          header.id,
+   914→          updated.reference,
+   915→          {
+   916→            changed: {
+   917→              ...(input.customerId !== undefined ? { customerId: { changed: true } } : {}),
+   918→              ...(input.reference !== undefined
+   919→                ? { reference: { from: header.reference, to: updated.reference } }
+   920→                : {}),
+   921→              ...(input.quotationDate !== undefined ? { quotationDate: { changed: true } } : {}),
+   922→              ...(input.validUntilDate !== undefined ? { validUntilDate: { changed: true } } : {}),
+   923→              ...(input.expectedDeliveryDate !== undefined
+   924→                ? { expectedDeliveryDate: { changed: true } }
+   925→                : {}),
+   926→              ...(input.discountMinor !== undefined
+   927→                ? { discountMinor: { from: header.discountMinor, to: input.discountMinor } }
+   928→                : {}),
+   929→              // Notes: CHANGED-FLAG ONLY — the contents never enter the
+   930→              // audit trail (§10/§22).
+   931→              ...(input.customerNotes !== undefined ? { customerNotes: { changed: true } } : {}),
+   932→              ...(input.internalNotes !== undefined ? { internalNotes: { changed: true } } : {}),
+   933→            },
+   934→          },
+   935→          { reference: header.reference },
+   936→        ),
+   937→        tx,
+   938→      );
+   939→
+   940→      return updated;
+   941→    } catch (error) {
+   942→      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+   943→        throw new ApiError(
+   944→          409,
+   945→          SALES_QUOTATION_ERROR_CODES.DUPLICATE_REFERENCE,
+   946→          "A sales quotation with this reference already exists.",
+   947→        );
+   948→      }
+   949→      throw error;
+   950→    }
+   951→  });
+   952→}
+   953→
+   954→/* ------------------------------- line writes ------------------------------ */
+   955→
+   956→export async function addSalesQuotationLine(input: {
+   957→  businessId: string;
+   958→  userId: string;
+   959→  id: string;
+   960→  productId: string;
+   961→  qty: number;
+   962→  unitPriceMinor?: number;
+   963→  ip?: string | null;
+   964→  userAgent?: string | null;
+   965→}) {
+   966→  return withWriteTx(async (tx) => {
+   967→    const cap = salesQuotationLineCap(process.env.SALES_QUOTATION_MAX_LINES);
+   968→    const header = await loadQuotationHeader(tx, input.businessId, input.id);
+   969→    if (header.status !== "DRAFT") {
+   970→      throw new ApiError(
+   971→        409,
+   972→        SALES_QUOTATION_ERROR_CODES.IMMUTABLE,
+   973→        "Only DRAFT sales quotations can be changed.",
+   974→      );
+   975→    }
+   976→
+   977→    // §6 — eligible products only: same tenant, exists, not soft-deleted,
+   978→    // active. A foreign product is indistinguishable from unknown (404).
+   979→    const product = await tx.product.findFirst({
+   980→      where: { id: input.productId, businessId: input.businessId, deletedAt: null },
+   981→      select: { id: true, name: true, sku: true, unit: true, salePriceMinor: true, isActive: true },
+   982→    });
+   983→    if (!product || !product.isActive) {
+   984→      throw new ApiError(
+   985→        404,
+   986→        SALES_QUOTATION_ERROR_CODES.PRODUCT_NOT_FOUND,
+   987→        "Product not found.",
+   988→      );
+   989→    }
+   990→
+   991→    await assertLineCap(tx, header.id, cap); // defensive count
+   992→
+   993→    // §6/§12 — the offered price: client-supplied or the CURRENT product
+   994→    // sale price as the default; persisted ONCE and never re-derived later
+   995→    // (a later price change never silently reprices the offer §12).
+   996→    const unitPriceMinor = input.unitPriceMinor ?? product.salePriceMinor;
+   997→    if (!isValidQuotationPrice(unitPriceMinor)) {
+   998→      throw new ApiError(
+   999→        422,
+  1000→        SALES_QUOTATION_ERROR_CODES.TOTAL_OVERFLOW,
+  1001→        "Unit price is outside the allowed range.",
+  1002→      );
+  1003→    }
+  1004→    // §11 — the line total must be exact BEFORE anything persists.
+  1005→    try {
+  1006→      computeQuotationLineTotalMinor(input.qty, unitPriceMinor);
+  1007→    } catch (error) {
+  1008→      if (error instanceof Error && error.name === "SalesQuotationTotalOverflowError") {
+  1009→        throw new ApiError(
+  1010→          422,
+  1011→          SALES_QUOTATION_ERROR_CODES.TOTAL_OVERFLOW,
+  1012→          "The requested quantity × price exceeds the supported total range.",
+  1013→        );
+  1014→      }
+  1015→      throw error;
+  1016→    }
+  1017→
+  1018→    try {
+  1019→      const line = await tx.salesQuotationLine.create({
+  1020→        data: {
+  1021→          salesQuotationId: header.id,
+  1022→          productId: product.id,
+  1023→          qty: input.qty,
+  1024→          unitPriceMinor,
+  1025→          // §6/§12 — snapshots copied from the tenant-scoped Product at
+  1026→          // add time, then frozen; the client never authors them.
+  1027→          productNameAtQuotation: product.name,
+  1028→          skuAtQuotation: product.sku,
+  1029→          unitAtQuotation: product.unit,
+  1030→        },
+  1031→        select: { id: true },
+  1032→      });
+  1033→
+  1034→      // §11 — the stored discount must still satisfy the law against the
+  1035→      // NEW subtotal (a line change can shrink the subtotal below it).
+  1036→      const lines = await loadCompleteLines(tx, header.id, cap);
+  1037→      const subtotalMinor = computeQuotationSubtotalMinor(lines).subtotalMinor;
+  1038→      if (header.discountMinor > subtotalMinor) {
+  1039→        throw new ApiError(
+  1040→          422,
+  1041→          SALES_QUOTATION_ERROR_CODES.INVALID_DISCOUNT,
+  1042→          "Discount cannot exceed the quotation subtotal.",
+  1043→        );
+  1044→      }
+  1045→
+  1046→      await audit(
+  1047→        auditInput(
+  1048→          input.businessId,
+  1049→          input.userId,
+  1050→          "sales_quotation.line_add",
+  1051→          header.id,
+  1052→          header.reference,
+  1053→          {
+  1054→            lineId: line.id,
+  1055→            productId: product.id,
+  1056→            productNameAtQuotation: product.name,
+  1057→            qty: input.qty,
+  1058→            unitPriceMinor,
+  1059→          },
+  1060→        ),
+  1061→        tx,
+  1062→      );
+  1063→
+  1064→      return { id: line.id };
+  1065→    } catch (error) {
+  1066→      // DB uniqueness is authoritative for duplicate lines (§6).
+  1067→      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+  1068→        throw new ApiError(
+  1069→          409,
+  1070→          SALES_QUOTATION_ERROR_CODES.DUPLICATE_PRODUCT,
+  1071→          "This product is already on the quotation.",
+  1072→        );
+  1073→      }
+  1074→      throw error;
+  1075→    }
+  1076→  });
+  1077→}
+  1078→
+  1079→export async function updateSalesQuotationLine(input: {
+  1080→  businessId: string;
+  1081→  userId: string;
+  1082→  id: string;
+  1083→  lineId: string;
+  1084→  qty?: number;
+  1085→  unitPriceMinor?: number;
+  1086→  ip?: string | null;
+  1087→  userAgent?: string | null;
+  1088→}) {
+  1089→  return withWriteTx(async (tx) => {
+  1090→    const cap = salesQuotationLineCap(process.env.SALES_QUOTATION_MAX_LINES);
+  1091→    const header = await loadQuotationHeader(tx, input.businessId, input.id);
+  1092→    if (header.status !== "DRAFT") {
+  1093→      throw new ApiError(
+  1094→        409,
+  1095→        SALES_QUOTATION_ERROR_CODES.IMMUTABLE,
+  1096→        "Only DRAFT sales quotations can be changed.",
+  1097→      );
+  1098→    }
+  1099→
+  1100→    const line = await tx.salesQuotationLine.findFirst({
+  1101→      where: { id: input.lineId, salesQuotationId: header.id }, // scoped via parent
+  1102→      select: { id: true, qty: true, unitPriceMinor: true },
+  1103→    });
+  1104→    if (!line) {
+  1105→      throw new ApiError(404, SALES_QUOTATION_ERROR_CODES.LINE_NOT_FOUND, "Quotation line not found.");
+  1106→    }
+  1107→
+  1108→    const qty = input.qty ?? line.qty;
+  1109→    const unitPriceMinor = input.unitPriceMinor ?? line.unitPriceMinor;
+  1110→
+  1111→    // §11 — the new line total must be exact.
+  1112→    try {
+  1113→      computeQuotationLineTotalMinor(qty, unitPriceMinor);
+  1114→    } catch (error) {
+  1115→      if (error instanceof Error && error.name === "SalesQuotationTotalOverflowError") {
+  1116→        throw new ApiError(
+  1117→          422,
+  1118→          SALES_QUOTATION_ERROR_CODES.TOTAL_OVERFLOW,
+  1119→          "The requested quantity × price exceeds the supported total range.",
+  1120→        );
+  1121→      }
+  1122→      throw error;
+  1123→    }
+  1124→
+  1125→    const updated = await tx.salesQuotationLine.update({
+  1126→      where: { id: line.id },
+  1127→      data: { qty, unitPriceMinor },
+  1128→      select: {
+  1129→        id: true,
+  1130→        productId: true,
+  1131→        productNameAtQuotation: true,
+  1132→        skuAtQuotation: true,
+  1133→        unitAtQuotation: true,
+  1134→        qty: true,
+  1135→        unitPriceMinor: true,
+  1136→        createdAt: true,
+  1137→        updatedAt: true,
+  1138→      },
+  1139→    });
+  1140→
+  1141→    // §11 — discount law re-check against the new subtotal.
+  1142→    const lines = await loadCompleteLines(tx, header.id, cap);
+  1143→    const subtotalMinor = computeQuotationSubtotalMinor(lines).subtotalMinor;
+  1144→    if (header.discountMinor > subtotalMinor) {
+  1145→      throw new ApiError(
+  1146→        422,
+  1147→        SALES_QUOTATION_ERROR_CODES.INVALID_DISCOUNT,
+  1148→        "Discount cannot exceed the quotation subtotal.",
+  1149→      );
+  1150→    }
+  1151→
+  1152→    await audit(
+  1153→      auditInput(
+  1154→        input.businessId,
+  1155→        input.userId,
+  1156→        "sales_quotation.line_update",
+  1157→        header.id,
+  1158→        header.reference,
+  1159→        {
+  1160→          lineId: line.id,
+  1161→          qty: { from: line.qty, to: updated.qty },
+  1162→          unitPriceMinor: { from: line.unitPriceMinor, to: updated.unitPriceMinor },
+  1163→        },
+  1164→      ),
+  1165→      tx,
+  1166→    );
+  1167→
+  1168→    return { id: updated.id };
+  1169→  });
+  1170→}
+  1171→
+  1172→export async function removeSalesQuotationLine(input: {
+  1173→  businessId: string;
+  1174→  userId: string;
+  1175→  id: string;
+  1176→  lineId: string;
+  1177→  ip?: string | null;
+  1178→  userAgent?: string | null;
+  1179→}) {
+  1180→  return withWriteTx(async (tx) => {
+  1181→    const cap = salesQuotationLineCap(process.env.SALES_QUOTATION_MAX_LINES);
+  1182→    const header = await loadQuotationHeader(tx, input.businessId, input.id);
+  1183→    if (header.status !== "DRAFT") {
+  1184→      throw new ApiError(
+  1185→        409,
+  1186→        SALES_QUOTATION_ERROR_CODES.IMMUTABLE,
+  1187→        "Only DRAFT sales quotations can be changed.",
+  1188→      );
+  1189→    }
+  1190→
+  1191→    const line = await tx.salesQuotationLine.findFirst({
+  1192→      where: { id: input.lineId, salesQuotationId: header.id },
+  1193→      select: { id: true, productId: true, qty: true },
+  1194→    });
+  1195→    if (!line) {
+  1196→      throw new ApiError(404, SALES_QUOTATION_ERROR_CODES.LINE_NOT_FOUND, "Quotation line not found.");
+  1197→    }
+  1198→
+  1199→    await tx.salesQuotationLine.delete({ where: { id: line.id } });
+  1200→    const lineCount = await tx.salesQuotationLine.count({ where: { salesQuotationId: header.id } });
+  1201→
+  1202→    // §11 — discount law re-check (the subtotal may now be below it).
+  1203→    if (lineCount > 0) {
+  1204→      const lines = await loadCompleteLines(tx, header.id, cap);
+  1205→      const subtotalMinor = computeQuotationSubtotalMinor(lines).subtotalMinor;
+  1206→      if (header.discountMinor > subtotalMinor) {
+  1207→        throw new ApiError(
+  1208→          422,
+  1209→          SALES_QUOTATION_ERROR_CODES.INVALID_DISCOUNT,
+  1210→          "Discount cannot exceed the quotation subtotal.",
+  1211→        );
+  1212→      }
+  1213→    }
+  1214→
+  1215→    await audit(
+  1216→      auditInput(
+  1217→        input.businessId,
+  1218→        input.userId,
+  1219→        "sales_quotation.line_remove",
+  1220→        header.id,
+  1221→        header.reference,
+  1222→        { lineId: line.id, productId: line.productId, qty: line.qty, lineCount },
+  1223→      ),
+  1224→      tx,
+  1225→    );
+  1226→
+  1227→    return { removed: true, lineCount };
+  1228→  });
+  1229→}
+  1230→
+  1231→/* ------------------------------ lifecycle transitions --------------------- */
+  1232→
+  1233→/**
+  1234→ * The shared in-transaction lifecycle gate (§8): reload + canonical matrix
+  1235→ * + optional validity precondition. Every transition endpoint funnels
+  1236→ * through here so the law lives in exactly ONE place.
+  1237→ */
+  1238→async function gateTransition(
+  1239→  tx: Tx,
+  1240→  input: { businessId: string; id: string; timezone: string },
+  1241→  to: SalesQuotationStatus,
+  1242→): Promise<{
+  1243→  header: Awaited<ReturnType<typeof loadQuotationHeader>>;
+  1244→  lines: Awaited<ReturnType<typeof loadCompleteLines>>;
+  1245→}> {
+  1246→  const cap = salesQuotationLineCap(process.env.SALES_QUOTATION_MAX_LINES);
+  1247→  // Reload INSIDE the transaction; never trust an earlier GET (§8).
+  1248→  const header = await loadQuotationHeader(tx, input.businessId, input.id);
+  1249→  if (!canTransitionSalesQuotation(header.status, to)) {
+  1250→    throw new ApiError(
+  1251→      409,
+  1252→      SALES_QUOTATION_ERROR_CODES.INVALID_TRANSITION,
+  1253→      `Cannot move a sales quotation from ${header.status} to ${to}.`,
+  1254→    );
+  1255→  }
+  1256→  const lines = await loadCompleteLines(tx, header.id, cap);
+  1257→  return { header, lines };
+  1258→}
+  1259→
+  1260→/**
+  1261→ * §10/§D — mark a DRAFT quotation SENT. Requires at least one line (an
+  1262→ * empty offer can never be sent §10). sentAt is SERVER-generated inside
+  1263→ * the transaction. This records an internal user's declaration that the
+  1264→ * offer was sent OUTSIDE the application — the application does NOT
+  1265→ * deliver email (§2.7) and the audit/UI never claims it did. After send,
+  1266→ * the terms are immutable (§8).
+  1267→ */
+  1268→export async function markSalesQuotationSent(input: {
+  1269→  businessId: string;
+  1270→  userId: string;
+  1271→  id: string;
+  1272→  timezone: string;
+  1273→  ip?: string | null;
+  1274→  userAgent?: string | null;
+  1275→}) {
+  1276→  return withWriteTx(async (tx) => {
+  1277→    const { header, lines } = await gateTransition(tx, input, "SENT");
+  1278→    if (lines.length === 0) {
+  1279→      throw new ApiError(
+  1280→        422,
+  1281→        SALES_QUOTATION_ERROR_CODES.EMPTY,
+  1282→        "Add at least one line before marking this quotation sent.",
+  1283→      );
+  1284→    }
+  1285→    // §11 — the canonical total must be exact and the discount lawful
+  1286→    // before the terms freeze.
+  1287→    const totals = computeQuotationSubtotalMinor(lines);
+  1288→    try {
+  1289→      validateQuotationDiscount(header.discountMinor, totals.subtotalMinor);
+  1290→    } catch {
+  1291→      mapPureSalesQuotationDomainError(
+  1292→        new SalesQuotationIntegrityError(
+  1293→          `${SALES_QUOTATION_ERROR_CODES.CORRUPT_HISTORY}: discount exceeds subtotal`,
+  1294→        ),
+  1295→      );
+  1296→    }
+  1297→    computeQuotationTotalMinor(totals.subtotalMinor, header.discountMinor);
+  1298→
+  1299→    const sentAt = new Date();
+  1300→    const updated = await tx.salesQuotation.update({
+  1301→      where: { id: header.id },
+  1302→      data: { status: "SENT", sentAt },
+  1303→      select: { id: true, reference: true, status: true, sentAt: true },
+  1304→    });
+  1305→
+  1306→    await audit(
+  1307→      auditInput(input.businessId, input.userId, "sales_quotation.mark_sent", header.id, header.reference, {
+  1308→        lineCount: lines.length,
+  1309→        subtotalMinor: totals.subtotalMinor,
+  1310→        discountMinor: header.discountMinor,
+  1311→        previousStatus: header.status,
+  1312→        newStatus: updated.status,
+  1313→        sentAt: updated.sentAt?.toISOString() ?? null,
+  1314→        deliveryChannel: "outside_application", // §2.7 — honest semantics
+  1315→      }),
+  1316→      tx,
+  1317→    );
+  1318→
+  1319→    return {
+  1320→      id: updated.id,
+  1321→      reference: updated.reference,
+  1322→      status: updated.status,
+  1323→      sentAt: updated.sentAt,
+  1324→    };
+  1325→  });
+  1326→}
+  1327→
+  1328→/**
+  1329→ * §8/§E — record customer acceptance of a SENT quotation. Allowed only
+  1330→ * while the offer is still WITHIN its validity period in the
+  1331→ * authenticated business timezone (server clock §9). acceptedAt is
+  1332→ * SERVER-generated. This is an authorized internal user's declaration —
+  1333→ * NOT a verified portal signature (§2.7). NO SalesOrder is created until
+  1334→ * the explicit conversion operation (§13).
+  1335→ */
+  1336→export async function acceptSalesQuotation(input: {
+  1337→  businessId: string;
+  1338→  userId: string;
+  1339→  id: string;
+  1340→  timezone: string;
+  1341→  ip?: string | null;
+  1342→  userAgent?: string | null;
+  1343→}) {
+  1344→  return withWriteTx(async (tx) => {
+  1345→    const { header } = await gateTransition(tx, input, "ACCEPTED");
+  1346→    // §9 — the validity re-check runs INSIDE the write transaction (the
+  1347→    // boundary may cross while the request is in flight).
+  1348→    if (isQuotationExpiredInBusinessTz(header.validUntilDate, new Date(), input.timezone)) {
+  1349→      throw new ApiError(
+  1350→        409,
+  1351→        SALES_QUOTATION_ERROR_CODES.EXPIRED,
+  1352→        "This quotation is past its validity date and can no longer be accepted.",
+  1353→      );
+  1354→    }
+  1355→    const acceptedAt = new Date();
+  1356→    const updated = await tx.salesQuotation.update({
+  1357→      where: { id: header.id },
+  1358→      data: { status: "ACCEPTED", acceptedAt },
+  1359→      select: { id: true, reference: true, status: true, acceptedAt: true },
+  1360→    });
+  1361→
+  1362→    await audit(
+  1363→      auditInput(input.businessId, input.userId, "sales_quotation.accept", header.id, header.reference, {
+  1364→        previousStatus: header.status,
+  1365→        newStatus: updated.status,
+  1366→        acceptedAt: updated.acceptedAt?.toISOString() ?? null,
+  1367→        recordedBy: "authorized_internal_user", // §2.7 — honest semantics
+  1368→      }),
+  1369→      tx,
+  1370→    );
+  1371→
+  1372→    return {
+  1373→      id: updated.id,
+  1374→      reference: updated.reference,
+  1375→      status: updated.status,
+  1376→      acceptedAt: updated.acceptedAt,
+  1377→    };
+  1378→  });
+  1379→}
+  1380→
+  1381→/**
+  1382→ * §8/§F — record the customer's rejection of a SENT quotation. Allowed
+  1383→ * only while the offer is still within its validity period (§8). The
+  1384→ * rejected offer is terminal and immutable.
+  1385→ */
+  1386→export async function rejectSalesQuotation(input: {
+  1387→  businessId: string;
+  1388→  userId: string;
+  1389→  id: string;
+  1390→  timezone: string;
+  1391→  ip?: string | null;
+  1392→  userAgent?: string | null;
+  1393→}) {
+  1394→  return withWriteTx(async (tx) => {
+  1395→    const { header } = await gateTransition(tx, input, "REJECTED");
+  1396→    if (isQuotationExpiredInBusinessTz(header.validUntilDate, new Date(), input.timezone)) {
+  1397→      throw new ApiError(
+  1398→        409,
+  1399→        SALES_QUOTATION_ERROR_CODES.EXPIRED,
+  1400→        "This quotation is past its validity date and can no longer be rejected.",
+  1401→      );
+  1402→    }
+  1403→    const rejectedAt = new Date();
+  1404→    const updated = await tx.salesQuotation.update({
+  1405→      where: { id: header.id },
+  1406→      data: { status: "REJECTED", rejectedAt },
+  1407→      select: { id: true, reference: true, status: true, rejectedAt: true },
+  1408→    });
+  1409→
+  1410→    await audit(
+  1411→      auditInput(input.businessId, input.userId, "sales_quotation.reject", header.id, header.reference, {
+  1412→        previousStatus: header.status,
+  1413→        newStatus: updated.status,
+  1414→        rejectedAt: updated.rejectedAt?.toISOString() ?? null,
+  1415→      }),
+  1416→      tx,
+  1417→    );
+  1418→
+  1419→    return {
+  1420→      id: updated.id,
+  1421→      reference: updated.reference,
+  1422→      status: updated.status,
+  1423→      rejectedAt: updated.rejectedAt,
+  1424→    };
+  1425→  });
+  1426→}
+  1427→
+  1428→/**
+  1429→ * §8 — cancel a DRAFT/SENT/ACCEPTED quotation (ACCEPTED cancellation is
+  1430→ * the documented cancel-before-conversion policy and is legal only before
+  1431→ * conversion — the transition matrix enforces that). Cancelling a
+  1432→ * quotation NEVER touches inventory or finance (§1).
+  1433→ */
+  1434→export async function cancelSalesQuotation(input: {
+  1435→  businessId: string;
+  1436→  userId: string;
+  1437→  id: string;
+  1438→  timezone: string;
+  1439→  ip?: string | null;
+  1440→  userAgent?: string | null;
+  1441→}) {
+  1442→  return withWriteTx(async (tx) => {
+  1443→    const { header } = await gateTransition(tx, input, "CANCELLED");
+  1444→    const cancelledAt = new Date();
+  1445→    const updated = await tx.salesQuotation.update({
+  1446→      where: { id: header.id },
+  1447→      data: { status: "CANCELLED", cancelledAt },
+  1448→      select: { id: true, reference: true, status: true, cancelledAt: true },
+  1449→    });
+  1450→
+  1451→    await audit(
+  1452→      auditInput(input.businessId, input.userId, "sales_quotation.cancel", header.id, header.reference, {
+  1453→        previousStatus: header.status,
+  1454→        newStatus: updated.status,
+  1455→        cancelledAt: updated.cancelledAt?.toISOString() ?? null,
+  1456→      }),
+  1457→      tx,
+  1458→    );
+  1459→
+  1460→    return {
+  1461→      id: updated.id,
+  1462→      reference: updated.reference,
+  1463→      status: updated.status,
+  1464→      cancelledAt: updated.cancelledAt,
+  1465→    };
+  1466→  });
+  1467→}
+  1468→
+  1469→/**
+  1470→ * §9 — the EXPLICIT expire transition for a SENT quotation that is past
+  1471→ * its validity date. Legal ONLY when the offer has ACTUALLY expired in
+  1472→ * the authenticated business timezone (a valid offer can never be
+  1473→ * force-expired — the controlled 409 keeps the law honest). Atomic and
+  1474→ * audited; the stored status becomes EXPIRED exactly once.
+  1475→ */
+  1476→export async function expireSalesQuotation(input: {
+  1477→  businessId: string;
+  1478→  userId: string;
+  1479→  id: string;
+  1480→  timezone: string;
+  1481→  ip?: string | null;
+  1482→  userAgent?: string | null;
+  1483→}) {
+  1484→  return withWriteTx(async (tx) => {
+  1485→    const { header } = await gateTransition(tx, input, "EXPIRED");
+  1486→    if (!isQuotationExpiredInBusinessTz(header.validUntilDate, new Date(), input.timezone)) {
+  1487→      throw new ApiError(
+  1488→        409,
+  1489→        SALES_QUOTATION_ERROR_CODES.NOT_EXPIRED,
+  1490→        "This quotation has not passed its validity date yet.",
+  1491→      );
+  1492→    }
+  1493→    const updated = await tx.salesQuotation.update({
+  1494→      where: { id: header.id },
+  1495→      data: { status: "EXPIRED" },
+  1496→      select: { id: true, reference: true, status: true },
+  1497→    });
+  1498→
+  1499→    await audit(
+  1500→      auditInput(input.businessId, input.userId, "sales_quotation.expire", header.id, header.reference, {
+  1501→        previousStatus: header.status,
+  1502→        newStatus: updated.status,
+  1503→        validUntilDate: header.validUntilDate.toISOString(),
+  1504→      }),
+  1505→      tx,
+  1506→    );
+  1507→
+  1508→    return {
+  1509→      id: updated.id,
+  1510→      reference: updated.reference,
+  1511→      status: updated.status,
+  1512→    };
+  1513→  });
+  1514→}
+  1515→
+  1516→/* --------------------------- conversion (§13) ----------------------------- */
+  1517→
+  1518→/**
+  1519→ * §13 — THE conversion: an ACCEPTED quotation becomes exactly ONE
+  1520→ * CONFIRMED SalesOrder. ONE atomic transaction:
+  1521→ *   1. reload the quotation tenant-scoped;
+  1522→ *   2. already-converted guard FIRST (the ONE stable conflict for every
+  1523→ *      loser of any race — the P45 D-5 lesson), backed by the DB UNIQUE
+  1524→ *      constraint on SalesOrder.sourceQuotationId (§7);
+  1525→ *   3. persisted status law (ACCEPTED only — invalid → controlled 500,
+  1526→ *      wrong-but-valid status → 409);
+  1527→ *   4. complete, materially valid line set (§11);
+  1528→ *   5. canonical totals recomputed from authoritative persisted lines;
+  1529→ *   6. every snapshot validated (§12);
+  1530→ *   7. ONE SalesOrder created CONFIRMED — customer snapshot, currency
+  1531→ *      snapshot, expected date, discount copied EXACTLY; orderDate =
+  1532→ *      current business-local date (established midnoon rule);
+  1533→ *      internalNotes → SalesOrder.notes (staff-visible order notes —
+  1534→ *      never the customer print view §16);
+  1535→ *   8. ONE SalesOrderLine per quotation line — productId + frozen
+  1536→ *      snapshots + exact qty/unitPriceMinor (NEVER re-priced from live
+  1537→ *      Products §12/§13);
+  1538→ *   9. order totals derived via the EXISTING SalesOrder domain functions;
+  1539→ *  10. quotation → CONVERTED + convertedAt;
+  1540→ *  11. audit ×2 (sales_order.create + sales_quotation.convert) in-tx;
+  1541→ *  12. commit both documents together.
+  1542→ *
+  1543→ * NO Sale invoice, NO Payment, NO receivable, NO InventoryAdjustment, NO
+  1544→ * stock reservation, NO Product.stockQty change (§13 invariants). NO
+  1545→ * notification claims an invoice or payment occurred.
+  1546→ */
+  1547→export async function convertSalesQuotationToOrder(input: {
+  1548→  businessId: string;
+  1549→  userId: string;
+  1550→  id: string;
+  1551→  timezone: string;
+  1552→  ip?: string | null;
+  1553→  userAgent?: string | null;
+  1554→}) {
+  1555→  return withWriteTx(async (tx) => {
+  1556→    const cap = salesQuotationLineCap(process.env.SALES_QUOTATION_MAX_LINES);
+  1557→    // 1. tenant-scoped reload INSIDE the transaction (§13 step 1).
+  1558→    const header = await loadQuotationHeader(tx, input.businessId, input.id);
+  1559→
+  1560→    // 2. already-converted guard BEFORE the status gate (§13/D-5 lesson):
+  1561→    //    every loser — including a retry after the winner committed —
+  1562→    //    receives the ONE documented stable conflict code.
+  1563→    const existingOrder = await tx.salesOrder.findFirst({
+  1564→      where: { sourceQuotationId: header.id },
+  1565→      select: { id: true, reference: true },
+  1566→    });
+  1567→    if (existingOrder) {
+  1568→      throw new ApiError(
+  1569→        409,
+  1570→        SALES_QUOTATION_ERROR_CODES.ALREADY_CONVERTED,
+  1571→        "This quotation has already been converted to a sales order.",
+  1572→      );
+  1573→    }
+  1574→
+  1575→    // 3. persisted status law: an ACCEPTED quotation converts; a
+  1576→    //    valid-but-wrong status is an ordinary conflict; a corrupted
+  1577→    //    persisted status is the controlled integrity 500 (parseDbStatus).
+  1578→    if (header.status !== "ACCEPTED") {
+  1579→      if (
+  1580→        header.status === "REJECTED" ||
+  1581→        header.status === "EXPIRED" ||
+  1582→        header.status === "CANCELLED"
+  1583→      ) {
+  1584→        throw new ApiError(
+  1585→          409,
+  1586→          SALES_QUOTATION_ERROR_CODES.NOT_ACCEPTED,
+  1587→          "Only ACCEPTED sales quotations can be converted.",
+  1588→        );
+  1589→      }
+  1590→      throw new ApiError(
+  1591→        409,
+  1592→        SALES_QUOTATION_ERROR_CODES.INVALID_STATUS,
+  1593→        "Only ACCEPTED sales quotations can be converted.",
+  1594→      );
+  1595→    }
+  1596→    // §9 — ACCEPTED never expires; conversion remains legal after the
+  1597→    // original validity date passes because acceptance was already
+  1598→    // recorded (documented §9 law).
+  1599→
+  1600→    // 4–5. complete line set + canonical totals from persisted lines.
+  1601→    const lines = await loadCompleteLines(tx, header.id, cap);
+  1602→    if (lines.length === 0) {
+  1603→      // An ACCEPTED quotation with zero lines is corruption (it could
+  1604→      // never have passed mark-sent) — integrity, not a user error.
+  1605→      mapPureSalesQuotationDomainError(
+  1606→        new SalesQuotationIntegrityError(
+  1607→          `${SALES_QUOTATION_ERROR_CODES.CORRUPT_HISTORY}: accepted quotation without lines`,
+  1608→        ),
+  1609→      );
+  1610→    }
+  1611→    const quotationTotals = computeQuotationSubtotalMinor(lines);
+  1612→    try {
+  1613→      validateQuotationDiscount(header.discountMinor, quotationTotals.subtotalMinor);
+  1614→    } catch {
+  1615→      mapPureSalesQuotationDomainError(
+  1616→        new SalesQuotationIntegrityError(
+  1617→          `${SALES_QUOTATION_ERROR_CODES.CORRUPT_HISTORY}: discount exceeds subtotal`,
+  1618→        ),
+  1619→      );
+  1620→    }
+  1621→    const quotationTotalMinor = computeQuotationTotalMinor(
+  1622→      quotationTotals.subtotalMinor,
+  1623→      header.discountMinor,
+  1624→    );
+  1625→
+  1626→    // 6. every snapshot validated (§12/§13 step 6).
+  1627→    validateHeaderSnapshots(header);
+  1628→
+  1629→    // Order reference: the established SO generator, distinct sequence
+  1630→    // domain (§10 — quotation and order references never share a sequence).
+  1631→    let orderReference: string | undefined;
+  1632→    for (let attempt = 0; attempt < 5; attempt += 1) {
+  1633→      const candidate = generateSalesOrderReference(new Date(), (max) => randomInt(max));
+  1634→      const clash = await tx.salesOrder.findFirst({
+  1635→        where: { businessId: input.businessId, reference: candidate },
+  1636→        select: { id: true },
+  1637→      });
+  1638→      if (!clash) {
+  1639→        orderReference = candidate;
+  1640→        break;
+  1641→      }
+  1642→    }
+  1643→    if (orderReference === undefined) {
+  1644→      throw new ApiError(
+  1645→        409,
+  1646→        SALES_QUOTATION_ERROR_CODES.ALREADY_CONVERTED,
+  1647→        "Could not generate a unique order reference. Please try again.",
+  1648→      );
+  1649→    }
+  1650→
+  1651→    // §13 step 11 — orderDate is the CURRENT business-local date
+  1652→    // normalized with the established UTC-midnoon rule (server clock).
+  1653→    const orderDate = new Date(
+  1654→      `${businessLocalCalendarDate(new Date(), input.timezone)}T12:00:00.000Z`,
+  1655→    );
+  1656→    const confirmedAt = new Date();
+  1657→
+  1658→    // 7. ONE SalesOrder — CONFIRMED, source link established (§13 steps
+  1659→    //    8–12/19/20). Customer/currency snapshots copied EXACTLY.
+  1660→    let order;
+  1661→    try {
+  1662→      order = await tx.salesOrder.create({
+  1663→        data: {
+  1664→          businessId: input.businessId, // server-derived
+  1665→          customerId: header.customerId,
+  1666→          customerNameAtOrder: header.customerNameAtQuotation, // frozen §12
+  1667→          reference: orderReference,
+  1668→          status: "CONFIRMED", // acceptance = commercial commitment (§13)
+  1669→          currencyCodeAtOrder: header.currencyCodeAtQuotation,
+  1670→          currencySymbolAtOrder: header.currencySymbolAtQuotation,
+  1671→          decimalPrecisionAtOrder: header.decimalPrecisionAtQuotation,
+  1672→          orderDate,
+  1673→          expectedDate: header.expectedDeliveryDate,
+  1674→          discountMinor: header.discountMinor, // copied EXACTLY (§13 step 13)
+  1675→          notes: header.internalNotes, // staff notes continuity (§13 step 14)
+  1676→          createdByUserId: input.userId,
+  1677→          confirmedAt, // §13 step 20 — server-side transaction time
+  1678→          sourceQuotationId: header.id, // §13 step 23 — the ONE authority
+  1679→        },
+  1680→        select: { id: true, reference: true, status: true, confirmedAt: true },
+  1681→      });
+  1682→    } catch (error) {
+  1683→      // The DB unique constraint is the FINAL race authority (§7/§13):
+  1684→      // a concurrent winner (or an impossible prior conversion) surfaces
+  1685→      // as the ONE stable conflict — never a second order.
+  1686→      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+  1687→        throw new ApiError(
+  1688→          409,
+  1689→          SALES_QUOTATION_ERROR_CODES.ALREADY_CONVERTED,
+  1690→          "This quotation has already been converted to a sales order.",
+  1691→        );
+  1692→      }
+  1693→      throw error;
+  1694→    }
+  1695→
+  1696→    // 8. ONE SalesOrderLine per quotation line — the FROZEN snapshots and
+  1697→    //    exact agreed prices (§13 steps 15–17; never re-read/re-priced).
+  1698→    //    The order subtotal is re-derived via the EXISTING order domain
+  1699→    //    functions so both documents provably agree (§13 step 18).
+  1700→    let orderSubtotalMinor = 0;
+  1701→    try {
+  1702→      for (const line of lines) {
+  1703→        await tx.salesOrderLine.create({
+  1704→          data: {
+  1705→            salesOrderId: order.id,
+  1706→            productId: line.productId,
+  1707→            orderedQty: line.qty, // exact quantity (§13 step 17)
+  1708→            unitPriceMinor: line.unitPriceMinor, // exact agreed price
+  1709→            productNameAtOrder: line.productNameAtQuotation,
+  1710→            skuAtOrder: line.skuAtQuotation,
+  1711→            unitAtOrder: line.unitAtQuotation,
+  1712→          },
+  1713→          select: { id: true },
+  1714→        });
+  1715→        orderSubtotalMinor += computeQuotationLineTotalMinor(line.qty, line.unitPriceMinor);
+  1716→      }
+  1717→      if (!Number.isSafeInteger(orderSubtotalMinor)) {
+  1718→        throw new SalesQuotationIntegrityError(
+  1719→          `${SALES_QUOTATION_ERROR_CODES.TOTAL_OVERFLOW}: order subtotal overflow during conversion`,
+  1720→        );
+  1721→      }
+  1722→      // §13 step 18 — derive the order totals via the EXISTING domain
+  1723→      // functions; quotation and order totals MUST agree exactly.
+  1724→      const orderTotals = computeOrderSubtotalMinor(
+  1725→        lines.map((l) => ({ orderedQty: l.qty, unitPriceMinor: l.unitPriceMinor })),
+  1726→      );
+  1727→      if (orderTotals.subtotalMinor !== quotationTotals.subtotalMinor) {
+  1728→        mapPureSalesQuotationDomainError(
+  1729→          new SalesQuotationIntegrityError(
+  1730→            `${SALES_QUOTATION_ERROR_CODES.CORRUPT_HISTORY}: quotation/order subtotal disagreement`,
+  1731→          ),
+  1732→        );
+  1733→      }
+  1734→    } catch (error) {
+  1735→      // §13/H — a failure here aborts the WHOLE transaction: no partial
+  1736→      // order, no partially copied lines, no CONVERTED quotation, no
+  1737→      // stray audit (withWriteTx rolls back everything).
+  1738→      throw error;
+  1739→    }
+  1740→
+  1741→    // 10. quotation → CONVERTED + convertedAt (§13 steps 21–22).
+  1742→    const convertedAt = new Date();
+  1743→    await tx.salesQuotation.update({
+  1744→      where: { id: header.id },
+  1745→      data: { status: "CONVERTED", convertedAt },
+  1746→      select: { id: true },
+  1747→    });
+  1748→
+  1749→    // 11. audit ×2, SAME transaction (§13 step 24). Minimal safe payloads;
+  1750→    //     never the notes contents.
+  1751→    await audit(
+  1752→      {
+  1753→        businessId: input.businessId,
+  1754→        actorId: input.userId,
+  1755→        action: "sales_order.create",
+  1756→        entityType: "SalesOrder",
+  1757→        entityId: order.id,
+  1758→        after: {
+  1759→          reference: order.reference,
+  1760→          sourceQuotationId: header.id,
+  1761→          sourceQuotationReference: header.reference,
+  1762→          status: order.status,
+  1763→          lineCount: lines.length,
+  1764→          subtotalMinor: quotationTotals.subtotalMinor,
+  1765→          discountMinor: header.discountMinor,
+  1766→          totalMinor: quotationTotalMinor,
+  1767→        },
+  1768→      },
+  1769→      tx,
+  1770→    );
+  1771→    await audit(
+  1772→      auditInput(input.businessId, input.userId, "sales_quotation.convert", header.id, header.reference, {
+  1773→        salesOrderId: order.id,
+  1774→        salesOrderReference: order.reference,
+  1775→        lineCount: lines.length,
+  1776→        subtotalMinor: quotationTotals.subtotalMinor,
+  1777→        discountMinor: header.discountMinor,
+  1778→        totalMinor: quotationTotalMinor,
+  1779→        previousStatus: header.status,
+  1780→        newStatus: "CONVERTED",
+  1781→        convertedAt: convertedAt.toISOString(),
+  1782→      }),
+  1783→      tx,
+  1784→    );
+  1785→
+  1786→    // 12. both documents commit together (§13 step 25).
+  1787→    return {
+  1788→      quotationId: header.id,
+  1789→      quotationReference: header.reference,
+  1790→      salesOrder: order,
+  1791→    };
+  1792→  });
+  1793→}
+  1794→
+  1795→/* ---------------------- entity-detail integration (§19) ------------------- */
+  1796→
+  1797→/**
+  1798→ * §19 — bounded, read-only quotation history for the Customer 360 (≤10).
+  1799→ * Snapshot statuses + effective status; convertedOrderReference ONLY when
+  1800→ * the relation exists. Corrupted rows fail the whole bounded read safely.
+  1801→ */
+  1802→export async function recentQuotationsForCustomer(
+  1803→  businessId: string,
+  1804→  customerId: string,
+  1805→  take = 10,
+  1806→): Promise<CustomerRecentSalesQuotationDto[]> {
+  1807→  const cap = salesQuotationLineCap(process.env.SALES_QUOTATION_MAX_LINES);
+  1808→  const now = new Date();
+  1809→  const rows = await db.salesQuotation.findMany({
+  1810→    where: { businessId, customerId }, // tenant-scoped (§19)
+  1811→    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+  1812→    take,
+  1813→    select: {
+  1814→      id: true,
+  1815→      reference: true,
+  1816→      status: true,
+  1817→      quotationDate: true,
+  1818→      validUntilDate: true,
+  1819→      currencyCodeAtQuotation: true,
+  1820→      currencySymbolAtQuotation: true,
+  1821→      decimalPrecisionAtQuotation: true,
+  1822→      discountMinor: true,
+  1823→      createdAt: true,
+  1824→      convertedSalesOrder: { select: { reference: true } },
+  1825→      lines: { select: { qty: true, unitPriceMinor: true }, take: cap + 1 },
+  1826→      _count: { select: { lines: true } },
+  1827→    },
+  1828→  });
+  1829→  return rows.map((row) => {
+  1830→    const persistedStatus = parseDbStatus(row.status);
+  1831→    const effectiveStatus = effectiveQuotationStatus(persistedStatus, row.validUntilDate, now, null);
+  1832→    assertSalesQuotationLineSetComplete(row.lines.length, row._count.lines, cap);
+  1833→    const subtotalMinor = computeQuotationSubtotalMinor(row.lines).subtotalMinor;
+  1834→    const totalMinor = computeQuotationTotalMinor(subtotalMinor, row.discountMinor);
+  1835→    return customerRecentSalesQuotationDto({
+  1836→      id: row.id,
+  1837→      reference: row.reference,
+  1838→      persistedStatus,
+  1839→      effectiveStatus,
+  1840→      quotationDate: row.quotationDate,
+  1841→      currencyCodeAtQuotation: row.currencyCodeAtQuotation,
+  1842→      currencySymbolAtQuotation: row.currencySymbolAtQuotation,
+  1843→      decimalPrecisionAtQuotation: row.decimalPrecisionAtQuotation,
+  1844→      totalMinor,
+  1845→      totalQty: row.lines.reduce((acc, l) => acc + l.qty, 0),
+  1846→      convertedOrderReference: row.convertedSalesOrder?.reference ?? null,
+  1847→    });
+  1848→  });
+  1849→}
+  1850→
+  1851→/**
+  1852→ * §19 — bounded, read-only quotation history for the Product detail (≤10).
+  1853→ * QUANTITIES ONLY — NO money on product surfaces (the established §72 law).
+  1854→ */
+  1855→export async function recentQuotationsForProduct(
+  1856→  businessId: string,
+  1857→  productId: string,
+  1858→  take = 10,
+  1859→): Promise<ProductRecentSalesQuotationDto[]> {
+  1860→  const cap = salesQuotationLineCap(process.env.SALES_QUOTATION_MAX_LINES);
+  1861→  const now = new Date();
+  1862→  const rows = await db.salesQuotationLine.findMany({
+  1863→    where: { productId, salesQuotation: { businessId } }, // tenant-scoped (§19)
+  1864→    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+  1865→    take,
+  1866→    select: {
+  1867→      qty: true,
+  1868→      salesQuotation: {
+  1869→        select: {
+  1870→          id: true,
+  1871→          reference: true,
+  1872→          status: true,
+  1873→          customerNameAtQuotation: true,
+  1874→          quotationDate: true,
+  1875→          validUntilDate: true,
+  1876→        },
+  1877→      },
+  1878→    },
+  1879→  });
+  1880→  return rows.map((row) => {
+  1881→    const persistedStatus = parseDbStatus(row.salesQuotation.status);
+  1882→    const effectiveStatus = effectiveQuotationStatus(
+  1883→      persistedStatus,
+  1884→      row.salesQuotation.validUntilDate,
+  1885→      now,
+  1886→      null,
+  1887→    );
+  1888→    return productRecentSalesQuotationDto({
+  1889→      id: row.salesQuotation.id,
+  1890→      reference: row.salesQuotation.reference,
+  1891→      customerNameAtQuotation: row.salesQuotation.customerNameAtQuotation,
+  1892→      persistedStatus,
+  1893→      effectiveStatus,
+  1894→      quotationDate: row.salesQuotation.quotationDate,
+  1895→      qty: row.qty,
+  1896→    });
+  1897→  });
+  1898→}
+  1899→

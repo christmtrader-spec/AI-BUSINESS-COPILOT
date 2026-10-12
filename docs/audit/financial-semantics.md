@@ -307,3 +307,42 @@ Confirm Order / Dispatched / Remaining to dispatch / Issue Invoice", FA
 صدور فاکتور — never پرداخت/بدهی in order copy. COMPLETED means "fully
 dispatched AND invoiced", never "paid": the linked invoice follows the
 existing UNPAID → PARTIAL → PAID pipeline (§64).
+
+---
+
+## 10. Sales Quotations (Prompt 47)
+
+A SalesQuotation is a **formal commercial offer** — "we propose these
+quantities at these prices, valid until this date". It sits one step
+BEFORE the order in the document chain and is NOT a financial term of
+any kind: the definitions in §2 above intentionally have NO quotation
+case. Full domain review: `docs/product/sales-quotations.md`.
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Revenue | **NO — an offer is not revenue** | no lifecycle transition (create/edit/mark-sent/accept/reject/cancel/expire/convert) touches `Sale`; reports, copilot metrics and the dashboard never read quotations |
+| Invoice / receivable | **NO** | no `Sale` row, no receivable/aging input; receivables are built from `Sale` only |
+| Payment | **NO** | no `Payment` row, no paid/balance field exists on the quotation (subtotal − discount is the whole money model) |
+| Customer Statement | **NO** | statements derive from Sale+Payment only; quotations are structurally absent (`src/lib/statements/`) |
+| Inventory movement / stock | **NO** | no `InventoryAdjustment`, no `Product.stockQty` change on ANY transition — statically scanned (service + export contain no stock/finance vocabulary) and E2E-pinned byte-identical against non-zero baselines |
+| Stock reservation | **NO** | no reservation model; acceptance does not reserve availability |
+| Accounting entry | **NO** | no journal/ledger/COGS vocabulary anywhere in the P47 domain |
+| Conversion (ACCEPTED → CONVERTED) | **Creates NO financial record** — exactly ONE CONFIRMED `SalesOrder` (+ its lines) is the ONLY artifact, plus two audit rows | conversion transaction §13: NO Sale/Payment/receivable/adjustment/stock delta; order totals derived via the EXISTING SalesOrder domain functions |
+
+**The ORDER remains the fulfillment/financial authority.** Conversion
+copies the frozen offer terms into one legitimate SalesOrder; from that
+moment the quotation is a read-only source document — dispatch, stock
+decrement, invoicing, receivable and payment semantics belong to the
+Prompt 45 documents exactly as for any manually created order. An
+ACCEPTED-but-never-converted quotation has the financial weight of
+nothing: it is a recorded negotiation outcome, not a booking.
+
+**Validity display law:** `effectiveStatus: EXPIRED` on a past-validity
+SENT offer is a display verdict only — it never mutates a financial or
+inventory figure, because the quotation never fed one.
+
+**Wording law:** quotation copy uses offer vocabulary — EN
+"Quotation / Mark as sent / Record acceptance / Convert to sales order",
+FA استعلام قیمت / ثبت ارسال / ثبت پذیرش مشتری / تبدیل به سفارش فروش —
+never فاکتور (invoice) on the offer itself; the printable sheet is
+explicitly labelled as an offer, not an invoice.

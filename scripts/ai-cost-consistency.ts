@@ -2,6 +2,12 @@
 /**
  * scripts/ai-cost-consistency.ts — Prompt 26 (§66).
  *
+ * P46-API RECOVERY NOTE: utcLastDays is no longer exported from
+ * "@/lib/ai/cost" → a local, pure UTC helper provides the bounded window.
+ * The COMPLETE-token arithmetic check now guards SQL-NULL token fields
+ * explicitly (the current ledger stores absent dimensions as NULL, never 0).
+ * All six audit invariants are unchanged.
+ *
  * UsageEvent ↔ AiCostRecord consistency audit (read-only, §132):
  *   1. Every COMMITTED AI_REQUESTS event has EXACTLY ONE cost attribution
  *      or is listed as PENDING (§68) — no duplicates (§20).
@@ -20,7 +26,13 @@
  */
 
 import { db } from "@/lib/db";
-import { utcLastDays } from "@/lib/ai/cost";
+
+/** Local pure UTC window (module no longer exports utcLastDays): [today-N
+ *  days 00:00 UTC, tomorrow 00:00 UTC) — inclusive of today, bounded. */
+function utcLastDays(days: number, now = new Date()): { from: Date; to: Date } {
+  const tomorrowStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) + 86_400_000;
+  return { from: new Date(tomorrowStart - days * 86_400_000), to: new Date(tomorrowStart) };
+}
 
 async function main() {
   const daysIdx = process.argv.indexOf("--days");
@@ -85,8 +97,15 @@ async function main() {
     } else {
       problems.push(`BAD_COST_STATUS ${r.id}: ${r.costStatus}`);
     }
-    // 5. Token arithmetic on COMPLETE records.
-    if (r.tokenStatus === "COMPLETE" && r.inputTokens + r.outputTokens !== r.totalTokens) {
+    // 5. Token arithmetic on COMPLETE records (NULL-guarded: the current
+    //    ledger stores absent dimensions as NULL — never 0).
+    if (
+      r.tokenStatus === "COMPLETE" &&
+      r.inputTokens != null &&
+      r.outputTokens != null &&
+      r.totalTokens != null &&
+      r.inputTokens + r.outputTokens !== r.totalTokens
+    ) {
       problems.push(`TOKEN_ARITHMETIC ${r.id}: in(${r.inputTokens}) + out(${r.outputTokens}) != total(${r.totalTokens})`);
     }
   }

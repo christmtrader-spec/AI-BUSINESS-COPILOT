@@ -285,7 +285,16 @@ eq(ENTITY_DESTINATION.OPPORTUNITY, "opportunities", "u25 OPPORTUNITY destination
 // Prompt 43 (§101) — GOODS_RETURN joins.
 // Prompt 44 — GOODS_DISPATCH joins: 12 destinations total.
 // Prompt 45 (§70) — SALES_ORDER joins: 13 destinations total.
-ok(SEARCH_DESTINATIONS.length === 13, "u25 destinations cover 13 entities (P41 POs + P42 receipts + P43 returns + P44 dispatches + P45 sales orders)");
+// Prompt 47 — the count derives from the CANONICAL registry (never a
+// hardcoded number): SEARCH_DESTINATIONS must stay 1:1 with
+// SEARCH_ENTITY_TYPES through ENTITY_DESTINATION.
+ok(
+  SEARCH_DESTINATIONS.length === SEARCH_ENTITY_TYPES.length &&
+    SEARCH_ENTITY_TYPES.every((t) =>
+      SEARCH_DESTINATIONS.includes(ENTITY_DESTINATION[t]),
+    ),
+  "u25 destinations cover every registered entity type (P41 POs + P42 receipts + P43 returns + P44 dispatches + P45 sales orders + P47 quotations)",
+);
 
 /* 26 — CRM tab vocabulary + default (§37) */
 // Prompt 36 (§43/§115) added the closed `tasks` tab — vocabulary extended.

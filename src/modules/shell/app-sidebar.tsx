@@ -23,6 +23,7 @@ import {
   Users,
   Wallet,
   ArrowUpRight,
+  FileSignature,
   PackageCheck,
   PackageMinus,
   PackageOpen,
@@ -65,6 +66,7 @@ type NavItem = {
     | "goodsReturns"
     | "goodsDispatches"
     | "salesOrders"
+    | "salesQuotations"
     | "products"
     | "inventory"
     | "sales"
@@ -102,6 +104,8 @@ const OPERATIONS: NavItem[] = [
   { view: { kind: "inventory-goods-dispatches" }, labelKey: "goodsDispatches", icon: PackageOpen },
   // Prompt 45 (§74) — sales orders join the business-operations group.
   { view: { kind: "sales-orders" }, labelKey: "salesOrders", icon: FileText },
+  // Prompt 47 — sales quotations join the same business-operations group.
+  { view: { kind: "sales-quotations" }, labelKey: "salesQuotations", icon: FileSignature },
   { view: { kind: "module", module: "products" }, labelKey: "products", icon: Package },
   { view: { kind: "module", module: "inventory" }, labelKey: "inventory", icon: Warehouse },
   { view: { kind: "module", module: "sales" }, labelKey: "sales", icon: ShoppingCart },

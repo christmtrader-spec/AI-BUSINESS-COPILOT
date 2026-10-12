@@ -107,6 +107,14 @@ export type AppView =
    */
   | { kind: "sales-orders" }
   | { kind: "sales-order"; id: string }
+  /**
+   * Prompt 47 — Sales quotation views: the LIST at #/sales-quotations and
+   * a DETAIL deep link at #/sales-quotations/<id>. The id is validated
+   * with the same safe-ID rules as entity routes — malformed ids NEVER
+   * become state (dashboard fallback).
+   */
+  | { kind: "sales-quotations" }
+  | { kind: "sales-quotation"; id: string }
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
@@ -233,6 +241,11 @@ export function viewKeyOf(view: AppView): string {
       ? "sales-orders"
     : view.kind === "sales-order"
       ? `sales-order:${view.id}`
+    // Prompt 47 — sales-quotation views: list + per-id detail keys.
+    : view.kind === "sales-quotations"
+      ? "sales-quotations"
+    : view.kind === "sales-quotation"
+      ? `sales-quotation:${view.id}`
       : view.kind === "join"
       ? `join:${view.token}`
       : view.kind === "reset-password"
@@ -388,6 +401,13 @@ export function viewToHash(view: AppView): string | null {
       // Prompt 45 (§88) — only charset-safe ids ever become a hash.
       if (!isValidEntityId(view.id)) return null;
       return `#/sales-orders/${view.id}`;
+    case "sales-quotations":
+      // Prompt 47 — canonical list hash.
+      return "#/sales-quotations";
+    case "sales-quotation":
+      // Prompt 47 — only charset-safe ids ever become a hash.
+      if (!isValidEntityId(view.id)) return null;
+      return `#/sales-quotations/${view.id}`;
     case "platform":
       // #/platform itself resolves to the overview section (§15).
       return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
@@ -583,6 +603,23 @@ export function hashToView(hash: string): AppView {
     }
     if (!isValidEntityId(id)) return { kind: "dashboard" };
     return { kind: "sales-order", id };
+  }
+  // Prompt 47 — sales-quotation deep links, matched BEFORE the
+  // module/entity fallbacks: #/sales-quotations opens the list;
+  // #/sales-quotations/<id> opens the detail only when the id is
+  // charset-safe; anything else falls through to the dashboard fallback —
+  // never an arbitrary "#/anything/<id>" interpretation.
+  if (path === "sales-quotations") return { kind: "sales-quotations" };
+  if (path.startsWith("sales-quotations/")) {
+    const rawId = path.slice("sales-quotations/".length);
+    let id = rawId;
+    try {
+      id = decodeURIComponent(rawId);
+    } catch {
+      return { kind: "dashboard" };
+    }
+    if (!isValidEntityId(id)) return { kind: "dashboard" };
+    return { kind: "sales-quotation", id };
   }
   // Prompt 34 — entity detail deep links (#/customers/<id>, §5/§6) are
   // attempted BEFORE the bare-module match: "customers" alone stays the

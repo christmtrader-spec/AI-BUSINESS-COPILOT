@@ -3951,3 +3951,273 @@ Work Log:
 FILES CHANGED THIS ROUND (all minimal, audited):
 - MODIFIED: src/lib/sales-orders/service.ts (D-5 guard order + law comment) · src/modules/sales-orders/sales-order-detail-view.tsx (D-7 cancel visibility gate, D-10 paidLabel) · src/modules/entities/customer-detail-view.tsx (D-8 widget) · src/modules/entities/product-detail-view.tsx (D-9 widget) · src/i18n/messages/en.ts + fa.ts (D-4 duplicate removed, paidLabel added) · scripts/prompt45-sales-order-cap-check.ts (D-1 header, D-2 13 assertions) · scripts/prompt44-unit.ts (D-3 fixtures) · scripts/prompt42-unit.ts (header invocation note) · docs/product/sales-orders.md (cancel-visibility precision).
 - DELETED: none. MIGRATIONS: none added (P45 migration already correct; 27/0 verified).
+
+---
+Task ID: 46-b
+Agent: public-commerce-cleanup subagent
+Task: Remove obsolete public-commerce paths (Prompt 46 baseline recovery)
+
+Work Log:
+- Read worklog top summary + Task 45-F entry first. Re-verified EVERY target
+  was dead before deleting (grep consumers in src/ + scripts/): no importer
+  of src/modules/pricing/pricing-view.tsx (the live /pricing page uses
+  src/components/public/pricing-root → components/public/pricing-view;
+  platform-shell imports src/modules/platform/pricing-view — a DIFFERENT,
+  live file), contact-sales-dialog only consumed by pricing-view,
+  legal-view.tsx orphaned, content/legal/index.ts consumed only by legal-view
+  + the P27 harness, trust.ts only by index.ts, lib/analytics(-client) only by
+  each other + pricing-view + the dead route, /api/v1/public/{pricing,
+  analytics,contact} routes unreferenced by any live client,
+  lib/payments/public-pricing.ts imported ONLY by the dead /api/v1/public/
+  pricing route (imports nonexistent configuredTrialDays from billing/catalog),
+  /api/v1/onboarding/dismiss writes nonexistent Business.onboardingDismissedAt,
+  SetupChecklistCard mounted nowhere (dashboard-view.tsx does not import it).
+- DELETED (13 paths): src/modules/pricing/{pricing-view,contact-sales-dialog}.tsx,
+  src/modules/legal/legal-view.tsx, src/content/legal/{index,trust}.ts,
+  src/lib/analytics.ts, src/lib/analytics-client.ts, src/lib/payments/
+  public-pricing.ts, src/modules/dashboard/setup-checklist-card.tsx,
+  src/app/api/v1/public/{analytics,contact,pricing}/ (dirs),
+  src/app/api/v1/onboarding/dismiss/ (dir). Removed the now-empty
+  src/modules/pricing, src/modules/legal, src/app/api/v1/public dirs.
+  NO migrations touched; schema files untouched.
+- REWROTE scripts/prompt25-pricing-ui-check.mjs (kept Q1–Q11 structure):
+  pricing sections repointed to canonical GET /api/public/pricing (id-free
+  DTO, prices==DB PlanPrice rows, EUR default, IRR listed only when an
+  active+effective book exists — DB-driven, USD/EURO 422, funnel cookie
+  issued); Q5 now asserts legacy /api/v1/public/analytics → 404 and the
+  canonical POST /api/public/events: allowlist (forged CHECKOUT_COMPLETED/
+  SIGNUP_COMPLETED/TRIAL_STARTED anonymous → 404), schema-enforced dimension
+  caps (planCode >32 → 422, nothing stored), unsafe body fields never stored,
+  invalid billingPeriod → 422, in-memory rate limit engages (429);
+  Q6 now asserts legacy /api/v1/public/contact → 404 + honest no-form
+  behavior on /pricing (no dead-endpoint reference, no mailto/fake form while
+  contactSalesUrl is null, contactSalesUrl only when configured); Q7 now uses
+  the canonical GET /api/v1/onboarding/status (query-param business context,
+  cross-tenant 403, server-derived checklist) + idempotent
+  /api/v1/onboarding/complete, legacy /api/v1/onboarding/dismiss → 404;
+  Q8/Q10 moved to the CommercialEvent ledger (SIGNUP_COMPLETED/BUSINESS_
+  CREATED/ONBOARDING_STARTED/ONBOARDING_COMPLETED/CHECKOUT_CREATED/
+  TRIAL_STARTED exactly-once via documented dedupeKeys); cleanup deletes the
+  harness's synthetic anonymous funnel rows (fixed copilot_funnel UUID).
+- REWROTE scripts/prompt27-legal-check.mjs: Q1 scans the LIVE registry
+  (src/content/legal/registry.ts — privacy/terms/ai-data-use/cookies) with
+  negation-aware claim scan (the honest content names GDPR/CCPA/SOC 2/ISO
+  27001 only inside "does not claim" sentences); Q2 asserts the real public
+  routes /privacy /terms /ai-data-use /cookies serve the registered documents
+  without auth; Q6 asserts legacy /api/v1/public/contact → 404 for any
+  submission + no ContactLead Prisma delegate + /pricing no-fake-form honesty;
+  Q7 asserts legacy /api/v1/public/analytics → 404 + canonical gate (forged
+  lifecycle → 404, allowlisted PRICING_VIEWED → 200, synthetic row cleaned).
+  Also made the pre-existing Q7 cost-privacy scan match the documented
+  Prompt 26/28 reality: tenant-facing routes must have ZERO AiCostRate/
+  AiCostRecord references while the documented INTERNAL operator plane
+  (/api/v1/platform/*, docs/ai/platform-ai-cost-operations.md) may — the
+  old blanket "no API route" form was stale and red for pre-existing reasons.
+- ENVIRONMENT REPAIR (data only, no schema): the dev DB had ZERO Plan/
+  PriceBook rows (a prior reset wiped billing seeds), which made every
+  business-scoped assertion impossible (BUSINESSES_MAX resolved 0 → 403 on
+  business creation — the old P25 harness would fail identically). Restored
+  via the project's own IDEMPOTENT seeds: bun scripts/seed-billing.ts
+  (5 plans × 9 entitlements, additive-only) + bun scripts/seed-pricing.ts
+  (EUR_STANDARD v1-2026-09 book, STARTER/BUSINESS/PRO). No migrations, no
+  db push, no destructive writes. Dev server was found DOWN twice (sandbox
+  reap); restarted via the project-standard scripts/ensure-dev.sh.
+- DOC FIX docs/legal/privacy-policy.md: stale row "AnalyticsEvent,
+  ContactLead, in-memory limiter" → CommercialEvent (src/lib/billing/events.ts,
+  fixed event directory, allowlisted dimensions, POST /api/public/events),
+  in-memory rate limiters, no contact-lead storage; also fixed the three
+  nearby rows that referenced deleted files (rendering at /privacy via the
+  legal doc pages instead of deleted legal-view.tsx #/privacy; funnel-events
+  evidence src/lib/billing/events.ts instead of deleted lib/analytics.ts;
+  contact/analytics retention row → funnel-event retention + no contact-lead
+  storage). Changed ONLY stale cells.
+
+Stage Summary:
+- Files removed (13): src/modules/pricing/pricing-view.tsx,
+  src/modules/pricing/contact-sales-dialog.tsx, src/modules/legal/legal-view.tsx,
+  src/content/legal/index.ts, src/content/legal/trust.ts, src/lib/analytics.ts,
+  src/lib/analytics-client.ts, src/lib/payments/public-pricing.ts,
+  src/modules/dashboard/setup-checklist-card.tsx, src/app/api/v1/public/analytics/,
+  src/app/api/v1/public/contact/, src/app/api/v1/public/pricing/,
+  src/app/api/v1/onboarding/dismiss/ (+3 now-empty parent dirs).
+- Files modified (3): scripts/prompt25-pricing-ui-check.mjs,
+  scripts/prompt27-legal-check.mjs, docs/legal/privacy-policy.md.
+  NOT touched (per task constraints): prisma/, migrations, src/i18n,
+  src/lib/billing/*, src/components/public/*, src/lib/sales-orders/*,
+  src/lib/ai/cost/*, src/modules/sales-orders, src/modules/shell, src/store.
+- Verification: scoped `bunx tsc --noEmit | grep …` for every removed
+  path → EMPTY; global grep for imports of every deleted path in src/ +
+  scripts/ → zero hits (only intentional 404-probe assertions in the two
+  rewritten harnesses); `bun run lint` → exit 0; total project tsc errors → 0
+  (at task start the only remaining errors were 177 in the P26-era
+  scripts/ai-cost-report.ts, repaired concurrently by the P46-API agent —
+  not touched by this task).
+- Suites (run against the live dev server, results real): 
+  scripts/prompt25-pricing-ui-check.mjs → 63 passed / 0 failed;
+  scripts/prompt27-legal-check.mjs → 37 passed / 0 failed (ALL GREEN).
+- Canonical architecture intact and now exclusively authoritative: public
+  pricing = GET /api/public/pricing + src/lib/billing/public-pricing.ts +
+  src/components/public/*; public funnel events = POST /api/public/events +
+  src/lib/billing/events.ts (CommercialEvent); onboarding = /api/v1/onboarding/
+  {status,complete}; legacy endpoints verified 404 at runtime.
+
+---
+Task ID: 46-a
+Agent: ai-cost-script-repair subagent (worklog entry completed by orchestrator after subagent timeout — all results independently re-verified)
+Task: Repair P26-era AI-cost report scripts to the current src/lib/ai/cost API (Prompt 46 baseline recovery)
+
+Work Log:
+- 5 scripts (prompt26-cost-check.ts, ai-cost-report.ts, ai-cost-reconcile.ts,
+  ai-cost-consistency.ts, ai-cost-gap-report.ts) were written against a
+  removed src/lib/ai/cost API (NANO_PER_MINOR/assertNanoMinor/tokensTimesRate/
+  attributeAiCostSafe/getPlanUnitEconomics/utcLastDays/DEFAULT_MODEL_ALIAS/
+  4-arg createAiCostRate/...). Adapted to the CURRENT surface:
+  NANO_MINOR_PER_MINOR/toBigIntSafe/multiplyRateByTokens/convertToMinorDisplayOnly/
+  formatNanoMinor/roundExact, attributeAiCost discriminated-union result,
+  createAiCostRate single-object input (inputRateNanoMinorPer1K),
+  resolveAiCostRate RateResolution {ok:true;rate}/{ok:false;reason},
+  getPlanAiEconomics status-gated DTO, DEFAULT_MODEL_MAPPING.
+- No assertions deleted; checks re-expressed on current primitives; fixture
+  hygiene preserved (TEST businesses deleted in finally; TEST environment only).
+- src/lib/ai/cost/* NOT modified. Orchestration note: this repair and the
+  46-b cleanup ran concurrently; total project tsc after both = 0 errors.
+
+Stage Summary:
+- bunx tsc --noEmit: 0 errors project-wide (was 164: 145 in these scripts,
+  19 in the 46-b scope).
+- EXECUTED: prompt26-cost-check.ts → 111 passed / 0 failed (shim preload;
+  AI_COST_ENVIRONMENT=TEST; zero fixture residue).
+- EXECUTED: ai-cost-consistency.ts → RESULT: CONSISTENT ✓.
+- EXECUTED: ai-cost-gap-report.ts → runs clean (0 pending gaps).
+- EXECUTED: ai-cost-reconcile.ts → DRY RUN clean (0 eligible; nothing mutated).
+- EXECUTED: ai-cost-report.ts → runs clean WITH the server-only shim
+  (bun --preload ./scripts/lib/register-server-only-shim.ts); without the
+  shim it cannot start (server-only import) — invocation documented.
+
+---
+Task ID: 47-core
+Agent: Z.ai Code (main orchestrator)
+Task: PROMPT 47 — Sales Quotations: schema+migration, domain, APIs, UI, search, entities, export, i18n (work in progress — core surfaces complete)
+
+Work Log:
+- P46 baseline recovery completed first (tsc 164→0; see 46-a/46-b sections).
+- DISCOVERED mid-round sandbox revert: db/custom.db lost its _prisma_migrations
+  ledger (schema intact at post-P45 state, 0 business rows). Ran the SANCTIONED
+  scripts/env-repair.mjs (re-baselined 27 ledger rows, restored .env baseline,
+  re-seeded billing/pricing, restored dev fixtures) → then applied the P47
+  migration GENUINELY via `prisma migrate deploy` → then added
+  20261012090000_prompt47_sales_quotations to the env-repair baseline registry.
+- Migration 20261012090000_prompt47_sales_quotations: additive-only (2 new
+  tables + SalesOrder.sourceQuotationId nullable column + unique index +
+  7 indexes). Verified: (1) `prisma migrate diff` from-schema-before→after
+  produces the same final state (redefine-vs-ADD COLUMN difference is style
+  only); (2) SQL applied cleanly to a COPY of the live DB →
+  `migrate diff --from-url copy --to-schema-datamodel` = NO DIFFERENCE
+  (exit 0); (3) ledger 28 applied / 0 pending; quick_check ok;
+  foreign_key_check 0 violations; SalesQuotation/SalesQuotationLine tables
+  + all 8 quotation indexes + SalesOrder.sourceQuotationId present.
+- Schema: SalesQuotation (customer SetNull + name snapshot, business-unique
+  reference, closed status vocabulary, currency snapshot, quotationDate/
+  validUntilDate/expectedDeliveryDate, discountMinor, customerNotes/
+  internalNotes, Restrict creator, lifecycle timestamps, NO expiredAt column
+  by design — expiration is derived §9); SalesQuotationLine (qty/unitPrice
+  integer laws, product Restrict, snapshots, @@unique(salesQuotationId,
+  productId)); SalesOrder.sourceQuotationId @unique (DB conversion-race
+  authority, SetNull).
+- Domain module src/lib/sales-quotations/: types.ts (pure laws: transitions
+  DRAFT→SENT|CANCELLED; SENT→ACCEPTED|REJECTED|CANCELLED|EXPIRED;
+  ACCEPTED→CONVERTED|CANCELLED; terminal REJECTED/EXPIRED/CANCELLED/
+  CONVERTED; validity/expiry via Intl en-CA business-local calendar dates;
+  qty/price/discount safe-integer math; cap 20..500 default 200; QT-
+  reference law; day windows via established helpers), schema.ts (zod
+  .strict() boundary), dto.ts (persistedStatus + effectiveStatus explicit;
+  print DTO without internalNotes/ids), integration.ts (error mapper),
+  service.ts (all lifecycle ops + conversion + entity-history readers),
+  export.ts (per-quotation CSV), index.ts.
+- APIs (13 route files): GET/POST /api/v1/sales-quotations; GET/PATCH
+  /[id]; POST /[id]/lines; PATCH/DELETE /[id]/lines/[lineId]; POST
+  /[id]/{mark-sent,accept,reject,cancel,expire,convert}; GET
+  /[id]/export (CSV_EXPORT entitlement + rate limit + audit); GET
+  /[id]/print (reduced customer-facing payload; tenant-authorized).
+- UI module src/modules/sales-quotations/: list (desktop table + mobile
+  cards + filters), create dialog, detail view (lifecycle actions gated on
+  effective status; converted-order card with deep link; internal notes
+  visually separated), product picker, line editor, print overlay
+  (+ globals.css .quotation-print-sheet print law).
+- Navigation: app-store (#/sales-quotations + #/sales-quotations/<id> with
+  safe-ID parsing), app-shell mount + doc titles, sidebar + command palette
+  entries (FileSignature icon).
+- Search: SALES_QUOTATION type (types/query/dto/icons/entity-route);
+  SEARCH_ITEM status tokens ACCEPTED/REJECTED/EXPIRED added; notes never
+  indexed; prompt35-unit count check now derives from the canonical registry.
+- Entities §19: Customer 360 + Product detail recent-quotation widgets
+  (customer: totals+order ref; product: quantities only §72 law) via
+  recentQuotationsForCustomer/Product service readers.
+- Data portability §20: export datasets sales_quotations + sales_quotation_lines
+  (CONFIDENTIAL, implication parent→child, snapshot-faithful columns, NO
+  internalNotes column ever); import remains the closed customers/suppliers/
+  products allowlist — quotation datasets rejected before any write.
+- restore-drill probes extended (SalesQuotation, SalesQuotationLine).
+- i18n: full salesQuotations namespace in en.ts + fa.ts (professional
+  Persian commercial terminology استعلام قیمت), nav/search/portability
+  labels; i18n audit: 0 missing, 0 parity gaps.
+- Verification so far: bunx tsc --noEmit = 0 errors; bun run lint = 0
+  problems; i18n audit clean.
+
+Stage Summary:
+- Core P47 surfaces implemented and type-clean. NEXT: test suites
+  (unit/E2E/cap/static/browser-fixture), docs+ADR, regression runs,
+  browser QA, fixture teardown, final gates.
+
+---
+Task ID: 47-tests
+Agent: Z.ai Code (test orchestrator)
+Task: PROMPT 47 — Sales Quotations: unit / E2E / cap-concurrency / static-scan test suites written, RUN to green, honest results.
+
+Work Log:
+- Reviewed 47-core surfaces line-by-line (types/schema/dto/service/export/integration, 12 route files / 13 endpoints, search query+candidate, export-catalog datasets, i18n) before writing/iterating tests.
+- The four P47 suites (drafted pre-session, unfinished) were COMPLETED, FIXED and RUN against the real implementation. Iterations below; final states all green.
+
+SUITE RESULTS (exact commands, final runs):
+- UNIT — `bun scripts/prompt47-unit.ts` → **338 passed / 0 failed**. Pure imports (types/schema/dto are client-safe); NO server-only shim needed (verified; header documents this). Covers: 7-status vocabulary; parseStatus integrity (INVALID ≠ DRAFT); FULL 7×7 transition matrix incl. all terminals; effectiveStatus (SENT+past → EXPIRED display; ACCEPTED never expires); inclusive-until expiry boundary in Asia/Tehran (20:00Z not expired / 20:31Z next-local-day expired); businessLocalCalendarDate + unknown-tz → UTC fallback; validity ordering + strict calendar dates (2026-02-30/2026-13-01 rejected); qty 1..1e6 safe-int; price 0..9e9; cap parsing default/malformed/clamps; line-set completeness (over-cap + mismatch-below-cap); canonical line/subtotal/total math + overflow + discount law + corrupt operands; reference normalize/generate (QT-, no I/L/O/0/1, deterministic); day windows (inclusive-from/exclusive-to, invalid → null); DTO laws (lineTotal recompute; detail total re-check; print DTO NO internalNotes key, no ids; corrupted status + missing snapshot → integrity); all 22 error codes; EN/FA salesQuotations parity + status_* ×7 + FA terminology; zod .strict() authority rejections (status/businessId/createdByUserId/currencyCodeAtQuotation/convertedAt), qty 0/1.5, validUntilDate required, list page/pageSize bounds.
+- E2E — `node scripts/prompt47-sales-quotation-check.mjs` (dev server :3000 via scripts/ensure-dev.sh) → **263 passed / 0 failed** (run to green over 5 iterations; final 2 runs identical). 25 sections: fixtures 2 tenants (stocks 500/54/192/10, NON-ZERO Sale/Payment baseline) → draft create (auto QT-, currency/customer snapshots, business-local today) + 7 authority injections 422 → lines (price default 500, duplicate 409 DUPLICATE_PRODUCT, qty 0/1.5/-1 422, price -1/9e9+1 422, snapshot injection 422, exact totals, discount law INVALID_DISCOUNT, remove, empty mark-sent 422 EMPTY) → snapshot freeze vs live renames → DRAFT-phase byte-identical stock/finance → mark-sent (server sentAt; PATCH+lines 409 IMMUTABLE) → accept (acceptedAt; NO SalesOrder; nothing mutated) → reject (NOT_ACCEPTED on convert) + cancel paths → EXPIRED law (past-validity: mark-sent allowed, accept/reject 409 EXPIRED, expire → EXPIRED terminal; NOT_EXPIRED guard on valid offer) → conversion (exactly ONE CONFIRMED order, sourceQuotationId, snapshot equality, orderDate=today midnoon, expectedDate/discount copied, 1 line per line exact, totals equal, ZERO Sale/Payment/adjustment/stock delta, CONVERTED+convertedAt, 2 audits) → duplicate convert 409 ALREADY_CONVERTED → 5-way convert race (1×200/4×409, 1 order) → 5-way duplicate-line race → 5-way duplicate-reference race → edit-vs-mark-sent → accept-vs-reject (exactly one 200; never both timestamps) → tenant isolation both directions + 401/403/404s → global search SALES_QUOTATION (ref/customer/SKU + foreign-tenant silence + no notes) → Customer 360 + Product detail (money-free) → CSV export (raw-byte BOM, CRLF, exact EN+FA headers, fr→422, formula-injection guard, CSV_EXPORT=false plan → 403 ENTITLEMENT_NOT_AVAILABLE) → business export via REAL /api/v1/exports (job datasets incl. implied sales_quotation_lines + downloaded JSON artifact rows + no internal notes) → import rejection via REAL /api/v1/imports (sales_quotations dataset → 422 IMPORT_INVALID_FILE, ZERO DataImportJob rows) → print endpoint (200, NO internalNotes/ids, customerNotes present, unauth 401) → teardown to ZERO + quick_check ok.
+- CAP/CONCURRENCY — `SALES_QUOTATION_MAX_LINES=20 bun --preload ./scripts/lib/register-server-only-shim.ts scripts/prompt47-sales-quotation-cap-check.ts` → **77 passed / 0 failed** (shim REQUIRED — server-only service imports; header documents the invocation). Covers: cap parsing (env 20 honored, default/malformed/clamps); 21st line → 422 LINE_LIMIT_REACHED, exactly 20 persisted; over-cap DB corruption → detail/list/export/line-add/mark-sent ALL 500 LINE_CAP_INVARIANT, recover after cleanup; accumulation overflow (4×2e15 safe; 5th → 422 TOTAL_OVERFLOW rolled back; persisted overflow → read 500; update-path overflow → 422 rolled back); 5-way duplicate-line race (1 line); mark-sent vs line-add race (no post-send edit; consistent final set); accept-vs-expire race (exactly one wins; never both); 5-way duplicate-reference race; conversion-failure rollback via direct-DB discount corruption (500 CORRUPT_HISTORY; NO order/CONVERTED/convertedAt/audit/stock/adjustment; succeeds + exactly-once audits after repair); audit atomicity (exactly one audit row per committed mutation); stock byte-identical across the whole suite. NOTE (pre-existing cross-module constraint, documented in the suite header, NOT a P47 regression): the documented 9e9 price ceiling is not PERSISTABLE (Prisma Int 32-bit columns shared with Sale/SaleItem/SalesOrder/PurchaseOrder) — the suite exercises storable 2e9 magnitudes so line totals still cross MAX_SAFE_INTEGER on accumulation. No migration may be authored by the test task.
+- STATIC — `bun scripts/prompt47-sales-quotation-static-scan.mjs` → **122 passed / 0 failed** (added rule 122: audit actions sales_quotation.* complete). Covers: purity (service never touches stockQty/Sale/Payment/InventoryAdjustment/goodsDispatch; export neither), routes getAuthContext+requirePermission + never body businessId + isValidEntityId guards, print DTO/route no internalNotes, search selects no notes, export no internalNotes column, import allowlist closed (no sales_quotation*), i18n EN+FA salesQuotations + status_* ×7, app-store hash directions + isValidEntityId, migration additive-only + env-repair baseline, audit vocabulary, error-code discipline (routes never duplicate literals), integration.ts the ONE mapping.
+
+DEFECTS FOUND + STATUS:
+- D-47/1 (TEST defect, cap-check): persisted-overflow corruption probe injected its 5th line for product BIG4 (already line'd) → guaranteed P2002 crash mid-suite + residue. FIXED → BIG5 (no existing line). 
+- D-47/2 (TEST defect, cap-check): 26 tsc errors — lifecycle/convert/detail/list service calls missing the required `timezone` (CTX lacked it). FIXED (CTX carries Asia/Tehran matching the fixture business); project `bunx tsc --noEmit` = 0 again.
+- D-47/3 (TEST defect, E2E): mixed ok() call conventions — 30 call sites passed (cond, name) into an ok(name, cond) harness → those assertions were VACUOUS (label string always truthy; real boolean discarded; printed "✓ true"/"✓ false"), masking two REAL failures. FIXED: ok() normalizes both orders; every counted assertion now evaluates its real condition.
+- D-47/4 (TEST defect, E2E): §22/§23 targeted endpoints that DO NOT EXIST (`POST /api/v1/businesses/export` → 405, `POST /api/v1/businesses/import` → 405, `POST /api/v1/data/import` → 404) — P45's committed E2E §21 uses the same stale paths (pre-existing, out of P47 scope; flagged here for the orchestrator). FIXED by testing the REAL portability surfaces: POST /api/v1/exports {datasets,format} + GET /api/v1/exports/[jobId] (+ /download, JSON artifact {manifest,datasets}) and POST /api/v1/imports (multipart; dataset allowlist rejects BEFORE any DataImportJob row). Assertions upgraded to artifact-level (row values, implication, no notes).
+- D-47/5 (REAL IMPLEMENTATION defect, FIXED): src/lib/sales-quotations/service.ts `loadCompleteLines()` leaked the RAW pure `SalesQuotationIntegrityError` from `assertSalesQuotationLineSetComplete` — so over-cap/corrupt-history on the shared lifecycle gate (mark-sent/accept/reject/cancel/expire) and on CONVERSION surfaced as a generic 500 INTERNAL_ERROR instead of the documented stable `SALES_QUOTATION_LINE_CAP_INVARIANT` / `SALES_QUOTATION_CORRUPT_HISTORY` (integration.ts declares itself "the ONE pure-domain-error → HTTP mapping for EVERY quotation integrity failure"; detail/list/export + line writes already mapped correctly). FIX (unambiguous, one call site): route the assert through `mapPureSalesQuotationDomainError`. Valid-data behavior unchanged; tsc 0 + lint 0 + all suites re-run green; cap-check 3.10 now passes GENUINELY.
+- D-47/6 (static-scan gap): the required "audit actions sales_quotation.* present" rule was missing. ADDED as rule 122 (all 11 action literals asserted present in the service).
+
+Verification: `bunx tsc --noEmit` 0 errors · `bun run lint` 0 problems · teardown residue P47Q/P47CAP businesses+users = 0 · PRAGMA quick_check ok · dev-baseline fixture (sara/eve/ali/rep16007/dev-baseline) untouched.
+
+Stage Summary:
+- All four P47 suites green with counted assertions only; one real implementation defect found and fixed (D-47/5); four test-harness defects fixed honestly; P45 E2E §21 stale endpoint paths flagged for a future pass. NEXT: docs+ADR, cross-prompt regression, browser QA, final gates.
+
+---
+Task ID: 47-docs
+Agent: Z.ai Code (docs sub-agent)
+Task: PROMPT 47 — Sales Quotations documentation set written (product spec + security review + ADR), downstream docs surgically updated, env surfaces verified, tsc verified 0.
+
+Work Log:
+- Read worklog 47-core/47-tests + the three P45 reference docs first; verified every claim against the implementation (src/lib/sales-quotations/types.ts transition matrix + 22-code error table, dto.ts persisted/effective status + print DTO without internalNotes/ids, integration.ts integrity mapping, service.ts 11 sales_quotation.* audit actions + conversion guarantees, export route 10/5min rate limit, export-catalog datasets, prisma schema customer-SetNull/creator+product-Restrict/unique constraints, i18n FA terminology ثبت ارسال/ثبت پذیرش مشتری/تبدیل به سفارش فروش).
+- CREATED docs/product/sales-quotations.md: what a quotation IS/IS-NOT; lifecycle table mirroring SALES_QUOTATION_TRANSITIONS (canonical matrix location named); MANUAL DECLARATION semantics (SENT/ACCEPTED are internal declarations; no email, no portal, no token); validity THROUGH validUntilDate inclusive (business tz, Intl en-CA, derived effectiveStatus vs persistedStatus, explicit atomic audited expire only when actually past, ACCEPTED never expires); snapshot freezing (write-time, renames never rewrite, conversion copies FROZEN values); money laws (safe-integer canonical math, overflow rejected, SALES_QUOTATION_MAX_LINES 20..500 default 200); conversion (one CONFIRMED order via DB-unique sourceQuotationId, transaction guarantees, internalNotes→order notes, NO Sale/Payment/receivable/adjustment/stock); printable offer (browser print dialog, reduced payload, no internalNotes, no tax rows, offer-not-invoice label); downstream compatibility; 13-route API table (+print = 14 endpoints on 13 route files) + UI routes + search SALES_QUOTATION + Customer 360/Product detail quantities-only; export-only datasets; honest limitations.
+- CREATED docs/security/sales-quotations-security.md mirroring the P45 security structure: authN/authZ (getAuthContext+requirePermission, viewer read-only, .strict() authority rejections); tenant isolation (both directions, 404 no-leak); concurrency (shared withWriteTransaction, DB uniques as race authority, in-transaction transition re-checks, stable race codes); integrity (INVALID≠DRAFT controlled 500, cap+1 three-check invariant, corruption=500 not user error, no silent repair); notes privacy (never in audit payloads/index/search/export/print); audit (11 actions + data.export, same-transaction); CSV stack; the 22-code error contract table by HTTP class (404/409/422/500) + adjacent codes; portability/backup; honest limits.
+- CREATED docs/adr/0047-sales-quotations.md (ADR format mirroring 0045): context, decision (separate domain; conversion into CONFIRMED order with the "customer acceptance establishes commercial commitment" rationale; derived expiration + explicit atomic transition instead of a scheduler; NO expiredAt column; ACCEPTED→CANCELLED-before-conversion documented policy; products mandatory on lines because conversion must produce legitimate SalesOrderLines; SetNull on sourceQuotationId with business-cascade rationale), consequences, alternatives rejected (public acceptance portal, email delivery, stock reservation, shared order sequence).
+- UPDATED docs/ARCHITECTURE.md: Sales Quotations row added to the §5.1 module map directly after Sales Orders (Phase "47 — COMPLETE", P45 entry style).
+- UPDATED docs/data/data-export.md: sales_quotations + sales_quotation_lines rows added to the dataset table (CONFIDENTIAL, export-only, internalNotes never exported; also filled the sibling sales_orders/sales_order_lines rows that P45 had left out of the table) + a "Prompt 47 — sales quotations" section mirroring the P45 section.
+- UPDATED docs/data/data-import.md: new "Sales Quotation datasets (Prompt 47)" section — NOT IMPLEMENTED/blocked with the reason (snapshot freezing, reference sequence, lifecycle state machine, exactly-once conversion link), allowlist rejects BEFORE any DataImportJob row/write.
+- UPDATED docs/legal/data-export-matrix.md: Sales quotations + lines row (✅ export-only, CONFIDENTIAL commercial offer data, internalNotes never exported, import blocked, no delete API).
+- UPDATED docs/legal/data-deletion-matrix.md: "Sales quotations (Prompt 47)" row mirroring the P45 SalesOrder row — business cascade, customer SetNull + frozen snapshot, product/creator Restrict, NO user-facing delete API, sourceQuotationId SetNull (order never destroyed by the quotation domain).
+- UPDATED docs/security/data-portability.md: export-catalog bullet now names sales_quotations→sales_quotation_lines implication + NO internalNotes column; import-security bullet names the P41–P47 operational datasets as structurally rejected before any write.
+- UPDATED docs/audit/financial-semantics.md: new "§10. Sales Quotations (Prompt 47)" — an offer is not revenue/invoice/payment/receivable/stock/reservation/accounting entry; conversion creates NO financial record (one order + 2 audits is all); the ORDER remains the fulfillment/financial authority; validity display law; wording law with the REAL FA terms (استعلام قیمت / ثبت ارسال / ثبت پذیرش مشتری / تبدیل به سفارش فروش).
+- UPDATED docs/legal/data-processing-inventory.md: "Sales quotations (Prompt 47)" row added to §4.2 Business operational records (customer-name snapshot + product snapshots; purpose: commercial offers; internalNotes staff-only — never audited verbatim/searched/printed/exported; CONFIDENTIAL with the natural-person caveat). Checked first: NO SalesOrder-class rows existed in this inventory (P45 documented Sale only), so the quotation row was added as the matching document row.
+- VERIFIED ONLY (no edits, as instructed): .env.example already carries the documented SALES_QUOTATION_MAX_LINES block (line 251); scripts/env-repair.mjs already baselines 20261012090000_prompt47_sales_quotations (line 86).
+- UPDATED docs/product/sales-orders.md: short "Source quotations (Prompt 47)" section after Lifecycle — optional inert sourceQuotationId relation, frozen copies + internalNotes continuity, no behavior change to legacy orders.
+- NO src/**, prisma/**, migrations or test scripts touched. NO builds/migrations run. `bunx tsc --noEmit` → 0 errors (exit 0) after all doc edits.
+
+Stage Summary:
+- Prompt 47 documentation set complete: 3 new docs (product/security/ADR) + 8 surgical downstream updates + 2 verified-only env surfaces + 1 cross-link note in the orders doc. All claims traced to the implementation; honesty laws kept (manual declarations, derived expiration, no fabrication of email/portal/tax capabilities). NEXT (orchestrator): cross-prompt regression suites, browser QA of the quotation UI, final gates.

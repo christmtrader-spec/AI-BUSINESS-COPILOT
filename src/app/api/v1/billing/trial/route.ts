@@ -13,6 +13,7 @@ import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { billingTrialSchema } from "@/lib/schemas";
 import { rateLimit } from "@/lib/rate-limit";
 import { endTrial, startTrial } from "@/lib/billing";
+import { recordCommercialEvent } from "@/lib/billing/events";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +28,14 @@ export const POST = route(async (req: NextRequest) => {
     });
   }
 
-  // §19: no trial policy without an explicit operator decision.
-  if (process.env.BILLING_TRIALS_ENABLED !== "1") {
+  // §19: no trial policy without an explicit operator decision. ONE gate,
+  // ONE truth: the canonical trial config (BILLING_TRIALS_ENABLED=true +
+  // BILLING_TRIAL_DAYS + BILLING_TRIAL_PLAN — trial-config.ts) is the
+  // single policy authority. The legacy `=== "1"` literal here predated
+  // the canonical config and contradicted it after the sandbox env restore
+  // (the newer /trial/start route already follows this contract).
+  const { getTrialConfig } = await import("@/lib/billing/trial-config");
+  if (!getTrialConfig().enabled) {
     throw new ApiError(
       422,
       "BUSINESS_NOT_ELIGIBLE",
@@ -41,5 +48,22 @@ export const POST = route(async (req: NextRequest) => {
     input.action === "start"
       ? await startTrial(ctx.businessId, input.days, { actorId: ctx.userId, source: "api" })
       : await endTrial(ctx.businessId, { actorId: ctx.userId });
+
+  // Prompt 46 canonical funnel law: trial starts flow through the ONE
+  // CommercialEvent ledger (idempotent per business via the SAME dedupeKey
+  // contract as the canonical /trial/start route — a second start attempt
+  // can never inflate the funnel). Fire-and-forget: the trial decision is
+  // never blocked by ledger writes.
+  if (input.action === "start") {
+    void recordCommercialEvent({
+      eventType: "TRIAL_STARTED",
+      userId: ctx.userId,
+      businessId: ctx.businessId,
+      planCode: result?.subscription?.plan?.code ?? null,
+      source: "api",
+      dedupeKey: `trial-start:${ctx.businessId}`,
+    });
+  }
+
   return ok(result);
 });

@@ -45,6 +45,10 @@ so they stay plain text.
 | `inventory_stocktake_lines` | count lines (Prompt 40): stocktake + product references, count-time snapshot metadata (productNameAtCount, skuAtCount, unitAtCount), systemQtyAtCount, countedQty, varianceQty, countedAt, countedByUserId, timestamps — **auto-included with inventory_stocktakes** | Confidential |
 | `purchase_orders` | purchase orders (Prompt 41): id, reference, status, supplier reference, order/expected dates, notes, write-time snapshots (supplierNameAtOrder, currencyCodeAtOrder/SymbolAtOrder/decimalPrecisionAtOrder), creator + lifecycle timestamps — **auto-includes purchase_order_lines** | Confidential |
 | `purchase_order_lines` | purchase order lines (Prompt 41): order + product references, write-time snapshot metadata (productNameAtOrder, skuAtOrder, unitAtOrder), orderedQty, unitPriceMinor, timestamps | Confidential |
+| `sales_orders` | sales orders (Prompt 45): reference, status, customer snapshot, order/expected dates, discount, notes, currency snapshots, creator + lifecycle timestamps — **auto-includes sales_order_lines; export-only (import blocked)** | Confidential |
+| `sales_order_lines` | sales order lines (Prompt 45): order + product references, write-time snapshot metadata, orderedQty, unitPriceMinor, timestamps | Confidential |
+| `sales_quotations` | sales quotations (Prompt 47): reference, persisted status, customer snapshot, quotation/valid-until/expected-delivery dates, discountMinor, customerNotes, currency snapshots, creator + lifecycle timestamps — **auto-includes sales_quotation_lines; export-only (import blocked); internalNotes NEVER exported** | Confidential |
+| `sales_quotation_lines` | sales quotation lines (Prompt 47): quotation + product references, write-time snapshot metadata (productNameAtQuotation, skuAtQuotation, unitAtQuotation), qty, unitPriceMinor, timestamps | Confidential |
 | `subscription_summary` | plan code/name, status, billing period, trial, cancel flags — customer-visible state only | Confidential |
 | `usage_summary` | current-period usage facts (metric, used, limit, remaining) — the same numbers the Usage page shows | Confidential |
 
@@ -153,3 +157,22 @@ product prices. Lifecycle columns (`confirmed_at`, `completed_at`,
 implemented** (§117): importing confirmed/completed operational orders
 could create dispatch-eligibility or invoice/fulfillment inconsistencies
 — restore from backup is the sanctioned recovery path.
+
+### Prompt 47 — sales quotations
+
+`sales_quotations` and `sales_quotation_lines` join the export catalog
+as CONFIDENTIAL datasets; the quotations dataset always implies its
+lines (parent → child implication). Rows carry the frozen historical
+snapshots verbatim (`customer_name_at_quotation`, currency triple,
+`product_name_at_quotation`, `sku_at_quotation`, `unit_at_quotation`)
+and the offered money as integer minor units (`discount_minor`,
+`unit_price_minor`) — the offer as made, never re-derived from live
+product prices. Quotation lifecycle columns (`sent_at`, `accepted_at`,
+`rejected_at`, `cancelled_at`, `converted_at`) export as recorded.
+**`internalNotes` is never exported** (staff-only content has no
+column); `customerNotes` exports as ordinary customer-visible document
+content. **Import remains intentionally NOT implemented**: importing
+quotations would bypass snapshot freezing, reference generation and the
+conversion state machine — the datasets are export-only, and the
+importer's allowlist rejects them BEFORE any database write. Restore
+from backup is the sanctioned recovery path.

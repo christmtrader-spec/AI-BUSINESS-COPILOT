@@ -633,3 +633,61 @@ export function salesOrderCandidate(row: SalesOrderSearchRow): SearchCandidate {
     method: null,
   };
 }
+
+/* ------------------------ Sales quotation (Prompt 47) --------------------- */
+
+export type SalesQuotationSearchRow = {
+  id: string;
+  reference: string;
+  status: string;
+  customerNameAtQuotation: string;
+  createdAt: Date;
+  /** Line snapshot TEXT (never money/notes) feeds the ranker. */
+  lines?: ReadonlyArray<{ productNameAtQuotation: string; skuAtQuotation: string | null }>;
+};
+
+/**
+ * Closed-token guard for the quotation lifecycle: an invalid persisted
+ * status is NOT mapped to Draft — the status token is omitted (null) and
+ * the quotation still renders under its reference (same safe-omission
+ * policy as the order/receipt/return/dispatch candidates).
+ */
+function salesQuotationStatusToken(status: string): SearchItemStatus | null {
+  return status === "DRAFT" ||
+    status === "SENT" ||
+    status === "ACCEPTED" ||
+    status === "REJECTED" ||
+    status === "EXPIRED" ||
+    status === "CANCELLED" ||
+    status === "CONVERTED"
+    ? status
+    : null;
+}
+
+export function salesQuotationCandidate(row: SalesQuotationSearchRow): SearchCandidate {
+  const skuNorms = (row.lines ?? [])
+    .map((l) => l.skuAtQuotation)
+    .filter((v): v is string => Boolean(v))
+    .map(normalizeSearchText);
+  const productNorms = (row.lines ?? [])
+    .map((l) => l.productNameAtQuotation)
+    .filter((v): v is string => Boolean(v));
+  return {
+    id: row.id,
+    type: "SALES_QUOTATION",
+    title: row.reference,
+    titleNorm: normalizeSearchText(row.reference),
+    subtitle: row.customerNameAtQuotation || null,
+    identifierNorm: normalizeSearchText(row.reference),
+    identifierExtras: skuNorms,
+    numericIdentifier: null,
+    secondaryNorms: [row.customerNameAtQuotation, ...productNorms]
+      .filter((v): v is string => Boolean(v))
+      .map(normalizeSearchText),
+    createdAt: row.createdAt,
+    status: salesQuotationStatusToken(row.status),
+    date: row.createdAt.toISOString(),
+    direction: null,
+    method: null,
+  };
+}

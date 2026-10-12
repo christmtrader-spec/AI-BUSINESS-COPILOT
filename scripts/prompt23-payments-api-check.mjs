@@ -276,6 +276,10 @@ const lateBody = buildMockEventBody("checkout.failed", okId, { reason: "late:pro
 const lateRes = await api("/api/v1/webhooks/payments/mock", { method: "POST", body: lateBody, headers: Object.fromEntries([...buildMockEventHeaders(lateBody).entries()]) });
 check("P6.5 late FAILED for SUCCEEDED session → ignored (stays SUCCEEDED)", lateRes.status === 200 && lateRes.json?.data?.sessionStatus === "SUCCEEDED");
 const planNow6 = await sub(ownerJar, businessId);
+{
+  const sessDb = await prisma.checkoutSession.findUnique({ where: { id: okId }, select: { status: true, fulfilledAt: true, planCode: true } });
+  const subDb = await prisma.subscription.findUnique({ where: { businessId }, include: { plan: { select: { code: true } } } });
+}
 check("P6.6 plan remains STARTER (stale event cannot downgrade, §75)", planNow6 === planAfterSuccess && planAfterSuccess === "STARTER", `now=${planNow6} afterSuccess=${planAfterSuccess} before=${planBefore}`);
 
 // multiple attempts → exactly one activation (§78)

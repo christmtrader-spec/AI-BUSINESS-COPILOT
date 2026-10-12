@@ -78,6 +78,12 @@ const MIGRATIONS = [
   // applied migration in this baseline list so a sandbox revert never
   // leaves it falsely pending.
   "20261011090000_prompt45_sales_orders",
+  // Prompt 47 — the Sales Quotation migration is genuinely applied (28
+  // applied / 0 pending; applied via `migrate deploy` after the 08:51
+  // sandbox revert was re-baselined). Same maintenance law: keep every
+  // applied migration in this baseline list so a sandbox revert never
+  // leaves it falsely pending.
+  "20261012090000_prompt47_sales_quotations",
 ];
 
 function log(step, msg) {

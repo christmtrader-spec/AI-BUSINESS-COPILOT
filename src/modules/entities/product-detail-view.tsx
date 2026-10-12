@@ -79,6 +79,7 @@ export function ProductDetailView({
   const tRt = useTranslations("goodsReturns");
   const tGd = useTranslations("goodsDispatches");
   const tSo = useTranslations("salesOrders");
+  const tSq = useTranslations("salesQuotations");
 
   const writable = can(role, "data:write");
   const p = data.product;
@@ -462,6 +463,45 @@ export function ProductDetailView({
                     <span className="flex items-center gap-2">
                       <span className="text-muted-foreground text-sm tabular-nums" dir="ltr">
                         {tSo("progressLabel", { dispatched: ord.dispatchedQty, ordered: ord.orderedQty })}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Prompt 47 (§19) — bounded quotation history (≤10). Commercial
+          OFFERS — not orders, not stock events (§1/§19): quantities only,
+          NO money (the established §72 law). Rows deep-link to the
+          quotation document (#/sales-quotations/<id>). */}
+      <Card data-testid="product-sales-quotation-history">
+        <CardContent className="pt-6">
+          <h2 className="mb-3 text-base font-semibold">{tSq("quotationHistory")}</h2>
+          {!data.recentSalesQuotations || data.recentSalesQuotations.length === 0 ? (
+            <p className="text-muted-foreground text-sm">{tSq("noQuotationHistory")}</p>
+          ) : (
+            <ul className="divide-y">
+              {data.recentSalesQuotations.map((qt) => (
+                <li key={`${qt.id}`}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40"
+                    onClick={() => navigate({ kind: "sales-quotation", id: qt.id })}
+                    aria-label={`${tSq("quotationHistory")}: ${qt.reference}`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium" dir="auto">{qt.reference}</span>
+                      <span className="text-muted-foreground block truncate text-xs" dir="auto">
+                        {qt.customerNameAtQuotation || "—"} · {tSq(`status_${qt.effectiveStatus}`)}
+                        {qt.quotationDate ? ` · ${new Date(qt.quotationDate).toISOString().slice(0, 10)}` : ""}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <span className="text-muted-foreground text-sm tabular-nums" dir="ltr">
+                        {tSq("qty")}: {qt.qty}
                       </span>
                     </span>
                   </button>

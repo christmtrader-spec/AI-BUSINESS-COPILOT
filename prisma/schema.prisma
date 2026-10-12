@@ -92,6 +92,9 @@ model User {
   // Prompt 45 — Sales Orders (§6/§68): creator link is Restrict — the same
   // creator-linked policy as P40–P44 (documented in the deletion matrix).
   salesOrderCreations         SalesOrder[]              @relation("SalesOrderCreator")
+  // Prompt 47 — Sales Quotations: creator link is Restrict — the same
+  // creator-linked policy as P40–P45 (documented in the deletion matrix).
+  salesQuotationCreations     SalesQuotation[]          @relation("SalesQuotationCreator")
 }
 
 // ---------------------------------------------------------------------------
@@ -310,6 +313,9 @@ model Business {
   goodsDispatches      GoodsDispatch[]
   // Prompt 45 — commercial customer orders (tenant-scoped, cascade; §10).
   salesOrders          SalesOrder[]
+  // Prompt 47 (§5) — commercial price offers (tenant-scoped, cascade):
+  // deleting the business deletes its quotations.
+  salesQuotations      SalesQuotation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -413,6 +419,10 @@ model Customer {
   // the frozen customerNameAtOrder snapshot keeps every order readable
   // even when the live relation later detaches.
   salesOrders SalesOrder[]
+  // Prompt 47 (§5/§12) — quotations offered to this customer. SetNull: the
+  // frozen customerNameAtQuotation snapshot keeps every quotation readable
+  // even when the live relation later detaches (same law as SalesOrder).
+  salesQuotations SalesQuotation[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -479,6 +489,10 @@ model Product {
   // Prompt 45 (§20) — order lines that commit to this product (the line
   // keeps its own historical snapshot; Restrict mirrors P41–P44).
   salesOrderLines SalesOrderLine[]
+  // Prompt 47 (§6) — quotation lines that offered this product (the line
+  // keeps its own historical snapshot; Restrict mirrors P41–P45 — a hard
+  // product delete can never silently destroy quotation evidence).
+  salesQuotationLines SalesQuotationLine[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -2441,8 +2455,19 @@ model SalesOrder {
   goodsDispatches GoodsDispatch[]
   // §52 — the ONE order-linked invoice (one-to-one, unique on Sale side).
   sale Sale?
+  // Prompt 47 (§7) — the ONE authoritative source-quotation relation when
+  // this order was converted from an accepted quotation. Nullable: every
+  // legacy/direct order keeps sourceQuotationId NULL. The UNIQUE constraint
+  // is the DATABASE authority behind "one quotation → at most one order"
+  // (§7/§13) — a losing concurrent conversion is a constraint violation,
+  // never a second order. SetNull mirrors the document chain (a business
+  // cascade removes both sides; the order itself is never destroyed by the
+  // quotation domain, and the quotation domain offers no delete API).
+  sourceQuotationId String?
+  sourceQuotation   SalesQuotation? @relation("SalesOrderSourceQuotation", fields: [sourceQuotationId], references: [id], onDelete: SetNull)
 
   @@unique([businessId, reference])
+  @@unique([sourceQuotationId])
   @@index([businessId, status])
   @@index([businessId, createdAt])
   @@index([businessId, orderDate])
@@ -2489,4 +2514,143 @@ model SalesOrderLine {
   // Prompt 45 (§32) — dispatch lines fulfilling THIS order line (the
   // dispatch→order-line link; SetNull mirrors the document chain).
   goodsDispatchLines GoodsDispatchLine[]
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 47 — SALES QUOTATIONS: formal price offers to prospective or
+// existing customers. A quotation is a COMMERCIAL OFFER document — NOT an
+// order, NOT revenue, NOT an invoice, NOT a payment, NOT a receivable, NOT
+// an inventory movement, NOT a stock reservation, NOT an accounting entry
+// (§1). Lifecycle (§8): DRAFT → SENT → ACCEPTED → CONVERTED, with
+// DRAFT/SENT → CANCELLED, SENT → REJECTED|EXPIRED, and ACCEPTED →
+// CANCELLED permitted before conversion. Creating, editing, sending,
+// accepting, rejecting, cancelling, expiring or converting a quotation
+// NEVER alters inventory and NEVER creates a financial transaction (§1).
+// The ONLY downstream effect of conversion is one legitimate linked
+// CONFIRMED SalesOrder (§13) through the authoritative unique relation.
+// ---------------------------------------------------------------------------
+model SalesQuotation {
+  id String @id @default(cuid())
+
+  // §5/§2.4 — tenant scope is ALWAYS the authenticated membership, never
+  // client input. Cascade mirrors every other tenant document.
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  // §5 — OPTIONAL customer. SetNull: the frozen customerNameAtQuotation
+  // snapshot keeps the quotation readable after the live relation detaches
+  // (§12 — same law as SalesOrder.customerId).
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  // §12 — customer identity frozen at creation (empty string when the
+  // quotation has no customer). Renames/soft-deletes never rewrite it.
+  customerNameAtQuotation String @default("")
+
+  // §5/§10 — business-local unique reference (QT- prefix), DB-enforced;
+  // quotation references are unique within their OWN business+document
+  // domain and share NO sequence with SalesOrder (§10).
+  reference String
+  // §8 — closed vocabulary DRAFT|SENT|ACCEPTED|REJECTED|EXPIRED|CANCELLED|
+  // CONVERTED. This is the offer lifecycle, never a payment status. An
+  // unknown persisted value is an integrity failure — never silently DRAFT.
+  status String @default("DRAFT")
+
+  // §5/§10 — currency snapshot from the business at creation (never client
+  // input); historical quotation display always uses this snapshot.
+  currencyCodeAtQuotation     String
+  currencySymbolAtQuotation   String
+  decimalPrecisionAtQuotation Int
+
+  // §9 — quotationDate and validUntilDate are strict calendar dates
+  // normalized with the established UTC-midnoon rule. Validity law: the
+  // offer is valid THROUGH validUntilDate (inclusive) in the authenticated
+  // business timezone; it expires when the current business-local calendar
+  // date is AFTER validUntilDate. validUntilDate < quotationDate is
+  // rejected (§9). expectedDeliveryDate is optional and calendar-scoped.
+  quotationDate        DateTime
+  validUntilDate       DateTime
+  expectedDeliveryDate DateTime?
+
+  // §11 — quotation-level discount, integer minor units 0..subtotalMinor.
+  // No tax engine, no shipping charges, no payment fields (§2.9).
+  discountMinor Int @default(0)
+
+  // §10 — customerNotes are customer-VISIBLE document data (rendered on
+  // the printable offer); internalNotes are INTERNAL only — never printed,
+  // never searched, never audited, never sent to AI (§10/§16/§22).
+  customerNotes String?
+  internalNotes String?
+
+  createdByUserId String
+  createdByUser   User @relation("SalesQuotationCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  // §8 — lifecycle timestamps are server-generated inside the write
+  // transaction; never client-controlled. sentAt records an internal
+  // user's declaration that the offer was sent OUTSIDE the application —
+  // it is NOT proof of email delivery (§2.7). acceptedAt records an
+  // authorized internal user's declaration of customer acceptance — NOT a
+  // verified portal signature (§2.7). There is deliberately NO expiredAt
+  // column: expiration is DERIVED from validUntilDate (§9) and the
+  // explicit EXPIRED transition is audited.
+  sentAt      DateTime?
+  acceptedAt  DateTime?
+  rejectedAt  DateTime?
+  cancelledAt DateTime?
+  convertedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines SalesQuotationLine[]
+  // §7/§13 — the ONE authoritative converted order (one-to-one through the
+  // unique SalesOrder.sourceQuotationId). Null until conversion; after
+  // conversion the quotation is terminal and immutable (§8).
+  convertedSalesOrder SalesOrder? @relation("SalesOrderSourceQuotation")
+
+  @@unique([businessId, reference])
+  @@index([businessId, status])
+  @@index([businessId, quotationDate])
+  @@index([businessId, validUntilDate])
+  @@index([customerId])
+}
+
+// SalesQuotationLine = one offered product within a quotation (§6). A
+// product appears AT MOST ONCE per quotation (§6 — DB-enforced, stable
+// duplicate error). qty is an integer 1..1,000,000 (§6); unitPriceMinor is
+// the AGREED offered price (§6 — persisted once, never silently re-derived
+// from the live Product). Snapshots (§6/§12) are copied server-side from
+// the tenant-scoped Product at line-add time and never overwritten; the
+// client can never author them. Products are MANDATORY (catalog-backed)
+// because conversion must produce legitimate SalesOrderLines (§6).
+model SalesQuotationLine {
+  id String @id @default(cuid())
+
+  salesQuotationId String
+  salesQuotation   SalesQuotation @relation(fields: [salesQuotationId], references: [id], onDelete: Cascade)
+
+  // §6 — Restrict mirrors P41–P45: product soft-delete keeps history; a
+  // hard product delete can never silently destroy quotation evidence.
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  // §6/§11 — integer 1..1_000_000 whole units; integer 0..9_000_000_000
+  // minor units. No tax, no shipping-fee, no payment, no stock fields.
+  qty            Int
+  unitPriceMinor Int
+
+  // §6/§12 — historical product identity (never overwritten from live
+  // data; the client never submits these as authoritative values).
+  productNameAtQuotation String
+  skuAtQuotation         String?
+  unitAtQuotation        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // §6 — at most one line per product per quotation…
+  @@unique([salesQuotationId, productId])
+  // §indexes — …but many quotation lines per product need the reverse
+  // index (product quotation history, §6/§19).
+  @@index([salesQuotationId])
+  @@index([productId])
 }

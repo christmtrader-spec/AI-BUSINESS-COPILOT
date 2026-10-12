@@ -13,6 +13,7 @@ category below is exportable.
 | Audit log | ✅ | CSV (`?format=csv&take=N`) | Active business, audit:read roles | `audit:read` + `CSV_EXPORT` entitlement | Bounded `take` | Same rows the Audit view shows |
 | Billing payments history (platform billing) | ✅ | CSV (`?format=csv`) | Active business subscription payments | Owner/billing roles | Bounded | `billing/payments?format=csv` |
 | Customers / Suppliers / Products / Sales / Expenses lists | ✅ | CSV (client-side, from the loaded/filtered table) | Active business, current filter | Module role (`data:read`) | Explicit "exported first N of M rows" truncation notice — no silent truncation | Formula-injection guard (`src/lib/csv.ts`) applied to every cell |
+| Sales quotations + lines (Prompt 47) | ✅ (export-only) | JSON / CSV dataset inside the business export (`sales_quotations`, auto-includes `sales_quotation_lines`) | Active business only | `settings:manage` (OWNER/ADMIN) + tenant check | Dataset record/size caps | CONFIDENTIAL commercial offer data — quotation totals are NOT revenue/receivable figures; `internalNotes` never exported; import blocked (datasets rejected before any write); no quotation delete API exists (terminal lifecycle states only) |
 | AI conversations | ❌ | — | — | — | — | NOT exported (in-product deletion exists instead) |
 | AI usage metadata | ✅ (in-app usage page only) | UI (not downloadable) | Own business | Member | — | Server-counted; no cost data exposed (§107) |
 | Analytics events | ❌ | — | — | — | — | Internal operational data |

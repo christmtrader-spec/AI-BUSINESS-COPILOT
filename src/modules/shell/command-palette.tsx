@@ -34,6 +34,7 @@ import {
   Users,
   Wallet,
   Warehouse,
+  FileSignature,
   type LucideIcon,
 } from "lucide-react";
 import { LOCALES, localeLabel } from "@/i18n/config";
@@ -68,6 +69,7 @@ type PaletteNavKey =
   | "goodsReturns"
   | "goodsDispatches"
   | "salesOrders"
+  | "salesQuotations"
   | "products"
   | "inventory"
   | "sales"
@@ -101,6 +103,8 @@ const NAV_ITEMS: PaletteItem[] = [
   { view: { kind: "inventory-goods-dispatches" }, labelKey: "goodsDispatches", icon: PackageOpen },
   // Prompt 45 (§88) — Sales Orders reachable through the SAME palette.
   { view: { kind: "sales-orders" }, labelKey: "salesOrders", icon: FileText },
+  // Prompt 47 — Sales Quotations reachable through the SAME palette.
+  { view: { kind: "sales-quotations" }, labelKey: "salesQuotations", icon: FileSignature },
   { view: { kind: "module", module: "products" }, labelKey: "products", icon: Package },
   { view: { kind: "module", module: "inventory" }, labelKey: "inventory", icon: Warehouse },
   { view: { kind: "module", module: "sales" }, labelKey: "sales", icon: ShoppingCart },

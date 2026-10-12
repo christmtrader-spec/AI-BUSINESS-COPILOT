@@ -58,6 +58,9 @@ export type ExportDatasetKey =
   | "inventory_goods_dispatch_lines"
   | "sales_orders"
   | "sales_order_lines"
+  // Prompt 47 (§20) — quotation datasets: export-only (import blocked).
+  | "sales_quotations"
+  | "sales_quotation_lines"
   | "subscription_summary"
   | "usage_summary";
 
@@ -88,6 +91,8 @@ export const EXPORT_DATASET_KEYS = [
   "inventory_goods_dispatch_lines",
   "sales_orders",
   "sales_order_lines",
+  "sales_quotations",
+  "sales_quotation_lines",
   "subscription_summary",
   "usage_summary",
 ] as const satisfies readonly ExportDatasetKey[];
@@ -107,6 +112,8 @@ export const DATASET_IMPLICATIONS: Partial<Record<ExportDatasetKey, ExportDatase
   inventory_goods_dispatches: ["inventory_goods_dispatch_lines"],
   // Prompt 45 (§116) — sales orders always carry their order lines.
   sales_orders: ["sales_order_lines"],
+  // Prompt 47 (§20) — quotations always carry their offer lines.
+  sales_quotations: ["sales_quotation_lines"],
 };
 
 export type DatasetMeta = {
@@ -172,6 +179,12 @@ export const EXPORT_CATALOG: Record<ExportDatasetKey, DatasetMeta> = {
   // eligibility or invoice/fulfillment inconsistencies.
   sales_orders: { key: "sales_orders", sensitivity: "CONFIDENTIAL", csvFile: "sales_orders.csv", labelKey: "salesOrders" },
   sales_order_lines: { key: "sales_order_lines", sensitivity: "CONFIDENTIAL", csvFile: "sales_order_lines.csv", labelKey: "salesOrderLines" },
+  // Prompt 47 (§20) — quotations + lines: CONFIDENTIAL BUSINESS DATA
+  // (commercial offers with customer identity + offered prices).
+  // Export-ONLY — import is intentionally blocked (§20): replaying offers
+  // through a generic importer would fabricate commercial history.
+  sales_quotations: { key: "sales_quotations", sensitivity: "CONFIDENTIAL", csvFile: "sales_quotations.csv", labelKey: "salesQuotations" },
+  sales_quotation_lines: { key: "sales_quotation_lines", sensitivity: "CONFIDENTIAL", csvFile: "sales_quotation_lines.csv", labelKey: "salesQuotationLines" },
   subscription_summary: { key: "subscription_summary", sensitivity: "CONFIDENTIAL", csvFile: "subscription.csv", labelKey: "subscriptionSummary" },
   usage_summary: { key: "usage_summary", sensitivity: "CONFIDENTIAL", csvFile: "usage.csv", labelKey: "usageSummary" },
 };
@@ -1430,6 +1443,120 @@ export const DATASET_FETCHERS: Record<ExportDatasetKey, DatasetFetcher> = {
     };
   },
 
+  sales_quotations: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.salesQuotation.findMany({
+        where: { businessId: ctx.businessId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take,
+        select: {
+          id: true,
+          reference: true,
+          status: true,
+          customerId: true,
+          customerNameAtQuotation: true,
+          currencyCodeAtQuotation: true,
+          currencySymbolAtQuotation: true,
+          decimalPrecisionAtQuotation: true,
+          quotationDate: true,
+          validUntilDate: true,
+          expectedDeliveryDate: true,
+          discountMinor: true,
+          customerNotes: true,
+          createdByUserId: true,
+          sentAt: true,
+          acceptedAt: true,
+          rejectedAt: true,
+          cancelledAt: true,
+          convertedAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((qt) => ({
+        json: {
+          id: qt.id,
+          reference: qt.reference,
+          status: qt.status,
+          customerId: qt.customerId,
+          customerNameAtQuotation: qt.customerNameAtQuotation,
+          currencyCodeAtQuotation: qt.currencyCodeAtQuotation,
+          currencySymbolAtQuotation: qt.currencySymbolAtQuotation,
+          decimalPrecisionAtQuotation: qt.decimalPrecisionAtQuotation,
+          quotationDate: iso(qt.quotationDate),
+          validUntilDate: iso(qt.validUntilDate),
+          expectedDeliveryDate: iso(qt.expectedDeliveryDate),
+          discountMinor: qt.discountMinor,
+          customerNotes: qt.customerNotes,
+          // internalNotes are deliberately NOT exported (staff-only §10/§20).
+          createdByUserId: qt.createdByUserId,
+          sentAt: iso(qt.sentAt),
+          acceptedAt: iso(qt.acceptedAt),
+          rejectedAt: iso(qt.rejectedAt),
+          cancelledAt: iso(qt.cancelledAt),
+          convertedAt: iso(qt.convertedAt),
+          createdAt: qt.createdAt.toISOString(),
+          updatedAt: qt.updatedAt.toISOString(),
+        },
+        csv: [
+          qt.id, qt.reference, qt.status, qt.customerId, qt.customerNameAtQuotation,
+          qt.currencyCodeAtQuotation, qt.currencySymbolAtQuotation, qt.decimalPrecisionAtQuotation,
+          iso(qt.quotationDate), iso(qt.validUntilDate), iso(qt.expectedDeliveryDate),
+          qt.discountMinor, qt.customerNotes, qt.createdByUserId,
+          iso(qt.sentAt), iso(qt.acceptedAt), iso(qt.rejectedAt), iso(qt.cancelledAt), iso(qt.convertedAt),
+          qt.createdAt.toISOString(), qt.updatedAt.toISOString(),
+        ],
+      })),
+      truncated,
+    };
+  },
+
+  sales_quotation_lines: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.salesQuotationLine.findMany({
+        where: { salesQuotation: { businessId: ctx.businessId } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take,
+        select: {
+          id: true,
+          salesQuotationId: true,
+          productId: true,
+          productNameAtQuotation: true,
+          skuAtQuotation: true,
+          unitAtQuotation: true,
+          qty: true,
+          unitPriceMinor: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((l) => ({
+        json: {
+          id: l.id,
+          salesQuotationId: l.salesQuotationId,
+          productId: l.productId,
+          productNameAtQuotation: l.productNameAtQuotation,
+          skuAtQuotation: l.skuAtQuotation,
+          unitAtQuotation: l.unitAtQuotation,
+          qty: l.qty,
+          unitPriceMinor: l.unitPriceMinor,
+          createdAt: l.createdAt.toISOString(),
+          updatedAt: l.updatedAt.toISOString(),
+        },
+        csv: [
+          l.id, l.salesQuotationId, l.productId, l.productNameAtQuotation,
+          l.skuAtQuotation, l.unitAtQuotation, l.qty, l.unitPriceMinor,
+          l.createdAt.toISOString(), l.updatedAt.toISOString(),
+        ],
+      })),
+      truncated,
+    };
+  },
+
 subscription_summary: async (ctx) => {
     // §51 — customer-visible subscription state ONLY. Provider verification
     // internals, webhook signatures and merchant credentials do not exist here.
@@ -1543,6 +1670,10 @@ export const DATASET_CSV_COLUMNS: Record<ExportDatasetKey, string[]> = {
   // money columns stay integer minor units (the agreed commercial contract).
   sales_orders: ["id", "reference", "status", "customer_id", "customer_name_at_order", "currency_code_at_order", "currency_symbol_at_order", "decimal_precision_at_order", "order_date", "expected_date", "discount_minor", "notes", "created_by_user_id", "confirmed_at", "completed_at", "cancelled_at", "created_at", "updated_at"],
   sales_order_lines: ["id", "sales_order_id", "product_id", "product_name_at_order", "sku_at_order", "unit_at_order", "ordered_qty", "unit_price_minor", "created_at", "updated_at"],
+  // Prompt 47 (§20) — quotation datasets: snapshot fields verbatim; money
+  // columns stay integer minor units; NO internalNotes column ever.
+  sales_quotations: ["id", "reference", "status", "customer_id", "customer_name_at_quotation", "currency_code_at_quotation", "currency_symbol_at_quotation", "decimal_precision_at_quotation", "quotation_date", "valid_until_date", "expected_delivery_date", "discount_minor", "customer_notes", "created_by_user_id", "sent_at", "accepted_at", "rejected_at", "cancelled_at", "converted_at", "created_at", "updated_at"],
+  sales_quotation_lines: ["id", "sales_quotation_id", "product_id", "product_name_at_quotation", "sku_at_quotation", "unit_at_quotation", "qty", "unit_price_minor", "created_at", "updated_at"],
   subscription_summary: ["plan_code", "plan_name", "status", "billing_period", "current_period_start", "current_period_end", "trial_start", "trial_end", "cancel_at_period_end", "canceled_at", "ended_at", "created_at"],
   usage_summary: ["metric", "used", "limit", "remaining", "percentage_used", "period_start", "period_end"],
 };

@@ -22,6 +22,7 @@ import {
   TrendingUp,
   UserRound,
   Wallet,
+  FileSignature,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
@@ -59,6 +60,7 @@ export function CustomerDetailView({
   const t = useTranslations("entityDetail");
   const tGd = useTranslations("goodsDispatches");
   const tSo = useTranslations("salesOrders");
+  const tSq = useTranslations("salesQuotations");
   const tCommon = useTranslations("common");
   const tStatements = useTranslations("statements");
   const tSearch = useTranslations("search");
@@ -258,6 +260,28 @@ export function CustomerDetailView({
             typeof o.invoiceNumber === "number"
               ? `INV-${String(o.invoiceNumber).padStart(4, "0")}`
               : null,
+        }))}
+      />
+
+      {/* Prompt 47 (§19) — bounded quotation history (≤10). Commercial
+          OFFERS — not orders, not invoices, not stock events (§1/§19):
+          a SENT offer is not a confirmed order and an ACCEPTED offer is
+          not yet a converted SalesOrder. Converted rows carry the exact
+          originating order reference. Rows deep-link to the quotation
+          document (#/sales-quotations/<id>). */}
+      <RelatedRecordList
+        title={tSq("quotationHistory")}
+        entity={null}
+        emptyText={tSq("noQuotationHistory")}
+        onOpen={() => {}}
+        onOpenRow={(id) => navigate({ kind: "sales-quotation", id })}
+        items={(data.recentSalesQuotations ?? []).map((qt) => ({
+          id: qt.id,
+          icon: FileSignature,
+          primary: qt.reference,
+          secondary: tSq(`status_${qt.effectiveStatus}`),
+          trailing: fmtMoney(business, qt.totalMinor),
+          trailingMuted: qt.convertedOrderReference ?? undefined,
         }))}
       />
 

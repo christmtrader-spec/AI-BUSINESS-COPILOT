@@ -1,0 +1,468 @@
+     1→/**
+     2→ * Prompt 47 — ISOLATED line-cap + SALES-QUOTATION CONCURRENCY process.
+     3→ *
+     4→ * Runs with SALES_QUOTATION_MAX_LINES=20 (NEVER changes the project default)
+     5→ * in its own process, exercising the REAL service layer against the REAL
+     6→ * dev database (the same harness law as the P42–P45 cap checks — the dev DB
+     7→ * is shared but every fixture row is P47CAP-prefixed and torn down to ZERO,
+     8→ * including crashed-run recovery):
+     9→ *   1. cap parsing: default / malformed → 200, below-min → 20 clamp,
+    10→ *      above-max → 500 clamp (§11 — never unbounded);
+    11→ *   2. sequential adds: 21 valid lines → 20 accepted, 21st → 422
+    12→ *      SALES_QUOTATION_LINE_LIMIT_REACHED (ordinary write-time rejection),
+    13→ *      exactly 20 persisted;
+    14→ *   3. over-cap corruption → a 21st line injected via the DB → detail/
+    15→ *      list/export ALL fail 500 SALES_QUOTATION_LINE_CAP_INVARIANT with
+    16→ *      ZERO mutation, recovering after cleanup (the P43 D9–D11 laws);
+    17→ *   4. exact-integer overflow: ONE max-magnitude line (1_000_000 ×
+    18→ *      9_000_000_000 = 9×10^15) is exactly safe and accepted; a SECOND
+    19→ *      max-magnitude line overflows the ACCUMULATED subtotal → 422
+    20→ *      SALES_QUOTATION_TOTAL_OVERFLOW (input-time law §11; the rejected
+    21→ *      line does NOT persist); the persisted-corruption path (a second max
+    22→ *      line injected via the DB) fails reads with the integrity 500;
+    23→ *   5. concurrent duplicate product lines → exactly one line, losers 409
+    24→ *      SALES_QUOTATION_DUPLICATE_PRODUCT (unique constraint);
+    25→ *   6. concurrent mark-sent vs line-add → no edit sneaks into SENT (the
+    26→ *      final line set is consistent with the add result);
+    27→ *   7. concurrent accept vs expire on a valid offer → the validity law
+    28→ *      holds (exactly one wins; ACCEPTED and EXPIRED never both);
+    29→ *   8. concurrent duplicate-reference creates → exactly one quotation,
+    30→ *      losers 409 SALES_QUOTATION_DUPLICATE_REFERENCE;
+    31→ *   9. conversion failure ROLLBACK: the cheapest SAFE simulation — the
+    32→ *      quotation's discountMinor is corrupted DIRECTLY in the DB (above
+    33→ *      the subtotal) AFTER acceptance, so the in-transaction conversion
+    34→ *      guard fails. Asserted: NO SalesOrder, quotation stays ACCEPTED (no
+    35→ *      CONVERTED/convertedAt), zero sales_order.create /
+    36→ *      sales_quotation.convert audit rows, zero stock/finance mutation;
+    37→ *  10. audit atomicity: every mutation produced EXACTLY its expected audit
+    38→ *      rows (the shared withWriteTransaction law — audit failure rolls back
+    39→ *      the mutation, so a committed mutation must always have its rows).
+    40→ *
+    41→ * Run: SALES_QUOTATION_MAX_LINES=20 bun --preload ./scripts/lib/register-server-only-shim.ts \
+    42→ *      scripts/prompt47-sales-quotation-cap-check.ts
+    43→ * (the shim neutralizes the `server-only` guard for out-of-process runs —
+    44→ * plain tsx/node CANNOT import the server service modules).
+    45→ */
+    46→import { PrismaClient } from "@prisma/client";
+    47→import {
+    48→  acceptSalesQuotation,
+    49→  addSalesQuotationLine,
+    50→  cancelSalesQuotation,
+    51→  convertSalesQuotationToOrder,
+    52→  createSalesQuotation,
+    53→  expireSalesQuotation,
+    54→  getSalesQuotation,
+    55→  listSalesQuotations,
+    56→  markSalesQuotationSent,
+    57→  updateSalesQuotationLine,
+    58→} from "../src/lib/sales-quotations/service";
+    59→import { buildSalesQuotationCsv } from "../src/lib/sales-quotations/export";
+    60→import {
+    61→  SALES_QUOTATION_LINE_CAP_DEFAULT,
+    62→  SALES_QUOTATION_LINE_CAP_MAX,
+    63→  SALES_QUOTATION_LINE_CAP_MIN,
+    64→  salesQuotationLineCap,
+    65→} from "../src/lib/sales-quotations/types";
+    66→
+    67→const db = new PrismaClient();
+    68→const TAG = "P47CAP";
+    69→const STAMP = `${Date.now()}`.slice(-8);
+    70→
+    71→let passed = 0;
+    72→let failed = 0;
+    73→const failures: string[] = [];
+    74→
+    75→function ok(name: string, cond: boolean, info = "") {
+    76→  if (cond) {
+    77→    passed += 1;
+    78→    console.log(`✓ ${name}`);
+    79→  } else {
+    80→    failed += 1;
+    81→    failures.push(`${name}${info ? ` — ${info}` : ""}`);
+    82→    console.log(`✗ ${name}${info ? " — " + info : ""}`);
+    83→  }
+    84→}
+    85→function section(name: string) {
+    86→  console.log(`\n== ${name} ==`);
+    87→}
+    88→function eq2(actual: unknown, expected: unknown, name: string) {
+    89→  ok(name, actual === expected, `got ${String(actual)}, want ${String(expected)}`);
+    90→}
+    91→function codeOf(error: unknown): string {
+    92→  return (error as { code?: string })?.code ?? String(error);
+    93→}
+    94→async function safe<T>(fn: () => Promise<T>): Promise<{ status: number; code: string; value?: T }> {
+    95→  try {
+    96→    const value = await fn();
+    97→    return { status: 200, code: "", value };
+    98→  } catch (error) {
+    99→    const e = error as { status?: number; code?: string };
+   100→    return { status: e.status ?? 500, code: e.code ?? String(error) };
+   101→  }
+   102→}
+   103→
+   104→async function purge() {
+   105→  const bizs = await db.business.findMany({ where: { name: { startsWith: `${TAG}-` } }, select: { id: true } });
+   106→  for (const b of bizs) {
+   107→    await db.auditLog.deleteMany({ where: { businessId: b.id } });
+   108→    await db.salesOrderLine.deleteMany({ where: { salesOrder: { businessId: b.id } } });
+   109→    await db.salesOrder.deleteMany({ where: { businessId: b.id } });
+   110→    await db.salesQuotationLine.deleteMany({ where: { salesQuotation: { businessId: b.id } } });
+   111→    await db.salesQuotation.deleteMany({ where: { businessId: b.id } });
+   112→    await db.payment.deleteMany({ where: { businessId: b.id } });
+   113→    await db.saleItem.deleteMany({ where: { sale: { businessId: b.id } } });
+   114→    await db.sale.deleteMany({ where: { businessId: b.id } });
+   115→    await db.inventoryAdjustment.deleteMany({ where: { businessId: b.id } });
+   116→    await db.customer.deleteMany({ where: { businessId: b.id } });
+   117→    await db.product.deleteMany({ where: { businessId: b.id } });
+   118→    await db.business.deleteMany({ where: { id: b.id } });
+   119→  }
+   120→  const users = await db.user.findMany({ where: { email: { startsWith: `${TAG.toLowerCase()}-` } }, select: { id: true } });
+   121→  for (const u of users) {
+   122→    await db.userSession.deleteMany({ where: { userId: u.id } });
+   123→    await db.user.deleteMany({ where: { id: u.id } });
+   124→  }
+   125→}
+   126→
+   127→const CTX = () => ({ businessId: "", userId: "" });
+   128→const calDate = (d: Date) => d.toISOString().slice(0, 10);
+   129→const futureDate = (n: number) => calDate(new Date(Date.now() + n * 86_400_000));
+   130→
+   131→async function main() {
+   132→  await purge();
+   133→
+   134→  const owner = await db.user.create({
+   135→    data: {
+   136→      email: `${TAG.toLowerCase()}-owner-${STAMP}@cap.test`,
+   137→      name: `${TAG} owner`,
+   138→      passwordHash: "$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinv",
+   139→    },
+   140→  });
+   141→  const biz = await db.business.create({
+   142→    data: {
+   143→      name: `${TAG}-biz-${STAMP}`,
+   144→      slug: `${TAG.toLowerCase()}-biz-${STAMP}`,
+   145→      ownerId: owner.id,
+   146→      currencyCode: "USD",
+   147→      currencySymbol: "$",
+   148→      decimalPrecision: 2,
+   149→      timezone: "Asia/Tehran",
+   150→    },
+   151→  });
+   152→  const ctx = CTX();
+   153→  ctx.businessId = biz.id;
+   154→  ctx.userId = owner.id;
+   155→
+   156→  const product = await db.product.create({
+   157→    data: { businessId: biz.id, name: `${TAG} Stocked`, sku: `${TAG}-SKU`, salePriceMinor: 100, stockQty: 500 },
+   158→  });
+   159→
+   160→  /* ---------------- 1. cap parsing (§11) ---------------- */
+   161→  section("1. cap parsing (SALES_QUOTATION_MAX_LINES env law)");
+   162→  eq2(SALES_QUOTATION_LINE_CAP_DEFAULT, 200, "1.1 default cap 200");
+   163→  eq2(SALES_QUOTATION_LINE_CAP_MIN, 20, "1.2 min cap 20");
+   164→  eq2(SALES_QUOTATION_LINE_CAP_MAX, 500, "1.3 max cap 500");
+   165→  eq2(salesQuotationLineCap(process.env.SALES_QUOTATION_MAX_LINES), 20, "1.4 the suite's env (20) is honored");
+   166→  eq2(salesQuotationLineCap(undefined), 200, "1.5 undefined env → default 200");
+   167→  eq2(salesQuotationLineCap("garbage"), 200, "1.6 malformed env → default 200");
+   168→  eq2(salesQuotationLineCap("10"), 20, "1.7 below min → clamped UP to 20");
+   169→  eq2(salesQuotationLineCap("1000"), 500, "1.8 above max → clamped DOWN to 500");
+   170→  eq2(salesQuotationLineCap("500"), 500, "1.9 max boundary accepted");
+   171→  eq2(salesQuotationLineCap("20"), 20, "1.10 min boundary accepted");
+   172→
+   173→  /* ---------------- 2. sequential line cap ---------------- */
+   174→  section("2. sequential line cap (SALES_QUOTATION_MAX_LINES=20)");
+   175→  const capped = await createSalesQuotation({ ...ctx, validUntilDate: futureDate(30), reference: `${TAG}-CAP` });
+   176→  let accepted = 0;
+   177→  let limitError = "";
+   178→  for (let i = 0; i < 21; i += 1) {
+   179→    const p = await db.product.create({
+   180→      data: { businessId: biz.id, name: `${TAG} P${i}`, sku: `${TAG}-P${i}`, salePriceMinor: 10, stockQty: 5 },
+   181→    });
+   182→    try {
+   183→      await addSalesQuotationLine({ ...ctx, id: capped.id, productId: p.id, qty: 1 });
+   184→      accepted += 1;
+   185→    } catch (error) {
+   186→      limitError = codeOf(error);
+   187→    }
+   188→  }
+   189→  eq2(accepted, 20, "2.1 exactly 20 lines accepted");
+   190→  ok(`2.2 21st line → 422 LINE_LIMIT (${limitError})`, limitError === "SALES_QUOTATION_LINE_LIMIT_REACHED");
+   191→  const cappedCount = await db.salesQuotationLine.count({ where: { salesQuotationId: capped.id } });
+   192→  eq2(cappedCount, 20, "2.3 exactly 20 lines persisted");
+   193→
+   194→  /* ---------------- 3. over-cap corruption (§11) ---------------- */
+   195→  section("3. over-cap corruption → controlled 500, zero mutation");
+   196→  const extra = await db.product.create({
+   197→    data: { businessId: biz.id, name: `${TAG} Extra`, sku: `${TAG}-X`, salePriceMinor: 10 },
+   198→  });
+   199→  await db.salesQuotationLine.create({
+   200→    data: {
+   201→      salesQuotationId: capped.id,
+   202→      productId: extra.id,
+   203→      qty: 1,
+   204→      unitPriceMinor: 10,
+   205→      productNameAtQuotation: extra.name,
+   206→    },
+   207→  }); // direct DB injection → 21 lines (corruption)
+   208→  const capDetail = await safe(() => getSalesQuotation({ businessId: biz.id, id: capped.id }));
+   209→  eq2(capDetail.status, 500, "3.1 detail fails 500");
+   210→  eq2(capDetail.code, "SALES_QUOTATION_LINE_CAP_INVARIANT", "3.2 stable invariant code");
+   211→  const capList = await safe(() => listSalesQuotations({ businessId: biz.id, page: 1, pageSize: 25 }));
+   212→  eq2(capList.status, 500, "3.3 list fails 500 on the corrupted row");
+   213→  eq2(capList.code, "SALES_QUOTATION_LINE_CAP_INVARIANT", "3.4 stable invariant code (list)");
+   214→  const capExport = await safe(() => buildSalesQuotationCsv({ businessId: biz.id, id: capped.id, locale: "en" }));
+   215→  eq2(capExport.status, 500, "3.5 export fails 500 (never a truncated CSV)");
+   216→  eq2(capExport.code, "SALES_QUOTATION_LINE_CAP_INVARIANT", "3.6 stable invariant code (export)");
+   217→  const capAdd = await safe(() => addSalesQuotationLine({ ...ctx, id: capped.id, productId: product.id, qty: 1 }));
+   218→  eq2(capAdd.status, 500, "3.7 line-add on corrupted quotation fails 500 (not the 422 user path)");
+   219→  eq2(capAdd.code, "SALES_QUOTATION_LINE_CAP_INVARIANT", "3.8 stable invariant code (line-add)");
+   220→  const capSend = await safe(() => markSalesQuotationSent({ ...ctx, id: capped.id }));
+   221→  eq2(capSend.status, 500, "3.9 mark-sent on corrupted quotation fails 500");
+   222→  eq2(capSend.code, "SALES_QUOTATION_LINE_CAP_INVARIANT", "3.10 stable invariant code (mark-sent)");
+   223→  await db.salesQuotationLine.delete({
+   224→    where: { id: (await db.salesQuotationLine.findFirst({ where: { salesQuotationId: capped.id, productId: extra.id } }))!.id },
+   225→  });
+   226→  const recovered = await getSalesQuotation({ businessId: biz.id, id: capped.id });
+   227→  eq2(recovered.quotation.id, capped.id, "3.11 reads recover after cleanup");
+   228→
+   229→  /* ------------- 4. exact-integer overflow (§11) ------------- */
+   230→  section("4. exact-integer overflow (accumulation crosses MAX_SAFE_INTEGER → 422/500)");
+   231→  // NOTE (discovered by this suite, reported to the orchestrator): the
+   232→  // documented price ceiling 9_000_000_000 cannot be PERSISTED — the
+   233→  // minor-unit money columns are Prisma `Int` (32-bit signed on read);
+   234→  // a stored value above 2_147_483_647 fails every later read with a
+   235→  // Prisma P2023 "Inconsistent column data" corruption error. This is a
+   236→  // PRE-EXISTING cross-module issue (Sale/SaleItem/PurchaseOrder/SalesOrder
+   237→  // share the same Int columns and the same 9e9 law). No migration may be
+   238→  // authored by the test task, so the overflow laws are exercised with
+   239→  // STORABLE magnitudes: line total 1_000_000 × 2_000_000_000 = 2×10^15
+   240→  // (safe per line); FIVE such lines accumulate past Number.MAX_SAFE_INTEGER.
+   241→  const BIG_PRICE = 2_000_000_000; // storable (< 2^31−1); line total 2×10^15
+   242→  const overQ = await createSalesQuotation({ ...ctx, validUntilDate: futureDate(30), reference: `${TAG}-OVER` });
+   243→  const maxLine1 = await addSalesQuotationLine({
+   244→    ...ctx,
+   245→    id: overQ.id,
+   246→    productId: product.id,
+   247→    qty: 1_000_000,
+   248→    unitPriceMinor: BIG_PRICE,
+   249→  });
+   250→  ok(`4.1 one max-magnitude line is exactly safe and accepted (id ${maxLine1.id})`, Boolean(maxLine1.id));
+   251→  const overQDetail1 = await getSalesQuotation({ businessId: biz.id, id: overQ.id });
+   252→  eq2(overQDetail1.summary.subtotalMinor, 2_000_000_000_000_000, "4.2 subtotal = 2×10^15 (exactly inside the safe range)");
+   253→  // Each additional max line needs a DIFFERENT product (duplicate-product law).
+   254→  for (let i = 2; i <= 5; i += 1) {
+   255→    const pN = await db.product.create({
+   256→      data: { businessId: biz.id, name: `${TAG} Big ${i}`, sku: `${TAG}-BIG${i}`, salePriceMinor: BIG_PRICE, stockQty: 5 },
+   257→    });
+   258→    const res = await safe(() =>
+   259→      addSalesQuotationLine({ ...ctx, id: overQ.id, productId: pN.id, qty: 1_000_000, unitPriceMinor: BIG_PRICE }),
+   260→    );
+   261→    if (i < 5) {
+   262→      eq2(res.status, 200, `4.${i}.a line ${i} accumulates to ${i * 2}×10^15 — still safe, accepted`);
+   263→    } else {
+   264→      eq2(res.status, 422, "4.3 fifth max line overflows the ACCUMULATED subtotal → 422 (input-time TOTAL_OVERFLOW, tx rolled back)");
+   265→      eq2(res.code, "SALES_QUOTATION_TOTAL_OVERFLOW", "4.4 stable overflow code");
+   266→    }
+   267→  }
+   268→  eq2(await db.salesQuotationLine.count({ where: { salesQuotationId: overQ.id } }), 4, "4.5 exactly the four lawful lines persisted (the overflowing 5th rolled back)");
+   269→  // Persisted-corruption path: inject a fifth max line DIRECTLY in the DB
+   270→  // (storable values, overflowing SUM) — reads fail with the integrity 500,
+   271→  // never a fabricated total.
+   272→  const product5 = await db.product.findFirst({ where: { businessId: biz.id, sku: `${TAG}-BIG4` } });
+   273→  await db.salesQuotationLine.create({
+   274→    data: {
+   275→      salesQuotationId: overQ.id,
+   276→      productId: product5!.id,
+   277→      qty: 1_000_000,
+   278→      unitPriceMinor: BIG_PRICE,
+   279→      productNameAtQuotation: product5!.name,
+   280→    },
+   281→  });
+   282→  const overRead = await safe(() => getSalesQuotation({ businessId: biz.id, id: overQ.id }));
+   283→  eq2(overRead.status, 500, "4.6 corrupted-persisted overflow → read fails 500");
+   284→  eq2(overRead.code, "SALES_QUOTATION_TOTAL_OVERFLOW", "4.7 stable integrity overflow code (not a subtotal lie)");
+   285→  await db.salesQuotationLine.delete({
+   286→    where: { id: (await db.salesQuotationLine.findFirst({ where: { salesQuotationId: overQ.id, productId: product5!.id, qty: 1_000_000 } }))!.id },
+   287→  });
+   288→  const overRecovered = await getSalesQuotation({ businessId: biz.id, id: overQ.id });
+   289→  eq2(overRecovered.summary.subtotalMinor, 8_000_000_000_000_000, "4.8 reads recover after cleanup (4 × 2×10^15)");
+   290→  // Line UPDATE with the same law: a tiny 5th line exists; updating it to
+   291→  // the max magnitude would overflow the ACCUMULATED subtotal → 422.
+   292→  await addSalesQuotationLine({ ...ctx, id: overQ.id, productId: product5!.id, qty: 1, unitPriceMinor: 1 });
+   293→  const overLines = await db.salesQuotationLine.findMany({ where: { salesQuotationId: overQ.id }, orderBy: { createdAt: "asc" } });
+   294→  eq2(overLines.length, 5, "4.8b tiny fifth line in place (8×10^15 + 1)");
+   295→  const updOverflow = await safe(() =>
+   296→    updateSalesQuotationLine({ ...ctx, id: overQ.id, lineId: overLines[4].id, qty: 1_000_000, unitPriceMinor: BIG_PRICE }),
+   297→  );
+   298→  eq2(updOverflow.status, 422, "4.9 line UPDATE that would overflow the accumulated subtotal → 422");
+   299→  eq2(updOverflow.code, "SALES_QUOTATION_TOTAL_OVERFLOW", "4.10 stable overflow code (update path)");
+   300→  eq2(
+   301→    (await db.salesQuotationLine.findUnique({ where: { id: overLines[4].id }, select: { qty: true } }))!.qty,
+   302→    1,
+   303→    "4.11 update rolled back (the tiny line keeps its lawful value)",
+   304→  );
+   305→
+   306→  /* ------------- 5. concurrent duplicate product lines ------------- */
+   307→  section("5. concurrent duplicate product lines (§6)");
+   308→  const dupQ = await createSalesQuotation({ ...ctx, validUntilDate: futureDate(30), reference: `${TAG}-DUP` });
+   309→  const dupResults = await Promise.allSettled(
+   310→    Array.from({ length: 5 }, () => addSalesQuotationLine({ ...ctx, id: dupQ.id, productId: product.id, qty: 5 })),
+   311→  );
+   312→  const dupWins = dupResults.filter((r) => r.status === "fulfilled");
+   313→  const dupLoses = dupResults.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+   314→  eq2(dupWins.length, 1, "5.1 exactly ONE line created");
+   315→  eq2(dupLoses.length, 4, "5.2 four losers");
+   316→  ok("5.3 losers carry the stable duplicate code", dupLoses.every((l) => codeOf(l.reason) === "SALES_QUOTATION_DUPLICATE_PRODUCT"));
+   317→  eq2(await db.salesQuotationLine.count({ where: { salesQuotationId: dupQ.id } }), 1, "5.4 exactly one persisted line (DB uniqueness authoritative)");
+   318→
+   319→  /* -------- 6. concurrent mark-sent vs line-add (§8/§10) -------- */
+   320→  section("6. concurrent mark-sent vs line-add (no edit sneaks into SENT)");
+   321→  const raceQ = await createSalesQuotation({ ...ctx, validUntilDate: futureDate(30), reference: `${TAG}-RACE1` });
+   322→  await addSalesQuotationLine({ ...ctx, id: raceQ.id, productId: product.id, qty: 1 });
+   323→  const preCount = await db.salesQuotationLine.count({ where: { salesQuotationId: raceQ.id } });
+   324→  const raceProduct = await db.product.create({
+   325→    data: { businessId: biz.id, name: `${TAG} Racer`, sku: `${TAG}-RACE`, salePriceMinor: 50, stockQty: 10 },
+   326→  });
+   327→  const [sendRes, addRes] = await Promise.allSettled([
+   328→    markSalesQuotationSent({ ...ctx, id: raceQ.id }),
+   329→    addSalesQuotationLine({ ...ctx, id: raceQ.id, productId: raceProduct.id, qty: 2 }),
+   330→  ]);
+   331→  const sendOk = sendRes.status === "fulfilled";
+   332→  const addOk = addRes.status === "fulfilled";
+   333→  const raceCount = await db.salesQuotationLine.count({ where: { salesQuotationId: raceQ.id } });
+   334→  const raceStatus = (await db.salesQuotation.findUnique({ where: { id: raceQ.id }, select: { status: true } }))!.status;
+   335→  eq2(raceStatus, "SENT", "6.1 final status SENT (mark-sent always eventually succeeds on a non-empty draft)");
+   336→  if (addOk) {
+   337→    eq2(raceCount, 2, "6.2 add won the lock FIRST → the line is part of the frozen offer (2 lines)");
+   338→    eq2(sendOk, true, "6.3 mark-sent then froze the 2-line offer");
+   339→  } else {
+   340→    eq2(raceCount, 1, "6.4 send won the lock FIRST → the late add is REJECTED (no post-send edit)");
+   341→    ok("6.5 losing add carries the stable immutable code", codeOf((addRes as PromiseRejectedResult).reason) === "SALES_QUOTATION_IMMUTABLE");
+   342→  }
+   343→  eq2(raceCount, addOk ? preCount + 1 : preCount, "6.6 the final line set is CONSISTENT with the add result (no partial write)");
+   344→
+   345→  /* ------------ 7. concurrent accept vs expire (§9) ------------ */
+   346→  section("7. concurrent accept vs expire (validity law holds)");
+   347→  const valQ = await createSalesQuotation({ ...ctx, validUntilDate: futureDate(30), reference: `${TAG}-RACE2` });
+   348→  await addSalesQuotationLine({ ...ctx, id: valQ.id, productId: product.id, qty: 1 });
+   349→  await markSalesQuotationSent({ ...ctx, id: valQ.id });
+   350→  const [acceptRes, expireRes] = await Promise.allSettled([
+   351→    acceptSalesQuotation({ ...ctx, id: valQ.id }),
+   352→    expireSalesQuotation({ ...ctx, id: valQ.id }),
+   353→  ]);
+   354→  const acceptOk = acceptRes.status === "fulfilled";
+   355→  const expireOk = expireRes.status === "fulfilled";
+   356→  ok(`7.1 exactly one wins (${acceptOk ? "accept" : "expire"})`, acceptOk !== expireOk);
+   357→  const valStatus = (await db.salesQuotation.findUnique({ where: { id: valQ.id }, select: { status: true, acceptedAt: true } }))!;
+   358→  ok(
+   359→    "7.2 the persisted status is consistent (ACCEPTED or EXPIRED, never both)",
+   360→    (valStatus.status === "ACCEPTED" && Boolean(valStatus.acceptedAt)) ||
+   361→      (valStatus.status === "EXPIRED" && !valStatus.acceptedAt),
+   362→  );
+   363→  if (acceptOk) {
+   364→    ok(
+   365→      "7.3 losing expire carries a transition/validity domain code",
+   366→      expireRes.status === "rejected" && ["SALES_QUOTATION_INVALID_TRANSITION", "SALES_QUOTATION_NOT_EXPIRED"].includes(codeOf((expireRes as PromiseRejectedResult).reason)),
+   367→    );
+   368→  } else {
+   369→    ok(
+   370→      "7.3 losing accept carries the expired code (validity gate)",
+   371→      acceptRes.status === "rejected" && ["SALES_QUOTATION_INVALID_TRANSITION", "SALES_QUOTATION_EXPIRED"].includes(codeOf((acceptRes as PromiseRejectedResult).reason)),
+   372→    );
+   373→  }
+   374→
+   375→  /* -------- 8. concurrent duplicate references (§10) -------- */
+   376→  section("8. concurrent duplicate-reference creates");
+   377→  const ref = `${TAG}-RACEREF`;
+   378→  const refResults = await Promise.allSettled(
+   379→    Array.from({ length: 5 }, () => createSalesQuotation({ ...ctx, validUntilDate: futureDate(30), reference: ref })),
+   380→  );
+   381→  const refWins = refResults.filter((r) => r.status === "fulfilled");
+   382→  const refLoses = refResults.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+   383→  eq2(refWins.length, 1, "8.1 exactly ONE quotation created");
+   384→  ok("8.2 losers carry the stable duplicate-reference code", refLoses.every((l) => codeOf(l.reason) === "SALES_QUOTATION_DUPLICATE_REFERENCE"));
+   385→  eq2(await db.salesQuotation.count({ where: { businessId: biz.id, reference: ref } }), 1, "8.3 exactly one persisted row");
+   386→
+   387→  /* ------- 9. conversion failure rollback (§13/H) ------- */
+   388→  section("9. conversion failure rollback (discount corrupted directly in DB)");
+   389→  // Simulation (documented): an ACCEPTED quotation whose discountMinor is
+   390→  // corrupted DIRECTLY via Prisma to exceed the canonical subtotal. The
+   391→  // in-transaction conversion guard then fails AFTER the transaction began
+   392→  // — the cheapest SAFE way to exercise the rollback law without forging
+   393→  // FKs (Product is Restrict-referenced by quotation lines, so deleting it
+   394→  // is impossible; pointing the line at a foreign product keeps the FK
+   395→  // valid and does NOT fail the order-line insert).
+   396→  const convQ = await createSalesQuotation({ ...ctx, validUntilDate: futureDate(30), reference: `${TAG}-CONV` });
+   397→  await addSalesQuotationLine({ ...ctx, id: convQ.id, productId: product.id, qty: 3, unitPriceMinor: 1000 }); // subtotal 3000
+   398→  await markSalesQuotationSent({ ...ctx, id: convQ.id });
+   399→  await acceptSalesQuotation({ ...ctx, id: convQ.id });
+   400→  const stockBefore = (await db.product.findUnique({ where: { id: product.id }, select: { stockQty: true } }))!.stockQty;
+   401→  const adjBefore = await db.inventoryAdjustment.count({ where: { businessId: biz.id } });
+   402→  await db.salesQuotation.update({ where: { id: convQ.id }, data: { discountMinor: 9999 } }); // > subtotal (corruption)
+   403→  const convFail = await safe(() => convertSalesQuotationToOrder({ ...ctx, id: convQ.id }));
+   404→  eq2(convFail.status, 500, "9.1 conversion of corrupted-discount quotation fails 500 (integrity, not a user error)");
+   405→  eq2(convFail.code, "SALES_QUOTATION_CORRUPT_HISTORY", "9.2 stable corrupt-history code");
+   406→  eq2(await db.salesOrder.count({ where: { sourceQuotationId: convQ.id } }), 0, "9.3 NO SalesOrder created");
+   407→  const convQRow = await db.salesQuotation.findUnique({ where: { id: convQ.id }, select: { status: true, convertedAt: true } });
+   408→  eq2(convQRow?.status, "ACCEPTED", "9.4 quotation UNCHANGED (still ACCEPTED — rollback held)");
+   409→  eq2(convQRow?.convertedAt, null, "9.5 no convertedAt (rollback held)");
+   410→  eq2(await db.auditLog.count({ where: { businessId: biz.id, action: "sales_order.create" } }), 0, "9.6 zero sales_order.create audit rows");
+   411→  eq2(await db.auditLog.count({ where: { businessId: biz.id, action: "sales_quotation.convert" } }), 0, "9.7 zero sales_quotation.convert audit rows");
+   412→  const stockAfterFail = (await db.product.findUnique({ where: { id: product.id }, select: { stockQty: true } }))!.stockQty;
+   413→  eq2(stockAfterFail, stockBefore, "9.8 zero stock mutation from the failed conversion");
+   414→  eq2(await db.inventoryAdjustment.count({ where: { businessId: biz.id } }), adjBefore, "9.9 zero adjustments from the failed conversion");
+   415→  // Restore the lawful discount; conversion then succeeds and the audit
+   416→  // trail appears EXACTLY once (rollback law → atomicity law).
+   417→  await db.salesQuotation.update({ where: { id: convQ.id }, data: { discountMinor: 0 } });
+   418→  const convOk = await convertSalesQuotationToOrder({ ...ctx, id: convQ.id });
+   419→  ok(`9.10 conversion succeeds after the corruption is repaired (order ${convOk.salesOrder.reference})`, Boolean(convOk.salesOrder.id));
+   420→  eq2(await db.salesOrder.count({ where: { sourceQuotationId: convQ.id } }), 1, "9.11 exactly ONE order after the successful conversion");
+   421→  eq2((await db.salesQuotation.findUnique({ where: { id: convQ.id }, select: { status: true } }))!.status, "CONVERTED", "9.12 quotation CONVERTED");
+   422→  eq2(await db.auditLog.count({ where: { businessId: biz.id, action: "sales_quotation.convert", entityId: convQ.id } }), 1, "9.13 exactly ONE convert audit row");
+   423→  eq2(await db.auditLog.count({ where: { businessId: biz.id, action: "sales_order.create" } }), 1, "9.14 exactly ONE order-create audit row");
+   424→
+   425→  /* ---------- 10. audit atomicity (withWriteTransaction law) ---------- */
+   426→  section("10. audit-failure atomicity: every committed mutation has EXACTLY its audit rows");
+   427→  const audQ = await createSalesQuotation({ ...ctx, validUntilDate: futureDate(30), reference: `${TAG}-AUD` });
+   428→  eq2(await db.auditLog.count({ where: { businessId: biz.id, action: "sales_quotation.create", entityId: audQ.id } }), 1, "10.1 create → exactly 1 sales_quotation.create audit");
+   429→  const audP1 = await db.product.create({ data: { businessId: biz.id, name: `${TAG} A1`, sku: `${TAG}-A1`, salePriceMinor: 10, stockQty: 5 } });
+   430→  const audP2 = await db.product.create({ data: { businessId: biz.id, name: `${TAG} A2`, sku: `${TAG}-A2`, salePriceMinor: 10, stockQty: 5 } });
+   431→  await addSalesQuotationLine({ ...ctx, id: audQ.id, productId: audP1.id, qty: 2 });
+   432→  await addSalesQuotationLine({ ...ctx, id: audQ.id, productId: audP2.id, qty: 1 });
+   433→  eq2(await db.auditLog.count({ where: { businessId: biz.id, action: "sales_quotation.line_add", entityId: audQ.id } }), 2, "10.2 two line-adds → exactly 2 line_add audits");
+   434→  await markSalesQuotationSent({ ...ctx, id: audQ.id });
+   435→  eq2(await db.auditLog.count({ where: { businessId: biz.id, action: "sales_quotation.mark_sent", entityId: audQ.id } }), 1, "10.3 mark-sent → exactly 1 mark_sent audit");
+   436→  await acceptSalesQuotation({ ...ctx, id: audQ.id });
+   437→  eq2(await db.auditLog.count({ where: { businessId: biz.id, action: "sales_quotation.accept", entityId: audQ.id } }), 1, "10.4 accept → exactly 1 accept audit");
+   438→  await cancelSalesQuotation({ ...ctx, id: dupQ.id }); // DRAFT cancel path
+   439→  eq2(await db.auditLog.count({ where: { businessId: biz.id, action: "sales_quotation.cancel", entityId: dupQ.id } }), 1, "10.5 cancel → exactly 1 cancel audit");
+   440→  // The stock NEVER moved across the WHOLE suite (quotation purity §1).
+   441→  const stockEnd = (await db.product.findUnique({ where: { id: product.id }, select: { stockQty: true } }))!.stockQty;
+   442→  eq2(stockEnd, stockBefore, "10.6 Product.stockQty byte-identical across the entire suite (§1 purity)");
+   443→  eq2(await db.inventoryAdjustment.count({ where: { businessId: biz.id } }), adjBefore, "10.7 zero InventoryAdjustment rows across the entire suite");
+   444→  eq2(await db.sale.count({ where: { businessId: biz.id } }), 0, "10.8 zero Sale rows (conversion creates no invoice §13)");
+   445→
+   446→  /* ---------------------------- teardown ---------------------------- */
+   447→  section("teardown to ZERO");
+   448→  await purge();
+   449→  const residueBiz = await db.business.count({ where: { name: { startsWith: `${TAG}-` } } });
+   450→  const residueUsers = await db.user.count({ where: { email: { startsWith: `${TAG.toLowerCase()}-` } } });
+   451→  eq2(residueBiz, 0, "T.1 zero fixture businesses");
+   452→  eq2(residueUsers, 0, "T.2 zero fixture users");
+   453→
+   454→  console.log(`\n=== RESULT: ${passed} passed, ${failed} failed ===`);
+   455→  if (failed > 0) {
+   456→    console.log("FAILURES:");
+   457→    for (const f of failures) console.log(`  ✗ ${f}`);
+   458→    process.exit(1);
+   459→  }
+   460→}
+   461→
+   462→main()
+   463→  .catch((e) => {
+   464→    console.error("FATAL:", e);
+   465→    process.exit(1);
+   466→  })
+   467→  .finally(() => db.$disconnect());
+   468→

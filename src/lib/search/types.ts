@@ -40,6 +40,10 @@ export const SEARCH_ENTITY_TYPES = [
   "GOODS_RETURN",
   "GOODS_DISPATCH",
   "SALES_ORDER",
+  // Prompt 47 — SALES_QUOTATION joins: discovery over commercial price
+  // offers (quotation reference + customer/product/SKU snapshots; NO
+  // amounts, NO notes in snippets §18/§10).
+  "SALES_QUOTATION",
 ] as const;
 
 export type SearchEntityType = (typeof SEARCH_ENTITY_TYPES)[number];
@@ -59,6 +63,7 @@ export const SEARCH_DESTINATIONS = [
   "goods-returns",
   "goods-dispatches",
   "sales-orders",
+  "sales-quotations",
 ] as const;
 
 export type SearchDestination = (typeof SEARCH_DESTINATIONS)[number];
@@ -78,6 +83,7 @@ export const ENTITY_DESTINATION: Record<SearchEntityType, SearchDestination> = {
   GOODS_RETURN: "goods-returns",
   GOODS_DISPATCH: "goods-dispatches",
   SALES_ORDER: "sales-orders",
+  SALES_QUOTATION: "sales-quotations",
 };
 
 /** Closed status tokens (client localizes; server never renders HTML).
@@ -111,7 +117,13 @@ export type SearchItemStatus =
   | "CLOSED"
   | "CANCELLED"
   | "POSTED"
-  | "COMPLETED";
+  | "COMPLETED"
+  // Prompt 47 — the sales-quotation lifecycle joins (ACCEPTED/REJECTED/
+  // EXPIRED are new closed tokens; DRAFT/SENT/CANCELLED/CONVERTED reuse
+  // existing tokens).
+  | "ACCEPTED"
+  | "REJECTED"
+  | "EXPIRED";
 
 /** Closed payment direction tokens (tenant Payment domain only — §42). */
 export type SearchItemDirection = "IN" | "OUT";

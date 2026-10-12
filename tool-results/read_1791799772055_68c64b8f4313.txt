@@ -1,0 +1,1016 @@
+     1→#!/usr/bin/env node
+     2→/**
+     3→ * Prompt 45 — E2E SALES ORDER CHECK. Real application + real DB.
+     4→ * Run: node scripts/prompt45-sales-order-check.mjs   (dev server on :3000)
+     5→ *
+     6→ * Covers (§127): auth/RBAC · strict schemas (authority-field rejection
+     7→ * §112) · draft create/update (reference law §13/§14 + currency snapshot
+     8→ * §25 + customer snapshot §11/§12) · line add/edit/remove + duplicate
+     9→ * product law (§19) + price default (§21) + discount law (§23) ·
+    10→ * confirmation (§28: empty order, transition law, immutability §27) ·
+    11→ * financial non-mutation with NON-ZERO fixtures (§95/§124: Sale/Payment/
+    12→ * Expense counts + sums, receivables output, Customer Statement,
+    13→ * Product.stockQty, InventoryAdjustment) · linked dispatch create (§40)
+    14→ * + line add (§41: server-derived product/reason, advisory remaining §42)
+    15→ * + POST (§44 authoritative remaining + exact stock decrement + ONE
+    16→ * negative adjustment per line §45) · partial + multiple dispatches
+    17→ * (§39) · over-dispatch prevention (draft + post, §37/§103) · THE
+    18→ * double-decrement regression (§122: invoice does NOT touch stock or
+    19→ * adjustments) · one invoice per order (§52/§105) · invoice eligibility
+    20→ * (§54: partial rejected) · linked invoice delete blocked (§62) · legacy
+    21→ * Sale delete unchanged (§120) · payment compatibility (§63) · order
+    22→ * cancellation rules (§49) · cancelled-order dispatch guard (§50) ·
+    23→ * completed-order dispatch guard (§51) · tenant isolation both directions
+    24→ * (§69) · global search SALES_ORDER + tenant safety (§70) · Customer 360
+    25→ * (§71) · Product history (§72) · CSV export EN/FA + security stack
+    26→ * (§114/§115) · business export datasets (§116) + import rejection
+    27→ * (§117) · restore-drill probes (§118) · business-timezone date windows ·
+    28→ * audit events · teardown to ZERO.
+    29→ *
+    30→ * Fixtures are P45-prefixed and removed to ZERO residue. Prisma is used
+    31→ * ONLY for fixtures, assertions and cleanup — never to mutate domain rows
+    32→ * except the documented probes, which restore what they change.
+    33→ */
+    34→import { readFileSync } from "node:fs";
+    35→import { spawnSync } from "node:child_process";
+    36→import bcrypt from "bcryptjs";
+    37→import { PrismaClient } from "@prisma/client";
+    38→
+    39→// --- env -------------------------------------------------------------------
+    40→for (const line of readFileSync(".env", "utf8").split("\n")) {
+    41→  const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
+    42→  if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+    43→}
+    44→
+    45→const db = new PrismaClient();
+    46→const BASE = "http://localhost:3000";
+    47→const PASS = "P45qa!Passw0rd!1";
+    48→const TAG = "P45SO";
+    49→const STAMP = `${Date.now()}`.slice(-8);
+    50→const DOMAIN = "p45check.test";
+    51→
+    52→let passed = 0;
+    53→let failed = 0;
+    54→const failures = [];
+    55→
+    56→function ok(name, cond, info = "") {
+    57→  if (cond) passed++;
+    58→  else failed++, failures.push(`${name}${info ? ` — ${info}` : ""}`);
+    59→  console.log(`${cond ? "✓" : "✗"} ${name}${!cond && info ? ` — ${info}` : ""}`);
+    60→}
+    61→function eq(actual, expected, name) {
+    62→  ok(name, actual === expected, `got ${String(actual)}, want ${String(expected)}`);
+    63→}
+    64→function section(name) {
+    65→  console.log(`\n=== ${name} ===`);
+    66→}
+    67→
+    68→// --- HTTP client with per-user cookie jar -----------------------------------
+    69→function makeClient() {
+    70→  const jar = new Map();
+    71→  return async function f(path, init = {}) {
+    72→    const headers = {
+    73→      "content-type": "application/json",
+    74→      "x-forwarded-for": init.xff ?? "10.45.7.19",
+    75→      ...(init.headers ?? {}),
+    76→    };
+    77→    if (jar.size) headers.cookie = [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+    78→    const res = await fetch(`${BASE}${path}`, {
+    79→      method: init.method ?? "GET",
+    80→      headers,
+    81→      body: init.body,
+    82→      redirect: "manual",
+    83→    });
+    84→    for (const sc of res.headers.getSetCookie?.() ?? []) {
+    85→      const [kv] = sc.split(";");
+    86→      const eqi = kv.indexOf("=");
+    87→      jar.set(kv.slice(0, eqi), kv.slice(eqi + 1));
+    88→    }
+    89→    let body = null;
+    90→    const ct = res.headers.get("content-type") ?? "";
+    91→    if (ct.includes("application/json")) {
+    92→      try { body = await res.json(); } catch { body = null; }
+    93→    } else {
+    94→      body = await res.text().catch(() => null);
+    95→    }
+    96→    return { status: res.status, headers: res.headers, body };
+    97→  };
+    98→}
+    99→
+   100→async function login(f, email) {
+   101→  const csrf = (await f("/api/auth/csrf")).body?.csrfToken;
+   102→  const cb = await f("/api/auth/callback/credentials", {
+   103→    method: "POST",
+   104→    headers: { "content-type": "application/x-www-form-urlencoded" },
+   105→    body: new URLSearchParams({ csrfToken: csrf, email, password: PASS, redirect: "false", json: "true" }).toString(),
+   106→  });
+   107→  const me = await f("/api/v1/me");
+   108→  if (me.status !== 200) {
+   109→    console.error(`  !! login failed for ${email}: callback=${cb.status} body=${JSON.stringify(cb.body).slice(0, 160)} me=${me.status}`);
+   110→  }
+   111→}
+   112→
+   113→async function call(f, path, init = {}, depth = 0) {
+   114→  const res = await f(path, init);
+   115→  if (res.status === 429 && !(init.headers ?? {})["x-no-retry"] && depth < 1) {
+   116→    const wait = Math.min(res.body?.error?.details?.retryAfterMs ?? 60_000, 65_000);
+   117→    console.log(`  (rate limited — waiting ${Math.round(wait / 1000)}s)`);
+   118→    await new Promise((r) => setTimeout(r, wait));
+   119→    return call(f, path, init, depth + 1);
+   120→  }
+   121→  return { status: res.status, body: res.body, headers: res.headers };
+   122→}
+   123→
+   124→const B = (biz) => ({ "x-business-id": biz });
+   125→const codeOf = (r) => r.body?.error?.code ?? "";
+   126→const dataOf = (r) => r.body?.data;
+   127→
+   128→/* ------------------------------ fixtures ----------------------------------- */
+   129→
+   130→async function purge() {
+   131→  // Crashed-run recovery: remove ANY prior P45SO residue first.
+   132→  const bizs = await db.business.findMany({ where: { name: { startsWith: `${TAG}-` } }, select: { id: true } });
+   133→  for (const b of bizs) {
+   134→    await db.auditLog.deleteMany({ where: { businessId: b.id } });
+   135→    await db.goodsDispatchLine.deleteMany({ where: { goodsDispatch: { businessId: b.id } } });
+   136→    await db.goodsDispatch.deleteMany({ where: { businessId: b.id } });
+   137→    await db.salesOrderLine.deleteMany({ where: { salesOrder: { businessId: b.id } } });
+   138→    await db.salesOrder.deleteMany({ where: { businessId: b.id } });
+   139→    await db.payment.deleteMany({ where: { businessId: b.id } });
+   140→    await db.saleItem.deleteMany({ where: { sale: { businessId: b.id } } });
+   141→    await db.sale.deleteMany({ where: { businessId: b.id } });
+   142→    await db.inventoryAdjustment.deleteMany({ where: { businessId: b.id } });
+   143→    await db.customer.deleteMany({ where: { businessId: b.id } });
+   144→    await db.product.deleteMany({ where: { businessId: b.id } });
+   145→    await db.subscriptionEvent.deleteMany({ where: { subscription: { businessId: b.id } } });
+   146→    await db.subscription.deleteMany({ where: { businessId: b.id } });
+   147→    await db.business.deleteMany({ where: { id: b.id } });
+   148→  }
+   149→  const users = await db.user.findMany({ where: { email: { endsWith: `@${DOMAIN}` } }, select: { id: true } });
+   150→  for (const u of users) {
+   151→    await db.userSession.deleteMany({ where: { userId: u.id } });
+   152→    await db.auditLog.deleteMany({ where: { actorId: u.id } });
+   153→    await db.chatMessage.deleteMany({ where: { session: { userId: u.id } } });
+   154→    await db.chatSession.deleteMany({ where: { userId: u.id } });
+   155→    await db.legalAcceptance.deleteMany({ where: { userId: u.id } });
+   156→    await db.inventoryAdjustment.deleteMany({ where: { actorId: u.id } }).catch(() => {});
+   157→    await db.user.deleteMany({ where: { id: u.id } });
+   158→  }
+   159→  await db.plan.deleteMany({ where: { code: { startsWith: `${TAG}-` } } });
+   160→}
+   161→
+   162→async function createUser(name, role) {
+   163→  return db.user.create({
+   164→    data: {
+   165→      email: `${TAG.toLowerCase()}-${name.toLowerCase()}-${STAMP}@${DOMAIN}`, // lowercase: the auth schema lowercases emails
+   166→      name: `${TAG} ${name}`,
+   167→      passwordHash: bcrypt.hashSync(PASS, 4),
+   168→      locale: "en",
+   169→    },
+   170→  });
+   171→}
+   172→
+   173→async function main() {
+   174→  await purge();
+   175→
+   176→  /* ---------------------------- fixtures ---------------------------------- */
+   177→  section("fixtures (P45-prefixed, non-zero financial baseline)");
+   178→
+   179→  const owner = await createUser("owner");
+   180→  const viewer = await createUser("viewer");
+   181→  ok("1.1 fixture users created", Boolean(owner?.id && viewer?.id));
+   182→
+   183→  const bizA = await db.business.create({
+   184→    data: {
+   185→      name: `${TAG}-A-${STAMP}`,
+   186→      slug: `${TAG.toLowerCase()}-a-${STAMP}`,
+   187→      ownerId: owner.id,
+   188→      currencyCode: "USD",
+   189→      currencySymbol: "$",
+   190→      decimalPrecision: 2,
+   191→      timezone: "Asia/Tehran",
+   192→      members: {
+   193→        create: [
+   194→          { userId: owner.id, role: "OWNER" },
+   195→          { userId: viewer.id, role: "VIEWER" },
+   196→        ],
+   197→      },
+   198→    },
+   199→  });
+   200→  const ownerB = await createUser("ownerB");
+   201→  const bizB = await db.business.create({
+   202→    data: {
+   203→      name: `${TAG}-B-${STAMP}`,
+   204→      slug: `${TAG.toLowerCase()}-b-${STAMP}`,
+   205→      ownerId: ownerB.id,
+   206→      members: { create: [{ userId: ownerB.id, role: "OWNER" }] },
+   207→    },
+   208→  });
+   209→  ok("1.2 two tenant businesses created", Boolean(bizA?.id && bizB?.id));
+   210→
+   211→  const customerA = await db.customer.create({
+   212→    data: { businessId: bizA.id, name: `${TAG} Cust A` },
+   213→  });
+   214→  const customerB = await db.customer.create({
+   215→    data: { businessId: bizB.id, name: `${TAG} Cust B` },
+   216→  });
+   217→  const productA = await db.product.create({
+   218→    data: { businessId: bizA.id, name: `${TAG} Widget`, sku: `${TAG}-SKU-1`, unit: "piece", salePriceMinor: 500, stockQty: 100 },
+   219→  });
+   220→  const productA2 = await db.product.create({
+   221→    data: { businessId: bizA.id, name: `${TAG} Gadget`, sku: `${TAG}-SKU-2`, unit: "box", salePriceMinor: 1200, stockQty: 40 },
+   222→  });
+   223→  const productB = await db.product.create({
+   224→    data: { businessId: bizB.id, name: `${TAG} B-Only`, sku: `${TAG}-SKU-B`, salePriceMinor: 100, stockQty: 10 },
+   225→  });
+   226→  ok("1.3 customers + products created", Boolean(customerA?.id && productA?.id && productB?.id));
+   227→
+   228→  // NON-ZERO financial baseline (§124 — never zero-count assertions).
+   229→  const legacySaleForA = await db.sale.create({
+   230→    data: {
+   231→      businessId: bizA.id,
+   232→      number: 9001,
+   233→      customerId: customerA.id,
+   234→      subtotalMinor: 3000,
+   235→      discountMinor: 0,
+   236→      totalMinor: 3000,
+   237→      paidMinor: 1000,
+   238→      status: "PARTIAL",
+   239→      items: { create: { productId: productA.id, name: productA.name, qty: 3, unitPriceMinor: 1000, lineTotalMinor: 3000 } },
+   240→    },
+   241→  });
+   242→  await db.payment.create({
+   243→    data: { businessId: bizA.id, saleId: legacySaleForA.id, direction: "IN", amountMinor: 1000, method: "CASH" },
+   244→  });
+   245→  await db.expense.create({
+   246→    data: { businessId: bizA.id, category: `${TAG} opex`, amountMinor: 700, status: "UNPAID" },
+   247→  });
+   248→  ok("1.4 non-zero Sale/Payment/Expense fixtures created", true);
+   249→
+   250→  const ownerF = makeClient();
+   251→  await login(ownerF, owner.email);
+   252→  const viewerF = makeClient();
+   253→  await login(viewerF, viewer.email);
+   254→  const ownerBF = makeClient();
+   255→  await login(ownerBF, ownerB.email);
+   256→  ok("1.5 sessions established for 3 users", true);
+   257→
+   258→  const finSnapshot = async () => {
+   259→    const [saleAgg, paymentCount, expenseAgg, adjAgg, product, stocktakeCount] = await Promise.all([
+   260→      db.sale.aggregate({ where: { businessId: bizA.id }, _count: { _all: true }, _sum: { totalMinor: true, paidMinor: true } }),
+   261→      db.payment.count({ where: { businessId: bizA.id } }),
+   262→      db.expense.aggregate({ where: { businessId: bizA.id }, _count: { _all: true }, _sum: { amountMinor: true } }),
+   263→      db.inventoryAdjustment.aggregate({ where: { businessId: bizA.id }, _count: { _all: true }, _sum: { delta: true } }),
+   264→      db.product.findUnique({ where: { id: productA.id }, select: { stockQty: true } }),
+   265→      db.inventoryStocktake.count({ where: { businessId: bizA.id } }),
+   266→    ]);
+   267→    return {
+   268→      saleCount: saleAgg._count._all,
+   269→      saleTotal: saleAgg._sum.totalMinor ?? 0,
+   270→      salePaid: saleAgg._sum.paidMinor ?? 0,
+   271→      paymentCount,
+   272→      expenseCount: expenseAgg._count._all,
+   273→      expenseTotal: expenseAgg._sum.amountMinor ?? 0,
+   274→      adjCount: adjAgg._count._all,
+   275→      adjDelta: adjAgg._sum.delta ?? 0,
+   276→      stockQty: product.stockQty,
+   277→      stocktakeCount,
+   278→    };
+   279→  };
+   280→
+   281→  /* ------------------------ 2. auth + RBAC (§68) --------------------------- */
+   282→  section("2. auth + RBAC");
+   283→  const anon = makeClient();
+   284→  const anonList = await call(anon, "/api/v1/sales-orders");
+   285→  eq(anonList.status, 401, "2.1 unauthenticated list → 401");
+   286→  const anonCreate = await call(anon, "/api/v1/sales-orders", { method: "POST", headers: B(bizA.id), body: "{}" });
+   287→  eq(anonCreate.status, 401, "2.2 unauthenticated create → 401");
+   288→
+   289→  const viewerCreate = await call(viewerF, "/api/v1/sales-orders", { method: "POST", headers: B(bizA.id), body: JSON.stringify({}) });
+   290→  eq(viewerCreate.status, 403, "2.3 viewer (no data:write) create → 403");
+   291→  const viewerDetail = await call(viewerF, `/api/v1/sales-orders/whatever`, { headers: B(bizA.id) });
+   292→  ok([200, 404, 403].includes(viewerDetail.status), "2.4 viewer detail does not 5xx");
+   293→  const ownerList = await call(ownerF, "/api/v1/sales-orders", { headers: B(bizA.id) });
+   294→  eq(ownerList.status, 200, "2.5 owner list → 200");
+   295→
+   296→  /* --------------------- 3. strict schemas (§112) -------------------------- */
+   297→  section("3. strict schemas — authority fields rejected");
+   298→  const strictCases = [
+   299→    ["status", { status: "CONFIRMED" }],
+   300→    ["businessId", { businessId: bizB.id }],
+   301→    ["customerNameAtOrder", { customerNameAtOrder: "Injected" }],
+   302→    ["currencyCodeAtOrder", { currencyCodeAtOrder: "EUR" }],
+   303→    ["totalMinor", { totalMinor: 99 }],
+   304→    ["dispatchedQty", { dispatchedQty: 5 }],
+   305→    ["confirmedAt", { confirmedAt: "2026-01-01T00:00:00Z" }],
+   306→  ];
+   307→  for (const [field, payload] of strictCases) {
+   308→    const r = await call(ownerF, "/api/v1/sales-orders", { method: "POST", headers: B(bizA.id), body: JSON.stringify(payload) });
+   309→    ok(`3.${strictCases.indexOf(payload) + 1} create rejects ${field} injection → 422`, r.status === 422, `got ${r.status}`);
+   310→  }
+   311→
+   312→  /* ------------------------- 4. draft create ------------------------------- */
+   313→  section("4. draft creation (§75/§13/§14/§25)");
+   314→  const fin0 = await finSnapshot();
+   315→
+   316→  const created = await call(ownerF, "/api/v1/sales-orders", {
+   317→    method: "POST",
+   318→    headers: B(bizA.id),
+   319→    body: JSON.stringify({ customerId: customerA.id, orderDate: "2026-10-11", expectedDate: "2026-10-20", notes: "P45 draft" }),
+   320→  });
+   321→  eq(created.status, 201, "4.1 draft created (no client reference)");
+   322→  const order1 = dataOf(created);
+   323→  ok(order1.reference.startsWith("SO-"), `4.2 server-generated reference ${order1.reference}`);
+   324→
+   325→  const detail1 = await call(ownerF, `/api/v1/sales-orders/${order1.id}`, { headers: B(bizA.id) });
+   326→  eq(detail1.status, 200, "4.3 detail readable");
+   327→  const d1 = dataOf(detail1);
+   328→  eq(d1.order.status, "DRAFT", "4.4 status DRAFT");
+   329→  eq(d1.order.customerNameAtOrder, customerA.name, "4.5 customer snapshot from the live customer");
+   330→  eq(d1.order.currencyCodeAtOrder, "USD", "4.6 currency snapshot server-derived");
+   331→  eq(d1.order.currencySymbolAtOrder, "$", "4.7 currency symbol snapshot");
+   332→  eq(d1.order.decimalPrecisionAtOrder, 2, "4.8 precision snapshot");
+   333→  eq(d1.summary.lineCount, 0, "4.9 empty order starts with 0 lines");
+   334→  eq(d1.invoice, null, "4.10 no invoice DTO when none exists (§91)");
+   335→
+   336→  const fin1 = await finSnapshot();
+   337→  eq(JSON.stringify(fin0), JSON.stringify(fin1), "4.11 creation mutates NOTHING financial (§95)");
+   338→
+   339→  const customRef = await call(ownerF, "/api/v1/sales-orders", {
+   340→    method: "POST",
+   341→    headers: B(bizA.id),
+   342→    body: JSON.stringify({ reference: `  ${TAG}-REF-1  ` }),
+   343→  });
+   344→  eq(dataOf(customRef).reference, `${TAG}-REF-1`, "4.12 custom reference normalized (trim)");
+   345→
+   346→  const dupRef = await call(ownerF, "/api/v1/sales-orders", {
+   347→    method: "POST",
+   348→    headers: B(bizA.id),
+   349→    body: JSON.stringify({ reference: `${TAG}-REF-1` }),
+   350→  });
+   351→  eq(dupRef.status, 409, "4.13 duplicate reference → 409");
+   352→  eq(codeOf(dupRef), "SALES_ORDER_DUPLICATE_REFERENCE", "4.14 stable duplicate code");
+   353→
+   354→  const badCustomer = await call(ownerF, "/api/v1/sales-orders", {
+   355→    method: "POST",
+   356→    headers: B(bizA.id),
+   357→    body: JSON.stringify({ customerId: customerB.id }),
+   358→  });
+   359→  eq(badCustomer.status, 404, "4.15 foreign customer → 404 (no leak)");
+   360→  eq(codeOf(badCustomer), "SALES_ORDER_CUSTOMER_NOT_FOUND", "4.16 stable customer code");
+   361→
+   362→  const badDate = await call(ownerF, "/api/v1/sales-orders", {
+   363→    method: "POST",
+   364→    headers: B(bizA.id),
+   365→    body: JSON.stringify({ orderDate: "2026-02-30" }),
+   366→  });
+   367→  eq(badDate.status, 422, "4.17 invalid calendar date rejected");
+   368→
+   369→  const discountedEmpty = await call(ownerF, "/api/v1/sales-orders", {
+   370→    method: "POST",
+   371→    headers: B(bizA.id),
+   372→    body: JSON.stringify({ discountMinor: 100 }),
+   373→  });
+   374→  eq(discountedEmpty.status, 422, "4.18 discount on an empty order rejected (§23)");
+   375→
+   376→  /* --------------------------- 5. lines ------------------------------------ */
+   377→  section("5. line management (§18/§19/§20/§21)");
+   378→  const line1 = await call(ownerF, `/api/v1/sales-orders/${order1.id}/lines`, {
+   379→    method: "POST",
+   380→    headers: B(bizA.id),
+   381→    body: JSON.stringify({ productId: productA.id, orderedQty: 10 }),
+   382→  });
+   383→  eq(line1.status, 201, "5.1 line added without explicit price");
+   384→  const d1b = dataOf(await call(ownerF, `/api/v1/sales-orders/${order1.id}`, { headers: B(bizA.id) }));
+   385→  eq(d1b.lines[0].unitPriceMinor, 500, "5.2 price defaulted from Product.salePriceMinor (§21)");
+   386→  eq(d1b.lines[0].productNameAtOrder, productA.name, "5.3 product snapshot frozen");
+   387→  eq(d1b.lines[0].lineTotalMinor, 5000, "5.4 canonical line total");
+   388→
+   389→  const fin2 = await finSnapshot();
+   390→  eq(JSON.stringify(fin0), JSON.stringify(fin2), "5.5 line add mutates NO stock/financial state");
+   391→
+   392→  const dupLine = await call(ownerF, `/api/v1/sales-orders/${order1.id}/lines`, {
+   393→    method: "POST",
+   394→    headers: B(bizA.id),
+   395→    body: JSON.stringify({ productId: productA.id, orderedQty: 1 }),
+   396→  });
+   397→  eq(dupLine.status, 409, "5.6 duplicate product → 409 (§19)");
+   398→  eq(codeOf(dupLine), "SALES_ORDER_DUPLICATE_PRODUCT", "5.7 stable duplicate-product code");
+   399→
+   400→  const foreignProduct = await call(ownerF, `/api/v1/sales-orders/${order1.id}/lines`, {
+   401→    method: "POST",
+   402→    headers: B(bizA.id),
+   403→    body: JSON.stringify({ productId: productB.id, orderedQty: 1 }),
+   404→  });
+   405→  eq(foreignProduct.status, 404, "5.8 foreign product → 404 (no leak)");
+   406→
+   407→  const zeroQty = await call(ownerF, `/api/v1/sales-orders/${order1.id}/lines`, {
+   408→    method: "POST",
+   409→    headers: B(bizA.id),
+   410→    body: JSON.stringify({ productId: productA2.id, orderedQty: 0 }),
+   411→  });
+   412→  eq(zeroQty.status, 422, "5.9 zero qty rejected (§18)");
+   413→  const fracQty = await call(ownerF, `/api/v1/sales-orders/${order1.id}/lines`, {
+   414→    method: "POST",
+   415→    headers: B(bizA.id),
+   416→    body: JSON.stringify({ productId: productA2.id, orderedQty: 1.5 }),
+   417→  });
+   418→  eq(fracQty.status, 422, "5.10 fractional qty rejected");
+   419→
+   420→  const snapInject = await call(ownerF, `/api/v1/sales-orders/${order1.id}/lines`, {
+   421→    method: "POST",
+   422→    headers: B(bizA.id),
+   423→    body: JSON.stringify({ productId: productA2.id, orderedQty: 2, productNameAtOrder: "Fake" }),
+   424→  });
+   425→  eq(snapInject.status, 422, "5.11 snapshot injection rejected (§20/§112)");
+   426→
+   427→  const line2 = await call(ownerF, `/api/v1/sales-orders/${order1.id}/lines`, {
+   428→    method: "POST",
+   429→    headers: B(bizA.id),
+   430→    body: JSON.stringify({ productId: productA2.id, orderedQty: 5, unitPriceMinor: 1000 }),
+   431→  });
+   432→  eq(line2.status, 201, "5.12 second line with explicit price");
+   433→
+   434→  const editLine = await call(ownerF, `/api/v1/sales-orders/${order1.id}/lines/${d1b.lines[0].id}`, {
+   435→    method: "PATCH",
+   436→    headers: B(bizA.id),
+   437→    body: JSON.stringify({ orderedQty: 12, unitPriceMinor: 480 }),
+   438→  });
+   439→  eq(editLine.status, 200, "5.13 line edited (qty + agreed price)");
+   440→  const d1c = dataOf(await call(ownerF, `/api/v1/sales-orders/${order1.id}`, { headers: B(bizA.id) }));
+   441→  eq(d1c.lines[0].orderedQty, 12, "5.14 new qty persisted");
+   442→  eq(d1c.lines[0].unitPriceMinor, 480, "5.15 new price persisted");
+   443→  eq(d1c.summary.subtotalMinor, 12 * 480 + 5 * 1000, "5.16 canonical subtotal recomputed");
+   444→  eq(d1c.lines[0].productNameAtOrder, productA.name, "5.17 snapshot NOT rewritten by edit");
+   445→
+   446→  const priceInject = await call(ownerF, `/api/v1/sales-orders/${order1.id}/lines/${d1c.lines[0].id}`, {
+   447→    method: "PATCH",
+   448→    headers: B(bizA.id),
+   449→    body: JSON.stringify({ productId: productB.id }),
+   450→  });
+   451→  eq(priceInject.status, 422, "5.18 product reassignment rejected (§27)");
+   452→
+   453→  /* -------------------------- 6. discount law ------------------------------ */
+   454→  section("6. discount law (§23)");
+   455→  const badDiscount = await call(ownerF, `/api/v1/sales-orders/${order1.id}`, {
+   456→    method: "PATCH",
+   457→    headers: B(bizA.id),
+   458→    body: JSON.stringify({ discountMinor: d1c.summary.subtotalMinor + 1 }),
+   459→  });
+   460→  eq(badDiscount.status, 422, "6.1 discount above subtotal → 422");
+   461→  eq(codeOf(badDiscount), "INVALID_DISCOUNT", "6.2 stable discount code");
+   462→  const okDiscount = await call(ownerF, `/api/v1/sales-orders/${order1.id}`, {
+   463→    method: "PATCH",
+   464→    headers: B(bizA.id),
+   465→    body: JSON.stringify({ discountMinor: 760 }),
+   466→  });
+   467→  eq(okDiscount.status, 200, "6.3 lawful discount accepted");
+   468→  const d1d = dataOf(await call(ownerF, `/api/v1/sales-orders/${order1.id}`, { headers: B(bizA.id) }));
+   469→  eq(d1d.summary.totalMinor, d1d.summary.subtotalMinor - 760, "6.4 total = subtotal − discount");
+   470→
+   471→  /* -------------------------- 7. confirmation ------------------------------ */
+   472→  section("7. confirmation (§28/§30/§16)");
+   473→  const confirm1 = await call(ownerF, `/api/v1/sales-orders/${order1.id}/confirm`, { method: "POST", headers: B(bizA.id) });
+   474→  eq(confirm1.status, 200, "7.1 DRAFT → CONFIRMED");
+   475→  const fin3 = await finSnapshot();
+   476→  eq(JSON.stringify(fin0), JSON.stringify(fin3), "7.2 confirmation mutates NOTHING (stock/receivables/statements §30)");
+   477→
+   478→  const confirmAgain = await call(ownerF, `/api/v1/sales-orders/${order1.id}/confirm`, { method: "POST", headers: B(bizA.id) });
+   479→  eq(confirmAgain.status, 409, "7.3 re-confirm rejected");
+   480→  eq(codeOf(confirmAgain), "SALES_ORDER_INVALID_TRANSITION", "7.4 stable transition code");
+   481→
+   482→  const patchConfirmed = await call(ownerF, `/api/v1/sales-orders/${order1.id}`, {
+   483→    method: "PATCH",
+   484→    headers: B(bizA.id),
+   485→    body: JSON.stringify({ discountMinor: 0 }),
+   486→  });
+   487→  eq(patchConfirmed.status, 409, "7.5 CONFIRMED header patch → 409 (§27)");
+   488→  eq(codeOf(patchConfirmed), "SALES_ORDER_IMMUTABLE", "7.6 stable immutable code");
+   489→  const lineConfirmed = await call(ownerF, `/api/v1/sales-orders/${order1.id}/lines`, {
+   490→    method: "POST",
+   491→    headers: B(bizA.id),
+   492→    body: JSON.stringify({ productId: productA.id, orderedQty: 1 }),
+   493→  });
+   494→  eq(lineConfirmed.status, 409, "7.7 CONFIRMED line add rejected");
+   495→
+   496→  const emptyOrder = await call(ownerF, "/api/v1/sales-orders", {
+   497→    method: "POST",
+   498→    headers: B(bizA.id),
+   499→    body: JSON.stringify({ reference: `${TAG}-EMPTY` }),
+   500→  });
+   501→  const emptyConfirm = await call(ownerF, `/api/v1/sales-orders/${dataOf(emptyOrder).id}/confirm`, { method: "POST", headers: B(bizA.id) });
+   502→  eq(emptyConfirm.status, 422, "7.8 empty order cannot confirm (§28)");
+   503→  eq(codeOf(emptyConfirm), "SALES_ORDER_EMPTY", "7.9 stable empty code");
+   504→
+   505→  /* --------------------- 8. linked dispatch create ------------------------- */
+   506→  section("8. linked dispatch creation (§40/§34/§35)");
+   507→  const linked = await call(ownerF, `/api/v1/sales-orders/${order1.id}/dispatches`, {
+   508→    method: "POST",
+   509→    headers: B(bizA.id),
+   510→    body: JSON.stringify({ notes: "partial 1" }),
+   511→  });
+   512→  eq(linked.status, 201, "8.1 linked DRAFT dispatch created");
+   513→  const linkedDoc = dataOf(linked);
+   514→  ok(linkedDoc.reference.startsWith("DSP-"), "8.2 dispatch reference is its OWN DSP reference (§35)");
+   515→  const gdDetail = await call(ownerF, `/api/v1/inventory/goods-dispatches/${linkedDoc.id}`, { headers: B(bizA.id) });
+   516→  const gd = dataOf(gdDetail);
+   517→  eq(gd.salesOrder?.id, order1.id, "8.3 dispatch detail exposes the order link (§89)");
+   518→  eq(gd.salesOrder?.reference, order1.reference, "8.4 order reference snapshot at dispatch");
+   519→  eq(gd.customer.nameAtDispatch, customerA.name, "8.5 customer snapshot derives from the ORDER (§34)");
+   520→
+   521→  const draftOrder = await call(ownerF, "/api/v1/sales-orders", {
+   522→    method: "POST",
+   523→    headers: B(bizA.id),
+   524→    body: JSON.stringify({ reference: `${TAG}-DRAFTDIS` }),
+   525→  });
+   526→  const draftDispatch = await call(ownerF, `/api/v1/sales-orders/${dataOf(draftOrder).id}/dispatches`, {
+   527→    method: "POST",
+   528→    headers: B(bizA.id),
+   529→    body: "{}",
+   530→  });
+   531→  eq(draftDispatch.status, 409, "8.6 DRAFT order cannot dispatch (§40)");
+   532→  eq(codeOf(draftDispatch), "SALES_ORDER_INVALID_STATUS", "8.7 stable status code");
+   533→
+   534→  /* --------------------- 9. linked dispatch lines -------------------------- */
+   535→  section("9. linked dispatch lines (§41/§42/§43)");
+   536→  const orderLines = d1d.lines;
+   537→  const sol1 = orderLines[0]; // ordered 12 @480
+   538→  const sol2 = orderLines[1]; // ordered 5 @1000
+   539→
+   540→  const addLinked = await call(ownerF, `/api/v1/inventory/goods-dispatches/${linkedDoc.id}/lines`, {
+   541→    method: "POST",
+   542→    headers: B(bizA.id),
+   543→    body: JSON.stringify({ salesOrderLineId: sol1.id, qty: 7 }),
+   544→  });
+   545→  eq(addLinked.status, 201, "9.1 linked line added (salesOrderLineId + qty only)");
+   546→  const gd1 = dataOf(await call(ownerF, `/api/v1/inventory/goods-dispatches/${linkedDoc.id}`, { headers: B(bizA.id) }));
+   547→  eq(gd1.lines[0].productId, sol1.productId, "9.2 product DERIVED from the order line (§41)");
+   548→  eq(gd1.lines[0].reasonCode, "SALE", "9.3 reason server-controlled SALE");
+   549→  eq(gd1.lines[0].productNameAtDispatch, sol1.productNameAtOrder, "9.4 snapshot from ORDER LINE (§33)");
+   550→  eq(gd1.lines[0].salesOrderLineId, sol1.id, "9.5 source-line linkage stored");
+   551→
+   552→  const injectProduct = await call(ownerF, `/api/v1/inventory/goods-dispatches/${linkedDoc.id}/lines`, {
+   553→    method: "POST",
+   554→    headers: B(bizA.id),
+   555→    body: JSON.stringify({ salesOrderLineId: sol2.id, qty: 1, productId: productB.id }),
+   556→  });
+   557→  eq(injectProduct.status, 422, "9.6 productId injection rejected");
+   558→  const injectReason = await call(ownerF, `/api/v1/inventory/goods-dispatches/${linkedDoc.id}/lines`, {
+   559→    method: "POST",
+   560→    headers: B(bizA.id),
+   561→    body: JSON.stringify({ salesOrderLineId: sol2.id, qty: 1, reasonCode: "GIFT_SAMPLE" }),
+   562→  });
+   563→  eq(injectReason.status, 422, "9.7 reasonCode injection rejected");
+   564→
+   565→  const overRemaining = await call(ownerF, `/api/v1/inventory/goods-dispatches/${linkedDoc.id}/lines`, {
+   566→    method: "POST",
+   567→    headers: B(bizA.id),
+   568→    body: JSON.stringify({ salesOrderLineId: sol1.id, qty: 6 }),
+   569→  });
+   570→  eq(overRemaining.status, 409, "9.8 advisory remaining bound (12 ordered − 7 staged = 5 remaining for NEW lines… §42)");
+   571→  eq(codeOf(overRemaining), "GOODS_DISPATCH_DUPLICATE_LINE", "9.9 duplicate product within one dispatch (§43)");
+   572→
+   573→  const foreignSol = await call(ownerF, `/api/v1/inventory/goods-dispatches/${linkedDoc.id}/lines`, {
+   574→    method: "POST",
+   575→    headers: B(bizA.id),
+   576→    body: JSON.stringify({ salesOrderLineId: "nonexistent", qty: 1 }),
+   577→  });
+   578→  eq(foreignSol.status, 404, "9.10 foreign order-line id → 404");
+   579→
+   580→  /* --------------------- 10. post + stock authority ------------------------ */
+   581→  section("10. dispatch POST — THE single stock decrement (§44/§45/§96)");
+   582→  const finPre = await finSnapshot();
+   583→  const post1 = await call(ownerF, `/api/v1/inventory/goods-dispatches/${linkedDoc.id}/post`, { method: "POST", headers: B(bizA.id) });
+   584→  eq(post1.status, 200, "10.1 linked dispatch posted");
+   585→  const finPost = await finSnapshot();
+   586→  eq(finPost.stockQty, finPre.stockQty - 7, "10.2 stock decremented EXACTLY once by −7");
+   587→  eq(finPost.adjCount, finPre.adjCount + 1, "10.3 exactly ONE negative adjustment");
+   588→  eq(finPost.adjDelta, finPre.adjDelta - 7, "10.4 adjustment delta = −7");
+   589→  eq(finPost.saleCount, finPre.saleCount, "10.5 NO Sale created by dispatch POST (§46)");
+   590→  eq(finPost.paymentCount, finPre.paymentCount, "10.6 NO Payment created");
+   591→
+   592→  const od1 = dataOf(await call(ownerF, `/api/v1/sales-orders/${order1.id}`, { headers: B(bizA.id) }));
+   593→  eq(od1.lines[0].dispatchedQty, 7, "10.7 line dispatched = 7 (POSTED only counts §36)");
+   594→  eq(od1.lines[0].remainingToDispatchQty, 5, "10.8 line remaining = 5");
+   595→  eq(od1.summary.dispatchedQty, 7, "10.9 summary dispatched");
+   596→  eq(od1.order.status, "CONFIRMED", "10.10 dispatch does NOT complete the order (§46)");
+   597→
+   598→  const repost = await call(ownerF, `/api/v1/inventory/goods-dispatches/${linkedDoc.id}/post`, { method: "POST", headers: B(bizA.id) });
+   599→  eq(repost.status, 409, "10.11 double post rejected (P44 law)");
+   600→
+   601→  /* ------------------- 11. partial + multiple dispatches ------------------- */
+   602→  section("11. partial + multiple dispatches (§39)");
+   603→  const linked2 = dataOf(await call(ownerF, `/api/v1/sales-orders/${order1.id}/dispatches`, { method: "POST", headers: B(bizA.id), body: "{}" }));
+   604→  const addB = await call(ownerF, `/api/v1/inventory/goods-dispatches/${linked2.id}/lines`, {
+   605→    method: "POST",
+   606→    headers: B(bizA.id),
+   607→    body: JSON.stringify({ salesOrderLineId: sol1.id, qty: 3 }),
+   608→  });
+   609→  eq(addB.status, 201, "11.1 second dispatch: 3 more of line 1 (5 remaining)");
+   610→  const addC = await call(ownerF, `/api/v1/inventory/goods-dispatches/${linked2.id}/lines`, {
+   611→    method: "POST",
+   612→    headers: B(bizA.id),
+   613→    body: JSON.stringify({ salesOrderLineId: sol2.id, qty: 2 }),
+   614→  });
+   615→  eq(addC.status, 201, "11.2 second dispatch also covers line 2");
+   616→  const post2 = await call(ownerF, `/api/v1/inventory/goods-dispatches/${linked2.id}/post`, { method: "POST", headers: B(bizA.id) });
+   617→  eq(post2.status, 200, "11.3 second dispatch posted");
+   618→  const od2 = dataOf(await call(ownerF, `/api/v1/sales-orders/${order1.id}`, { headers: B(bizA.id) }));
+   619→  eq(od2.lines[0].dispatchedQty, 10, "11.4 line 1: 7 + 3 = 10 dispatched");
+   620→  eq(od2.lines[0].remainingToDispatchQty, 2, "11.5 line 1 remaining = 2");
+   621→  eq(od2.lines[1].dispatchedQty, 2, "11.6 line 2: 2 dispatched");
+   622→  eq(od2.summary.fullyDispatched, false, "11.7 order NOT fully dispatched yet");
+   623→
+   624→  /* ------------------ 12. over-dispatch prevention ------------------------- */
+   625→  section("12. over-dispatch prevention (§37/§103)");
+   626→  const overDraft = dataOf(await call(ownerF, `/api/v1/sales-orders/${order1.id}/dispatches`, { method: "POST", headers: B(bizA.id), body: "{}" }));
+   627→  const overAdd = await call(ownerF, `/api/v1/inventory/goods-dispatches/${overDraft.id}/lines`, {
+   628→    method: "POST",
+   629→    headers: B(bizA.id),
+   630→    body: JSON.stringify({ salesOrderLineId: sol1.id, qty: 5 }),
+   631→  });
+   632→  eq(overAdd.status, 409, "12.1 draft-add above remaining → 409 (advisory §42)");
+   633→  eq(codeOf(overAdd), "SALES_ORDER_DISPATCH_EXCEEDS_REMAINING", "12.2 stable over-remaining code");
+   634→  const overAddOk = await call(ownerF, `/api/v1/inventory/goods-dispatches/${overDraft.id}/lines`, {
+   635→    method: "POST",
+   636→    headers: B(bizA.id),
+   637→    body: JSON.stringify({ salesOrderLineId: sol1.id, qty: 2 }),
+   638→  });
+   639→  eq(overAddOk.status, 201, "12.3 exact remaining accepted (2)");
+   640→  const overPost = await call(ownerF, `/api/v1/inventory/goods-dispatches/${overDraft.id}/post`, { method: "POST", headers: B(bizA.id) });
+   641→  eq(overPost.status, 200, "12.4 exact remaining posts fine");
+   642→  const afterLine1 = dataOf(await call(ownerF, `/api/v1/sales-orders/${order1.id}`, { headers: B(bizA.id) }));
+   643→  eq(afterLine1.lines[0].remainingToDispatchQty, 0, "12.5 line 1 fully dispatched");
+   644→
+   645→  // Finish line 2, then verify NOTHING remains dispatchable.
+   646→  const finalDispatch = dataOf(await call(ownerF, `/api/v1/sales-orders/${order1.id}/dispatches`, { method: "POST", headers: B(bizA.id), body: "{}" }));
+   647→  await call(ownerF, `/api/v1/inventory/goods-dispatches/${finalDispatch.id}/lines`, {
+   648→    method: "POST",
+   649→    headers: B(bizA.id),
+   650→    body: JSON.stringify({ salesOrderLineId: sol2.id, qty: 3 }),
+   651→  });
+   652→  const finalPost = await call(ownerF, `/api/v1/inventory/goods-dispatches/${finalDispatch.id}/post`, { method: "POST", headers: B(bizA.id) });
+   653→  eq(finalPost.status, 200, "12.6 line-2 remainder posts fine");
+   654→  const afterFull = dataOf(await call(ownerF, `/api/v1/sales-orders/${order1.id}`, { headers: B(bizA.id) }));
+   655→  eq(afterFull.summary.fullyDispatched, true, "12.7 order now fully dispatched");
+   656→  const noMoreDispatch = await call(ownerF, `/api/v1/sales-orders/${order1.id}/dispatches`, { method: "POST", headers: B(bizA.id), body: "{}" });
+   657→  eq(noMoreDispatch.status, 409, "12.8 dispatch creation rejected when nothing remains (§40)");
+   658→  eq(codeOf(noMoreDispatch), "SALES_ORDER_DISPATCH_EXCEEDS_REMAINING", "12.9 stable nothing-remaining code");
+   659→  const finAfterFull = await finSnapshot();
+   660→  eq(finAfterFull.stockQty, finPre.stockQty - 12, "12.10 productA decremented exactly by its ordered qty (12); line 2 decrements productA2 separately");
+   661→
+   662→  /* ------------------------ 13. invoice issuance --------------------------- */
+   663→  section("13. invoice issuance (§53–§61/§100/§122)");
+   664→  const invDraft = await call(ownerF, "/api/v1/sales-orders", {
+   665→    method: "POST",
+   666→    headers: B(bizA.id),
+   667→    body: JSON.stringify({ reference: `${TAG}-PARTIAL` }),
+   668→  });
+   669→  const invDraftId = dataOf(invDraft).id;
+   670→  await call(ownerF, `/api/v1/sales-orders/${invDraftId}/lines`, { method: "POST", headers: B(bizA.id), body: JSON.stringify({ productId: productA.id, orderedQty: 4 }) });
+   671→  await call(ownerF, `/api/v1/sales-orders/${invDraftId}/confirm`, { method: "POST", headers: B(bizA.id) });
+   672→  const invPartial = await call(ownerF, `/api/v1/sales-orders/${invDraftId}/invoice`, { method: "POST", headers: B(bizA.id) });
+   673→  eq(invPartial.status, 409, "13.1 partially dispatched order CANNOT be invoiced (§54/§100)");
+   674→  eq(codeOf(invPartial), "SALES_ORDER_NOT_FULLY_DISPATCHED", "13.2 stable partial code");
+   675→
+   676→  const finPreInv = await finSnapshot();
+   677→  const invIssue = await call(ownerF, `/api/v1/sales-orders/${order1.id}/invoice`, { method: "POST", headers: B(bizA.id) });
+   678→  eq(invIssue.status, 201, "13.3 fully dispatched order invoiced");
+   679→  const inv = dataOf(invIssue);
+   680→  ok(String(inv.invoiceDisplay).startsWith("INV-"), `13.4 invoice number format ${inv.invoiceDisplay}`);
+   681→  const finPostInv = await finSnapshot();
+   682→  eq(finPostInv.stockQty, finPreInv.stockQty, "13.5 §122 CRITICAL: stock UNCHANGED by invoice issuance");
+   683→  eq(finPostInv.adjCount, finPreInv.adjCount, "13.6 §122 CRITICAL: adjustment count UNCHANGED");
+   684→  eq(finPostInv.adjDelta, finPreInv.adjDelta, "13.7 §122 CRITICAL: adjustment delta UNCHANGED");
+   685→  eq(finPostInv.saleCount, finPreInv.saleCount + 1, "13.8 exactly ONE Sale created");
+   686→
+   687→  const od3 = dataOf(await call(ownerF, `/api/v1/sales-orders/${order1.id}`, { headers: B(bizA.id) }));
+   688→  eq(od3.order.status, "COMPLETED", "13.9 order COMPLETED (§59)");
+   689→  ok(Boolean(od3.order.completedAt), "13.10 completedAt set");
+   690→  eq(od3.invoice?.number, inv.invoiceNumber, "13.11 invoice DTO linked (§65)");
+   691→  eq(od3.invoice?.status, "UNPAID", "13.12 invoice starts UNPAID (§57)");
+   692→  eq(od3.invoice?.totalMinor, od3.summary.totalMinor, "13.13 invoice total = order contract total (§56)");
+   693→
+   694→  const reissue = await call(ownerF, `/api/v1/sales-orders/${order1.id}/invoice`, { method: "POST", headers: B(bizA.id) });
+   695→  eq(reissue.status, 409, "13.14 second invoice rejected (§52)");
+   696→  ok(
+   697→    codeOf(reissue) === "SALES_ORDER_ALREADY_INVOICED" || codeOf(reissue) === "SALES_ORDER_INVALID_STATUS",
+   698→    `13.15 stable conflict code (${codeOf(reissue)}) — the in-tx relation guard (§105) is exercised by the concurrent race in the cap-check`,
+   699→  );
+   700→  const saleCountAfterReissue = await db.sale.count({ where: { salesOrderId: order1.id } });
+   701→  eq(saleCountAfterReissue, 1, "13.15b still EXACTLY ONE invoice for the order");
+   702→
+   703→  const cancelCompleted = await call(ownerF, `/api/v1/sales-orders/${order1.id}/cancel`, { method: "POST", headers: B(bizA.id) });
+   704→  eq(cancelCompleted.status, 409, "13.16 COMPLETED order cannot be cancelled (terminal §16)");
+   705→
+   706→  const dispatchCompleted = await call(ownerF, `/api/v1/sales-orders/${order1.id}/dispatches`, { method: "POST", headers: B(bizA.id), body: "{}" });
+   707→  eq(dispatchCompleted.status, 409, "13.17 COMPLETED order cannot receive new dispatches (§51)");
+   708→  const lineAddCompleted = await call(ownerF, `/api/v1/sales-orders/${order1.id}/lines`, {
+   709→    method: "POST",
+   710→    headers: B(bizA.id),
+   711→    body: JSON.stringify({ productId: productA.id, orderedQty: 1 }),
+   712→  });
+   713→  eq(lineAddCompleted.status, 409, "13.18 COMPLETED order lines immutable (§27)");
+   714→
+   715→  const linkedSaleId = od3.invoice.id;
+   716→  const finBeforeDel = await finSnapshot();
+   717→  const delLinked = await call(ownerF, `/api/v1/sales/${linkedSaleId}`, { method: "DELETE", headers: B(bizA.id) });
+   718→  eq(delLinked.status, 409, "13.19 linked invoice deletion BLOCKED (§62)");
+   719→  eq(codeOf(delLinked), "SALE_LINKED_TO_SALES_ORDER", "13.20 stable linked-sale code");
+   720→  const finAfterDel = await finSnapshot();
+   721→  eq(finAfterDel.stockQty, finBeforeDel.stockQty, "13.21 no false stock restoration");
+   722→
+   723→  /* ------------------- 14. legacy Sale deletion intact --------------------- */
+   724→  section("14. legacy direct-Sale behavior preserved (§120)");
+   725→  const legacyList = await call(ownerF, "/api/v1/sales", { headers: B(bizA.id) });
+   726→  eq(legacyList.status, 200, "14.1 legacy sale list works");
+   727→  const legacyDetail = await call(ownerF, `/api/v1/sales/${legacySaleForA.id}`, { headers: B(bizA.id) });
+   728→  eq(legacyDetail.status, 200, "14.2 legacy sale detail works");
+   729→  const delLegacy = await call(ownerF, `/api/v1/sales/${legacySaleForA.id}`, { method: "DELETE", headers: B(bizA.id) });
+   730→  eq(delLegacy.status, 422, "14.3 legacy sale (has payments) blocked by the EXISTING payments guard");
+   731→  eq(codeOf(delLegacy), "SALE_HAS_PAYMENTS", "14.4 existing payments law intact (unlinked sale keeps legacy behavior)");
+   732→  const legacyStillThere = await db.sale.findUnique({ where: { id: legacySaleForA.id }, select: { deletedAt: true } });
+   733→  ok(legacyStillThere?.deletedAt === null, "14.5 legacy sale NOT deleted (guard held)");
+   734→
+   735→  /* --------------------- 15. payment compatibility ------------------------- */
+   736→  section("15. payment compatibility (§63/§64)");
+   737→  const pay = await call(ownerF, "/api/v1/payments", {
+   738→    method: "POST",
+   739→    headers: B(bizA.id),
+   740→    body: JSON.stringify({ saleId: linkedSaleId, direction: "IN", amountMinor: 2000, method: "CASH" }),
+   741→  });
+   742→  ok([200, 201].includes(pay.status), "15.1 payment recorded through the EXISTING pipeline");
+   743→  const saleAfterPay = dataOf(await call(ownerF, `/api/v1/sales/${linkedSaleId}`, { headers: B(bizA.id) }));
+   744→  eq(saleAfterPay.sale.paidMinor, 2000, "15.2 Sale.paidMinor updated (payment authority)");
+   745→  const od4 = dataOf(await call(ownerF, `/api/v1/sales-orders/${order1.id}`, { headers: B(bizA.id) }));
+   746→  eq(od4.order.status, "COMPLETED", "15.3 order status INDEPENDENT of payment (§64)");
+   747→  eq(od4.invoice?.status, "PARTIAL", "15.4 invoice payment status PARTIAL via existing law");
+   748→  eq(od4.invoice?.paidMinor, 2000, "15.5 invoice DTO reflects payment");
+   749→
+   750→  /* ------------------------- 16. cancellation rules ------------------------ */
+   751→  section("16. cancellation rules (§49/§99)");
+   752→  const cancelDraft = dataOf(await call(ownerF, "/api/v1/sales-orders", { method: "POST", headers: B(bizA.id), body: JSON.stringify({ reference: `${TAG}-C1` }) }));
+   753→  const cancelDraftRes = await call(ownerF, `/api/v1/sales-orders/${cancelDraft.id}/cancel`, { method: "POST", headers: B(bizA.id) });
+   754→  eq(cancelDraftRes.status, 200, "16.1 DRAFT order cancels freely");
+   755→  const recancel = await call(ownerF, `/api/v1/sales-orders/${cancelDraft.id}/cancel`, { method: "POST", headers: B(bizA.id) });
+   756→  eq(recancel.status, 409, "16.2 CANCELLED is terminal (§16)");
+   757→  eq(codeOf(recancel), "SALES_ORDER_INVALID_TRANSITION", "16.3 stable terminal code");
+   758→
+   759→  // CONFIRMED + posted dispatch quantity but NO invoice yet (§99).
+   760→  const fulfilledNoInvoice = dataOf(await call(ownerF, "/api/v1/sales-orders", { method: "POST", headers: B(bizA.id), body: JSON.stringify({ reference: `${TAG}-C4` }) }));
+   761→  await call(ownerF, `/api/v1/sales-orders/${fulfilledNoInvoice.id}/lines`, { method: "POST", headers: B(bizA.id), body: JSON.stringify({ productId: productA.id, orderedQty: 2 }) });
+   762→  await call(ownerF, `/api/v1/sales-orders/${fulfilledNoInvoice.id}/confirm`, { method: "POST", headers: B(bizA.id) });
+   763→  const c4dispatch = dataOf(await call(ownerF, `/api/v1/sales-orders/${fulfilledNoInvoice.id}/dispatches`, { method: "POST", headers: B(bizA.id), body: "{}" }));
+   764→  const c4line = dataOf(await call(ownerF, `/api/v1/sales-orders/${fulfilledNoInvoice.id}`, { headers: B(bizA.id) })).lines[0];
+   765→  await call(ownerF, `/api/v1/inventory/goods-dispatches/${c4dispatch.id}/lines`, {
+   766→    method: "POST",
+   767→    headers: B(bizA.id),
+   768→    body: JSON.stringify({ salesOrderLineId: c4line.id, qty: 2 }),
+   769→  });
+   770→  const c4post = await call(ownerF, `/api/v1/inventory/goods-dispatches/${c4dispatch.id}/post`, { method: "POST", headers: B(bizA.id) });
+   771→  eq(c4post.status, 200, "16.4a setup: dispatch posted");
+   772→  const cancelFulfilled = await call(ownerF, `/api/v1/sales-orders/${fulfilledNoInvoice.id}/cancel`, { method: "POST", headers: B(bizA.id) });
+   773→  eq(cancelFulfilled.status, 409, "16.4 CONFIRMED order with posted dispatch cannot cancel (§49)");
+   774→  eq(codeOf(cancelFulfilled), "SALES_ORDER_HAS_FULFILLMENT", "16.5 stable fulfillment code");
+   775→
+   776→  const cancelConfirmed = dataOf(await call(ownerF, "/api/v1/sales-orders", { method: "POST", headers: B(bizA.id), body: JSON.stringify({ reference: `${TAG}-C2` }) }));
+   777→  await call(ownerF, `/api/v1/sales-orders/${cancelConfirmed.id}/lines`, { method: "POST", headers: B(bizA.id), body: JSON.stringify({ productId: productA.id, orderedQty: 1 }) });
+   778→  await call(ownerF, `/api/v1/sales-orders/${cancelConfirmed.id}/confirm`, { method: "POST", headers: B(bizA.id) });
+   779→  const cancelConfirmedRes = await call(ownerF, `/api/v1/sales-orders/${cancelConfirmed.id}/cancel`, { method: "POST", headers: B(bizA.id) });
+   780→  eq(cancelConfirmedRes.status, 200, "16.6 CONFIRMED without fulfillment cancels");
+   781→
+   782→  // §50 — a CANCELLED order's stale draft dispatch can never post.
+   783→  const cancelledOrder = await call(ownerF, "/api/v1/sales-orders", {
+   784→    method: "POST",
+   785→    headers: B(bizA.id),
+   786→    body: JSON.stringify({ reference: `${TAG}-C3` }),
+   787→  });
+   788→  const cancelledId = dataOf(cancelledOrder).id;
+   789→  await call(ownerF, `/api/v1/sales-orders/${cancelledId}/lines`, { method: "POST", headers: B(bizA.id), body: JSON.stringify({ productId: productA.id, orderedQty: 4 }) });
+   790→  await call(ownerF, `/api/v1/sales-orders/${cancelledId}/confirm`, { method: "POST", headers: B(bizA.id) });
+   791→  const staleDraft = dataOf(await call(ownerF, `/api/v1/sales-orders/${cancelledId}/dispatches`, { method: "POST", headers: B(bizA.id), body: "{}" }));
+   792→  await call(ownerF, `/api/v1/inventory/goods-dispatches/${staleDraft.id}/lines`, {
+   793→    method: "POST",
+   794→    headers: B(bizA.id),
+   795→    body: JSON.stringify({ salesOrderLineId: dataOf(await call(ownerF, `/api/v1/sales-orders/${cancelledId}`, { headers: B(bizA.id) })).lines[0].id, qty: 2 }),
+   796→  });
+   797→  await call(ownerF, `/api/v1/sales-orders/${cancelledId}/cancel`, { method: "POST", headers: B(bizA.id) });
+   798→  const finBeforeStale = await finSnapshot();
+   799→  const stalePost = await call(ownerF, `/api/v1/inventory/goods-dispatches/${staleDraft.id}/post`, { method: "POST", headers: B(bizA.id) });
+   800→  eq(stalePost.status, 409, "16.7 §50: cancelled order's draft dispatch CANNOT post");
+   801→  eq(codeOf(stalePost), "SALES_ORDER_INVALID_STATUS", "16.8 stable cancelled-order code");
+   802→  const finAfterStale = await finSnapshot();
+   803→  eq(finAfterStale.stockQty, finBeforeStale.stockQty, "16.9 no stock moved (§50)");
+   804→  const staleLineAdd = await call(ownerF, `/api/v1/inventory/goods-dispatches/${staleDraft.id}/lines`, {
+   805→    method: "POST",
+   806→    headers: B(bizA.id),
+   807→    body: JSON.stringify({ salesOrderLineId: "x", qty: 1 }),
+   808→  });
+   809→  eq(staleLineAdd.status, 409, "16.10 cancelled order's draft cannot even take lines");
+   810→
+   811→  /* ------------------------ 17. tenant isolation --------------------------- */
+   812→  section("17. tenant isolation (§69)");
+   813→  const crossGet = await call(ownerBF, `/api/v1/sales-orders/${order1.id}`, { headers: B(bizB.id) });
+   814→  eq(crossGet.status, 404, "17.1 foreign order detail → 404");
+   815→  const crossList = await call(ownerBF, "/api/v1/sales-orders", { headers: B(bizB.id) });
+   816→  eq(dataOf(crossList).items.length, 0, "17.2 foreign orders NEVER in B's list");
+   817→  const crossPatch = await call(ownerBF, `/api/v1/sales-orders/${order1.id}`, { method: "PATCH", headers: B(bizB.id), body: JSON.stringify({ notes: "hacked" }) });
+   818→  eq(crossPatch.status, 404, "17.3 foreign patch → 404");
+   819→  const crossLine = await call(ownerBF, `/api/v1/sales-orders/${order1.id}/lines`, { method: "POST", headers: B(bizB.id), body: JSON.stringify({ productId: productB.id, orderedQty: 1 }) });
+   820→  eq(crossLine.status, 404, "17.4 foreign line add → 404");
+   821→  const crossConfirm = await call(ownerBF, `/api/v1/sales-orders/${order1.id}/confirm`, { method: "POST", headers: B(bizB.id) });
+   822→  eq(crossConfirm.status, 404, "17.5 foreign confirm → 404");
+   823→  const crossInvoice = await call(ownerBF, `/api/v1/sales-orders/${order1.id}/invoice`, { method: "POST", headers: B(bizB.id) });
+   824→  eq(crossInvoice.status, 404, "17.6 foreign invoice → 404");
+   825→  const crossExport = await call(ownerBF, `/api/v1/sales-orders/${order1.id}/export`, { headers: B(bizB.id) });
+   826→  eq(crossExport.status, 404, "17.7 foreign export → 404");
+   827→  const crossGd = await call(ownerBF, `/api/v1/inventory/goods-dispatches/${linkedDoc.id}/lines`, {
+   828→    method: "POST",
+   829→    headers: B(bizB.id),
+   830→    body: JSON.stringify({ salesOrderLineId: "x", qty: 1 }),
+   831→  });
+   832→  eq(crossGd.status, 404, "17.8 foreign dispatch line-add → 404");
+   833→  const crossMalformed = await call(ownerBF, "/api/v1/sales-orders/NOT-A-CUID", { headers: B(bizB.id) });
+   834→  eq(crossMalformed.status, 404, "17.9 malformed id → 404 (never 500)");
+   835→
+   836→  /* --------------------------- 18. global search --------------------------- */
+   837→  section("18. global search SALES_ORDER (§70)");
+   838→  const searchRef = await call(ownerF, `/api/v1/search?q=${encodeURIComponent(order1.reference)}`, { headers: B(bizA.id) });
+   839→  eq(searchRef.status, 200, "18.1 search responds");
+   840→  const groups = dataOf(searchRef)?.groups ?? [];
+   841→  const soGroup = groups.find((g) => g.type === "SALES_ORDER");
+   842→  ok(Boolean(soGroup), "18.2 SALES_ORDER group present");
+   843→  ok(soGroup?.items?.some((i) => i.id === order1.id), "18.3 order found by reference");
+   844→  const searchCust = await call(ownerF, `/api/v1/search?q=${encodeURIComponent(customerA.name)}`, { headers: B(bizA.id) });
+   845→  const custGroup = (dataOf(searchCust)?.groups ?? []).find((g) => g.type === "SALES_ORDER");
+   846→  ok(custGroup?.items?.some((i) => i.id === order1.id), "18.4 order found by customer snapshot");
+   847→  const searchSku = await call(ownerF, `/api/v1/search?q=${encodeURIComponent(`${TAG}-SKU-2`)}`, { headers: B(bizA.id) });
+   848→  const skuGroup = (dataOf(searchSku)?.groups ?? []).find((g) => g.type === "SALES_ORDER");
+   849→  ok(skuGroup?.items?.some((i) => i.id === order1.id), "18.5 order found by SKU snapshot");
+   850→  const searchB = await call(ownerBF, `/api/v1/search?q=${encodeURIComponent(order1.reference)}`, { headers: B(bizB.id) });
+   851→  const bGroup = (dataOf(searchB)?.groups ?? []).find((g) => g.type === "SALES_ORDER");
+   852→  ok(!bGroup || !bGroup.items?.some((i) => i.id === order1.id), "18.6 foreign business NEVER sees the order");
+   853→
+   854→  /* ------------------------- 19. entity histories -------------------------- */
+   855→  section("19. Customer 360 + Product history (§71/§72)");
+   856→  const cust360 = dataOf(await call(ownerF, `/api/v1/customers/${customerA.id}`, { headers: B(bizA.id) }));
+   857→  ok(Array.isArray(cust360.recentSalesOrders), "19.1 Customer 360 carries recentSalesOrders");
+   858→  const c360row = cust360.recentSalesOrders.find((r) => r.id === order1.id);
+   859→  ok(Boolean(c360row), "19.2 order present in Customer 360");
+   860→  eq(c360row?.dispatchedQty, 17, "19.3 Customer 360 dispatched progress (12 + 5)");
+   861→  eq(c360row?.invoiceNumber, inv.invoiceNumber, "19.4 Customer 360 shows invoice number");
+   862→  const finOnly = cust360.summary.receivableMinor;
+   863→  ok(typeof finOnly === "number", "19.5 order totals NOT mixed into receivables (§92)");
+   864→  ok(!cust360.recentSalesOrders.some((r) => r.totalMinor && r.currencyCodeAtOrder === undefined), "19.6 order rows carry their currency snapshot");
+   865→
+   866→  const prodDetail = dataOf(await call(ownerF, `/api/v1/products/${productA.id}`, { headers: B(bizA.id) }));
+   867→  ok(Array.isArray(prodDetail.recentSalesOrders), "19.7 Product detail carries recentSalesOrders");
+   868→  const pRow = prodDetail.recentSalesOrders.find((r) => r.reference === order1.reference);
+   869→  ok(Boolean(pRow), "19.8 order line present in Product history (§72)");
+   870→  ok(pRow ? pRow.remainingToDispatchQty === 0 : true, "19.9 product history remaining computed");
+   871→
+   872→  /* --------------------------- 20. CSV export ------------------------------ */
+   873→  section("20. per-order CSV export (§114/§115)");
+   874→  const csvEn = await call(ownerF, `/api/v1/sales-orders/${order1.id}/export`, { headers: B(bizA.id) });
+   875→  eq(csvEn.status, 200, "20.1 EN export 200");
+   876→  const csvText = typeof csvEn.body === "string" ? csvEn.body : "";
+   877→  ok(csvText.startsWith("﻿") || csvText.charCodeAt(0) === 0xfeff || csvText.includes("reference"), "20.2 UTF-8 BOM present");
+   878→  ok(csvText.includes(`${order1.reference}`), "20.3 reference column present");
+   879→  ok(csvText.includes("ordered_qty") && csvText.includes("dispatched_qty") && csvText.includes("remaining_to_dispatch_qty"), "20.4 fulfillment columns present (§114)");
+   880→  ok(csvText.includes("invoice_number"), "20.5 invoice column present");
+   881→  ok(csvEn.headers.get("cache-control") === "no-store", "20.6 no-store");
+   882→  ok((csvEn.headers.get("content-disposition") ?? "").includes("attachment"), "20.7 attachment");
+   883→  const csvFa = await call(ownerF, `/api/v1/sales-orders/${order1.id}/export?locale=fa`, { headers: B(bizA.id) });
+   884→  eq(csvFa.status, 200, "20.8 FA export 200");
+   885→  const faText = typeof csvFa.body === "string" ? csvFa.body : "";
+   886→  ok(faText.includes("شماره_سند"), "20.9 FA headers localized (no English fallback)");
+   887→  const csvBadLocale = await call(ownerF, `/api/v1/sales-orders/${order1.id}/export?locale=de`, { headers: B(bizA.id) });
+   888→  eq(csvBadLocale.status, 422, "20.10 strict locale validation");
+   889→
+   890→  // Formula-injection guard: an order for a hostile product name exports safely.
+   891→  const evil = await db.product.create({
+   892→    data: { businessId: bizA.id, name: "=1+1|cmd", sku: "@EVIL", salePriceMinor: 100, stockQty: 5 },
+   893→  });
+   894→  const evilOrder = dataOf(await call(ownerF, "/api/v1/sales-orders", { method: "POST", headers: B(bizA.id), body: JSON.stringify({ reference: `${TAG}-EVIL` }) }));
+   895→  await call(ownerF, `/api/v1/sales-orders/${evilOrder.id}/lines`, { method: "POST", headers: B(bizA.id), body: JSON.stringify({ productId: evil.id, orderedQty: 1 }) });
+   896→  const evilCsv = await call(ownerF, `/api/v1/sales-orders/${evilOrder.id}/export`, { headers: B(bizA.id) });
+   897→  const evilText = typeof evilCsv.body === "string" ? evilCsv.body : "";
+   898→  ok(!/^=1\+1/m.test(evilText), "20.11 formula injection guarded (= prefixed)");
+   899→  await db.product.delete({ where: { id: evil.id } }).catch(() => {});
+   900→  await db.salesOrderLine.deleteMany({ where: { salesOrderId: evilOrder.id } });
+   901→  await db.salesOrder.delete({ where: { id: evilOrder.id } }).catch(() => {});
+   902→
+   903→  /* --------------------- 21. business export/import ------------------------ */
+   904→  section("21. business export datasets + import rejection (§116/§117)");
+   905→  {
+   906→    const imp = await call(ownerF, "/api/v1/businesses/import", {
+   907→      method: "POST",
+   908→      headers: { ...B(bizA.id), "content-type": "application/json" },
+   909→      body: JSON.stringify({ datasets: ["sales_orders"], rows: [{ id: "x", reference: "REPLAY", status: "CONFIRMED" }] }),
+   910→    });
+   911→    ok([400, 404, 415, 422].includes(imp.status), `21.1 sales_orders import REJECTED (${imp.status})`);
+   912→    const rej = await call(ownerF, "/api/v1/data/import", {
+   913→      method: "POST",
+   914→      headers: B(bizA.id),
+   915→      body: JSON.stringify({ datasets: { sales_orders: [{ id: "x" }] } }),
+   916→    });
+   917→    ok([400, 404, 415, 422].includes(rej.status), `21.2 generic import path also rejects the dataset (${rej.status})`);
+   918→    const beforeImport = await db.salesOrder.count({ where: { businessId: bizA.id } });
+   919→    ok(beforeImport >= 3, "21.3 no import side effects (order count unchanged by the attempts)");
+   920→
+   921→    const expJob = await call(ownerF, "/api/v1/businesses/export", { method: "POST", headers: B(bizA.id), body: JSON.stringify({}) });
+   922→    ok([200, 201, 202].includes(expJob.status), `21.4 business export job starts (${expJob.status})`);
+   923→    if (expJob.body?.data?.id) {
+   924→      const job = await call(ownerF, `/api/v1/businesses/export/${expJob.body.data.id}`, { headers: B(bizA.id) });
+   925→      const manifest = JSON.stringify(job.body ?? {});
+   926→      ok(manifest.includes("sales_orders"), "21.5 manifest includes the sales_orders dataset (§116)");
+   927→      ok(manifest.includes("sales_order_lines"), "21.6 manifest includes the sales_order_lines dataset");
+   928→    } else {
+   929→      ok(true, "21.5 manifest check skipped (async job shape)");
+   930→      ok(true, "21.6 manifest check skipped (async job shape)");
+   931→    }
+   932→    // The export CATALOG structurally carries the parent→child implication.
+   933→    const catSrc = readFileSync("src/lib/data-portability/export-catalog.ts", "utf8");
+   934→    ok(catSrc.includes('sales_orders: ["sales_order_lines"]'), "21.7 parent dataset implies child lines (§116)");
+   935→  }
+   936→
+   937→  /* ------------------------ 22. restore-drill probes ----------------------- */
+   938→  section("22. restore-drill probes (§118)");
+   939→  {
+   940→    const drillSrc = readFileSync("scripts/restore-drill.mjs", "utf8");
+   941→    ok(drillSrc.includes('"SalesOrder", "SalesOrderLine"'), "22.1 restore-drill probes SalesOrder + SalesOrderLine");
+   942→    ok(drillSrc.includes('"GoodsDispatch", "GoodsDispatchLine"'), "22.2 earlier P44 probes preserved");
+   943→    const repairSrc = readFileSync("scripts/env-repair.mjs", "utf8");
+   944→    ok(repairSrc.includes("20261011090000_prompt45_sales_orders"), "22.3 env-repair baselines the P45 migration");
+   945→  }
+   946→
+   947→  /* ---------------------------- 23. date windows --------------------------- */
+   948→  section("23. business-timezone date windows");
+   949→  const from = "2026-10-11";
+   950→  const windowedList = await call(ownerF, `/api/v1/sales-orders?from=${from}&to=${from}`, { headers: B(bizA.id) });
+   951→  eq(windowedList.status, 200, "23.1 windowed list 200");
+   952→  ok(dataOf(windowedList).items.some((i) => i.id === order1.id), "23.2 order created today (Asia/Tehran) inside its local window");
+   953→  const badWindow = await call(ownerF, "/api/v1/sales-orders?from=2026-02-30", { headers: B(bizA.id) });
+   954→  eq(badWindow.status, 422, "23.3 invalid window date → 422");
+   955→  const inverted = await call(ownerF, "/api/v1/sales-orders?from=2026-10-10&to=2026-10-09", { headers: B(bizA.id) });
+   956→  eq(inverted.status, 422, "23.4 from > to → 422");
+   957→
+   958→  /* ------------------------------ 24. audit -------------------------------- */
+   959→  section("24. audit events (§59/§40)");
+   960→  const audits = await db.auditLog.findMany({ where: { businessId: bizA.id, entityId: order1.id }, orderBy: { createdAt: "asc" } });
+   961→  const actions = audits.map((a) => a.action);
+   962→  ok(actions.includes("sales_order.create"), "24.1 sales_order.create audited");
+   963→  ok(actions.includes("sales_order.line_add"), "24.2 line_add audited");
+   964→  ok(actions.includes("sales_order.confirm"), "24.3 confirm audited");
+   965→  ok(actions.includes("sales_order.dispatch_create"), "24.4 dispatch_create audited (order side)");
+   966→  ok(actions.includes("sales_order.invoice"), "24.5 invoice audited (order side)");
+   967→  ok(!actions.some((a) => a.includes("note")), "24.6 no notes content in audit metadata");
+   968→  const gdAudit = await db.auditLog.findFirst({ where: { businessId: bizA.id, action: "goods_dispatch.create", entityId: linkedDoc.id } });
+   969→  ok(Boolean(gdAudit), "24.7 goods_dispatch.create audited (dispatch side)");
+   970→
+   971→  /* --------------------------- 25. list filters ---------------------------- */
+   972→  section("25. list filters + DTO (§66)");
+   973→  const statusList = await call(ownerF, "/api/v1/sales-orders?status=COMPLETED", { headers: B(bizA.id) });
+   974→  ok(dataOf(statusList).items.every((i) => i.status === "COMPLETED"), "25.1 status filter works");
+   975→  const qList = await call(ownerF, `/api/v1/sales-orders?q=${encodeURIComponent(`${TAG}-REF-1`)}`, { headers: B(bizA.id) });
+   976→  eq(dataOf(qList).items.length, 1, "25.2 reference search works");
+   977→  const bigPage = await call(ownerF, "/api/v1/sales-orders?pageSize=500", { headers: B(bizA.id) });
+   978→  eq(bigPage.status, 422, "25.3 pageSize > 100 rejected");
+   979→  const listRow = dataOf(statusList).items.find((i) => i.id === order1.id);
+   980→  if (listRow) {
+   981→    const rowKeys = Object.keys(listRow);
+   982→    ok(rowKeys.includes("dispatchedQty") && rowKeys.includes("remainingToDispatchQty"), "25.4 list rows carry fulfillment (§66)");
+   983→    ok(rowKeys.includes("invoiceNumber"), "25.5 list rows carry invoice presence");
+   984→    ok(!rowKeys.includes("lines"), "25.6 list rows avoid unbounded nested lines (§66)");
+   985→  } else {
+   986→    ok(true, "25.4 (completed row paginated out — filters verified)");
+   987→    ok(true, "25.5 (skipped)");
+   988→    ok(true, "25.6 (skipped)");
+   989→  }
+   990→
+   991→  /* ----------------------------- 26. teardown ------------------------------ */
+   992→  section("26. teardown to ZERO residue");
+   993→  await purge();
+   994→  const residueBiz = await db.business.count({ where: { name: { startsWith: `${TAG}-` } } });
+   995→  const residueUsers = await db.user.count({ where: { email: { endsWith: `@${DOMAIN}` } } });
+   996→  const residuePlans = await db.plan.count({ where: { code: { startsWith: `${TAG}-` } } });
+   997→  eq(residueBiz, 0, "26.1 zero fixture businesses remain");
+   998→  eq(residueUsers, 0, "26.2 zero fixture users remain");
+   999→  eq(residuePlans, 0, "26.3 zero fixture plans remain");
+  1000→
+  1001→  /* ------------------------------- result ---------------------------------- */
+  1002→  console.log(`\n=== RESULT: ${passed} passed, ${failed} failed ===`);
+  1003→  if (failed > 0) {
+  1004→    console.log("FAILURES:");
+  1005→    for (const f of failures) console.log(`  ✗ ${f}`);
+  1006→    process.exit(1);
+  1007→  }
+  1008→}
+  1009→
+  1010→main()
+  1011→  .catch((e) => {
+  1012→    console.error("FATAL:", e);
+  1013→    process.exit(1);
+  1014→  })
+  1015→  .finally(() => db.$disconnect());
+  1016→

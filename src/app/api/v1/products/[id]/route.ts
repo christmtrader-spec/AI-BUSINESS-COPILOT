@@ -21,6 +21,7 @@ import { listRecentReceiptsForProduct } from "@/lib/inventory/goods-receipt/serv
 import { listRecentReturnsForProduct } from "@/lib/inventory/goods-return/service";
 import { listRecentDispatchesForProduct } from "@/lib/inventory/goods-dispatch/service";
 import { listRecentOrdersForProduct } from "@/lib/sales-orders/service";
+import { recentQuotationsForProduct } from "@/lib/sales-quotations/service";
 
 export const dynamic = "force-dynamic";
 
@@ -56,7 +57,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   // §42 — parallel bounded queries, deterministic ordering, explicit select.
   // Prompt 41 (§66) — Product detail gains a bounded purchase-order history:
   // READ-ONLY (§201), historical line snapshots (§236), never stock-related.
-  const [recentAdjustments, recentSaleItems, recentStocktakeLines, recentPurchaseOrderLines, recentGoodsReceiptLines, recentGoodsReturnLines, recentGoodsDispatchLines, recentSalesOrderLines] =
+  const [recentAdjustments, recentSaleItems, recentStocktakeLines, recentPurchaseOrderLines, recentGoodsReceiptLines, recentGoodsReturnLines, recentGoodsDispatchLines, recentSalesOrderLines, recentSalesQuotationLines] =
     await Promise.all([
     db.inventoryAdjustment.findMany({
       where: { businessId: ctx.businessId, productId: id },
@@ -131,6 +132,9 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
     // Prompt 45 (§72) — ≤10 recent sales-order lines (NO money §72;
     // quantities only — commercial commitments, never stock events).
     listRecentOrdersForProduct({ businessId: ctx.businessId, productId: id, take: 10 }),
+    // Prompt 47 (§19) — ≤10 recent quotation lines (NO money; quantities
+    // only — commercial offers, never stock events §19).
+    recentQuotationsForProduct(ctx.businessId, id, 10),
   ]);
 
   // Flatten SaleItem → Sale into the mapper's input shape (no N+1: the
@@ -173,6 +177,15 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
       recentGoodsReturnLines,
       recentGoodsDispatchLines,
       recentSalesOrderLines,
+      recentSalesQuotationLines.map((l) => ({
+        id: l.id,
+        reference: l.reference,
+        customerNameAtQuotation: l.customerNameAtQuotation,
+        status: l.persistedStatus,
+        effectiveStatus: l.effectiveStatus,
+        quotationDate: l.quotationDate,
+        qty: l.qty,
+      })),
     );
   } catch (error) {
     // §12/§13 — corrupted PO status → the SAME stable integrity code as the
