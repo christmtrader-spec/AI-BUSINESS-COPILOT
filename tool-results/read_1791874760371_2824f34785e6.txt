@@ -1,0 +1,730 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→import { create } from "zustand";
+     4→     4→import { persist } from "zustand/middleware";
+     5→     5→import { registerBusinessIdProvider } from "@/lib/api-client";
+     6→     6→import { DEFAULT_LOCALE, isLocale, type Locale } from "@/i18n/config";
+     7→     7→import {
+     8→     8→  entityToHash,
+     9→     9→  isValidEntityId,
+    10→    10→  parseEntityRoute,
+    11→    11→  type EntityType,
+    12→    12→} from "@/lib/entity-routes";
+    13→    13→import {
+    14→    14→  isStatementTypeToken,
+    15→    15→  type StatementTypeToken,
+    16→    16→} from "@/lib/statements/types";
+    17→    17→
+    18→    18→/**
+    19→    19→ * Global client state (Zustand). Server data lives in TanStack Query;
+    20→    20→ * this store only holds UI/session preferences.
+    21→    21→ * - locale persists (A05/A06)
+    22→    22→ * - activeBusinessId persists; the SERVER re-verifies membership on
+    23→    23→ *   every request (A01) — this value is a UX hint, never an authority.
+    24→    24→ * - view is the current app module; it is MIRRORED to the URL hash
+    25→    25→ *   (e.g. #/sales) so deep links, refresh persistence and browser
+    26→    26→ *   back/forward work even though this environment only exposes "/".
+    27→    27→ */
+    28→    28→export type AppView =
+    29→    29→  | { kind: "dashboard" }
+    30→    30→  | { kind: "audit" }
+    31→    31→  | { kind: "settings:business" }
+    32→    32→  | { kind: "settings:members" }
+    33→    33→  | { kind: "settings:billing" }
+    34→    34→  | { kind: "settings:security" }
+    35→    35→  /** Prompt 31 — customer data portability center (#/data, §123/§186). */
+    36→    36→  | { kind: "settings:data" }
+    37→    37→  /** Prompt 32 — notification center (#/notifications, §109) + preferences (#/settings/notifications, §63). */
+    38→    38→  | { kind: "notifications" }
+    39→    39→  | { kind: "settings:notifications" }
+    40→    40→  /** Prompt 33 — Search Results Center (#/search, #/search?q=…, §13). */
+    41→    41→  | { kind: "search"; query?: string }
+    42→    42→  /**
+    43→    43→   * Prompt 35 (§36/§37) — CRM module (#/crm). ONE view kind with a CLOSED
+    44→    44→   * tab vocabulary (leads | pipeline | opportunities); the tab rides the
+    45→    45→   * hash query (#/crm?tab=leads). Bare #/crm and unknown tabs resolve to
+    46→    46→   * the documented deterministic default (pipeline).
+    47→    47→   */
+    48→    48→  | { kind: "crm"; tab: CrmTab }
+    49→    49→  /**
+    50→    50→   * Prompt 34 — Entity detail deep link (#/customers/<id>, §4/§5). The
+    51→    51→   * entity is a CLOSED vocabulary token (lib/entity-routes) — never an
+    52→    52→   * arbitrary string — and the id is validated by `parseEntityRoute`.
+    53→    53→   */
+    54→    54→  | { kind: "entity"; entity: EntityType; id: string }
+    55→    55→  /**
+    56→    56→   * Prompt 39 — Party statements (#/statements?type=customer|supplier&id=<id>,
+    57→    57→   * §54–§59). The type is a CLOSED two-token vocabulary; the id must pass
+    58→    58→   * the same safe-ID validation as entity routes. Unknown types and missing
+    59→    59→   * or unsafe ids NEVER become state — they fall back to the dashboard like
+    60→    60→   * every other unknown hash (§58).
+    61→    61→   */
+    62→    62→  | { kind: "statements"; statementType: StatementTypeToken; id: string }
+    63→    63→  /**
+    64→    64→   * Prompt 40 — Inventory stocktake views (§76/§77/§136): the LIST at
+    65→    65→   * #/inventory/stocktakes and a DETAIL deep link at
+    66→    66→   * #/inventory/stocktakes/<id>. The id is validated with the same
+    67→    67→   * safe-ID rules as entity routes — malformed ids NEVER become state.
+    68→    68→   */
+    69→    69→  | { kind: "inventory-stocktakes" }
+    70→    70→  | { kind: "inventory-stocktake"; id: string }
+    71→    71→  /**
+    72→    72→   * Prompt 41 — Purchase order views (§69/§70): the LIST at
+    73→    73→   * #/purchase-orders and a DETAIL deep link at #/purchase-orders/<id>.
+    74→    74→   * The id is validated with the same safe-ID rules as entity routes —
+    75→    75→   * malformed ids NEVER become state (dashboard fallback).
+    76→    76→   */
+    77→    77→  | { kind: "purchase-orders" }
+    78→    78→  | { kind: "purchase-order"; id: string }
+    79→    79→  /**
+    80→    80→   * Prompt 42 — Goods receipt views (§116): the LIST at
+    81→    81→   * #/inventory/goods-receipts and a DETAIL deep link at
+    82→    82→   * #/inventory/goods-receipts/<id>. The id is validated with the same
+    83→    83→   * safe-ID rules as entity routes — malformed ids NEVER become state.
+    84→    84→   */
+    85→    85→  | { kind: "inventory-goods-receipts" }
+    86→    86→  | { kind: "inventory-goods-receipt"; id: string }
+    87→    87→  /**
+    88→    88→   * Prompt 43 — Goods return views (§91): the LIST at
+    89→    89→   * #/inventory/goods-returns and a DETAIL deep link at
+    90→    90→   * #/inventory/goods-returns/<id>. The id is validated with the same
+    91→    91→   * safe-ID rules as entity routes — malformed ids NEVER become state.
+    92→    92→   */
+    93→    93→  | { kind: "inventory-goods-returns" }
+    94→    94→  | { kind: "inventory-goods-return"; id: string }
+    95→    95→  /**
+    96→    96→   * Prompt 44 — Goods dispatch views: the LIST at
+    97→    97→   * #/inventory/goods-dispatches and a DETAIL deep link at
+    98→    98→   * #/inventory/goods-dispatches/<id>. The id is validated with the same
+    99→    99→   * safe-ID rules as entity routes — malformed ids NEVER become state.
+   100→   100→   */
+   101→   101→  | { kind: "inventory-goods-dispatches" }
+   102→   102→  | { kind: "inventory-goods-dispatch"; id: string }
+   103→   103→  /**
+   104→   104→   * Prompt 45 — Sales order views: the LIST at #/sales-orders and a DETAIL
+   105→   105→   * deep link at #/sales-orders/<id>. The id is validated with the same
+   106→   106→   * safe-ID rules as entity routes — malformed ids NEVER become state.
+   107→   107→   */
+   108→   108→  | { kind: "sales-orders" }
+   109→   109→  | { kind: "sales-order"; id: string }
+   110→   110→  /**
+   111→   111→   * Prompt 47 — Sales quotation views: the LIST at #/sales-quotations and
+   112→   112→   * a DETAIL deep link at #/sales-quotations/<id>. The id is validated
+   113→   113→   * with the same safe-ID rules as entity routes — malformed ids NEVER
+   114→   114→   * become state (dashboard fallback).
+   115→   115→   */
+   116→   116→  | { kind: "sales-quotations" }
+   117→   117→  | { kind: "sales-quotation"; id: string }
+   118→   118→  | { kind: "profile" }
+   119→   119→  | { kind: "onboarding" }
+   120→   120→  | { kind: "join"; token: string }
+   121→   121→  | { kind: "forgot-password" }
+   122→   122→  | { kind: "reset-password"; token: string }
+   123→   123→  | { kind: "module"; module: string; /** optional sub-resource (e.g. reports ?month=YYYY-MM) */ param?: string }
+   124→   124→  /** Prompt 28 — internal platform console (separate workspace, §15). */
+   125→   125→  | { kind: "platform"; section: PlatformSection }
+   126→   126→  /** Prompt 30 §250 — email verification landing (token from the email link). */
+   127→   127→  | { kind: "verify-email"; token: string };
+   128→   128→
+   129→   129→/**
+   130→   130→ * Prompt 35 (§37) — closed CRM tab vocabulary.
+   131→   131→ * Prompt 36 (§43/§54) — adds `tasks` (the work queue). There is NO
+   132→   132→ * `activities` tab: activities are contextual timeline records rendered on
+   133→   133→ * entity pages, never a standalone list (§54).
+   134→   134→ */
+   135→   135→export const CRM_TABS = ["leads", "pipeline", "opportunities", "tasks"] as const;
+   136→   136→export type CrmTab = (typeof CRM_TABS)[number];
+   137→   137→
+   138→   138→/**
+   139→   139→ * Prompt 35 (§37) — the deterministic default tab for bare #/crm and for
+   140→   140→ * unknown tab values: the pipeline board (documented in crm-foundation.md).
+   141→   141→ */
+   142→   142→export const CRM_DEFAULT_TAB: CrmTab = "pipeline";
+   143→   143→
+   144→   144→export function isCrmTab(value: string): value is CrmTab {
+   145→   145→  return (CRM_TABS as readonly string[]).includes(value);
+   146→   146→}
+   147→   147→
+   148→   148→export const KNOWN_MODULES = [
+   149→   149→  "customers",
+   150→   150→  "suppliers",
+   151→   151→  "products",
+   152→   152→  "inventory",
+   153→   153→  "sales",
+   154→   154→  "expenses",
+   155→   155→  "payments",
+   156→   156→  "receivables",
+   157→   157→  "payables",
+   158→   158→  "reports",
+   159→   159→  "copilot",
+   160→   160→] as const;
+   161→   161→
+   162→   162→export type KnownModule = (typeof KNOWN_MODULES)[number];
+   163→   163→
+   164→   164→/**
+   165→   165→ * Prompt 28 — platform console sections (§15). `security` is the grouped
+   166→   166→ * landing (audit + operators tabs per §87); `ai-cost` carries its internal
+   167→   167→ * tabs inside the view (§38).
+   168→   168→ */
+   169→   169→export const PLATFORM_SECTIONS = [
+   170→   170→  "overview",
+   171→   171→  "businesses",
+   172→   172→  "users",
+   173→   173→  "subscriptions",
+   174→   174→  "payments",
+   175→   175→  "pricing",
+   176→   176→  "ai-cost",
+   177→   177→  "security",
+   178→   178→  "audit",
+   179→   179→  "operators",
+   180→   180→  "system",
+   181→   181→] as const;
+   182→   182→
+   183→   183→export type PlatformSection = (typeof PLATFORM_SECTIONS)[number];
+   184→   184→
+   185→   185→export function isPlatformSection(value: string): value is PlatformSection {
+   186→   186→  return (PLATFORM_SECTIONS as readonly string[]).includes(value);
+   187→   187→}
+   188→   188→
+   189→   189→export function isKnownModule(value: string): value is KnownModule {
+   190→   190→  return (KNOWN_MODULES as readonly string[]).includes(value);
+   191→   191→}
+   192→   192→
+   193→   193→/** Stable identity of a view (for equality checks / keys). */
+   194→   194→export function viewKeyOf(view: AppView): string {
+   195→   195→  return view.kind === "module"
+   196→   196→    ? `module:${view.module}`
+   197→   197→    // Prompt 35 — the tab is part of the key so tab switches remount the
+   198→   198→    // inner CRM view deterministically.
+   199→   199→    : view.kind === "crm"
+   200→   200→      ? `crm:${view.tab}`
+   201→   201→    // Prompt 34 — entity + id both matter: opening a different record
+   202→   202→    // remounts the detail view so no stale record can ever be shown (§36).
+   203→   203→    : view.kind === "entity"
+   204→   204→      ? `entity:${view.entity}:${view.id}`
+   205→   205→    // Prompt 39 — type + id both matter: opening another party's statement
+   206→   206→    // remounts the view so no stale statement can ever be shown (§159).
+   207→   207→    : view.kind === "statements"
+   208→   208→      ? `statements:${view.statementType}:${view.id}`
+   209→   209→    // Prompt 40 — stocktake views: list + per-id detail keys so opening
+   210→   210→    // another stocktake remounts the detail view (no stale record, §36 parity).
+   211→   211→    : view.kind === "inventory-stocktakes"
+   212→   212→      ? "inventory-stocktakes"
+   213→   213→    : view.kind === "inventory-stocktake"
+   214→   214→      ? `inventory-stocktake:${view.id}`
+   215→   215→    // Prompt 41 — purchase-order views: list + per-id detail keys so opening
+   216→   216→    // another order remounts the detail view (no stale record, §36 parity).
+   217→   217→    : view.kind === "purchase-orders"
+   218→   218→      ? "purchase-orders"
+   219→   219→    : view.kind === "purchase-order"
+   220→   220→      ? `purchase-order:${view.id}`
+   221→   221→    // Prompt 42 — goods-receipt views: list + per-id detail keys so opening
+   222→   222→    // another receipt remounts the detail view (no stale record, §36 parity).
+   223→   223→    : view.kind === "inventory-goods-receipts"
+   224→   224→      ? "inventory-goods-receipts"
+   225→   225→    : view.kind === "inventory-goods-receipt"
+   226→   226→      ? `inventory-goods-receipt:${view.id}`
+   227→   227→    // Prompt 43 — goods-return views: list + per-id detail keys so opening
+   228→   228→    // another return remounts the detail view (§36 parity).
+   229→   229→    : view.kind === "inventory-goods-returns"
+   230→   230→      ? "inventory-goods-returns"
+   231→   231→    : view.kind === "inventory-goods-return"
+   232→   232→      ? `inventory-goods-return:${view.id}`
+   233→   233→    // Prompt 44 — goods-dispatch views: list + per-id detail keys so opening
+   234→   234→    // another dispatch remounts the detail view (P43 parity).
+   235→   235→    : view.kind === "inventory-goods-dispatches"
+   236→   236→      ? "inventory-goods-dispatches"
+   237→   237→    : view.kind === "inventory-goods-dispatch"
+   238→   238→      ? `inventory-goods-dispatch:${view.id}`
+   239→   239→    // Prompt 45 — sales-order views: list + per-id detail keys (§36 parity).
+   240→   240→    : view.kind === "sales-orders"
+   241→   241→      ? "sales-orders"
+   242→   242→    : view.kind === "sales-order"
+   243→   243→      ? `sales-order:${view.id}`
+   244→   244→    // Prompt 47 — sales-quotation views: list + per-id detail keys.
+   245→   245→    : view.kind === "sales-quotations"
+   246→   246→      ? "sales-quotations"
+   247→   247→    : view.kind === "sales-quotation"
+   248→   248→      ? `sales-quotation:${view.id}`
+   249→   249→      : view.kind === "join"
+   250→   250→      ? `join:${view.token}`
+   251→   251→      : view.kind === "reset-password"
+   252→   252→        ? `reset:${view.token}`
+   253→   253→        : view.kind === "verify-email"
+   254→   254→          ? `verify:${view.token}`
+   255→   255→          : view.kind === "platform"
+   256→   256→            ? `platform:${view.section}`
+   257→   257→            // Prompt 33 — the Search Center keeps a STABLE view key so the
+   258→   258→            // mounted view (and its focused input) survives query updates;
+   259→   259→            // the query itself only matters for sameView/back-forward (§13).
+   260→   260→            : view.kind;
+   261→   261→}
+   262→   262→
+   263→   263→/**
+   264→   264→ * Structural view equality (applyHash). Deliberately FINER than viewKeyOf:
+   265→   265→ * module sub-state (?month= deep-link param) must re-enter the store when
+   266→   266→ * the hash changes, but must NOT remount the module (viewKey stays stable
+   267→   267→ * so React keeps the mounted view alive — reports state survives dialog
+   268→   268→ * open/close).
+   269→   269→ */
+   270→   270→export function sameView(a: AppView, b: AppView): boolean {
+   271→   271→  if (viewKeyOf(a) !== viewKeyOf(b)) return false;
+   272→   272→  if (a.kind === "module" && b.kind === "module") {
+   273→   273→    return (a.param ?? null) === (b.param ?? null);
+   274→   274→  }
+   275→   275→  // Prompt 34 — entity views compare entity + id (viewKey already carries
+   276→   276→  // both, so reaching here means they are equal; kept explicit for clarity).
+   277→   277→  if (a.kind === "entity" && b.kind === "entity") {
+   278→   278→    return a.entity === b.entity && a.id === b.id;
+   279→   279→  }
+   280→   280→  // Prompt 35 — CRM tab changes re-enter the store (back/forward) without
+   281→   281→  // remounting the module boundary shell; the tab drives the inner view.
+   282→   282→  if (a.kind === "crm" && b.kind === "crm") {
+   283→   283→    return a.tab === b.tab;
+   284→   284→  }
+   285→   285→  // Prompt 39 — statement views compare type + id (viewKey already carries
+   286→   286→  // both; explicit for parity with entity views).
+   287→   287→  if (a.kind === "statements" && b.kind === "statements") {
+   288→   288→    return a.statementType === b.statementType && a.id === b.id;
+   289→   289→  }
+   290→   290→  // Prompt 40 — stocktake detail compares id (viewKey already carries it).
+   291→   291→  if (a.kind === "inventory-stocktake" && b.kind === "inventory-stocktake") {
+   292→   292→    return a.id === b.id;
+   293→   293→  }
+   294→   294→  // Prompt 41 — purchase-order detail compares id (viewKey already carries it).
+   295→   295→  if (a.kind === "purchase-order" && b.kind === "purchase-order") {
+   296→   296→    return a.id === b.id;
+   297→   297→  }
+   298→   298→  // Prompt 42 — goods-receipt detail compares id (viewKey already carries it).
+   299→   299→  if (a.kind === "inventory-goods-receipt" && b.kind === "inventory-goods-receipt") {
+   300→   300→    return a.id === b.id;
+   301→   301→  }
+   302→   302→  // Prompt 43 — goods-return detail compares id (viewKey already carries it).
+   303→   303→  if (a.kind === "inventory-goods-return" && b.kind === "inventory-goods-return") {
+   304→   304→    return a.id === b.id;
+   305→   305→  }
+   306→   306→  // Prompt 44 — goods-dispatch detail compares id (viewKey already carries it).
+   307→   307→  if (a.kind === "inventory-goods-dispatch" && b.kind === "inventory-goods-dispatch") {
+   308→   308→    return a.id === b.id;
+   309→   309→  }
+   310→   310→  // Prompt 33 — hash query changes re-enter the store (back/forward must
+   311→   311→  // update the Search Center) without remounting the view (§13/§33).
+   312→   312→  if (a.kind === "search" && b.kind === "search") {
+   313→   313→    return (a.query ?? null) === (b.query ?? null);
+   314→   314→  }
+   315→   315→  return true;
+   316→   316→}
+   317→   317→
+   318→   318→/** URL hash for a view. `onboarding` is a transient state — no address. */
+   319→   319→export function viewToHash(view: AppView): string | null {
+   320→   320→  switch (view.kind) {
+   321→   321→    case "dashboard":
+   322→   322→      return "#/dashboard";
+   323→   323→    case "audit":
+   324→   324→      return "#/audit";
+   325→   325→    case "settings:business":
+   326→   326→      return "#/settings";
+   327→   327→    case "settings:members":
+   328→   328→      return "#/settings/members";
+   329→   329→    case "settings:billing":
+   330→   330→      return "#/settings/billing";
+   331→   331→    case "profile":
+   332→   332→      return "#/profile";
+   333→   333→    case "settings:security":
+   334→   334→      return "#/settings/security";
+   335→   335→    case "settings:data":
+   336→   336→      return "#/data";
+   337→   337→    case "notifications":
+   338→   338→      return "#/notifications";
+   339→   339→    case "settings:notifications":
+   340→   340→      return "#/settings/notifications";
+   341→   341→    case "search": {
+   342→   342→      // §33 — the query persists in the hash (encodeURIComponent, §29) so
+   343→   343→      // refresh and back/forward keep it; never any other param.
+   344→   344→      const q = (view.query ?? "").trim();
+   345→   345→      return q ? `#/search?q=${encodeURIComponent(q)}` : "#/search";
+   346→   346→    }
+   347→   347→    case "crm":
+   348→   348→      // Prompt 35 (§37) — the tab persists in the hash; the default tab
+   349→   349→      // renders as bare "#/crm" so the address stays canonical.
+   350→   350→      return view.tab === CRM_DEFAULT_TAB ? "#/crm" : `#/crm?tab=${view.tab}`;
+   351→   351→    case "entity":
+   352→   352→      // Prompt 34 — centralized encoder (§7/§39): validated entity + id,
+   353→   353→      // safe-charset id, encodeURIComponent. Returns null (never a hash)
+   354→   354→      // for anything that could not survive parseEntityRoute.
+   355→   355→      return entityToHash(view.entity, view.id);
+   356→   356→    case "statements":
+   357→   357→      // Prompt 39 (§57/§139) — closed type + validated id only; anything
+   358→   358→      // else produces no hash at all (never an arbitrary statement URL).
+   359→   359→      if (!isStatementTypeToken(view.statementType)) return null;
+   360→   360→      if (!isValidEntityId(view.id)) return null;
+   361→   361→      return `#/statements?type=${view.statementType}&id=${encodeURIComponent(view.id)}`;
+   362→   362→    case "inventory-stocktakes":
+   363→   363→      // Prompt 40 (§76) — canonical list hash.
+   364→   364→      return "#/inventory/stocktakes";
+   365→   365→    case "inventory-stocktake":
+   366→   366→      // Prompt 40 (§77/§136) — only charset-safe ids ever become a hash.
+   367→   367→      if (!isValidEntityId(view.id)) return null;
+   368→   368→      return `#/inventory/stocktakes/${view.id}`;
+   369→   369→    case "purchase-orders":
+   370→   370→      // Prompt 41 (§70) — canonical list hash.
+   371→   371→      return "#/purchase-orders";
+   372→   372→    case "purchase-order":
+   373→   373→      // Prompt 41 (§70) — only charset-safe ids ever become a hash.
+   374→   374→      if (!isValidEntityId(view.id)) return null;
+   375→   375→      return `#/purchase-orders/${view.id}`;
+   376→   376→    case "inventory-goods-receipts":
+   377→   377→      // Prompt 42 (§116) — canonical list hash.
+   378→   378→      return "#/inventory/goods-receipts";
+   379→   379→    case "inventory-goods-receipt":
+   380→   380→      // Prompt 42 (§116) — only charset-safe ids ever become a hash.
+   381→   381→      if (!isValidEntityId(view.id)) return null;
+   382→   382→      return `#/inventory/goods-receipts/${view.id}`;
+   383→   383→    case "inventory-goods-returns":
+   384→   384→      // Prompt 43 (§91) — canonical list hash.
+   385→   385→      return "#/inventory/goods-returns";
+   386→   386→    case "inventory-goods-return":
+   387→   387→      // Prompt 43 (§91) — only charset-safe ids ever become a hash.
+   388→   388→      if (!isValidEntityId(view.id)) return null;
+   389→   389→      return `#/inventory/goods-returns/${view.id}`;
+   390→   390→    case "inventory-goods-dispatches":
+   391→   391→      // Prompt 44 — canonical list hash.
+   392→   392→      return "#/inventory/goods-dispatches";
+   393→   393→    case "inventory-goods-dispatch":
+   394→   394→      // Prompt 44 — only charset-safe ids ever become a hash.
+   395→   395→      if (!isValidEntityId(view.id)) return null;
+   396→   396→      return `#/inventory/goods-dispatches/${view.id}`;
+   397→   397→    case "sales-orders":
+   398→   398→      // Prompt 45 (§88) — canonical list hash.
+   399→   399→      return "#/sales-orders";
+   400→   400→    case "sales-order":
+   401→   401→      // Prompt 45 (§88) — only charset-safe ids ever become a hash.
+   402→   402→      if (!isValidEntityId(view.id)) return null;
+   403→   403→      return `#/sales-orders/${view.id}`;
+   404→   404→    case "sales-quotations":
+   405→   405→      // Prompt 47 — canonical list hash.
+   406→   406→      return "#/sales-quotations";
+   407→   407→    case "sales-quotation":
+   408→   408→      // Prompt 47 — only charset-safe ids ever become a hash.
+   409→   409→      if (!isValidEntityId(view.id)) return null;
+   410→   410→      return `#/sales-quotations/${view.id}`;
+   411→   411→    case "platform":
+   412→   412→      // #/platform itself resolves to the overview section (§15).
+   413→   413→      return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
+   414→   414→    case "module": {
+   415→   415→      if (!isKnownModule(view.module)) return null;
+   416→   416→      // Module sub-state deep links (e.g. #/reports?month=YYYY-MM) stay in
+   417→   417→      // the address bar — month is the only sub-param today.
+   418→   418→      if (view.param && /^\d{4}-\d{2}$/.test(view.param)) {
+   419→   419→        return `#/${view.module}?month=${view.param}`;
+   420→   420→      }
+   421→   421→      return `#/${view.module}`;
+   422→   422→    }
+   423→   423→    case "join":
+   424→   424→      return `#/join/${view.token}`;
+   425→   425→    case "forgot-password":
+   426→   426→      return "#/forgot-password";
+   427→   427→    case "reset-password":
+   428→   428→      return `#/reset-password/${view.token}`;
+   429→   429→    case "verify-email":
+   430→   430→      return `#/verify-email/${view.token}`;
+   431→   431→    case "onboarding":
+   432→   432→      return null;
+   433→   433→  }
+   434→   434→}
+   435→   435→
+   436→   436→/** Parse a location hash into a view. Unknown → dashboard (never onboarding). */
+   437→   437→export function hashToView(hash: string): AppView {
+   438→   438→  const raw = hash.replace(/^#\/?/, "").replace(/\/+$/, "");
+   439→   439→  // Query part (e.g. #/reports?month=2026-04) — module-scoped deep-link params.
+   440→   440→  const qIndex = raw.indexOf("?");
+   441→   441→  const path = (qIndex === -1 ? raw : raw.slice(0, qIndex)).trim();
+   442→   442→  const query = new URLSearchParams(qIndex === -1 ? "" : raw.slice(qIndex + 1));
+   443→   443→  if (!path || path === "dashboard") return { kind: "dashboard" };
+   444→   444→  if (path === "audit") return { kind: "audit" };
+   445→   445→  if (path === "settings") return { kind: "settings:business" };
+   446→   446→  if (path === "settings/members") return { kind: "settings:members" };
+   447→   447→  if (path === "settings/billing") return { kind: "settings:billing" };
+   448→   448→  if (path === "settings/security") return { kind: "settings:security" };
+   449→   449→  if (path === "data") return { kind: "settings:data" };
+   450→   450→  if (path === "notifications") return { kind: "notifications" };
+   451→   451→  if (path === "settings/notifications") return { kind: "settings:notifications" };
+   452→   452→  // Prompt 33 — Search Results Center deep links (#/search, #/search?q=…).
+   453→   453→  if (path === "search") {
+   454→   454→    const q = query.get("q") ?? "";
+   455→   455→    const clean = sanitizeSearchHashQuery(q);
+   456→   456→    return clean ? { kind: "search", query: clean } : { kind: "search" };
+   457→   457→  }
+   458→   458→  // Prompt 35 (§37) — CRM deep links: #/crm, #/crm?tab=<closed tab>.
+   459→   459→  // Unknown tab values fall back to CRM_DEFAULT_TAB (pipeline) — the hash
+   460→   460→  // query is never interpreted as arbitrary state.
+   461→   461→  if (path === "crm") {
+   462→   462→    const tab = query.get("tab") ?? "";
+   463→   463→    return { kind: "crm", tab: isCrmTab(tab) ? tab : CRM_DEFAULT_TAB };
+   464→   464→  }
+   465→   465→  if (path === "profile") return { kind: "profile" };
+   466→   466→  // Prompt 28 — platform console deep links (#/platform, #/platform/<section>).
+   467→   467→  if (path === "platform") return { kind: "platform", section: "overview" };
+   468→   468→  if (path.startsWith("platform/")) {
+   469→   469→    const section = path.slice("platform/".length);
+   470→   470→    if (isPlatformSection(section)) return { kind: "platform", section };
+   471→   471→    return { kind: "platform", section: "overview" };
+   472→   472→  }
+   473→   473→  if (path.startsWith("join/")) {
+   474→   474→    const token = path.slice("join/".length);
+   475→   475→    // Opaque invite token: non-empty, bounded length (server validates the rest).
+   476→   476→    if (token.length > 0 && token.length <= 128) return { kind: "join", token };
+   477→   477→  }
+   478→   478→  if (path === "forgot-password") return { kind: "forgot-password" };
+   479→   479→  if (path.startsWith("verify-email/")) {
+   480→   480→    const token = path.slice("verify-email/".length);
+   481→   481→    // Opaque verification token: bounded length; the server validates the rest.
+   482→   482→    if (token.length > 0 && token.length <= 200) return { kind: "verify-email", token };
+   483→   483→    return { kind: "dashboard" };
+   484→   484→  }
+   485→   485→  if (path.startsWith("reset-password/")) {
+   486→   486→    const token = path.slice("reset-password/".length);
+   487→   487→    // Opaque reset token: non-empty, bounded length (server validates the rest).
+   488→   488→    if (token.length > 0 && token.length <= 200) return { kind: "reset-password", token };
+   489→   489→    // Malformed reset link → the forgot form so a fresh link can be requested.
+   490→   490→    return { kind: "forgot-password" };
+   491→   491→  }
+   492→   492→  // Prompt 39 (§57/§58/§139) — statement deep links: #/statements with a
+   493→   493→  // closed `type` token and a safe `id`. Unknown type / missing or unsafe
+   494→   494→  // id → the existing unknown-hash fallback (dashboard); the query string
+   495→   495→  // is never interpreted as arbitrary state.
+   496→   496→  if (path === "statements") {
+   497→   497→    const type = query.get("type") ?? "";
+   498→   498→    const rawId = query.get("id") ?? "";
+   499→   499→    if (!isStatementTypeToken(type)) return { kind: "dashboard" };
+   500→   500→    let id = rawId;
+   501→   501→    try {
+   502→   502→      id = decodeURIComponent(rawId);
+   503→   503→    } catch {
+   504→   504→      return { kind: "dashboard" };
+   505→   505→    }
+   506→   506→    if (!isValidEntityId(id)) return { kind: "dashboard" };
+   507→   507→    return { kind: "statements", statementType: type, id };
+   508→   508→  }
+   509→   509→  // Prompt 40 (§76/§77/§136) — inventory stocktake deep links, matched
+   510→   510→  // BEFORE the module/entity fallbacks: #/inventory/stocktakes opens the
+   511→   511→  // list; #/inventory/stocktakes/<id> opens the detail only when the id is
+   512→   512→  // charset-safe; anything else falls through to the dashboard fallback.
+   513→   513→  if (path === "inventory/stocktakes") return { kind: "inventory-stocktakes" };
+   514→   514→  if (path.startsWith("inventory/stocktakes/")) {
+   515→   515→    const rawId = path.slice("inventory/stocktakes/".length);
+   516→   516→    let id = rawId;
+   517→   517→    try {
+   518→   518→      id = decodeURIComponent(rawId);
+   519→   519→    } catch {
+   520→   520→      return { kind: "dashboard" };
+   521→   521→    }
+   522→   522→    if (!isValidEntityId(id)) return { kind: "dashboard" };
+   523→   523→    return { kind: "inventory-stocktake", id };
+   524→   524→  }
+   525→   525→  // Prompt 41 (§69/§70) — purchase-order deep links, matched BEFORE the
+   526→   526→  // module/entity fallbacks: #/purchase-orders opens the list;
+   527→   527→  // #/purchase-orders/<id> opens the detail only when the id is charset-safe;
+   528→   528→  // anything else falls through to the dashboard fallback.
+   529→   529→  if (path === "purchase-orders") return { kind: "purchase-orders" };
+   530→   530→  if (path.startsWith("purchase-orders/")) {
+   531→   531→    const rawId = path.slice("purchase-orders/".length);
+   532→   532→    let id = rawId;
+   533→   533→    try {
+   534→   534→      id = decodeURIComponent(rawId);
+   535→   535→    } catch {
+   536→   536→      return { kind: "dashboard" };
+   537→   537→    }
+   538→   538→    if (!isValidEntityId(id)) return { kind: "dashboard" };
+   539→   539→    return { kind: "purchase-order", id };
+   540→   540→  }
+   541→   541→  // Prompt 42 (§116) — goods-receipt deep links, matched BEFORE the
+   542→   542→  // module/entity fallbacks: #/inventory/goods-receipts opens the list;
+   543→   543→  // #/inventory/goods-receipts/<id> opens the detail only when the id is
+   544→   544→  // charset-safe; anything else falls through to the dashboard fallback.
+   545→   545→  if (path === "inventory/goods-receipts") return { kind: "inventory-goods-receipts" };
+   546→   546→  if (path.startsWith("inventory/goods-receipts/")) {
+   547→   547→    const rawId = path.slice("inventory/goods-receipts/".length);
+   548→   548→    let id = rawId;
+   549→   549→    try {
+   550→   550→      id = decodeURIComponent(rawId);
+   551→   551→    } catch {
+   552→   552→      return { kind: "dashboard" };
+   553→   553→    }
+   554→   554→    if (!isValidEntityId(id)) return { kind: "dashboard" };
+   555→   555→    return { kind: "inventory-goods-receipt", id };
+   556→   556→  }
+   557→   557→  // Prompt 43 (§91) — goods-return deep links, matched BEFORE the
+   558→   558→  // module/entity fallbacks: #/inventory/goods-returns opens the list;
+   559→   559→  // #/inventory/goods-returns/<id> opens the detail only when the id is
+   560→   560→  // charset-safe; anything else falls through to the dashboard fallback.
+   561→   561→  if (path === "inventory/goods-returns") return { kind: "inventory-goods-returns" };
+   562→   562→  if (path.startsWith("inventory/goods-returns/")) {
+   563→   563→    const rawId = path.slice("inventory/goods-returns/".length);
+   564→   564→    let id = rawId;
+   565→   565→    try {
+   566→   566→      id = decodeURIComponent(rawId);
+   567→   567→    } catch {
+   568→   568→      return { kind: "dashboard" };
+   569→   569→    }
+   570→   570→    if (!isValidEntityId(id)) return { kind: "dashboard" };
+   571→   571→    return { kind: "inventory-goods-return", id };
+   572→   572→  }
+   573→   573→  // Prompt 44 — goods-dispatch deep links, matched BEFORE the
+   574→   574→  // module/entity fallbacks: #/inventory/goods-dispatches opens the list;
+   575→   575→  // #/inventory/goods-dispatches/<id> opens the detail only when the id is
+   576→   576→  // charset-safe; anything else falls through to the dashboard fallback —
+   577→   577→  // never an arbitrary "#/anything/<id>" interpretation.
+   578→   578→  if (path === "inventory/goods-dispatches") return { kind: "inventory-goods-dispatches" };
+   579→   579→  if (path.startsWith("inventory/goods-dispatches/")) {
+   580→   580→    const rawId = path.slice("inventory/goods-dispatches/".length);
+   581→   581→    let id = rawId;
+   582→   582→    try {
+   583→   583→      id = decodeURIComponent(rawId);
+   584→   584→    } catch {
+   585→   585→      return { kind: "dashboard" };
+   586→   586→    }
+   587→   587→    if (!isValidEntityId(id)) return { kind: "dashboard" };
+   588→   588→    return { kind: "inventory-goods-dispatch", id };
+   589→   589→  }
+   590→   590→  // Prompt 45 — sales-order deep links, matched BEFORE the
+   591→   591→  // module/entity fallbacks: #/sales-orders opens the list;
+   592→   592→  // #/sales-orders/<id> opens the detail only when the id is charset-safe;
+   593→   593→  // anything else falls through to the dashboard fallback — never an
+   594→   594→  // arbitrary "#/anything/<id>" interpretation.
+   595→   595→  if (path === "sales-orders") return { kind: "sales-orders" };
+   596→   596→  if (path.startsWith("sales-orders/")) {
+   597→   597→    const rawId = path.slice("sales-orders/".length);
+   598→   598→    let id = rawId;
+   599→   599→    try {
+   600→   600→      id = decodeURIComponent(rawId);
+   601→   601→    } catch {
+   602→   602→      return { kind: "dashboard" };
+   603→   603→    }
+   604→   604→    if (!isValidEntityId(id)) return { kind: "dashboard" };
+   605→   605→    return { kind: "sales-order", id };
+   606→   606→  }
+   607→   607→  // Prompt 47 — sales-quotation deep links, matched BEFORE the
+   608→   608→  // module/entity fallbacks: #/sales-quotations opens the list;
+   609→   609→  // #/sales-quotations/<id> opens the detail only when the id is
+   610→   610→  // charset-safe; anything else falls through to the dashboard fallback —
+   611→   611→  // never an arbitrary "#/anything/<id>" interpretation.
+   612→   612→  if (path === "sales-quotations") return { kind: "sales-quotations" };
+   613→   613→  if (path.startsWith("sales-quotations/")) {
+   614→   614→    const rawId = path.slice("sales-quotations/".length);
+   615→   615→    let id = rawId;
+   616→   616→    try {
+   617→   617→      id = decodeURIComponent(rawId);
+   618→   618→    } catch {
+   619→   619→      return { kind: "dashboard" };
+   620→   620→    }
+   621→   621→    if (!isValidEntityId(id)) return { kind: "dashboard" };
+   622→   622→    return { kind: "sales-quotation", id };
+   623→   623→  }
+   624→   624→  // Prompt 34 — entity detail deep links (#/customers/<id>, §5/§6) are
+   625→   625→  // attempted BEFORE the bare-module match: "customers" alone stays the
+   626→   626→  // module list while "customers/<id>" resolves through the centralized
+   627→   627→  // parser (allowlisted first segment, bounded charset-safe id). Anything
+   628→   628→  // else falls through to the dashboard fallback (§6.6) — never an
+   629→   629→  // arbitrary "#/anything/<id>" interpretation.
+   630→   630→  const entityRoute = parseEntityRoute(path);
+   631→   631→  if (entityRoute) return { kind: "entity", ...entityRoute };
+   632→   632→  if (isKnownModule(path)) {
+   633→   633→    // Module sub-param deep links: ?month=YYYY-MM opens reports straight
+   634→   634→    // into the drill-down, or pre-filters sales/expenses to that month
+   635→   635→    // (e.g. "Open in Sales" from the reports month dialog).
+   636→   636→    const month = query.get("month");
+   637→   637→    if (month && /^\d{4}-\d{2}$/.test(month)) {
+   638→   638→      return { kind: "module", module: path, param: month };
+   639→   639→    }
+   640→   640→    return { kind: "module", module: path };
+   641→   641→  }
+   642→   642→  return { kind: "dashboard" };
+   643→   643→}
+   644→   644→
+   645→   645→/** Sync the URL to a view without triggering navigation events. */
+   646→   646→function syncUrl(view: AppView, replace: boolean) {
+   647→   647→  if (typeof window === "undefined") return;
+   648→   648→  const hash = viewToHash(view);
+   649→   649→  if (!hash) return;
+   650→   650→  const target = `${window.location.pathname}${window.location.search}${hash}`;
+   651→   651→  if (`${window.location.pathname}${window.location.search}${window.location.hash}` === target) {
+   652→   652→    return;
+   653→   653→  }
+   654→   654→  try {
+   655→   655→    if (replace) window.history.replaceState(null, "", target);
+   656→   656→    else window.history.pushState(null, "", target);
+   657→   657→  } catch {
+   658→   658→    // history might be unavailable in exotic embeds — URL sync is best-effort
+   659→   659→  }
+   660→   660→}
+   661→   661→
+   662→   662→/**
+   663→   663→ * Prompt 33 — hash `?q=` hygiene (§16/§29): the query is rendered strictly
+   664→   664→ * as text, so only control characters/null bytes are stripped and the
+   665→   665→ * length is capped to the search schema bound. URLSearchParams already
+   666→   666→ * performs percent-decoding; no other transformation is applied.
+   667→   667→ */
+   668→   668→function sanitizeSearchHashQuery(raw: string): string {
+   669→   669→  const capped = Array.from(raw)
+   670→   670→    .filter((ch) => {
+   671→   671→      const code = ch.codePointAt(0) ?? 0;
+   672→   672→      return code > 0x1f && code !== 0x7f;
+   673→   673→    })
+   674→   674→    .slice(0, 64)
+   675→   675→    .join("");
+   676→   676→  const trimmed = capped.trim();
+   677→   677→  return trimmed.length > 0 ? trimmed : "";
+   678→   678→}
+   679→   679→
+   680→   680→type AppState = {
+   681→   681→  locale: Locale;
+   682→   682→  activeBusinessId: string | null;
+   683→   683→  view: AppView;
+   684→   684→  commandOpen: boolean;
+   685→   685→  setLocale: (locale: Locale) => void;
+   686→   686→  setActiveBusiness: (id: string | null) => void;
+   687→   687→  navigate: (view: AppView, opts?: { replace?: boolean }) => void;
+   688→   688→  /** Back/forward + deep links: set view WITHOUT pushing a new history entry. */
+   689→   689→  replaceView: (view: AppView) => void;
+   690→   690→  setCommandOpen: (open: boolean) => void;
+   691→   691→};
+   692→   692→
+   693→   693→export const useAppStore = create<AppState>()(
+   694→   694→  persist(
+   695→   695→    (set) => ({
+   696→   696→      locale: DEFAULT_LOCALE,
+   697→   697→      activeBusinessId: null,
+   698→   698→      view: { kind: "dashboard" },
+   699→   699→      commandOpen: false,
+   700→   700→      setLocale: (locale) => set({ locale }),
+   701→   701→      setActiveBusiness: (activeBusinessId) => set({ activeBusinessId }),
+   702→   702→      navigate: (view, opts) => {
+   703→   703→        set({ view });
+   704→   704→        syncUrl(view, opts?.replace ?? false);
+   705→   705→      },
+   706→   706→      replaceView: (view) => set({ view }),
+   707→   707→      setCommandOpen: (commandOpen) => set({ commandOpen }),
+   708→   708→    }),
+   709→   709→    {
+   710→   710→      name: "abc-preferences",
+   711→   711→      partialize: (s) => ({
+   712→   712→        locale: s.locale,
+   713→   713→        activeBusinessId: s.activeBusinessId,
+   714→   714→      }),
+   715→   715→      merge: (persisted, current) => {
+   716→   716→        const p = (persisted ?? {}) as Partial<AppState>;
+   717→   717→        return {
+   718→   718→          ...current,
+   719→   719→          locale: isLocale(p.locale) ? p.locale : DEFAULT_LOCALE,
+   720→   720→          activeBusinessId:
+   721→   721→            typeof p.activeBusinessId === "string" ? p.activeBusinessId : null,
+   722→   722→        };
+   723→   723→      },
+   724→   724→    },
+   725→   725→  ),
+   726→   726→);
+   727→   727→
+   728→   728→// Wire the API client to the active business context (x-business-id header).
+   729→   729→registerBusinessIdProvider(() => useAppStore.getState().activeBusinessId);
+   730→   730→

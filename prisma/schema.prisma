@@ -61,40 +61,43 @@ model User {
 
   // Prompt 35 — Advanced CRM Foundation (§9/§11): explicit relation names
   // avoid Prisma ambiguity (both CRM models reference User).
-  crmLeadAssignments      CrmLead[]            @relation("CrmLeadAssignee")
-  crmOpportunityAssignments CrmOpportunity[]   @relation("CrmOpportunityAssignee")
+  crmLeadAssignments        CrmLead[]        @relation("CrmLeadAssignee")
+  crmOpportunityAssignments CrmOpportunity[] @relation("CrmOpportunityAssignee")
 
   // Prompt 36 — CRM Activities + Tasks (§5/§7/§61): explicit relation names
   // for the three User references (creator of activities, assignee and
   // creator of tasks). Activity/task creators are Restrict — a user with
   // created CRM records follows the existing account-deletion policy
   // (documented in docs/legal/data-deletion-matrix.md before migration).
-  crmActivityCreations    CrmActivity[]        @relation("CrmActivityCreator")
-  crmTaskCreations        CrmTask[]            @relation("CrmTaskCreator")
-  crmTaskAssignments      CrmTask[]            @relation("CrmTaskAssignee")
+  crmActivityCreations CrmActivity[] @relation("CrmActivityCreator")
+  crmTaskCreations     CrmTask[]     @relation("CrmTaskCreator")
+  crmTaskAssignments   CrmTask[]     @relation("CrmTaskAssignee")
 
   // Prompt 40 — Inventory Stocktake (§11/§13): explicit relation names for
   // the two User references (stocktake creator, line counter). Both are
   // Restrict — the same creator-linked policy as CRM (documented in
   // docs/legal/data-deletion-matrix.md BEFORE the migration).
-  inventoryStocktakeCreations InventoryStocktake[]      @relation("InventoryStocktakeCreator")
-  inventoryStocktakeCounts    InventoryStocktakeLine[]  @relation("InventoryStocktakeCounter")
+  inventoryStocktakeCreations InventoryStocktake[]     @relation("InventoryStocktakeCreator")
+  inventoryStocktakeCounts    InventoryStocktakeLine[] @relation("InventoryStocktakeCounter")
   // Prompt 41 — Purchase Orders (§6): creator link is Restrict — the same
   // creator-linked policy as CRM/P40 (documented in the deletion matrix).
-  purchaseOrderCreations      PurchaseOrder[]           @relation("PurchaseOrderCreator")
+  purchaseOrderCreations      PurchaseOrder[]          @relation("PurchaseOrderCreator")
   // Prompt 42 — Goods Receipts (§21): creator link is Restrict — the same
   // creator-linked policy as P40/P41 (documented in the deletion matrix).
-  goodsReceiptCreations       GoodsReceipt[]            @relation("GoodsReceiptCreator")
+  goodsReceiptCreations       GoodsReceipt[]           @relation("GoodsReceiptCreator")
   // Prompt 43 — Goods Returns (§24): creator link is Restrict — the same
   // creator-linked policy as P40/P41/P42 (documented in the deletion matrix).
-  goodsReturnCreations        GoodsReturn[]             @relation("GoodsReturnCreator")
-  goodsDispatchCreations      GoodsDispatch[]           @relation("GoodsDispatchCreator")
+  goodsReturnCreations        GoodsReturn[]            @relation("GoodsReturnCreator")
+  goodsDispatchCreations      GoodsDispatch[]          @relation("GoodsDispatchCreator")
   // Prompt 45 — Sales Orders (§6/§68): creator link is Restrict — the same
   // creator-linked policy as P40–P44 (documented in the deletion matrix).
-  salesOrderCreations         SalesOrder[]              @relation("SalesOrderCreator")
+  salesOrderCreations         SalesOrder[]             @relation("SalesOrderCreator")
   // Prompt 47 — Sales Quotations: creator link is Restrict — the same
   // creator-linked policy as P40–P45 (documented in the deletion matrix).
-  salesQuotationCreations     SalesQuotation[]          @relation("SalesQuotationCreator")
+  salesQuotationCreations     SalesQuotation[]         @relation("SalesQuotationCreator")
+  // Prompt 48 — Supplier Bills: creator link is Restrict — the same
+  // creator-linked policy as P40–P47 (documented in the deletion matrix).
+  supplierBillCreations       SupplierBill[]           @relation("SupplierBillCreator")
 }
 
 // ---------------------------------------------------------------------------
@@ -317,8 +320,9 @@ model Business {
   // deleting the business deletes its quotations.
   salesQuotations      SalesQuotation[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  supplierBills SupplierBill[]
 
   @@index([ownerId])
 }
@@ -405,28 +409,30 @@ model Customer {
   // Prompt 35 — CRM links (§11): a lead points at the customer it converted
   // into; an opportunity may reference an existing customer. Both are
   // SetNull so deleting a customer never breaks CRM history rows.
-  crmLeads        CrmLead[]
+  crmLeads         CrmLead[]
   crmOpportunities CrmOpportunity[]
   // Prompt 36 (§4/§61) — CRM activity/task contexts. SetNull: deleting the
   // customer (hard cascade path) detaches history rows but never destroys
   // them; the normal UI soft-delete hides them from active timelines.
-  crmActivities   CrmActivity[]
-  crmTasks        CrmTask[]
+  crmActivities    CrmActivity[]
+  crmTasks         CrmTask[]
   // Prompt 44 — dispatch history rows pointing at this customer. SetNull:
   // deleting the customer detaches the link but never destroys history.
-  goodsDispatches GoodsDispatch[]
+  goodsDispatches  GoodsDispatch[]
   // Prompt 45 (§11/§12) — commercial orders for this customer. SetNull:
   // the frozen customerNameAtOrder snapshot keeps every order readable
   // even when the live relation later detaches.
-  salesOrders SalesOrder[]
+  salesOrders      SalesOrder[]
   // Prompt 47 (§5/§12) — quotations offered to this customer. SetNull: the
   // frozen customerNameAtQuotation snapshot keeps every quotation readable
   // even when the live relation later detaches (same law as SalesOrder).
-  salesQuotations SalesQuotation[]
+  salesQuotations  SalesQuotation[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
 }
+
+// (Prompt 48 — Supplier model gains supplierBills below in its own block.)
 
 model Supplier {
   id         String    @id @default(cuid())
@@ -441,12 +447,17 @@ model Supplier {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
-  expenses Expense[]
+  expenses       Expense[]
   // Prompt 41 — procurement documents issued to this supplier (cascade on
   // tenant; the supplier FK itself is Restrict so hard-deleting a supplier
   // with documents can never silently destroy procurement history §234 —
   // the API only ever soft-deletes suppliers).
   purchaseOrders PurchaseOrder[]
+  // Prompt 48 — supplier invoice documents issued by this supplier. Restrict
+  // mirrors PurchaseOrder: the supplier row must outlive its bill documents;
+  // the API only ever soft-deletes suppliers (the frozen supplierNameAtBill
+  // snapshot keeps every bill readable regardless).
+  supplierBills  SupplierBill[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -470,29 +481,33 @@ model Product {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  adjustments InventoryAdjustment[]
-  saleItems   SaleItem[]
+  adjustments             InventoryAdjustment[]
+  saleItems               SaleItem[]
   // Prompt 40 — physical count lines that snapshotted this product.
   inventoryStocktakeLines InventoryStocktakeLine[]
   // Prompt 41 — procurement lines that snapshotted this product (the line
   // keeps its own historical snapshot; §26/§27).
-  purchaseOrderLines PurchaseOrderLine[]
+  purchaseOrderLines      PurchaseOrderLine[]
   // Prompt 42 — receipt lines that moved this product's stock (the line
   // keeps its own historical snapshot; §28-§30).
-  goodsReceiptLines GoodsReceiptLine[]
+  goodsReceiptLines       GoodsReceiptLine[]
   // Prompt 43 — return lines that moved this product's stock back to the
   // supplier (the line keeps its own historical snapshot; §30).
-  goodsReturnLines GoodsReturnLine[]
+  goodsReturnLines        GoodsReturnLine[]
   // Prompt 44 — dispatch lines that moved this product's stock out (the
   // line keeps its own historical snapshot).
-  goodsDispatchLines GoodsDispatchLine[]
+  goodsDispatchLines      GoodsDispatchLine[]
   // Prompt 45 (§20) — order lines that commit to this product (the line
   // keeps its own historical snapshot; Restrict mirrors P41–P44).
-  salesOrderLines SalesOrderLine[]
+  salesOrderLines         SalesOrderLine[]
   // Prompt 47 (§6) — quotation lines that offered this product (the line
   // keeps its own historical snapshot; Restrict mirrors P41–P45 — a hard
   // product delete can never silently destroy quotation evidence).
-  salesQuotationLines SalesQuotationLine[]
+  salesQuotationLines     SalesQuotationLine[]
+  // Prompt 48 (§6) — bill lines that invoiced this product (the line keeps
+  // its own historical snapshot; Restrict mirrors P41–P47 — a hard product
+  // delete can never silently destroy posted bill history).
+  supplierBillLines       SupplierBillLine[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, name])
@@ -524,23 +539,23 @@ model InventoryAdjustment {
 // semantics (§43) — never Sale/Expense/Payment/Statement/CRM.
 // ---------------------------------------------------------------------------
 model InventoryStocktake {
-  id         String   @id @default(cuid())
+  id String @id @default(cuid())
 
   businessId String
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   // §22 — required, 2..80 chars, unique per business (DB-enforced).
-  reference  String
+  reference String
   // §8 — closed lifecycle: DRAFT | COUNTING | REVIEW | FINALIZED | CANCELLED
   // (transitions are server-authoritative, §9).
-  status     String   @default("DRAFT")
+  status    String  @default("DRAFT")
   // §7 — closed vocabulary; only SELECTED exists in Prompt 40.
-  countType  String   @default("SELECTED")
+  countType String  @default("SELECTED")
   // §23 — optional free text (≤2000 chars); never logged, never sent to AI.
-  notes      String?
+  notes     String?
 
   createdByUserId String
-  createdByUser   User @relation("InventoryStocktakeCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByUser   User   @relation("InventoryStocktakeCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
   startedAt   DateTime?
   reviewedAt  DateTime?
@@ -559,13 +574,13 @@ model InventoryStocktake {
 }
 
 model InventoryStocktakeLine {
-  id          String             @id @default(cuid())
+  id String @id @default(cuid())
 
   stocktakeId String
   stocktake   InventoryStocktake @relation(fields: [stocktakeId], references: [id], onDelete: Cascade)
 
-  productId   String
-  product     Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   // §15 — server-side snapshot of Product.stockQty AT COUNT TIME (never
   // client-supplied). Finalization stale-check compares this against the
@@ -577,7 +592,7 @@ model InventoryStocktakeLine {
 
   countedAt       DateTime
   countedByUserId String
-  countedByUser   User @relation("InventoryStocktakeCounter", fields: [countedByUserId], references: [id], onDelete: Restrict)
+  countedByUser   User     @relation("InventoryStocktakeCounter", fields: [countedByUserId], references: [id], onDelete: Restrict)
 
   // §19 — product metadata snapshot for historical understandability
   // (NOT sale/cost prices).
@@ -676,7 +691,14 @@ model Expense {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  payments Payment[]
+  payments     Payment[]
+  // Prompt 48 — AT MOST ONE supplier bill may link this Expense as its
+  // posted payable (P48 §2: the bill is the document authority; the Expense
+  // stays the sole financial liability authority). SetNull: the FK only ever
+  // fires at business-cascade deletion, where the bill row is being removed
+  // by the same cascade — a user-facing delete of a linked Expense is
+  // blocked by the API (SUPPLIER_BILL_LINKED_EXPENSE_IMMUTABLE).
+  supplierBill SupplierBill?
 
   @@index([businessId, deletedAt, createdAt])
   @@index([businessId, status])
@@ -1610,7 +1632,7 @@ model Notification {
   archivedAt    DateTime?
   createdAt     DateTime  @default(now())
   // Ephemeral notifications (e.g. usage warnings) may expire (§57).
-  expiresAt DateTime?
+  expiresAt     DateTime?
 
   deliveries NotificationDelivery[]
 
@@ -1628,20 +1650,20 @@ model NotificationDelivery {
   notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
 
   // IN_APP | EMAIL (PUSH/SMS are future adapters, not implemented §9/§140).
-  channel String
+  channel           String
   // PENDING | PROCESSING | SENT | FAILED | SKIPPED | CANCELED (§142).
-  status String @default("PENDING")
+  status            String    @default("PENDING")
   // Bounded retry counter (NOTIFICATION_EMAIL_MAX_ATTEMPTS, §45).
-  attemptCount  Int       @default(0)
-  lastAttemptAt DateTime?
-  sentAt        DateTime?
-  failedAt      DateTime?
+  attemptCount      Int       @default(0)
+  lastAttemptAt     DateTime?
+  sentAt            DateTime?
+  failedAt          DateTime?
   // Safe provider reference (§47) — never SMTP credentials.
   providerMessageId String?
   // Normalized failure class (§130/§263) — never raw SMTP output.
-  failureCode String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  failureCode       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@index([notificationId])
   @@index([status, createdAt])
@@ -1676,43 +1698,43 @@ model NotificationPreference {
 //   - Soft delete via deletedAt; financial records are never touched.
 // ---------------------------------------------------------------------------
 model CrmLead {
-  id               String    @id @default(cuid())
-  businessId       String
-  business         Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
-  name             String
-  companyName      String?
-  phone            String?
-  email            String?
+  name        String
+  companyName String?
+  phone       String?
+  email       String?
 
-  source           String
-  sourceDetail     String?
+  source       String
+  sourceDetail String?
 
   // Server-controlled status (closed vocabulary, §6/§22) — never client-set
   // through the generic PATCH path.
-  status           String    @default("NEW")
+  status String @default("NEW")
 
-  note             String?
+  note String?
 
   assignedToUserId String?
-  assignedToUser   User?     @relation("CrmLeadAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  assignedToUser   User?   @relation("CrmLeadAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
 
   // Set ONLY by the conversion transaction (§23-§26) — never by generic PATCH.
-  customerId       String?
-  customer         Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
-  convertedAt      DateTime?
-  deletedAt        DateTime?
+  convertedAt DateTime?
+  deletedAt   DateTime?
 
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  opportunities    CrmOpportunity[]
+  opportunities CrmOpportunity[]
 
   // Prompt 36 (§4) — timeline records anchored on this lead (SetNull: the
   // lead row itself is soft-deleted, never physically removed).
-  activities       CrmActivity[]
-  tasks            CrmTask[]
+  activities CrmActivity[]
+  tasks      CrmTask[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, status])
@@ -1722,45 +1744,45 @@ model CrmLead {
 }
 
 model CrmOpportunity {
-  id                 String    @id @default(cuid())
-  businessId         String
-  business           Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
-  title              String
-  description        String?
+  title       String
+  description String?
 
-  leadId             String?
-  lead               CrmLead?  @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  leadId String?
+  lead   CrmLead? @relation(fields: [leadId], references: [id], onDelete: SetNull)
 
-  customerId         String?
-  customer           Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
   // Closed stage vocabulary (§6/§7); probability is an integer 0–100.
-  stage              String    @default("DISCOVERY")
-  probabilityPct     Int       @default(10)
+  stage          String @default("DISCOVERY")
+  probabilityPct Int    @default(10)
 
   // FORECAST value — integer minor units (§12). NEVER accounting revenue.
-  expectedValueMinor Int       @default(0)
+  expectedValueMinor Int    @default(0)
   currencyCode       String
 
-  expectedCloseDate  DateTime?
+  expectedCloseDate DateTime?
 
-  assignedToUserId   String?
-  assignedToUser     User?     @relation("CrmOpportunityAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  assignedToUserId String?
+  assignedToUser   User?   @relation("CrmOpportunityAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
 
-  lostReason         String?
+  lostReason String?
 
-  wonAt              DateTime?
-  lostAt             DateTime?
+  wonAt  DateTime?
+  lostAt DateTime?
 
-  deletedAt          DateTime?
+  deletedAt DateTime?
 
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Prompt 36 (§4) — timeline records anchored on this opportunity (SetNull).
-  activities         CrmActivity[]
-  tasks              CrmTask[]
+  activities CrmActivity[]
+  tasks      CrmTask[]
 
   @@index([businessId, deletedAt])
   @@index([businessId, stage])
@@ -1783,41 +1805,41 @@ model CrmOpportunity {
 // opportunity — §8, enforced in the service layer).
 // ---------------------------------------------------------------------------
 model CrmActivity {
-  id              String    @id @default(cuid())
+  id String @id @default(cuid())
 
-  businessId      String
-  business        Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   // Closed vocabulary ACTIVITY_TYPES (§6 of prompt 36) — no arbitrary strings.
-  type            String
+  type String
 
-  title           String
-  description     String?
+  title       String
+  description String?
 
   // Real point in time — stored UTC (§16 of prompt 36).
-  occurredAt      DateTime
+  occurredAt DateTime
 
   // Optional integer minutes, 1–1440 (§14 of prompt 36).
   durationMinutes Int?
 
   // EXACTLY ONE of these three is non-null (§8 of prompt 36 — service layer
   // enforces; the DB allows nulls because SQLite/Prisma cannot express XOR).
-  leadId          String?
-  lead            CrmLead? @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  leadId String?
+  lead   CrmLead? @relation(fields: [leadId], references: [id], onDelete: SetNull)
 
-  opportunityId   String?
-  opportunity     CrmOpportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  opportunityId String?
+  opportunity   CrmOpportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
 
-  customerId      String?
-  customer        Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
   createdByUserId String
-  createdByUser   User @relation("CrmActivityCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByUser   User   @relation("CrmActivityCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
-  deletedAt       DateTime?
+  deletedAt DateTime?
 
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([businessId, deletedAt])
   @@index([businessId, occurredAt])
@@ -1829,46 +1851,46 @@ model CrmActivity {
 }
 
 model CrmTask {
-  id                String    @id @default(cuid())
+  id String @id @default(cuid())
 
-  businessId        String
-  business          Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
-  title             String
-  description       String?
+  title       String
+  description String?
 
   // Closed vocabularies + server state machine (§12/§13 of prompt 36).
-  status            String    @default("OPEN")
-  priority          String    @default("NORMAL")
+  status   String @default("OPEN")
+  priority String @default("NORMAL")
 
   // Optional future instant — stored UTC (§16 of prompt 36).
-  dueAt             DateTime?
+  dueAt DateTime?
 
   // Set only through the dedicated /status endpoint; non-null iff COMPLETED.
-  completedAt       DateTime?
+  completedAt DateTime?
 
   // EXACTLY ONE context (§8 of prompt 36).
-  leadId            String?
-  lead              CrmLead? @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  leadId String?
+  lead   CrmLead? @relation(fields: [leadId], references: [id], onDelete: SetNull)
 
-  opportunityId     String?
-  opportunity       CrmOpportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  opportunityId String?
+  opportunity   CrmOpportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
 
-  customerId        String?
-  customer          Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
   // Assignee is OPTIONAL and validated against the current business's
   // active memberships (§10/§69 of prompt 36). SetNull on user deletion.
-  assignedToUserId  String?
-  assignedToUser    User? @relation("CrmTaskAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  assignedToUserId String?
+  assignedToUser   User?   @relation("CrmTaskAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
 
-  createdByUserId   String
-  createdByUser     User @relation("CrmTaskCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByUserId String
+  createdByUser   User   @relation("CrmTaskCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
-  deletedAt         DateTime?
+  deletedAt DateTime?
 
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Prompt 37 — per-task reminder configuration (tenant business data, §5).
   // reminderEnabled=true ⇒ ONE due-soon notification for the CURRENT dueAt
@@ -1876,9 +1898,9 @@ model CrmTask {
   // No recurring reminders, no daily overdue spam (§6/§175). Server keeps
   // these consistent: dueAt=null ⇒ all three reset (§8). Offsets are a
   // closed vocabulary validated in src/lib/crm/task-types.ts (§7).
-  reminderEnabled        Boolean @default(false)
-  reminderMinutesBefore  Int?
-  overdueAlertEnabled    Boolean @default(false)
+  reminderEnabled       Boolean @default(false)
+  reminderMinutesBefore Int?
+  overdueAlertEnabled   Boolean @default(false)
 
   @@index([businessId, deletedAt])
   @@index([businessId, status])
@@ -1922,7 +1944,7 @@ model PurchaseOrder {
   // §12 — business-local unique reference, DB-enforced (concurrency-safe).
   reference String
   // §14 — closed vocabulary DRAFT|SENT|CONFIRMED|CLOSED|CANCELLED.
-  status    String   @default("DRAFT")
+  status    String @default("DRAFT")
 
   // §22 — currency snapshot from the business at creation (never client input).
   currencyCodeAtOrder     String
@@ -1941,7 +1963,7 @@ model PurchaseOrder {
   supplierNameAtOrder String
 
   createdByUserId String
-  createdByUser   User @relation("PurchaseOrderCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByUser   User   @relation("PurchaseOrderCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
   sentAt      DateTime?
   confirmedAt DateTime?
@@ -1951,10 +1973,14 @@ model PurchaseOrder {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  lines PurchaseOrderLine[]
+  lines         PurchaseOrderLine[]
   // Prompt 42 — goods receipts recorded against this order (§23). Cascade
   // mirrors the tenant-deletion path: receipts never outlive their order.
   goodsReceipts GoodsReceipt[]
+  // Prompt 48 — supplier bills invoicing this order. Restrict: the PO is
+  // business-cascaded and a PO with posted bills is never user-deletable —
+  // the FK only ever fires at business deletion (mirrors goodsReceipts).
+  supplierBills SupplierBill[]
 
   @@unique([businessId, reference])
   @@index([businessId, status])
@@ -1976,7 +2002,7 @@ model PurchaseOrderLine {
   // Restrict (§234): product soft-delete keeps history; hard product delete
   // must not silently destroy procurement lines.
   productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   // §28 — integer 1..1_000_000 whole units. §29 — integer 0..9_000_000_000
   // minor units (zero allowed: free/promotional items). No floats, ever.
@@ -1991,12 +2017,16 @@ model PurchaseOrderLine {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Prompt 42 — receipt lines recorded against this PO line (§34/§14).
+  goodsReceiptLines GoodsReceiptLine[]
+  // Prompt 48 — bill lines invoicing this PO line. Restrict: procurement
+  // history outlives any single bill document; the chain only ever fires at
+  // business deletion (mirrors goodsReceiptLines).
+  supplierBillLines SupplierBillLine[]
+
   @@unique([purchaseOrderId, productId])
   @@index([purchaseOrderId])
   @@index([productId])
-
-  // Prompt 42 — receipt lines recorded against this PO line (§34/§14).
-  goodsReceiptLines GoodsReceiptLine[]
 }
 
 // ---------------------------------------------------------------------------
@@ -2039,12 +2069,12 @@ model GoodsReceipt {
   reference String
   // §7 — closed vocabulary DRAFT|POSTED|CANCELLED. Transitions are
   // server-authoritative through the dedicated post/cancel endpoints.
-  status    String   @default("DRAFT")
+  status    String @default("DRAFT")
 
   // §25 — supplier identity snapshot copied from the PO's ALREADY-FROZEN
   // supplierNameAtOrder (never the live Supplier.name — the supplier may
   // later rename or soft-delete; history must stay readable).
-  supplierNameAtReceipt String
+  supplierNameAtReceipt           String
   // §24 — PO reference snapshot at receipt creation.
   purchaseOrderReferenceAtReceipt String
 
@@ -2053,7 +2083,7 @@ model GoodsReceipt {
   notes String?
 
   createdByUserId String
-  createdByUser   User @relation("GoodsReceiptCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByUser   User   @relation("GoodsReceiptCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
   // §74 — postedAt is server-generated UTC at the post transition; never
   // client-controlled. cancelledAt mirrors it for the cancel transition.
@@ -2063,7 +2093,7 @@ model GoodsReceipt {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  lines GoodsReceiptLine[]
+  lines   GoodsReceiptLine[]
   // Prompt 43 — returns created FROM this receipt (§13/§14). Cascade mirrors
   // the tenant-deletion path: a return never outlives its source receipt.
   returns GoodsReturn[]
@@ -2097,7 +2127,7 @@ model GoodsReceiptLine {
   // soft-delete keeps history; a hard product delete can never silently
   // destroy receiving evidence.
   productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   // §17/§18 — integer 1..GOODS_RECEIPT_QTY_MAX whole units. No floats.
   receivedQty Int
@@ -2111,16 +2141,16 @@ model GoodsReceiptLine {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Prompt 43 — return lines that returned units of THIS receipt line
+  // (§29 — the same receipt line may be returned across many documents).
+  returnLines GoodsReturnLine[]
+
   // §27 — at most once per receipt document…
   @@unique([goodsReceiptId, purchaseOrderLineId])
   // §179 — …but many receipts per PO line need the reverse index.
   @@index([purchaseOrderLineId])
   @@index([productId])
   @@index([goodsReceiptId])
-
-  // Prompt 43 — return lines that returned units of THIS receipt line
-  // (§29 — the same receipt line may be returned across many documents).
-  returnLines GoodsReturnLine[]
 }
 
 // ---------------------------------------------------------------------------
@@ -2166,15 +2196,15 @@ model GoodsReturn {
   reference String
   // §9 — closed vocabulary DRAFT|POSTED|CANCELLED. Transitions are
   // server-authoritative through the dedicated post/cancel endpoints.
-  status    String   @default("DRAFT")
+  status    String @default("DRAFT")
 
   // §16 — supplier identity snapshot copied from the receipt's
   // ALREADY-FROZEN supplierNameAtReceipt (never the live Supplier.name —
   // rename/soft-delete must not rewrite return history §31).
-  supplierNameAtReturn String
+  supplierNameAtReturn           String
   // §17 — receipt reference snapshot at return creation (historical
   // readability must not depend exclusively on a live relation §31).
-  goodsReceiptReferenceAtReturn String
+  goodsReceiptReferenceAtReturn  String
   // §18 — PO reference snapshot copied from the receipt's
   // purchaseOrderReferenceAtReceipt. Snapshot only — never client-authored.
   purchaseOrderReferenceAtReturn String
@@ -2184,7 +2214,7 @@ model GoodsReturn {
   notes String?
 
   createdByUserId String
-  createdByUser   User @relation("GoodsReturnCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByUser   User   @relation("GoodsReturnCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
   // §43 step 19 — postedAt is server-generated UTC at the post transition;
   // never client-controlled. cancelledAt mirrors it for the cancel
@@ -2229,7 +2259,7 @@ model GoodsReturnLine {
   // history; a hard product delete can never silently destroy return
   // evidence.
   productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   // §32 — integer 1..GOODS_RETURN_QTY_MAX whole units. No floats.
   returnedQty Int
@@ -2273,12 +2303,12 @@ model GoodsDispatch {
   // §link — an OPTIONAL customer association. SetNull: deleting the
   // customer must never destroy dispatch history; the name snapshot below
   // keeps the row readable regardless.
-  customerId String?
-  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId             String?
+  customer               Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   // §snapshot — customer identity frozen at creation from the linked
   // Customer (empty string when the dispatch has no customer). Renames or
   // deletions never rewrite dispatch history.
-  customerNameAtDispatch String @default("")
+  customerNameAtDispatch String    @default("")
 
   // §reference — business-local unique reference, DB-enforced (duplicate
   // inserts lose the race with a constraint error → 409).
@@ -2286,7 +2316,7 @@ model GoodsDispatch {
   // §lifecycle — closed vocabulary DRAFT|POSTED|CANCELLED. Transitions are
   // server-authoritative through the dedicated post/cancel endpoints;
   // POSTED is immutable, CANCELLED is terminal.
-  status    String   @default("DRAFT")
+  status    String @default("DRAFT")
 
   // §notes — optional free text (≤2000 chars); document data only — never
   // logged to audit bodies, never sent to AI, never indexed into search.
@@ -2298,14 +2328,14 @@ model GoodsDispatch {
   // explicit (P45 §7), and a linked dispatch is the ONLY document whose
   // POST decrements stock against the order's remaining quantity.
   // NOT unique: §3/§39 — ONE order is fulfilled by MANY dispatches.
-  salesOrderId String?
-  salesOrder   SalesOrder? @relation(fields: [salesOrderId], references: [id], onDelete: SetNull)
+  salesOrderId                  String?
+  salesOrder                    SalesOrder? @relation(fields: [salesOrderId], references: [id], onDelete: SetNull)
   // §35 — order reference snapshot at dispatch creation (historical
   // readability must not depend exclusively on a live relation).
   salesOrderReferenceAtDispatch String?
 
   createdByUserId String
-  createdByUser   User @relation("GoodsDispatchCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByUser   User   @relation("GoodsDispatchCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
   // §posting — server-generated UTC timestamps; never client-controlled.
   postedAt    DateTime?
@@ -2339,7 +2369,7 @@ model GoodsDispatchLine {
   // §product — Restrict mirrors P42/P43: product soft-delete keeps history;
   // a hard product delete can never silently destroy dispatch evidence.
   productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   // §qty — integer 1..GOODS_DISPATCH_QTY_MAX whole units. No floats.
   qty Int
@@ -2405,18 +2435,18 @@ model SalesOrder {
   // §11 — OPTIONAL customer (cash/anonymous orders allowed, mirroring the
   // Sale convention). SetNull: the frozen customerNameAtOrder snapshot
   // keeps the order readable after the live relation detaches (§12).
-  customerId String?
-  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId          String?
+  customer            Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   // §12 — customer identity frozen at creation (empty string when the
   // order has no customer). Renames/soft-deletes never rewrite it.
-  customerNameAtOrder String @default("")
+  customerNameAtOrder String    @default("")
 
   // §13/§14 — business-local unique reference, DB-enforced (concurrency
   // safe: duplicate inserts lose the race with a constraint error → 409).
   reference String
   // §15 — closed vocabulary DRAFT|CONFIRMED|COMPLETED|CANCELLED. This is
   // the commercial-order lifecycle, NEVER the Sale payment status.
-  status    String   @default("DRAFT")
+  status    String @default("DRAFT")
 
   // §25 — currency snapshot from the business at creation (never client
   // input); historical order display always uses this snapshot.
@@ -2439,7 +2469,7 @@ model SalesOrder {
   notes String?
 
   createdByUserId String
-  createdByUser   User @relation("SalesOrderCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByUser   User   @relation("SalesOrderCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
   // §16 — lifecycle timestamps are server-generated inside the write
   // transaction; never client-controlled.
@@ -2450,11 +2480,11 @@ model SalesOrder {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  lines SalesOrderLine[]
+  lines             SalesOrderLine[]
   // Prompt 45 (§32) — fulfillment dispatches recorded against this order.
-  goodsDispatches GoodsDispatch[]
+  goodsDispatches   GoodsDispatch[]
   // §52 — the ONE order-linked invoice (one-to-one, unique on Sale side).
-  sale Sale?
+  sale              Sale?
   // Prompt 47 (§7) — the ONE authoritative source-quotation relation when
   // this order was converted from an accepted quotation. Nullable: every
   // legacy/direct order keeps sourceQuotationId NULL. The UNIQUE constraint
@@ -2464,7 +2494,7 @@ model SalesOrder {
   // cascade removes both sides; the order itself is never destroyed by the
   // quotation domain, and the quotation domain offers no delete API).
   sourceQuotationId String?
-  sourceQuotation   SalesQuotation? @relation("SalesOrderSourceQuotation", fields: [sourceQuotationId], references: [id], onDelete: SetNull)
+  sourceQuotation   SalesQuotation?  @relation("SalesOrderSourceQuotation", fields: [sourceQuotationId], references: [id], onDelete: SetNull)
 
   @@unique([businessId, reference])
   @@unique([sourceQuotationId])
@@ -2489,7 +2519,7 @@ model SalesOrderLine {
   // §20 — Restrict mirrors P41–P44: product soft-delete keeps history; a
   // hard product delete can never silently destroy order evidence.
   productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   // §18/§21 — integer 1..1_000_000 whole units; integer 0..9_000_000_000
   // minor units (zero allowed: free/promotional items). No floats, ever.
@@ -2505,15 +2535,15 @@ model SalesOrderLine {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Prompt 45 (§32) — dispatch lines fulfilling THIS order line (the
+  // dispatch→order-line link; SetNull mirrors the document chain).
+  goodsDispatchLines GoodsDispatchLine[]
+
   // §19 — at most one line per product per order…
   @@unique([salesOrderId, productId])
   // §indexes — …but many order lines per product need the reverse index.
   @@index([salesOrderId])
   @@index([productId])
-
-  // Prompt 45 (§32) — dispatch lines fulfilling THIS order line (the
-  // dispatch→order-line link; SetNull mirrors the document chain).
-  goodsDispatchLines GoodsDispatchLine[]
 }
 
 // ---------------------------------------------------------------------------
@@ -2540,11 +2570,11 @@ model SalesQuotation {
   // §5 — OPTIONAL customer. SetNull: the frozen customerNameAtQuotation
   // snapshot keeps the quotation readable after the live relation detaches
   // (§12 — same law as SalesOrder.customerId).
-  customerId String?
-  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId              String?
+  customer                Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   // §12 — customer identity frozen at creation (empty string when the
   // quotation has no customer). Renames/soft-deletes never rewrite it.
-  customerNameAtQuotation String @default("")
+  customerNameAtQuotation String    @default("")
 
   // §5/§10 — business-local unique reference (QT- prefix), DB-enforced;
   // quotation references are unique within their OWN business+document
@@ -2553,7 +2583,7 @@ model SalesQuotation {
   // §8 — closed vocabulary DRAFT|SENT|ACCEPTED|REJECTED|EXPIRED|CANCELLED|
   // CONVERTED. This is the offer lifecycle, never a payment status. An
   // unknown persisted value is an integrity failure — never silently DRAFT.
-  status String @default("DRAFT")
+  status    String @default("DRAFT")
 
   // §5/§10 — currency snapshot from the business at creation (never client
   // input); historical quotation display always uses this snapshot.
@@ -2582,7 +2612,7 @@ model SalesQuotation {
   internalNotes String?
 
   createdByUserId String
-  createdByUser   User @relation("SalesQuotationCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByUser   User   @relation("SalesQuotationCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
   // §8 — lifecycle timestamps are server-generated inside the write
   // transaction; never client-controlled. sentAt records an internal
@@ -2601,11 +2631,11 @@ model SalesQuotation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  lines SalesQuotationLine[]
+  lines               SalesQuotationLine[]
   // §7/§13 — the ONE authoritative converted order (one-to-one through the
   // unique SalesOrder.sourceQuotationId). Null until conversion; after
   // conversion the quotation is terminal and immutable (§8).
-  convertedSalesOrder SalesOrder? @relation("SalesOrderSourceQuotation")
+  convertedSalesOrder SalesOrder?          @relation("SalesOrderSourceQuotation")
 
   @@unique([businessId, reference])
   @@index([businessId, status])
@@ -2631,7 +2661,7 @@ model SalesQuotationLine {
   // §6 — Restrict mirrors P41–P45: product soft-delete keeps history; a
   // hard product delete can never silently destroy quotation evidence.
   productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   // §6/§11 — integer 1..1_000_000 whole units; integer 0..9_000_000_000
   // minor units. No tax, no shipping-fee, no payment, no stock fields.
@@ -2652,5 +2682,187 @@ model SalesQuotationLine {
   // §indexes — …but many quotation lines per product need the reverse
   // index (product quotation history, §6/§19).
   @@index([salesQuotationId])
+  @@index([productId])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 48 — Supplier Bills / Accounts Payable Documents (§5).
+//
+// SupplierBill = "the supplier invoiced these product quantities at these
+// unit prices against this purchase order". It is the PROCUREMENT INVOICE
+// DOCUMENT and its itemized commercial detail (§4) — NOT a GoodsReceipt
+// (physical receipt authority), NOT a PurchaseOrder (procurement
+// commitment), NOT a GoodsReturn (physical return authority), NOT a
+// Payment (settlement authority), and NOT an Expense in disguise.
+//
+// NO-DUPLICATE-PAYABLE LAW (§2 — the core architecture): the bill is the
+// DOCUMENT authority; the linked Expense is the SOLE financial liability
+// authority; Payments keep referencing the Expense; supplier statements and
+// payables aging keep reading the Expense exactly once. Posting creates
+// EXACTLY ONE Expense inside the posting transaction; a DRAFT/CANCELLED
+// bill has NO Expense (expenseId NULL). Posting NEVER touches Product
+// stock, InventoryAdjustment, GoodsReceipt, GoodsReturn, PurchaseOrder
+// quantities, Payment, Sale, SalesOrder or receivables (§11).
+//
+// LIFECYCLE (§10): DRAFT → POSTED | CANCELLED. POSTED is immutable in this
+// phase (no edit, no cancel — reversal workflow out of scope); CANCELLED is
+// terminal. Transitions run ONLY through the dedicated post/cancel
+// endpoints — there is NO generic status PATCH. Unknown persisted statuses
+// are integrity errors, never silently DRAFT.
+//
+// Snapshots (§5/§6): supplier name, PO reference, currency and product
+// name/sku/unit are frozen at write time from ALREADY-FROZEN PO data —
+// history stays readable after any later rename/soft-delete. The supplier
+// invoice reference is normalized and DB-unique per (business, supplier);
+// SQLite multi-NULL semantics let bills without an invoice reference
+// coexist freely.
+// ---------------------------------------------------------------------------
+model SupplierBill {
+  id String @id @default(cuid())
+
+  // Tenant scope is ALWAYS the authenticated membership, never client
+  // input. Cascade mirrors every other tenant document.
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  // §5 — the billed supplier; MUST be the PO's supplier (re-checked inside
+  // the posting transaction, §11 step 4). Restrict mirrors PurchaseOrder:
+  // the supplier row outlives its documents; the API only soft-deletes.
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  // §5/§6 — exactly ONE source purchase order. Restrict mirrors
+  // GoodsReceipt→PurchaseOrder: the FK only ever fires at business
+  // deletion; a posted bill never silently loses its source PO.
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+
+  // Business-local unique reference, DB-enforced (concurrency-safe:
+  // duplicate inserts lose the race with a constraint error → 409 §21).
+  reference                String
+  // §5 — the supplier's own invoice number (normalized, optional). Unique
+  // per (business, supplier) via the composite constraint below; SQLite
+  // multi-NULL semantics keep invoice-less bills conflict-free.
+  supplierInvoiceReference String?
+
+  // §5 — historical identity snapshots, frozen at write time.
+  supplierNameAtBill           String
+  purchaseOrderReferenceAtBill String
+
+  // §5/§8 — currency snapshot copied from the PO's ALREADY-FROZEN order
+  // currency (never client input); a differing invoice currency is
+  // rejected with SUPPLIER_BILL_CURRENCY_MISMATCH (§8 — FX out of scope).
+  currencyCodeAtBill     String
+  currencySymbolAtBill   String
+  decimalPrecisionAtBill Int
+
+  // §10 — closed vocabulary DRAFT|POSTED|CANCELLED, parsed with the
+  // integrity law (unknown → controlled 500, never DRAFT).
+  status String @default("DRAFT")
+
+  // §5 — date-only business semantics, normalized to the canonical
+  // UTC-midnoon instant (Prompt-35 §84 law; the linked Expense inherits
+  // both under the same normalization, §11 steps 20-21).
+  billDate DateTime
+  dueDate  DateTime?
+
+  // §9 — canonical server-derived totals (integer minor units; NEVER
+  // client-submitted; recomputed inside the posting transaction).
+  subtotalMinor Int @default(0)
+  discountMinor Int @default(0)
+  totalMinor    Int @default(0)
+
+  // §16 — staff-only free text (≤2000 chars); never logged to audit
+  // bodies, never sent to AI, never indexed into search, never exported.
+  internalNotes String?
+
+  createdByUserId String
+  createdByUser   User   @relation("SupplierBillCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  // §10/§11 — server-generated UTC timestamps; never client-controlled.
+  postedAt    DateTime?
+  cancelledAt DateTime?
+
+  // §2/§5 — THE one-to-one payable link. NULL for DRAFT/CANCELLED; exactly
+  // one Expense exists for every POSTED bill (created INSIDE the posting
+  // transaction, §11 steps 15-24). @unique is the database-level guarantee
+  // that two bills can never share one payable (the concurrent-posting
+  // loser loses this constraint → rollback → controlled conflict).
+  // SetNull: the FK only ever fires at business-cascade deletion (see
+  // Expense.supplierBill for the reciprocal relation).
+  expenseId String?  @unique
+  expense   Expense? @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines SupplierBillLine[]
+
+  @@unique([businessId, reference])
+  // §5 — supplier invoice references are unique per (business, supplier):
+  // different suppliers MAY reuse the same invoice number (documented
+  // business rule); the same supplier may not invoice the same number
+  // twice. NULLs are distinct under SQLite semantics.
+  @@unique([businessId, supplierId, supplierInvoiceReference])
+  // List/filter/query indexes (§15).
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+  @@index([businessId, billDate])
+  @@index([businessId, dueDate])
+  @@index([businessId, purchaseOrderId])
+  @@index([businessId, supplierId])
+}
+
+// SupplierBillLine = one invoiced product quantity within a bill document
+// (§6). A PO line appears AT MOST ONCE per bill (DB-enforced) but MAY
+// appear across many bills while received-unbilled quantity remains (§7 —
+// partial invoicing). billedQty is a whole-unit integer ≥ 1 (§6);
+// unitPriceMinor is the ACTUAL supplier-invoice price entered by an
+// authorized user (§8 — never silently replaced by the PO price); the PO
+// unit price is snapshotted alongside for the displayed variance.
+model SupplierBillLine {
+  id String @id @default(cuid())
+
+  supplierBillId String
+  supplierBill   SupplierBill @relation(fields: [supplierBillId], references: [id], onDelete: Cascade)
+
+  // §6 — the PO line is the procurement product authority (the bill's
+  // supplier and business must match the PO; re-verified at posting).
+  // Restrict mirrors GoodsReceiptLine→PurchaseOrderLine: the chain only
+  // ever fires at business deletion.
+  purchaseOrderLineId String
+  purchaseOrderLine   PurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Restrict)
+
+  // §6 — the product derives from the authoritative PurchaseOrderLine
+  // (NEVER client authority). Restrict: a hard product delete can never
+  // silently destroy posted bill history.
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  // §6/§8/§9 — integer 1..1_000_000 whole units; integer 0..1_000_000_000
+  // minor units. lineTotalMinor = billedQty × unitPriceMinor (BigInt math,
+  // server-derived, never client-submitted).
+  billedQty      Int
+  unitPriceMinor Int
+  lineTotalMinor Int
+
+  // §6 — historical product identity copied from the PO LINE's
+  // ALREADY-FROZEN snapshot (never the live Product row).
+  productNameAtBill String
+  skuAtBill         String?
+  unitAtBill        String?
+
+  // §8 — the agreed purchase-order unit price at billing time, snapshotted
+  // for the displayed price variance (invoiced − PO). Never overwritten.
+  purchaseOrderUnitPriceMinor Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // §6 — at most once per bill document…
+  @@unique([supplierBillId, purchaseOrderLineId])
+  // …but many bills per PO line need the reverse index (matching + history).
+  @@index([supplierBillId])
+  @@index([purchaseOrderLineId])
   @@index([productId])
 }

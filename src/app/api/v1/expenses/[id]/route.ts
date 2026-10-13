@@ -8,6 +8,12 @@
  * Prompt 34 (§18/§20/§21/§85): tenant-scoped GET, soft-delete filter,
  * explicit DTO with supplier name only (no supplier object), bounded
  * payments list (≤20), integer minor units.
+ * Prompt 48 (§12): an Expense linked to a POSTED SupplierBill is the
+ * document-backed payable — generic deletion and generic edits that would
+ * break reconciliation with its posted bill (amount, supplier, category,
+ * spentAt, dueDate, document reference) are blocked with the stable
+ * SUPPLIER_BILL_LINKED_EXPENSE_IMMUTABLE error. Free-text note edits stay
+ * allowed; Payment-controlled paidMinor/status updates are untouched.
  */
 import { NextRequest } from "next/server";
 import type { Prisma } from "@prisma/client";
@@ -25,6 +31,27 @@ type RouteParams = { params: Promise<{ id: string }> };
 
 /** Bounded payments list (§18/§85). */
 const PAYMENTS_TAKE = 20;
+
+/**
+ * Prompt 48 §12 — load the bill link for a payable. A bill carries
+ * expenseId ONLY from posting onward (DRAFT/CANCELLED bills have none),
+ * so any linked bill found here is a POSTED document-backed payable.
+ */
+async function loadLinkedPostedBill(businessId: string, expenseId: string) {
+  return db.supplierBill.findFirst({
+    where: { businessId, expenseId },
+    select: { id: true, reference: true, status: true, totalMinor: true },
+  });
+}
+
+/** The ONE stable block for reconciliation-breaking edits/deletes (§12). */
+function throwLinkedExpenseImmutable(): never {
+  throw new ApiError(
+    422,
+    "SUPPLIER_BILL_LINKED_EXPENSE_IMMUTABLE",
+    "This payable is linked to a posted supplier bill and cannot be edited or deleted here. Its amount, supplier, category and dates must stay reconciled with the bill document.",
+  );
+}
 
 async function loadExpense(businessId: string, id: string) {
   const expense = await db.expense.findFirst({
@@ -110,6 +137,20 @@ export const PATCH = route(async (req: NextRequest, { params }: RouteParams) => 
   const before = await loadExpense(ctx.businessId, id);
   const input = await parseBody(req, expenseUpdateSchema);
 
+  // Prompt 48 §12 — a bill-linked payable cannot be edited in ways that
+  // break reconciliation with its posted bill. `note` stays editable.
+  const linkedBill = await loadLinkedPostedBill(ctx.businessId, before.id);
+  if (linkedBill && linkedBill.status === "POSTED") {
+    const touchesReconciliation =
+      input.amountMinor !== undefined ||
+      input.supplierId !== undefined ||
+      input.category !== undefined ||
+      input.spentAt !== undefined ||
+      input.dueDate !== undefined ||
+      input.reference !== undefined;
+    if (touchesReconciliation) throwLinkedExpenseImmutable();
+  }
+
   if (
     input.amountMinor !== undefined &&
     input.amountMinor < before.paidMinor
@@ -185,6 +226,11 @@ export const DELETE = route(async (req: NextRequest, { params }: RouteParams) =>
       "This expense has payments recorded. Delete its payments first to keep the money history consistent.",
     );
   }
+
+  // Prompt 48 §12 — never delete the payable behind a posted supplier bill
+  // (a posted bill must not lose its linked Expense).
+  const linkedBill = await loadLinkedPostedBill(ctx.businessId, before.id);
+  if (linkedBill && linkedBill.status === "POSTED") throwLinkedExpenseImmutable();
 
   await db.$transaction(async (tx) => {
     await tx.expense.update({ where: { id: before.id }, data: { deletedAt: new Date() } });

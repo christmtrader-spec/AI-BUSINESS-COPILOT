@@ -115,6 +115,14 @@ export type AppView =
    */
   | { kind: "sales-quotations" }
   | { kind: "sales-quotation"; id: string }
+  /**
+   * Prompt 48 — Supplier bill views: the LIST at #/supplier-bills and a
+   * DETAIL deep link at #/supplier-bills/<id>. The id is validated with
+   * the same safe-ID rules as every document deep link — malformed ids
+   * NEVER become state (dashboard fallback).
+   */
+  | { kind: "supplier-bills" }
+  | { kind: "supplier-bill"; id: string }
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
@@ -246,6 +254,11 @@ export function viewKeyOf(view: AppView): string {
       ? "sales-quotations"
     : view.kind === "sales-quotation"
       ? `sales-quotation:${view.id}`
+    // Prompt 48 — supplier-bill views: list + per-id detail keys (§36 parity).
+    : view.kind === "supplier-bills"
+      ? "supplier-bills"
+    : view.kind === "supplier-bill"
+      ? `supplier-bill:${view.id}`
       : view.kind === "join"
       ? `join:${view.token}`
       : view.kind === "reset-password"
@@ -305,6 +318,10 @@ export function sameView(a: AppView, b: AppView): boolean {
   }
   // Prompt 44 — goods-dispatch detail compares id (viewKey already carries it).
   if (a.kind === "inventory-goods-dispatch" && b.kind === "inventory-goods-dispatch") {
+    return a.id === b.id;
+  }
+  // Prompt 48 — supplier-bill detail compares id (viewKey already carries it).
+  if (a.kind === "supplier-bill" && b.kind === "supplier-bill") {
     return a.id === b.id;
   }
   // Prompt 33 — hash query changes re-enter the store (back/forward must
@@ -408,6 +425,13 @@ export function viewToHash(view: AppView): string | null {
       // Prompt 47 — only charset-safe ids ever become a hash.
       if (!isValidEntityId(view.id)) return null;
       return `#/sales-quotations/${view.id}`;
+    case "supplier-bills":
+      // Prompt 48 — canonical list hash.
+      return "#/supplier-bills";
+    case "supplier-bill":
+      // Prompt 48 — only charset-safe ids ever become a hash.
+      if (!isValidEntityId(view.id)) return null;
+      return `#/supplier-bills/${view.id}`;
     case "platform":
       // #/platform itself resolves to the overview section (§15).
       return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
@@ -620,6 +644,19 @@ export function hashToView(hash: string): AppView {
     }
     if (!isValidEntityId(id)) return { kind: "dashboard" };
     return { kind: "sales-quotation", id };
+  }
+  // Prompt 48 — supplier-bill list + detail deep links (#/supplier-bills/<id>).
+  if (path === "supplier-bills") return { kind: "supplier-bills" };
+  if (path.startsWith("supplier-bills/")) {
+    const rawId = path.slice("supplier-bills/".length);
+    let id = rawId;
+    try {
+      id = decodeURIComponent(rawId);
+    } catch {
+      return { kind: "dashboard" };
+    }
+    if (!isValidEntityId(id)) return { kind: "dashboard" };
+    return { kind: "supplier-bill", id };
   }
   // Prompt 34 — entity detail deep links (#/customers/<id>, §5/§6) are
   // attempted BEFORE the bare-module match: "customers" alone stays the

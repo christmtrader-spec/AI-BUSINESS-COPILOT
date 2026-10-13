@@ -84,6 +84,11 @@ const MIGRATIONS = [
   // applied migration in this baseline list so a sandbox revert never
   // leaves it falsely pending.
   "20261012090000_prompt47_sales_quotations",
+  // Prompt 48 — the Supplier Bill migration is genuinely applied (29
+  // applied / 0 pending; additive two-table CREATE via `migrate deploy`).
+  // Same maintenance law: keep every applied migration in this baseline
+  // list so a sandbox revert never leaves it falsely pending.
+  "20261013090000_prompt48_supplier_bills",
 ];
 
 function log(step, msg) {
