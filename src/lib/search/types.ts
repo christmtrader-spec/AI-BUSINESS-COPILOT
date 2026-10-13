@@ -25,7 +25,10 @@
  *  NO stock quantities in snippets).
  *  Prompt 45 (§70): SALES_ORDER joins — discovery over commercial customer
  *  orders (order reference + customer snapshot + product/SKU snapshots;
- *  NO amounts, NO fulfillment quantities in snippets). */
+ *  NO amounts, NO fulfillment quantities in snippets).
+ *  Prompt 48 (§5): SUPPLIER_BILL joins — discovery over supplier invoice
+ *  documents (bill reference + supplier invoice reference + supplier/PO
+ *  snapshots + product/SKU snapshots; NO amounts, NO notes in snippets). */
 export const SEARCH_ENTITY_TYPES = [
   "CUSTOMER",
   "SUPPLIER",
@@ -44,6 +47,8 @@ export const SEARCH_ENTITY_TYPES = [
   // offers (quotation reference + customer/product/SKU snapshots; NO
   // amounts, NO notes in snippets §18/§10).
   "SALES_QUOTATION",
+  // Prompt 48 (§5) — SUPPLIER_BILL joins.
+  "SUPPLIER_BILL",
 ] as const;
 
 export type SearchEntityType = (typeof SEARCH_ENTITY_TYPES)[number];
@@ -64,6 +69,7 @@ export const SEARCH_DESTINATIONS = [
   "goods-dispatches",
   "sales-orders",
   "sales-quotations",
+  "supplier-bills",
 ] as const;
 
 export type SearchDestination = (typeof SEARCH_DESTINATIONS)[number];
@@ -84,6 +90,7 @@ export const ENTITY_DESTINATION: Record<SearchEntityType, SearchDestination> = {
   GOODS_DISPATCH: "goods-dispatches",
   SALES_ORDER: "sales-orders",
   SALES_QUOTATION: "sales-quotations",
+  SUPPLIER_BILL: "supplier-bills",
 };
 
 /** Closed status tokens (client localizes; server never renders HTML).

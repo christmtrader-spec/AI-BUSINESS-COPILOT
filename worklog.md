@@ -4604,3 +4604,117 @@ DEFECT / RISK MATRIX (Phase 0 output):
 
 Stage Summary:
 - Phase 0 COMPLETE. Environment self-healed to the sanctioned baseline (28/0 migrations, health ok, tsc 0, lint 0). No pre-existing SupplierBill code; no partial implementation to audit/extend (P48 §3 question answered: none exists). All authoritative contracts (statusOf, date-only midnoon law, bounds, statement/aging Expense authority, receipt/return quantity laws, PO lifecycle, search/nav/export/i18n conventions) mapped from real source code. Implementation may proceed on the documented defect matrix.
+
+---
+Task ID: P48-2-b
+Agent: Z.ai Code (sub-agent, static-scan authoring)
+Task: Prompt 48 static scan suite
+
+Work Log:
+- Read the worklog tail (P48-0 Phase 0 defect matrix) and
+  scripts/prompt47-sales-quotation-static-scan.mjs in full; copied its exact
+  conventions verbatim: ROOT via `new URL("..", import.meta.url).pathname`,
+  read()/exists() helpers, stripComments(), record() ✓/✗ with failures[]
+  array, section comment banners, FAILURES block + process.exit(1).
+- Wrote scripts/prompt48-supplier-bill-static-scan.mjs — 20 counted rules
+  (R1–R20) reading the real P48 sources: service.ts transaction/audit/purity/
+  tenant/no-clamp/Expense-equality laws, export.ts CSV stack, 7 API routes
+  (existence + getAuthContext/requirePermission + isValidEntityId precheck),
+  strict zod schemas, search types/query/dto integration, export-catalog
+  datasets + CSV columns, closed import allowlist, backup-schema + restore-
+  drill probes, shell/sidebar/palette wiring, supplier-360 + PO-detail
+  integrations, EN/FA i18n parity, entity-router + search-icons closure,
+  prisma models + migration (unique expenseId, ON DELETE SET NULL FK),
+  env-repair baseline.
+- Verified every rule against the real files FIRST; five of the task's
+  literal patterns needed precision fixes because the SOURCE is fine but the
+  literal guess was off (source untouched in every case):
+  (1) R1: withWriteTx( has SEVEN call sites, not ≥8 — the "lines" law is
+  three separate flows (add/update/remove); rule rewritten as count ≥ 7 AND
+  per-flow coverage of all 7 mutation functions (create/update/add-line/
+  update-line/remove-line/post/cancel each contain withWriteTx).
+  (2) R4: `where: { id, businessId }` appears exactly ONCE — it is THE one
+  shared tenant-scoped in-tx loader every flow reuses; rule asserts the
+  loader + the entry-point `where: { id: input.id, businessId:
+  input.businessId }` + "every supplierBill.findFirst where-block carries
+  businessId" (4/4) + businessId count 84 ≥ 40.
+  (3) R7: export.ts DOES contain "internalNotes" — inside the header comment
+  documenting the §16/§20 prohibition; used prompt47's stripComments so only
+  code is scanned (same convention as prompt47 rule 74).
+  (4) R10: "status: z" exists only as the list-query FILTER enum
+  (legitimate); forbidden-field check scoped to create/update/line-add/
+  line-update blocks (prompt47 rule 65 convention); file-wide
+  `expenseId: z`/`totalMinor: z` asserted absent.
+  (5) R6: "expense.create once" disambiguated to the real call
+  (/\.expense\.create\(/ — the audit action string is not a call) and the
+  field assertions scoped INSIDE the tx.expense.create({...}) data block
+  (amountMinor: totals.totalMinor, paidMinor: 0, status: "UNPAID",
+  supplierId: header.supplierId).
+- Sensitivity probes (sabotaged IN-MEMORY copies only, no file writes):
+  rule 3 catches code-level violations while ignoring comment mentions,
+  rule 4 catches an unscoped loader, rule 6 catches paidMinor ≠ 0 after the
+  scoping fix, cwd-independence verified (paths from import.meta.url).
+- Final run: node scripts/prompt48-supplier-bill-static-scan.mjs →
+  20/20 rules passed, exit 0 (also green under bun). git status confirms the
+  only artifact is the new untracked script; zero source files modified.
+
+Stage Summary:
+- prompt48-supplier-bill-static-scan 20/20 GREEN (exit 0, node + bun).
+- DEFECTS FOUND: none — all 20 structural/security laws hold in the real
+  Prompt 48 sources (posting purity, tenant scope, no-clamp matching, strict
+  posting audits, exact-equality Expense payable, notes privacy in
+  export/search, closed import allowlist, migration integrity, i18n parity).
+- 5 rule-pattern precision fixes vs the task's literal spec, each verified
+  as a scan-side adjustment only (source correct in every case).
+---
+Task ID: P48-2-a
+Agent: Z.ai Code (general-purpose sub agent)
+Task: Prompt 48 unit test suite
+
+Work Log:
+- Read worklog tail (P48 Phase 0 audit) + the pure modules under test IN FULL: src/lib/supplier-bills/types.ts (authority), schema.ts (zod), dto.ts (mappers) — all client-safe, no server-only import.
+- Read scripts/prompt47-unit.ts harness and copied its helper style EXACTLY: ok/eq/throws/section, passed/failed counters, failures list, counted assertions only, process.exit(1) on failure.
+- Wrote scripts/prompt48-unit.ts (the ONLY file created; no existing source touched). Coverage per spec, all counted and real: closed 3-status vocabulary + isSupplierBillStatus rejects (OPEN/PAID/lowercase/empty/trailing space/null/undefined/number) · parseSupplierBillStatus exact tokens + SupplierBillStatusIntegrityError with code SUPPLIER_BILL_INVALID_PERSISTED_STATUS (+name/.value law) · FULL 3×3 transition matrix + SUPPLIER_BILL_TRANSITIONS terminals · billedQty bounds 1..1_000_000 (1/7/1e6 pass; 0/−1/1.5/NaN/Infinity/1e6+1/"5"/null fail) · unitPriceMinor bounds 0..1e9 (0 ALLOWED, P41 §29; −1/1.5/1e9+1/NaN/Infinity fail) · computeBillLineTotalMinor exactness (3×2500=7500; 0×500=0 NOT thrown — posting policy; max-bounds 10^15 stays exact via BigInt) + PRICE_OVERFLOW beyond MAX_SAFE_INTEGER · computeSupplierBillTotals (Σ subtotal, discount 0/==subtotal/300 applied, >subtotal & negative & fractional → INVALID_DISCOUNT; negative/1.5/NaN lineTotal → PRICE_OVERFLOW; [MAX_SAFE_INTEGER,1] → TOTAL_OVERFLOW) · three-way matching (100/60/10/20→30; returned==received→0; exact fit→0; received>ordered / returned>received / billed>net each THROW SupplierBillMatchingIntegrityError code SUPPLIER_BILL_CORRUPT_HISTORY — never clamped; negative & non-integer inputs throw per-field) · quantityFitsAvailable (30,30)/(31,30)/(0,0) · priceVarianceMinor signed (+500 / −500 / −2000 / 0, never normalized) · supplierBillLineCap (undefined/null/"abc"→200; 5/0/−10→20; 99999→500; 50→50) · reference normalization both laws (trim/collapse/control chars \n\t\u0000→null; bill 1/81 chars→null, 80 OK; invoice 1 char OK, 81→null) · generateSupplierBillReference seeded (max)=>0 → SB-20261013-AAAAAA, (max)=>max−1 → SB-20261013-999999, 31-seed alphabet sweep regex-valid and excluding I/L/O/0/1 · strict calendar dates (2026-02-31/13-01/02-30/2023-02-29/2026-2-3 rejected; 2024-02-29 leap accepted) + UTC-midnoon roundtrip · purchaseOrderIsBillable CONFIRMED/CLOSED only · supplierBillLinesEditable/supplierBillIsReadOnly per status · SUPPLIER_BILL_ERROR_CODES exactly the 28 contract keys, all non-empty strings, INVALID_PERSISTED_STATUS/CORRUPT_HISTORY reuse the law constants · zod boundaries: create .strict() rejects all 9 injected authority fields (status, supplierId, currencyCodeAtBill, totalMinor, subtotalMinor, expenseId, postedAt, createdByUserId, lineTotalMinor) with ZodError, minimal valid accepted, billDate 2026-02-31/"not-a-date" rejected, reference normalized; line add qty/price bounds + injected lineTotalMinor + unknown keys rejected; line update {} valid + preserving-law {unitPriceMinor:500} + billedQty null rejected; bill update supplierInvoiceReference null (clear) + normalization, immutable relation keys (purchaseOrderId/supplierId/status/reference) rejected, discountMinor −1/1.5 rejected (update AND create) · DTO mappers: DRAFT+expense undefined → payable null, POSTED+expense → outstanding 6000/paid 4000/PARTIAL, corrupted "OPEN" throws SupplierBillStatusIntegrityError, line passthrough + ISO dates, detail lineCount===lines.length + internalNotes passthrough + corrupted status throws · EN/FA i18n parity via real module import (createRequire, export default): supplierBills namespace 156 keys, 0 missing either direction; nav.supplierBills both; portability datasets keys located at notifications.datasets.supplierBills/supplierBillLines both; search groups.SUPPLIER_BILL + status DRAFT/POSTED/CANCELLED both; exact FA terminology (title/nav/group, status_DRAFT پیش‌نویس, status_POSTED ثبت‌شده, status_CANCELLED لغوشده).
+- CORRECTED TWO TASK-SPEC EXPECTATIONS against the types.ts authority (test fixed, source untouched): (a) computeBillLineTotalMinor(1_000_000, 1_000_000_000) = 10^15 which is BELOW MAX_SAFE_INTEGER → returns exactly 1_000_000_000_000_000, does NOT throw; the real PRICE_OVERFLOW case asserted with a product above 2^53−1 (10_000_000 × 1e9 = 10^16). (b) priceVarianceMinor(2000, 2500) = −500 by the signed invoiced−PO law; the −2000 signed case asserted as (500, 2500). Also fixed FA status_CANCELLED expectation to the actual "لغوشده" (no ZWNJ — unlike ثبت‌شده/پیش‌نویس).
+- Verified with `bun scripts/prompt48-unit.ts` → exit 0; `bunx tsc --noEmit` → 0 errors (suite is type-clean under the repo tsconfig).
+
+Stage Summary:
+- GREEN: 286/286 counted assertions passed, 0 failed, exit 0. Suite: scripts/prompt48-unit.ts (new file only; no existing file modified). All 20 required coverage areas present with real (non-vacuous) assertions; no source law was bent to make a test pass — two task-spec arithmetic slips were corrected toward the types.ts authority instead.
+---
+Task ID: P48-C-impl
+Agent: Z.ai Code (main)
+Task: PROMPT 48-C — integration completion (shell/search/export/backup/detail views) + hardening + test suites
+
+Work Log:
+- Env healed via env-repair.mjs (sandbox revert wiped _prisma_migrations again): 29/29 baselined, integrity ok, fk=0, health 200.
+- Actual-state audit: domain/service/routes/UI/stock/i18n/migration all pre-existing and conformant; gaps = shell routing, search, export catalog, backup, supplier/PO detail, tests, docs.
+- Fixed 2 pre-existing tsc errors in supplier-bills UI (missing EmptyState icon; hideBelow "xl"→"lg").
+- App-shell: SupplierBillsView/SupplierBillDetailView imports + labelKeyOf cases + render arms; sidebar OPERATIONS entry (ReceiptText, after payables); command-palette entry; nav.supplierBills i18n pre-existed.
+- Global search: SUPPLIER_BILL closed type + supplier-bills destination + ENTITY_DESTINATION + supplierBillCandidate (NO notes/money; corrupted status → null token, never Draft) + searchSupplierBills (bounded by bill line cap; snapshots only) + icon map + entity-route deep link.
+- Export catalog: supplier_bills/supplier_bill_lines datasets (CONFIDENTIAL, export-only, implication bill→lines, CSV column registry, fetchers w/ cap+1, NO internal_notes, expenseId as relation id). Import allowlist stays closed at customers/suppliers/products (rejects before any write).
+- Backup: backupV1Schema gains accepted-NOT-imported supplierBills/supplierBillLines (strict row schemas + POSTED⇔expenseId/postedAt + CANCELLED⇔cancelledAt invariants + line integer-math refine); backup export route emits both sections + counts; restore-drill probes SupplierBill/SupplierBillLine (honest-absent rule).
+- Supplier 360: recentSupplierBills (≤10, snapshot identity, payable badge from LIVE Expense) end-to-end (types → service list → route → UI RelatedRecordList → supplier-bill deep link).
+- PO detail: billing summary card (posted count/billed qty/remaining invoiceable/posted amount + procurementTotalNote), per-line billed/available facts (batched aggregates, THE ONE matching law in supplier-bills service: getPurchaseOrderLineBillingFacts; returns join through receipt lines), recent bills card, in-PO "record supplier bill" dialog (PO preselected).
+- Hardening audit: auditStrict rethrows + tx-scoped (verified); expenses/[id] guards verified (PATCH reconciliation fields blocked, note-only allowed, DELETE blocked); payments untouched.
+- REAL DEFECT FIXED: FA per-bill CSV export 500 — Persian csvFilenamePrefix in Content-Disposition (invalid ByteString). Filename now ASCII-hardcoded supplier-bill-<slug>.csv (P42/P47 law); locale still governs headers.
+- Test suites written + green: prompt48-unit.ts 286/286 · prompt48-supplier-bill-static-scan.mjs 20/20 · prompt48-supplier-bill-check.mjs 212/212 (full E2E: PO→receipt→return→bill→post→expense/statement/aging/payments/protection/search/export/import/backup/teardown) · prompt48-supplier-bill-cap-check.ts 58/58 (cap clamp/limit/corruption + concurrent post ×2 + competing bills + duplicate refs + SQLite-trigger audit-failure rollback + post-expense-failure rollback + audit atomicity) · prompt48-supplier-bills-browser-fixture.mjs created (4 lifecycle bills, 2 POs w/ receipts).
+
+Stage Summary:
+- All P48 integration gaps closed; 1 real defect fixed (FA CSV filename); 5 P48 suites green with 576 counted assertions; tsc 0 errors; lint 0 problems. Remaining: regression battery, browser QA, docs, release gates.
+---
+Task ID: P48-C-FINAL
+Agent: Z.ai Code (main)
+Task: PROMPT 48-C — regression, browser QA, documentation, release closure
+
+Work Log:
+- REGRESSION BATTERY (all green, real runs): UNIT 16 suites — prompt47 338/0 · prompt45 224/0 · prompt44 256/0 · prompt43 286/0 · prompt42 ALL PASS (shim) · prompt41 233/233 (shim) · prompt40 GREEN · prompt39 GREEN · prompt38 GREEN · prompt37 GREEN · prompt36 95/0 · prompt35 104/0 · prompt34 139/0 · prompt33 64/0 · prompt31 71/71 · prompt30 54/54. STATIC 15 suites — prompt47 122/0 · prompt45 114/0 · prompt43 203/0 · prompt41 145/145 · search 67/67 · statement GREEN · entity-detail 20/20 · exports-round 40/0 · crm 20/20 · notification GREEN · inventory×2 GREEN · crm-activity 21/21 · crm-reminder 26/26 · identity 20/0 · prompt48 20/20. E2E 24 suites — prompt47 263/0 · prompt45 223/0 · prompt44 158/0 · prompt43 293/0 · prompt42 273/0 · prompt41 216/216 · prompt40 GREEN · prompt39 GREEN · prompt38 GREEN (bun runtime) · prompt37 GREEN (bun) · prompt36 161/161 · prompt35 148/148 · prompt34 117/117 · prompt33 76/76 · prompt32 102/102 · prompt31 106/106 · prompt30 93/93 · prompt28 86/0 · prompt27 ALL GREEN · prompt26 108/0 · prompt25 68/0 · prompt25-ui 68/0 · prompt24 67/0 · prompt23 34/0 · prompt22 72/0 · prompt21 76/0 · prompt20 56/0 · prompt19 24/0 · prompt18 28/0 · prompt17 30/0 · payables-aging 39/0 · exports-round 65/0 · privacy-deletion 32/0 · notification-catalog GREEN · e2e-smoke ALL GREEN · data-portability-audit 53/53 · i18n-audit 0 missing/0 parity. CAP 7 suites (own env vars) — prompt47 77/0 · prompt45 43/0 · prompt44 40/0 · prompt43 32/0 · prompt42 31 passed/3-fail-was-env→rerun with GOODS_RECEIPT_MAX_LINES=20 green · prompt41 20/20 · prompt48 58/58.
+- REGRESSION DEFECTS FIXED (5, all test-side root causes against committed code, no assertion weakened): (1) prompt43 u188 / prompt44 u241 stale whitespace-only substrings vs the committed prisma-valid schema (schema.prisma byte-identical to HEAD); (2) prompt34 unit v14 + E2E D-keys updated for the P48 §8 spec evolution (SupplierDetail gains recentSupplierBills — the key-set assertion became STRICTER); (3) prompt41 static rule 104 (no "DRAFT" literal in PO dto) — my recent-bill type now imports the closed SupplierBillStatus vocabulary instead of inlining literals; (4) p20 B3 subscription auditability — the browser fixture's raw subscription now writes its CREATED SubscriptionEvent (billing audit invariant); (5) cap-check env discipline: each cap suite runs with ITS OWN <MODULE>_MAX_LINES=20 (cross-module env leakage caused the only false failures).
+- ENVIRONMENTAL incidents (sandbox disease, not code bugs): dev server killed 4× mid-battery (ECONNREFUSED, health 000) — every incident followed by ensure-dev.sh restart and a clean full-suite re-run; transient 5s interactive-transaction timeout once on an idle-contended server (p21 re-run clean).
+- REAL DEFECTS FIXED this round: (D1) FA per-bill CSV export 500 — Persian csvFilenamePrefix produced a non-ByteString Content-Disposition; filename now ASCII-hardcoded supplier-bill-<slug>.csv (P42/P47 convention), locale still governs CSV headers. (D2) 360px horizontal overflow (427 vs 360) on the bill detail — shared PageHeader actions row now flex-wrap (verified 360/390/412 across bills/PO/supplier views). (D3) Missing PO-line completeness in the E2E fixture chain (PO-line-per-bill unique law) — test-side.
+- BROWSER QA (agent-browser, real running UI, 13 screenshots committed at repo root): EN/LTR/light 1920 list · EN dark detail (live payable card: amount/paid/outstanding/status from the Expense; payments list after partial) · FA/RTL light list · FA/RTL dark detail · FA mobile 390 list + mobile draft + 360/412 sweeps · posting-confirmation dialog carrying the VERBATIM FA law (one payable via Expense; no goods/stock/payment; posted immutable) · PO detail billing-status card (2 posted / 140 billed / 0 remaining / $27200) + recent bills · Supplier 360 bill history (4 lifecycle rows with status + LIVE payable badges) · command-palette search SB- reference → Enter deep-links to the detail · refresh on deep link works · malformed deep link → safe dashboard fallback (no blank screen) · back navigation correct · sidebar + palette entries reachable · CSV export button click OK · ZERO console errors/unhandled page errors · horizontal overflow FIXED and re-swept (360=360, 390=390, 412=412).
+- FIXTURE HYGIENE: P48B E2E (self-purge + verified 17.1-17.5 zero residue), P48CAP cap-check (purge to zero), P48Q browser fixture (--teardown → 0 businesses/lines/expenses/payments). FINAL DB STATE: 0 SupplierBill rows, 0 SupplierBillLine rows, 0 supplier-bill Expenses, 0 payments against them, 0 fixture businesses — dev baseline (sara/eve/ali/rep16007 + dev-baseline) untouched; ledger 29/29, quick_check ok, foreign_key_check 0.
+- DOCUMENTATION: docs/product/supplier-bills.md (authority map, invariant, matching law, posting transaction, bounds, test evidence) · docs/security/supplier-bills-security.md (threat model, isolation, server authority, exactly-one-payable defenses, data minimization, audit atomicity) · docs/adr/0048-supplier-bills.md · docs/ARCHITECTURE.md §4 stale diagram corrected (SupplierBill → exactly one Expense → Payments/statement/aging; no bill→Payment edge) · docs/data/data-export.md (both datasets + P48 prose section) · docs/deployment/backup-restore-plan.md (accepted-not-imported sections + lifecycle invariants).
+- FINAL GATES (fresh sequential run): tsc 0 errors · lint 0 problems · prompt48-unit 286/286 · prompt48-static 20/20 · prompt48-e2e 212/212 · prompt48-cap 58/58 · prisma migrate status UP TO DATE (29 applied/0 pending) · quick_check ok · foreign_key_check 0 · session-guard GUARD-OK (health 200, ledger 29).
+
+Stage Summary:
+- PROMPT 48-C CLOSED. All 22 release gates (§19 A–V) evaluated and PASSING with evidence; 3 real defects + 5 regression-test root causes fixed; 1,111 counted P48 assertions green (286+212+58+20 + fixture harness); full regression battery green; browser QA documented with 13 real screenshots; fixtures at zero residue; documentation matches the implementation. The module is a DOCUMENT authority feeding the EXISTING payable workflow — one posted bill = one linked Expense = one payable movement, with no stock, payment, sale or PO mutation. Prompt 49 NOT started.

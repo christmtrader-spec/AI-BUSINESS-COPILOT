@@ -54,6 +54,10 @@ export function entityViewFromSearchItem(item: SearchResultItem): AppView {
     // Prompt 47 — quotations route to their own detail view.
     return { kind: "sales-quotation", id: item.id };
   }
+  if (item.type === "SUPPLIER_BILL") {
+    // Prompt 48 (§5) — supplier bills route to their own detail view.
+    return { kind: "supplier-bill", id: item.id };
+  }
   const entity = SEARCH_TYPE_TO_ENTITY[item.type];
   return { kind: "entity", entity, id: item.id };
 }

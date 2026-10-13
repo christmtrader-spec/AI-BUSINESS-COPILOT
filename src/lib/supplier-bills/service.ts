@@ -1473,6 +1473,7 @@ export async function listRecentBillsForSupplier(input: {
     dueDate: string | null;
     totalMinor: number;
     currencySymbolAtBill: string;
+    decimalPrecisionAtBill: number;
     payableStatus: string | null;
     paidMinor: number | null;
   }>
@@ -1491,6 +1492,7 @@ export async function listRecentBillsForSupplier(input: {
       dueDate: true,
       totalMinor: true,
       currencySymbolAtBill: true,
+      decimalPrecisionAtBill: true,
       expense: { select: { status: true, paidMinor: true } },
     },
   });
@@ -1504,6 +1506,7 @@ export async function listRecentBillsForSupplier(input: {
     dueDate: row.dueDate ? row.dueDate.toISOString() : null,
     totalMinor: row.totalMinor,
     currencySymbolAtBill: row.currencySymbolAtBill,
+    decimalPrecisionAtBill: row.decimalPrecisionAtBill,
     payableStatus: row.expense?.status ?? null,
     paidMinor: row.expense?.paidMinor ?? null,
   }));
@@ -1555,4 +1558,119 @@ export async function getPurchaseOrderBillingSummary(input: {
     totalAvailableQty,
     postedBilledAmountMinor: amountAgg._sum.totalMinor,
   };
+}
+
+/**
+ * §17 — per-PO-line billing facts for the PO detail page: previously
+ * billed (POSTED bills only), available billable remainder (THE ONE pure
+ * law), and the distinct invoiced unit prices recorded by posted bills
+ * (price-variance evidence vs the PO price snapshot — §8). ALL lines are
+ * computed with batched grouped aggregates (never one query per line);
+ * corrupted history surfaces the stable 500 — never clamped.
+ */
+export async function getPurchaseOrderLineBillingFacts(input: {
+  businessId: string;
+  purchaseOrderLineIds: string[];
+}): Promise<
+  Array<{
+    lineId: string;
+    previouslyBilledQty: number;
+    availableBillableQty: number;
+    postedInvoicedUnitPricesMinor: number[];
+  }>
+> {
+  if (input.purchaseOrderLineIds.length === 0) return [];
+  const [billedGrouped, priceRows, poLineRows] = await Promise.all([
+    db.supplierBillLine.groupBy({
+      by: ["purchaseOrderLineId"],
+      where: {
+        purchaseOrderLineId: { in: input.purchaseOrderLineIds },
+        supplierBill: { status: "POSTED", businessId: input.businessId },
+      },
+      _sum: { billedQty: true },
+    }),
+    // Distinct invoiced unit prices per PO line from POSTED bills —
+    // bounded by the line cap per PO line is impractical in one query;
+    // the bill-level cap (≤ SUPPLIER_BILL_MAX_LINES per bill) and the
+    // PO-level POSTED bill count bound this read. take is capped hard.
+    db.supplierBillLine.findMany({
+      where: {
+        purchaseOrderLineId: { in: input.purchaseOrderLineIds },
+        supplierBill: { status: "POSTED", businessId: input.businessId },
+      },
+      select: { purchaseOrderLineId: true, unitPriceMinor: true },
+      take: 2000,
+      orderBy: [{ createdAt: "asc" as const }, { id: "asc" as const }],
+    }),
+    db.purchaseOrderLine.findMany({
+      where: {
+        id: { in: input.purchaseOrderLineIds },
+        purchaseOrder: { businessId: input.businessId },
+      },
+      select: { id: true, orderedQty: true },
+    }),
+  ]);
+  const billedByLine = new Map(
+    billedGrouped.map((g) => [g.purchaseOrderLineId, g._sum.billedQty ?? 0]),
+  );
+  const pricesByLine = new Map<string, number[]>();
+  for (const row of priceRows) {
+    const list = pricesByLine.get(row.purchaseOrderLineId) ?? [];
+    if (!list.includes(row.unitPriceMinor)) list.push(row.unitPriceMinor);
+    pricesByLine.set(row.purchaseOrderLineId, list);
+  }
+  const orderedByLine = new Map(poLineRows.map((l) => [l.id, l.orderedQty]));
+  // Received/returned per line via the SAME batch aggregates the PO
+  // receiving summary uses (§7 — POSTED receipts/returns only).
+  const receivedGrouped = await db.goodsReceiptLine.groupBy({
+    by: ["purchaseOrderLineId"],
+    where: {
+      purchaseOrderLineId: { in: input.purchaseOrderLineIds },
+      goodsReceipt: { status: "POSTED" },
+    },
+    _sum: { receivedQty: true },
+  });
+  const receivedByLine = new Map(
+    receivedGrouped.map((g) => [g.purchaseOrderLineId, g._sum.receivedQty ?? 0]),
+  );
+  // POSTED returns join their PO line THROUGH the source receipt line
+  // (§7 — the authoritative relation); fetched as a bounded batch and
+  // summed per PO line (never a per-line query).
+  const returnRows = await db.goodsReturnLine.findMany({
+    where: {
+      goodsReturn: { status: "POSTED" },
+      goodsReceiptLine: { purchaseOrderLineId: { in: input.purchaseOrderLineIds } },
+    },
+    select: {
+      returnedQty: true,
+      goodsReceiptLine: { select: { purchaseOrderLineId: true } },
+    },
+    take: 2000,
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+  const returnedByLine = new Map<string, number>();
+  for (const row of returnRows) {
+    const poLineId = row.goodsReceiptLine.purchaseOrderLineId;
+    returnedByLine.set(poLineId, (returnedByLine.get(poLineId) ?? 0) + row.returnedQty);
+  }
+  return input.purchaseOrderLineIds.map((lineId) => {
+    const previouslyBilledQty = billedByLine.get(lineId) ?? 0;
+    let availableBillableQty = 0;
+    try {
+      availableBillableQty = computeAvailableBillableQty({
+        orderedQty: orderedByLine.get(lineId) ?? 0,
+        receivedQty: receivedByLine.get(lineId) ?? 0,
+        returnedQty: returnedByLine.get(lineId) ?? 0,
+        previouslyBilledQty,
+      });
+    } catch (error) {
+      mapPureSupplierBillDomainError(error); // stable CORRUPT_HISTORY 500
+    }
+    return {
+      lineId,
+      previouslyBilledQty,
+      availableBillableQty,
+      postedInvoicedUnitPricesMinor: pricesByLine.get(lineId) ?? [],
+    };
+  });
 }

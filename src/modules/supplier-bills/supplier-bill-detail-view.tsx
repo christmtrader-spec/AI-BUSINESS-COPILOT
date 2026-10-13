@@ -20,6 +20,7 @@ import { useTranslations } from "next-intl";
 import {
   ArrowLeft,
   Download,
+  FileText,
   Loader2,
   Pencil,
   Plus,
@@ -284,7 +285,7 @@ export function SupplierBillDetailView({ id, role }: { id: string; role: Role })
         onDashboard={() => navigate({ kind: "dashboard" })}
       />
     ) : (
-      <EmptyState title={t("loadFailed")} description={tCommon("retry")} />
+      <EmptyState icon={FileText} title={t("loadFailed")} description={tCommon("retry")} />
     );
   }
 

@@ -262,7 +262,7 @@ export function SupplierBillsView({ role }: { role: Role }) {
                 {
                   id: "billDate",
                   header: t("billDate"),
-                  hideBelow: "xl",
+                  hideBelow: "lg",
                   sortValue: (r: SupplierBillListItemDto) => r.billDate,
                   cell: (r: SupplierBillListItemDto) => (
                     <span className="text-xs text-muted-foreground" dir="ltr">

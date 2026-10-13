@@ -115,8 +115,10 @@ User ─┬─< BusinessMember >─ Business
       │                        ├─< SalesInvoice ─< SalesInvoiceItem
       │                        │        └─< Payment (received)
       │                        ├─< Expense (category, paidFrom)
-      │                        ├─< SupplierBill (minimal, for payables)
-      │                        │        └─< Payment (made)
+      │                        ├─< SupplierBill (invoice document)
+      │                        │        └─(exactly one, after posting)→ Expense
+      │                        │            Expense ─< Payment (made) · supplier
+      │                        │            statement · payables aging (derived)
       │                        └─< AuditLog
       └─ Account (NextAuth credentials)
 ```

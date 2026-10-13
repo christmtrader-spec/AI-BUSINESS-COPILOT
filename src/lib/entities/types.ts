@@ -177,6 +177,30 @@ export type SupplierDetail = {
   recentGoodsReceipts?: SupplierRecentGoodsReceipt[];
   /** Prompt 43 (§100) — bounded: ≤ 10 goods returns (snapshot identity). */
   recentGoodsReturns?: SupplierRecentReturn[];
+  /**
+   * Prompt 48 (§8) — bounded: ≤ 10 supplier bills (snapshot identity).
+   * READ-ONLY document history: never a payable movement — the payable
+   * state shown per posted row comes from the LIVE linked Expense
+   * (paidMinor/status), never a copied bill balance.
+   */
+  recentSupplierBills?: SupplierRecentBill[];
+};
+
+/** Prompt 48 (§8) — bounded supplier-bill row for Supplier 360. */
+export type SupplierRecentBill = {
+  id: string;
+  reference: string;
+  supplierInvoiceReference: string | null;
+  purchaseOrderReferenceAtBill: string;
+  status: string;
+  billDate: string;
+  dueDate: string | null;
+  totalMinor: number;
+  currencySymbolAtBill: string;
+  decimalPrecisionAtBill: number;
+  /** Live linked-Expense payment state (null for DRAFT/CANCELLED §10). */
+  payableStatus: string | null;
+  paidMinor: number | null;
 };
 
 /** Prompt 43 (§100) — bounded goods-return row for Supplier 360. */

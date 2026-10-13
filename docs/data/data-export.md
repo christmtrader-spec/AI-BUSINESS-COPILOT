@@ -49,6 +49,8 @@ so they stay plain text.
 | `sales_order_lines` | sales order lines (Prompt 45): order + product references, write-time snapshot metadata, orderedQty, unitPriceMinor, timestamps | Confidential |
 | `sales_quotations` | sales quotations (Prompt 47): reference, persisted status, customer snapshot, quotation/valid-until/expected-delivery dates, discountMinor, customerNotes, currency snapshots, creator + lifecycle timestamps — **auto-includes sales_quotation_lines; export-only (import blocked); internalNotes NEVER exported** | Confidential |
 | `sales_quotation_lines` | sales quotation lines (Prompt 47): quotation + product references, write-time snapshot metadata (productNameAtQuotation, skuAtQuotation, unitAtQuotation), qty, unitPriceMinor, timestamps | Confidential |
+| `supplier_bills` | supplier bills (Prompt 48): reference, supplier invoice reference, supplier snapshot, PO reference snapshot, persisted status, bill/due dates, currency snapshots, subtotal/discount/total (integer minor units), creator + lifecycle timestamps, `expense_id` (the linked payable relationship) — **auto-includes supplier_bill_lines; export-only (import blocked); internalNotes NEVER exported** | Confidential |
+| `supplier_bill_lines` | supplier bill lines (Prompt 48): bill + PO-line + product references, write-time snapshot metadata (productNameAtBill, skuAtBill, unitAtBill), billedQty, unitPriceMinor, purchaseOrderUnitPriceMinor (variance evidence), lineTotalMinor, timestamps | Confidential |
 | `subscription_summary` | plan code/name, status, billing period, trial, cancel flags — customer-visible state only | Confidential |
 | `usage_summary` | current-period usage facts (metric, used, limit, remaining) — the same numbers the Usage page shows | Confidential |
 
@@ -176,3 +178,24 @@ quotations would bypass snapshot freezing, reference generation and the
 conversion state machine — the datasets are export-only, and the
 importer's allowlist rejects them BEFORE any database write. Restore
 from backup is the sanctioned recovery path.
+
+### Prompt 48 — supplier bills
+
+`supplier_bills` and `supplier_bill_lines` join the export catalog as
+CONFIDENTIAL datasets; the bills dataset always implies its lines
+(parent → child implication). Rows carry the frozen historical snapshots
+verbatim (`supplier_name_at_bill`, `purchase_order_reference_at_bill`,
+currency triple, `product_name_at_bill`, `sku_at_bill`, `unit_at_bill`)
+and the invoiced money as integer minor units (`subtotal_minor`,
+`discount_minor`, `total_minor`, `unit_price_minor`,
+`purchase_order_unit_price_minor` as the PO-vs-invoice variance
+evidence, `line_total_minor`). The linked payable travels as
+`expense_id` (a stable relationship identifier) — the PAYABLE ITSELF
+lives in the authoritative `expenses` dataset, so the two are never
+double-counted. **`internalNotes` is never exported** (no column).
+**Import remains intentionally NOT implemented**: replaying bills through
+a generic importer could fabricate payable history or claim a
+SupplierBill↔Expense relation outside the atomic posting transaction —
+the importer's allowlist rejects both dataset names BEFORE any database
+write (no DataImportJob row). Restore from backup is the sanctioned
+recovery path.

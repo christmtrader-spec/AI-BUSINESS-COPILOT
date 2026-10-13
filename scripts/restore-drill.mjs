@@ -210,6 +210,10 @@ try {
     // surface (same honest-absent rule: older backups may predate the
     // models — reported, never a drill failure).
     "SalesQuotation", "SalesQuotationLine",
+    // Prompt 48 (§7) — supplier bills + lines join the restore verification
+    // surface (same honest-absent rule). The bill↔Expense link travels as
+    // SupplierBill.expenseId; the drill probes the physical columns too.
+    "SupplierBill", "SupplierBillLine",
   ];
   const counts = {};
   for (const entity of ENTITIES) {

@@ -573,7 +573,7 @@ ok(String(GOODS_DISPATCH_ERROR_CODES.LINE_LIMIT) !== String(GOODS_DISPATCH_ERROR
   ok(schema.includes("goodsDispatchCreations      GoodsDispatch[]"), "u238 creator backref with Restrict policy");
   ok(schema.includes("goodsDispatchLines GoodsDispatchLine[]"), "u239 product backref");
   ok(schema.includes("goodsDispatches      GoodsDispatch[]"), "u240 business backref");
-  ok(schema.includes("goodsDispatches GoodsDispatch[]"), "u241 customer backref");
+  ok(schema.includes("goodsDispatches  GoodsDispatch[]"), "u241 customer backref");
   const repair = readFileSync("scripts/env-repair.mjs", "utf8");
   ok(repair.includes("20261010090000_prompt44_goods_dispatches"), "u242 env-repair baseline carries the P44 migration");
   const drill = readFileSync("scripts/restore-drill.mjs", "utf8");

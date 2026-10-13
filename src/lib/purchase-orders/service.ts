@@ -34,6 +34,14 @@ import {
   GOODS_RECEIPT_LINE_CAP_INVARIANT,
 } from "@/lib/inventory/goods-receipt/types";
 import { listRecentReceiptsForPurchaseOrder } from "@/lib/inventory/goods-receipt/service";
+// Prompt 48 (§9) — the PO detail billing summary reuses the supplier-bill
+// service calculations (THE ONE matching law — never a copied algorithm).
+import {
+  mapPureSupplierBillDomainError,
+  getPurchaseOrderBillingSummary,
+  getPurchaseOrderLineBillingFacts,
+  listRecentBillsForPurchaseOrder,
+} from "@/lib/supplier-bills/service";
 import {
   // P43 §80 — the ONE canonical POSTED-returned-quantity aggregate for PO
   // lines + the return-history corruption mapper (net = gross − returned).
@@ -628,6 +636,42 @@ export async function getPurchaseOrder(input: { businessId: string; id: string }
     recentReceipts = undefined; // §104-analog — history is display-only
   }
 
+  // Prompt 48 (§9) — billing summaries reuse the supplier-bill service
+  // (THE ONE matching law). Per §104-analog, history/summary failures are
+  // DISPLAY-ONLY here: a corrupted billing history must still surface its
+  // stable integrity code (below), but a transient summary error degrades
+  // to an omitted section rather than a broken document page.
+  let billingAgg;
+  try {
+    const [summary, recentBills] = await Promise.all([
+      getPurchaseOrderBillingSummary({
+        businessId: input.businessId,
+        purchaseOrderId: header.id,
+      }),
+      listRecentBillsForPurchaseOrder({
+        businessId: input.businessId,
+        purchaseOrderId: header.id,
+        take: 10,
+      }),
+    ]);
+    const lineFacts = await getPurchaseOrderLineBillingFacts({
+      businessId: input.businessId,
+      purchaseOrderLineIds: lineRows.map((l) => l.id),
+    });
+    billingAgg = { ...summary, lines: lineFacts, recentBills };
+  } catch (error) {
+    // Corrupted BILLING history (status/aggregate integrity) is never
+    // hidden behind a missing section — it surfaces the stable 500.
+    if (
+      error instanceof Error &&
+      (error.name === "SupplierBillMatchingIntegrityError" ||
+        error.name === "SupplierBillStatusIntegrityError")
+    ) {
+      mapPureSupplierBillDomainError(error);
+    }
+    billingAgg = undefined; // transient read failure → display-only omission
+  }
+
   try {
     return purchaseOrderDetailDto(
       {
@@ -640,6 +684,16 @@ export async function getPurchaseOrder(input: { businessId: string; id: string }
       lineRows,
       receivingAgg,
       recentReceipts,
+      billingAgg
+        ? {
+            postedBillCount: billingAgg.postedBillCount,
+            totalBilledQty: billingAgg.totalBilledQty,
+            totalAvailableQty: billingAgg.totalAvailableQty,
+            postedBilledAmountMinor: billingAgg.postedBilledAmountMinor,
+            lines: billingAgg.lines,
+          }
+        : undefined,
+      billingAgg?.recentBills,
     );
   } catch (error) {
     mapPureDomainError(error); // §13/§17 — controlled integrity/overflow

@@ -94,6 +94,10 @@ export function mapSupplierDetail(
   // Prompt 43 (§100) — bounded return history passes through verbatim
   // (already mapped + status-parsed by the goods-return service).
   recentGoodsReturns: SupplierDetail["recentGoodsReturns"] = [],
+  // Prompt 48 (§8) — bounded bill history passes through verbatim (already
+  // mapped + status-parsed by the supplier-bill service; corrupt persisted
+  // status surfaces the controlled integrity error — never a fake DRAFT).
+  recentSupplierBills: SupplierDetail["recentSupplierBills"] = [],
 ): SupplierDetail {
   return {
     supplier: {
@@ -111,6 +115,7 @@ export function mapSupplierDetail(
     recentPurchaseOrders: mapSupplierPurchaseOrders(recentPurchaseOrders),
     recentGoodsReceipts,
     recentGoodsReturns,
+    recentSupplierBills,
   };
 }
 

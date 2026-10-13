@@ -243,7 +243,11 @@ shipped and rate-limited:
 - Contents: business config (incl. `currencyCode`/`decimalPrecision`,
   `export/route.ts:105-115`), members, customers, suppliers, products,
   inventory adjustments, sales + items, expenses, payments, audit trail
-  (`export/route.ts:49-189`). Money is documented as integer minor units
+  (`export/route.ts:49-189`). Prompt 48 adds `supplierBills` +
+  `supplierBillLines` (validate-for-fidelity, NEVER re-imported — the
+  posting transaction is the only sanctioned origin of a bill; the linked
+  payable round-trips through `expenses` with dueDate + reference).
+  Money is documented as integer minor units
   inside the file (`export/route.ts:116-119`, A08).
 - Privacy: password hashes never leave the server; other members are reduced
   to ids/names/emails (`export/route.ts:11-13`).
@@ -266,7 +270,10 @@ shipped and rate-limited:
   (`import/route.ts:88-92`); per-entity row caps — customers/suppliers/
   products 5,000, adjustments/sales/expenses 20,000, payments 50,000
   (`backup-schema.ts:207-213`); 200 items per sale (`:142`); audit trail
-  50,000 / members 500 accepted-but-ignored (`:205-206`).
+  50,000 / members 500 accepted-but-ignored (`:205-206`); supplierBills
+  20,000 / supplierBillLines 50,000 accepted-but-NOT-imported (row schemas
+  verify lifecycle invariants: POSTED ⇔ expenseId+postedAt,
+  CANCELLED ⇔ cancelledAt, and bill/line integer math).
 - Sale line totals are re-verified with integer math on import
   (`import/route.ts:305-316`); a currency mismatch yields a loud warning in
   the report (`:27-29,114`); `members`/`auditTrail` are never imported

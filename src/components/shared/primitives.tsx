@@ -64,7 +64,14 @@ export function PageHeader({
         </h1>
         {subtitle ? <p className="text-muted-foreground text-sm">{subtitle}</p> : null}
       </div>
-      {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+      {actions ? (
+        // flex-wrap: many-action headers (e.g. the supplier-bill detail with
+        // Back + Export + Edit + Cancel + Post) must wrap on narrow phones —
+        // a single unwrappable row overflows the 360px viewport (RTL left-bleed).
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {actions}
+        </div>
+      ) : null}
     </div>
   );
 }

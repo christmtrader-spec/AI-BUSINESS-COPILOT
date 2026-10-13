@@ -21,6 +21,7 @@ import { goodsReceiptLineCap } from "@/lib/inventory/goods-receipt/types";
 import { goodsDispatchLineCap } from "@/lib/inventory/goods-dispatch/types";
 import { salesOrderLineCap } from "@/lib/sales-orders/types";
 import { salesQuotationLineCap } from "@/lib/sales-quotations/types";
+import { supplierBillLineCap } from "@/lib/supplier-bills/types";
 import { goodsReturnLineCap } from "@/lib/inventory/goods-return/types";
 import {
   customerCandidate,
@@ -36,6 +37,7 @@ import {
   productCandidate,
   purchaseOrderCandidate,
   saleCandidate,
+  supplierBillCandidate,
   supplierCandidate,
   type ExpenseRow,
   type OpportunityRow,
@@ -44,6 +46,7 @@ import {
   type GoodsDispatchSearchRow,
   type SalesOrderSearchRow,
   type SalesQuotationSearchRow,
+  type SupplierBillSearchRow,
   type PaymentRow,
   type PurchaseOrderSearchRow,
   type SaleRow,
@@ -602,6 +605,60 @@ async function searchSalesQuotations(
 
 
 /**
+ * Prompt 48 (§5) — supplier-bill discovery. Searchable metadata ONLY:
+ * reference, supplier invoice reference, supplier snapshot, PO reference
+ * snapshot, product/SKU snapshots. NO internalNotes, NO money columns,
+ * NO expense/payment state — the bill list/detail APIs stay the only
+ * surfaces that expose financial state (§5 least-privilege).
+ */
+async function searchSupplierBills(
+  businessId: string,
+  variants: string[],
+): Promise<SearchCandidate[]> {
+  const rows = await db.supplierBill.findMany({
+    where: {
+      businessId, // server-derived tenant scope, never client input
+      OR: [
+        ...variants.map((v) => ({ reference: { contains: v } })),
+        ...variants.map((v) => ({ supplierInvoiceReference: { contains: v } })),
+        ...variants.map((v) => ({ supplierNameAtBill: { contains: v } })),
+        ...variants.map((v) => ({ purchaseOrderReferenceAtBill: { contains: v } })),
+        ...variants.map((v) => ({
+          lines: {
+            some: {
+              OR: [
+                { productNameAtBill: { contains: v } },
+                { skuAtBill: { contains: v } },
+              ],
+            },
+          },
+        })),
+      ],
+    },
+    select: {
+      id: true,
+      reference: true,
+      supplierInvoiceReference: true,
+      status: true,
+      supplierNameAtBill: true,
+      createdAt: true,
+      billDate: true,
+      // Line SNAPSHOT TEXT (name/SKU) feeds the ranker's match fields;
+      // bounded by the SAME bill line-cap law (never unbounded).
+      // No quantities and no money selected.
+      lines: {
+        select: { productNameAtBill: true, skuAtBill: true },
+        take: supplierBillLineCap(process.env.SUPPLIER_BILL_MAX_LINES),
+      },
+    },
+    orderBy: { createdAt: "desc" as const },
+    take: SEARCH_PER_ENTITY_TAKE,
+  });
+  return rows.map((r) => supplierBillCandidate(r as SupplierBillSearchRow));
+}
+
+
+/**
  * Run all requested entity searches concurrently (§6) and return the
  * combined candidate pool (pre-dedup, pre-rank). Bounded to
  * types.length × SEARCH_PER_ENTITY_TAKE rows.
@@ -658,6 +715,9 @@ export async function fetchSearchCandidates(options: {
         break;
       case "SALES_QUOTATION":
         tasks.push(searchSalesQuotations(businessId, variants));
+        break;
+      case "SUPPLIER_BILL":
+        tasks.push(searchSupplierBills(businessId, variants));
         break;
     }
   }

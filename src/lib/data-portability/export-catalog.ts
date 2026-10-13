@@ -61,6 +61,9 @@ export type ExportDatasetKey =
   // Prompt 47 (§20) — quotation datasets: export-only (import blocked).
   | "sales_quotations"
   | "sales_quotation_lines"
+  // Prompt 48 (§6) — supplier-bill datasets: export-only (import blocked).
+  | "supplier_bills"
+  | "supplier_bill_lines"
   | "subscription_summary"
   | "usage_summary";
 
@@ -93,6 +96,8 @@ export const EXPORT_DATASET_KEYS = [
   "sales_order_lines",
   "sales_quotations",
   "sales_quotation_lines",
+  "supplier_bills",
+  "supplier_bill_lines",
   "subscription_summary",
   "usage_summary",
 ] as const satisfies readonly ExportDatasetKey[];
@@ -114,6 +119,8 @@ export const DATASET_IMPLICATIONS: Partial<Record<ExportDatasetKey, ExportDatase
   sales_orders: ["sales_order_lines"],
   // Prompt 47 (§20) — quotations always carry their offer lines.
   sales_quotations: ["sales_quotation_lines"],
+  // Prompt 48 (§6) — supplier bills always carry their invoice lines.
+  supplier_bills: ["supplier_bill_lines"],
 };
 
 export type DatasetMeta = {
@@ -185,6 +192,13 @@ export const EXPORT_CATALOG: Record<ExportDatasetKey, DatasetMeta> = {
   // through a generic importer would fabricate commercial history.
   sales_quotations: { key: "sales_quotations", sensitivity: "CONFIDENTIAL", csvFile: "sales_quotations.csv", labelKey: "salesQuotations" },
   sales_quotation_lines: { key: "sales_quotation_lines", sensitivity: "CONFIDENTIAL", csvFile: "sales_quotation_lines.csv", labelKey: "salesQuotationLines" },
+  // Prompt 48 (§6) — supplier bills + lines: CONFIDENTIAL BUSINESS DATA
+  // (supplier invoice documents with supplier identity + invoiced prices).
+  // Export-ONLY — import is intentionally blocked (§6.1): replaying bills
+  // through a generic importer would fabricate payable history or claim
+  // SupplierBill↔Expense relations outside the posting transaction.
+  supplier_bills: { key: "supplier_bills", sensitivity: "CONFIDENTIAL", csvFile: "supplier_bills.csv", labelKey: "supplierBills" },
+  supplier_bill_lines: { key: "supplier_bill_lines", sensitivity: "CONFIDENTIAL", csvFile: "supplier_bill_lines.csv", labelKey: "supplierBillLines" },
   subscription_summary: { key: "subscription_summary", sensitivity: "CONFIDENTIAL", csvFile: "subscription.csv", labelKey: "subscriptionSummary" },
   usage_summary: { key: "usage_summary", sensitivity: "CONFIDENTIAL", csvFile: "usage.csv", labelKey: "usageSummary" },
 };
@@ -1557,6 +1571,136 @@ export const DATASET_FETCHERS: Record<ExportDatasetKey, DatasetFetcher> = {
     };
   },
 
+
+  // Prompt 48 (§6) — supplier-bill datasets. Authoritative document data +
+  // frozen snapshots + exact integer minor units; expenseId exported as the
+  // allowed document relationship identifier (no duplicated balance fields
+  // — paid/outstanding live ONLY in the authoritative expenses dataset).
+  // internalNotes deliberately NOT exported (staff-only, §16/§6).
+  supplier_bills: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.supplierBill.findMany({
+        where: { businessId: ctx.businessId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take,
+        select: {
+          id: true,
+          reference: true,
+          supplierInvoiceReference: true,
+          supplierId: true,
+          supplierNameAtBill: true,
+          purchaseOrderId: true,
+          purchaseOrderReferenceAtBill: true,
+          status: true,
+          billDate: true,
+          dueDate: true,
+          currencyCodeAtBill: true,
+          currencySymbolAtBill: true,
+          decimalPrecisionAtBill: true,
+          subtotalMinor: true,
+          discountMinor: true,
+          totalMinor: true,
+          createdByUserId: true,
+          postedAt: true,
+          cancelledAt: true,
+          expenseId: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((b) => ({
+        json: {
+          id: b.id,
+          reference: b.reference,
+          supplierInvoiceReference: b.supplierInvoiceReference,
+          supplierId: b.supplierId,
+          supplierNameAtBill: b.supplierNameAtBill,
+          purchaseOrderId: b.purchaseOrderId,
+          purchaseOrderReferenceAtBill: b.purchaseOrderReferenceAtBill,
+          status: b.status,
+          billDate: iso(b.billDate),
+          dueDate: iso(b.dueDate),
+          currencyCodeAtBill: b.currencyCodeAtBill,
+          currencySymbolAtBill: b.currencySymbolAtBill,
+          decimalPrecisionAtBill: b.decimalPrecisionAtBill,
+          subtotalMinor: b.subtotalMinor,
+          discountMinor: b.discountMinor,
+          totalMinor: b.totalMinor,
+          createdByUserId: b.createdByUserId,
+          postedAt: iso(b.postedAt),
+          cancelledAt: iso(b.cancelledAt),
+          expenseId: b.expenseId,
+          createdAt: b.createdAt.toISOString(),
+          updatedAt: b.updatedAt.toISOString(),
+        },
+        csv: [
+          b.id, b.reference, b.supplierInvoiceReference, b.supplierId,
+          b.supplierNameAtBill, b.purchaseOrderId, b.purchaseOrderReferenceAtBill,
+          b.status, iso(b.billDate), iso(b.dueDate),
+          b.currencyCodeAtBill, b.currencySymbolAtBill, b.decimalPrecisionAtBill,
+          b.subtotalMinor, b.discountMinor, b.totalMinor,
+          b.createdByUserId, iso(b.postedAt), iso(b.cancelledAt), b.expenseId,
+          b.createdAt.toISOString(), b.updatedAt.toISOString(),
+        ],
+      })),
+      truncated,
+    };
+  },
+
+  supplier_bill_lines: async (ctx) => {
+    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+      db.supplierBillLine.findMany({
+        where: { supplierBill: { businessId: ctx.businessId } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take,
+        select: {
+          id: true,
+          supplierBillId: true,
+          purchaseOrderLineId: true,
+          productId: true,
+          productNameAtBill: true,
+          skuAtBill: true,
+          unitAtBill: true,
+          billedQty: true,
+          unitPriceMinor: true,
+          purchaseOrderUnitPriceMinor: true,
+          lineTotalMinor: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    );
+    return {
+      rows: items.map((l) => ({
+        json: {
+          id: l.id,
+          supplierBillId: l.supplierBillId,
+          purchaseOrderLineId: l.purchaseOrderLineId,
+          productId: l.productId,
+          productNameAtBill: l.productNameAtBill,
+          skuAtBill: l.skuAtBill,
+          unitAtBill: l.unitAtBill,
+          billedQty: l.billedQty,
+          unitPriceMinor: l.unitPriceMinor,
+          purchaseOrderUnitPriceMinor: l.purchaseOrderUnitPriceMinor,
+          lineTotalMinor: l.lineTotalMinor,
+          createdAt: l.createdAt.toISOString(),
+          updatedAt: l.updatedAt.toISOString(),
+        },
+        csv: [
+          l.id, l.supplierBillId, l.purchaseOrderLineId, l.productId,
+          l.productNameAtBill, l.skuAtBill, l.unitAtBill,
+          l.billedQty, l.unitPriceMinor, l.purchaseOrderUnitPriceMinor,
+          l.lineTotalMinor,
+          l.createdAt.toISOString(), l.updatedAt.toISOString(),
+        ],
+      })),
+      truncated,
+    };
+  },
+
 subscription_summary: async (ctx) => {
     // §51 — customer-visible subscription state ONLY. Provider verification
     // internals, webhook signatures and merchant credentials do not exist here.
@@ -1674,6 +1818,8 @@ export const DATASET_CSV_COLUMNS: Record<ExportDatasetKey, string[]> = {
   // columns stay integer minor units; NO internalNotes column ever.
   sales_quotations: ["id", "reference", "status", "customer_id", "customer_name_at_quotation", "currency_code_at_quotation", "currency_symbol_at_quotation", "decimal_precision_at_quotation", "quotation_date", "valid_until_date", "expected_delivery_date", "discount_minor", "customer_notes", "created_by_user_id", "sent_at", "accepted_at", "rejected_at", "cancelled_at", "converted_at", "created_at", "updated_at"],
   sales_quotation_lines: ["id", "sales_quotation_id", "product_id", "product_name_at_quotation", "sku_at_quotation", "unit_at_quotation", "qty", "unit_price_minor", "created_at", "updated_at"],
+  supplier_bills: ["id", "reference", "supplier_invoice_reference", "supplier_id", "supplier_name_at_bill", "purchase_order_id", "purchase_order_reference_at_bill", "status", "bill_date", "due_date", "currency_code_at_bill", "currency_symbol_at_bill", "decimal_precision_at_bill", "subtotal_minor", "discount_minor", "total_minor", "created_by_user_id", "posted_at", "cancelled_at", "expense_id", "created_at", "updated_at"],
+  supplier_bill_lines: ["id", "supplier_bill_id", "purchase_order_line_id", "product_id", "product_name_at_bill", "sku_at_bill", "unit_at_bill", "billed_qty", "unit_price_minor", "purchase_order_unit_price_minor", "line_total_minor", "created_at", "updated_at"],
   subscription_summary: ["plan_code", "plan_name", "status", "billing_period", "current_period_start", "current_period_end", "trial_start", "trial_end", "cancel_at_period_end", "canceled_at", "ended_at", "created_at"],
   usage_summary: ["metric", "used", "limit", "remaining", "percentage_used", "period_start", "period_end"],
 };

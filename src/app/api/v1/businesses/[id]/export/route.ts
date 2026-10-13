@@ -46,7 +46,9 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   const businessId = ctx.businessId;
 
   // Every query is tenant-scoped by businessId (A01).
-  const [business, members, customers, suppliers, products, adjustments, sales, expenses, payments, auditLogs] =
+  // Prompt 48 (§7) — supplier-bill documents join the backup round-trip
+  // (validate-for-fidelity, never re-imported — see backup-schema.ts).
+  const [business, members, customers, suppliers, products, adjustments, sales, expenses, payments, auditLogs, supplierBills, supplierBillLines] =
     await Promise.all([
       db.business.findUnique({ where: { id: businessId } }),
       db.businessMember.findMany({
@@ -74,6 +76,16 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         orderBy: { createdAt: "asc" },
         include: { actor: { select: { name: true, email: true } } },
       }),
+      // Prompt 48 (§7) — bills + lines (snapshots + relation ids; internalNotes
+      // deliberately excluded — staff-only §16).
+      db.supplierBill.findMany({
+        where: { businessId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      }),
+      db.supplierBillLine.findMany({
+        where: { supplierBill: { businessId } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      }),
     ]);
 
   if (!business) {
@@ -100,6 +112,8 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         expenses: expenses.length,
         payments: payments.length,
         auditLogs: auditLogs.length,
+        supplierBills: supplierBills.length,
+        supplierBillLines: supplierBillLines.length,
       },
     },
     business: {
@@ -177,6 +191,47 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
       method: p.method,
       note: p.note,
       paidAt: p.paidAt,
+    })),
+    // Prompt 48 (§7) — bill documents round-trip with the linked-Expense
+    // identifier; internalNotes never leave the staff view (§16).
+    supplierBills: supplierBills.map((b) => ({
+      id: b.id,
+      reference: b.reference,
+      supplierInvoiceReference: b.supplierInvoiceReference,
+      supplierId: b.supplierId,
+      supplierNameAtBill: b.supplierNameAtBill,
+      purchaseOrderId: b.purchaseOrderId,
+      purchaseOrderReferenceAtBill: b.purchaseOrderReferenceAtBill,
+      status: b.status,
+      billDate: b.billDate,
+      dueDate: b.dueDate,
+      currencyCodeAtBill: b.currencyCodeAtBill,
+      currencySymbolAtBill: b.currencySymbolAtBill,
+      decimalPrecisionAtBill: b.decimalPrecisionAtBill,
+      subtotalMinor: b.subtotalMinor,
+      discountMinor: b.discountMinor,
+      totalMinor: b.totalMinor,
+      createdByUserId: b.createdByUserId,
+      postedAt: b.postedAt,
+      cancelledAt: b.cancelledAt,
+      expenseId: b.expenseId,
+      createdAt: b.createdAt,
+      updatedAt: b.updatedAt,
+    })),
+    supplierBillLines: supplierBillLines.map((l) => ({
+      id: l.id,
+      supplierBillId: l.supplierBillId,
+      purchaseOrderLineId: l.purchaseOrderLineId,
+      productId: l.productId,
+      productNameAtBill: l.productNameAtBill,
+      skuAtBill: l.skuAtBill,
+      unitAtBill: l.unitAtBill,
+      billedQty: l.billedQty,
+      unitPriceMinor: l.unitPriceMinor,
+      purchaseOrderUnitPriceMinor: l.purchaseOrderUnitPriceMinor,
+      lineTotalMinor: l.lineTotalMinor,
+      createdAt: l.createdAt,
+      updatedAt: l.updatedAt,
     })),
     auditTrail: auditLogs.map((a) => ({
       id: a.id,

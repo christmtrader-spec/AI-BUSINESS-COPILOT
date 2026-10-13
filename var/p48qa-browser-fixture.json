@@ -1,0 +1,33 @@
+{
+  "tag": "P48Q-BROWSE",
+  "email": "p48q-owner-mv6le8ct@p48q.test",
+  "password": "testpass123",
+  "businessId": "cmv6le8f80002u1e3o98itunw",
+  "supplierId": "cmv6le8fb000au1e3ojlnkuqe",
+  "purchaseOrderIds": [
+    "cmv6le94g00shu1yvtczwyg1f",
+    "cmv6lecjf00tfu1yvh1r84n2g"
+  ],
+  "bills": {
+    "postedUnpaid": "cmv6ledjy00u3u1yv3mwhm6qy",
+    "postedPartial": "cmv6lefa300uhu1yvasy4hype",
+    "draft": "cmv6lefkf00uzu1yv92w1qo1z",
+    "cancelled": "cmv6lefly00v7u1yveee0migt"
+  },
+  "references": {
+    "A": "SB-20261013-HMMCTA",
+    "B": "SB-20261013-92SRU4",
+    "C": "SB-20261013-E82SFC",
+    "D": "SB-20261013-CTY48D"
+  },
+  "invoiceRefs": {
+    "A": "GINV-2026-001",
+    "B": "GINV-2026-002"
+  },
+  "products": [
+    "cmv6le8fc000cu1e3xrm119fh",
+    "cmv6le8fc000eu1e34bktyvg2",
+    "cmv6le8fd000gu1e34pf07m6u"
+  ],
+  "stockBaseline": "unchanged by billing (posting is a no-stock law)"
+}

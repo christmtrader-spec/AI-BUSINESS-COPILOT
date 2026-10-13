@@ -17,6 +17,7 @@ import { purchaseOrderLineCap } from "@/lib/purchase-orders/types";
 import { mapPurePurchaseOrderDomainError } from "@/lib/purchase-orders/service";
 import { listRecentReceiptsForSupplier } from "@/lib/inventory/goods-receipt/service";
 import { listRecentReturnsForSupplier } from "@/lib/inventory/goods-return/service";
+import { listRecentBillsForSupplier } from "@/lib/supplier-bills/service";
 import {
   computeSupplierSummary,
   mapSupplierDetail,
@@ -53,7 +54,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   // Prompt 41 (§65) — the Supplier 360 gains a bounded procurement section:
   // PurchaseOrder rows are READ-ONLY here (§201) and never feed the payable
   // summary below — a PO is a commitment document, not a payable (§150).
-  const [statusBuckets, recentExpenses, recentPayments, recentPurchaseOrders, recentGoodsReceipts, recentGoodsReturns] =
+  const [statusBuckets, recentExpenses, recentPayments, recentPurchaseOrders, recentGoodsReceipts, recentGoodsReturns, recentSupplierBills] =
     await Promise.all([
     db.expense.groupBy({
       by: ["status"],
@@ -113,6 +114,10 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
     // NO financial statement contamination — returns are never payables
     // and never mutate the statement or aging views).
     listRecentReturnsForSupplier({ businessId: ctx.businessId, supplierId: id, take: 10 }),
+    // Prompt 48 (§8) — bounded supplier-bill history (≤10, snapshot identity).
+    // READ-ONLY document rows; the per-bill payable state comes from the
+    // LIVE linked Expense — this section never adds a payable movement.
+    listRecentBillsForSupplier({ businessId: ctx.businessId, supplierId: id, take: 10 }),
   ]);
 
   const summary = computeSupplierSummary(
@@ -134,6 +139,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
       recentPurchaseOrders,
       recentGoodsReceipts,
       recentGoodsReturns,
+      recentSupplierBills,
     );
   } catch (error) {
     // §12/§13 — corrupted PO status → the SAME stable integrity code as the

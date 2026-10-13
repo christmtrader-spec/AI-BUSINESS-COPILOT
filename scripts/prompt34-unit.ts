@@ -200,7 +200,8 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
   );
   // Prompt 41 added the read-only `recentPurchaseOrders` section (≤10, bounded).
   // Prompt 42 (§121) added `recentGoodsReceipts`; Prompt 43 (§100) appends `recentGoodsReturns`.
-  eq(Object.keys(supp), ["supplier", "summary", "recentExpenses", "recentPayments", "recentPurchaseOrders", "recentGoodsReceipts", "recentGoodsReturns"], "v14 SupplierDetail top-level keys (P43 §100 adds recentGoodsReturns)");
+  // Prompt 48 (§8) appends `recentSupplierBills` (bounded read-only bill history).
+  eq(Object.keys(supp), ["supplier", "summary", "recentExpenses", "recentPayments", "recentPurchaseOrders", "recentGoodsReceipts", "recentGoodsReturns", "recentSupplierBills"], "v14 SupplierDetail top-level keys (P48 §8 adds recentSupplierBills)");
 
   const prod = mapProductDetail(
     { id: "pr1", name: "Widget", sku: "W1", unit: "pcs", salePriceMinor: 500, costPriceMinor: 300, stockQty: 9, lowStockAt: 5, isActive: true, createdAt: base, updatedAt: base },

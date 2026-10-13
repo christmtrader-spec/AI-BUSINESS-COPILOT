@@ -22,6 +22,7 @@ import {
   PackageCheck,
   PackageMinus,
   PackageOpen,
+  ReceiptText,
   ScrollText,
   Search,
   Settings,
@@ -70,6 +71,7 @@ type PaletteNavKey =
   | "goodsDispatches"
   | "salesOrders"
   | "salesQuotations"
+  | "supplierBills"
   | "products"
   | "inventory"
   | "sales"
@@ -105,6 +107,8 @@ const NAV_ITEMS: PaletteItem[] = [
   { view: { kind: "sales-orders" }, labelKey: "salesOrders", icon: FileText },
   // Prompt 47 — Sales Quotations reachable through the SAME palette.
   { view: { kind: "sales-quotations" }, labelKey: "salesQuotations", icon: FileSignature },
+  // Prompt 48 (§4.3) — Supplier Bills reachable through the SAME palette.
+  { view: { kind: "supplier-bills" }, labelKey: "supplierBills", icon: ReceiptText },
   { view: { kind: "module", module: "products" }, labelKey: "products", icon: Package },
   { view: { kind: "module", module: "inventory" }, labelKey: "inventory", icon: Warehouse },
   { view: { kind: "module", module: "sales" }, labelKey: "sales", icon: ShoppingCart },

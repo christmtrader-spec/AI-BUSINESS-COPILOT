@@ -563,7 +563,7 @@ ok(goodsReceiptIsReturnable("POSTED") && !goodsReceiptIsReturnable("DRAFT") && !
   ok(lineModel.includes("@@unique([goodsReturnId, goodsReceiptLineId])"), "u185 line uniqueness per document (§29)");
   ok(lineModel.includes("productNameAtReturn") && lineModel.includes("skuAtReturn") && lineModel.includes("unitAtReturn"), "u186 line snapshot columns (§30)");
   ok(lineModel.includes("reasonCode"), "u187 line reason column (§23)");
-  ok(lineModel.includes("product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)"), "u188 product relation Restrict (§120)");
+  ok(lineModel.includes("product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)"), "u188 product relation Restrict (§120)");
   ok(!/receivedQty Int/.test(lineModel), "u189 line stores NO received-qty copy (receipt is the authority, §34)");
 }
 

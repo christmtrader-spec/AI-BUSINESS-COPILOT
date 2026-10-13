@@ -27,6 +27,7 @@ import {
   PackageCheck,
   PackageMinus,
   PackageOpen,
+  ReceiptText,
   Warehouse,
   type LucideIcon,
 } from "lucide-react";
@@ -67,6 +68,7 @@ type NavItem = {
     | "goodsDispatches"
     | "salesOrders"
     | "salesQuotations"
+    | "supplierBills"
     | "products"
     | "inventory"
     | "sales"
@@ -113,6 +115,8 @@ const OPERATIONS: NavItem[] = [
   { view: { kind: "module", module: "payments" }, labelKey: "payments", icon: CreditCard },
   { view: { kind: "module", module: "receivables" }, labelKey: "receivables", icon: HandCoins },
   { view: { kind: "module", module: "payables" }, labelKey: "payables", icon: ArrowUpRight },
+  // Prompt 48 (§4.2) — supplier bills join the financial/operations group.
+  { view: { kind: "supplier-bills" }, labelKey: "supplierBills", icon: ReceiptText },
 ];
 
 const INTELLIGENCE: NavItem[] = [

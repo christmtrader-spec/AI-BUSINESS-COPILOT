@@ -29,6 +29,7 @@ import {
   Send,
   Trash2,
   XCircle,
+  ReceiptText,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { can, type Role } from "@/lib/rbac";
@@ -58,6 +59,8 @@ import {
   type PurchaseOrderStatus,
 } from "@/lib/purchase-orders/types";
 import type { PurchaseOrderDetailDto, PurchaseOrderLineDto } from "@/lib/purchase-orders/dto";
+// Prompt 48 (§9) — record-supplier-bill dialog (reused, PO preselected).
+import { SupplierBillCreateDialog } from "@/modules/supplier-bills/supplier-bill-create-dialog";
 import {
   addPurchaseOrderLine,
   fetchPurchaseOrder,
@@ -91,6 +94,8 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
   const tGr = useTranslations("goodsReceipts");
   const tCommon = useTranslations("common");
   const tErrors = useTranslations("errors");
+  // Prompt 48 (§9) — supplier-bill billing status + history labels.
+  const tB = useTranslations("supplierBills");
   const queryClient = useQueryClient();
   const navigate = useAppStore((s) => s.navigate);
   const locale = useAppStore((s) => s.locale);
@@ -104,6 +109,8 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
   const [lifecycle, setLifecycle] = useState<LifecycleAction | null>(null);
   // Prompt 42 §103 — the Record Goods Receipt dialog opened from this PO.
   const [grOpen, setGrOpen] = useState(false);
+  // Prompt 48 (§9) — record-supplier-bill dialog state (PO preselected).
+  const [billOpen, setBillOpen] = useState(false);
 
   const detail = useQuery({
     queryKey: purchaseOrderKeys.detail(businessId, id),
@@ -464,6 +471,57 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
         </Card>
       ) : null}
 
+      {/* Prompt 48 (§9) — Billing status: quantities + the POSTED-bill
+          document amount ONLY. The payable itself lives on the linked
+          Expense (§2) — this card never shows an outstanding balance and
+          never double-counts the bill as a second payable movement. */}
+      {data.billing ? (
+        <Card data-testid="po-billing-summary">
+          <CardContent className="pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-base font-semibold">{tB("billedSummaryTitle")}</h2>
+              {status === "CONFIRMED" || status === "CLOSED" ? (
+                writable ? (
+                  <Button type="button" size="sm" variant="outline" onClick={() => setBillOpen(true)} data-testid="po-record-bill">
+                    <ReceiptText className="size-4" aria-hidden />
+                    {tB("createAction")}
+                  </Button>
+                ) : null
+              ) : null}
+            </div>
+            <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">{tB("postedBillCount")}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums" dir="ltr">
+                  {data.billing.postedBillCount}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">{tB("billedQtyLabel")}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums text-emerald-600 dark:text-emerald-400" dir="ltr">
+                  {data.billing.totalBilledQty}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">{tB("remainingInvoiceable")}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums" dir="ltr">
+                  {data.billing.totalAvailableQty}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">{tB("billedAmount")}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums" dir="ltr">
+                  {data.billing.postedBilledAmountMinor != null
+                    ? `${(data.billing.postedBilledAmountMinor / 10 ** precision).toFixed(precision)} ${symbol}`
+                    : "—"}
+                </p>
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">{tB("procurementTotalNote")}</p>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {/* Lines */}
       <Card>
         <CardContent className="pt-4">
@@ -540,6 +598,22 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
                             cell: (l: PurchaseOrderLineDto) => (
                               <span className="text-muted-foreground tabular-nums" dir="ltr">
                                 {l.receivedQty ?? 0} / {l.remainingQty ?? 0}
+                              </span>
+                            ),
+                          },
+                        ]
+                      : []),
+                    ...(data.billing
+                      ? [
+                          {
+                            // Prompt 48 (§9) — billed / invoiceable per PO
+                            // line (THE ONE matching law; quantities only).
+                            id: "billing" as const,
+                            header: tB("billedQtyLabel"),
+                            align: "end" as const,
+                            cell: (l: PurchaseOrderLineDto) => (
+                              <span className="text-muted-foreground tabular-nums" dir="ltr">
+                                {l.previouslyBilledQty ?? 0} / {l.availableBillableQty ?? 0}
                               </span>
                             ),
                           },
@@ -718,6 +792,48 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
         </Card>
       ) : null}
 
+      {/* Prompt 48 (§9) — Recent Supplier Bills (bounded 10). Click-through
+          to the bill detail deep link. Document rows only — never a
+          payable movement; the linked Expense remains the sole authority. */}
+      {data.recentBills && data.recentBills.length > 0 ? (
+        <Card data-testid="po-recent-bills">
+          <CardContent className="pt-4">
+            <h2 className="text-base font-semibold">{tB("poHistory")}</h2>
+            <ul className="mt-2 divide-y">
+              {data.recentBills.map((b) => (
+                <li key={b.id}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-2 rounded-md px-1 py-2 text-start text-sm transition-colors hover:bg-muted/40"
+                    onClick={() => navigate({ kind: "supplier-bill", id: b.id })}
+                  >
+                    <span className="min-w-0 truncate font-medium" dir="auto">{b.reference}</span>
+                    <span className="text-muted-foreground flex shrink-0 items-center gap-2 text-xs">
+                      <span
+                        className={cn(
+                          "rounded border px-1.5 py-0.5",
+                          b.status === "POSTED"
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                            : b.status === "CANCELLED"
+                              ? "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                              : "bg-muted text-muted-foreground border-border",
+                        )}
+                      >
+                        {tB(`status_${b.status}`)}
+                      </span>
+                      <span className="tabular-nums" dir="ltr">
+                        {(b.totalMinor / 10 ** precision).toFixed(precision)} {b.currencySymbolAtBill}
+                      </span>
+                      <span dir="ltr">{dateFmt.format(new Date(b.billDate))}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {/* Line add dialog — product fixed, qty + price (§83/§82) */}
       {addTarget ? (
         <LineQtyPriceDialog
@@ -806,6 +922,24 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
             setGrOpen(false);
             await invalidate();
             navigate({ kind: "inventory-goods-receipt", id: receiptId });
+          }}
+        />
+      ) : null}
+      {/* Prompt 48 (§9) — Record Supplier Bill dialog, PO preselected. */}
+      {billOpen ? (
+        <SupplierBillCreateDialog
+          businessId={businessId}
+          presetPo={{
+            id: data.id,
+            reference: data.reference,
+            supplierNameAtOrder: data.supplier.nameAtOrder,
+            availableQty: data.billing?.totalAvailableQty ?? 0,
+          }}
+          onClose={() => setBillOpen(false)}
+          onCreated={async (billId) => {
+            setBillOpen(false);
+            await invalidate();
+            navigate({ kind: "supplier-bill", id: billId });
           }}
         />
       ) : null}

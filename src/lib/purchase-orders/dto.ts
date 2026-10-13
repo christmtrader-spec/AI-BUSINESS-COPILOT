@@ -19,6 +19,34 @@ import {
 } from "./types";
 import type { PurchaseOrderRecentReceiptDto } from "@/lib/inventory/goods-receipt/dto";
 export type { PurchaseOrderRecentReceiptDto };
+// Prompt 48 (§9) — the closed bill-status vocabulary is imported, never
+// re-inlined (keeps the P41 "no DRAFT coercion literal" law intact).
+import type { SupplierBillStatus } from "@/lib/supplier-bills/types";
+
+/**
+ * Prompt 48 (§9) — ADDITIVE per-PO-line billing facts (quantities derived
+ * by the ONE canonical supplier-bill matching law; NEVER client-trusted).
+ * postedInvoicedUnitPricesMinor feeds the PO-vs-invoice price variance
+ * display (§8 — variance is RECORDED, never silently normalized).
+ */
+export type PurchaseOrderLineBillFact = {
+  lineId: string;
+  previouslyBilledQty: number;
+  availableBillableQty: number;
+  postedInvoicedUnitPricesMinor: number[];
+};
+
+/** Prompt 48 (§9) — bounded recent-bill row for the PO detail page. */
+export type PurchaseOrderRecentBill = {
+  id: string;
+  reference: string;
+  supplierInvoiceReference: string | null;
+  status: SupplierBillStatus;
+  billDate: string;
+  totalMinor: number;
+  currencySymbolAtBill: string;
+  lineCount: number;
+};
 
 /** §51 — bounded, lighter-than-detail list row. */
 export type PurchaseOrderListItemDto = {
@@ -61,6 +89,13 @@ export type PurchaseOrderLineDto = {
    */
   returnedQty?: number;
   netReceivedQty?: number;
+  /**
+   * Prompt 48 (§9) — ADDITIVE billing facts per PO line (THE ONE matching
+   * law): already-billed (POSTED bills only) and the remaining invoiceable
+   * quantity. Quantities only — never money (§151).
+   */
+  previouslyBilledQty?: number;
+  availableBillableQty?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -122,6 +157,21 @@ export type PurchaseOrderDetailDto = {
    * §105). Click-through to the receipt detail deep link.
    */
   recentReceipts?: PurchaseOrderRecentReceiptDto[];
+  /**
+   * Prompt 48 (§9) — ADDITIVE billing summary: linked-bill count, billed
+   * quantity, remaining invoiceable quantity (net received − billed) and
+   * the posted-bill document amount. The PAYABLE itself never appears here
+   * — it lives on the linked Expense (§2/§151: a bill is not money).
+   */
+  billing?: {
+    postedBillCount: number;
+    totalBilledQty: number;
+    totalAvailableQty: number;
+    postedBilledAmountMinor: number | null;
+    lines: PurchaseOrderLineBillFact[];
+  };
+  /** Prompt 48 (§9) — bounded recent-bills list (take 10). */
+  recentBills?: PurchaseOrderRecentBill[];
 };
 
 /* ------------------------------- row shapes ------------------------------- */
@@ -255,10 +305,26 @@ export function purchaseOrderDetailDto(
     }>;
   },
   recentReceipts?: ReadonlyArray<PurchaseOrderRecentReceiptDto>,
+  billing?: {
+    postedBillCount: number;
+    totalBilledQty: number;
+    totalAvailableQty: number;
+    postedBilledAmountMinor: number | null;
+    lines: ReadonlyArray<{
+      lineId: string;
+      previouslyBilledQty: number;
+      availableBillableQty: number;
+      postedInvoicedUnitPricesMinor: number[];
+    }>;
+  },
+  recentBills?: ReadonlyArray<PurchaseOrderRecentBill>,
 ): PurchaseOrderDetailDto {
   const totals: PurchaseOrderTotal = computePurchaseOrderTotal(lines);
   const receivingByLine = new Map(
     receiving ? receiving.lines.map((r) => [r.lineId, r]) : [],
+  );
+  const billingByLine = new Map(
+    billing ? billing.lines.map((b) => [b.lineId, b]) : [],
   );
   return {
     id: row.id,
@@ -300,6 +366,12 @@ export function purchaseOrderDetailDto(
         dto.returnedQty = recv.returnedQty ?? 0;
         dto.netReceivedQty = recv.netReceivedQty ?? recv.receivedQty;
       }
+      // Prompt 48 (§9) — ADDITIVE billing facts (quantities only).
+      const billFact = billingByLine.get(l.id);
+      if (billFact) {
+        dto.previouslyBilledQty = billFact.previouslyBilledQty;
+        dto.availableBillableQty = billFact.availableBillableQty;
+      }
       return dto;
     }),
     ...(receiving
@@ -321,5 +393,17 @@ export function purchaseOrderDetailDto(
     ...(recentReceipts && recentReceipts.length > 0
       ? { recentReceipts: [...recentReceipts] }
       : {}),
+    ...(billing
+      ? {
+          billing: {
+            postedBillCount: billing.postedBillCount,
+            totalBilledQty: billing.totalBilledQty,
+            totalAvailableQty: billing.totalAvailableQty,
+            postedBilledAmountMinor: billing.postedBilledAmountMinor,
+            lines: billing.lines.map((b) => ({ ...b })),
+          },
+        }
+      : {}),
+    ...(recentBills && recentBills.length > 0 ? { recentBills: [...recentBills] } : {}),
   };
 }

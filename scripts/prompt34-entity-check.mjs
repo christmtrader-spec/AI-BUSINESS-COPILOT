@@ -308,7 +308,7 @@ section("DTO");
   // Prompt 41 added the read-only `recentPurchaseOrders` section (≤10, bounded).
   // Prompt 42 (§121) added `recentGoodsReceipts`; Prompt 43 (§100) adds `recentGoodsReturns` (≤10,
   // snapshot identity, NO financial statement contamination) — appended last.
-  check("D supplier exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["supplier", "summary", "recentExpenses", "recentPayments", "recentPurchaseOrders", "recentGoodsReceipts", "recentGoodsReturns"]));
+  check("D supplier exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["supplier", "summary", "recentExpenses", "recentPayments", "recentPurchaseOrders", "recentGoodsReceipts", "recentGoodsReturns", "recentSupplierBills"]));
   check("D summary keys", data && JSON.stringify(Object.keys(data.summary)) === JSON.stringify(["totalExpensesMinor", "paidExpensesMinor", "payableMinor", "expenseCount", "paidExpenseCount", "openExpenseCount"]));
 }
 {

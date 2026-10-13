@@ -62,6 +62,7 @@ export function SupplierDetailView({
   const tPo = useTranslations("purchaseOrders");
   const tGr = useTranslations("goodsReceipts");
   const tRt = useTranslations("goodsReturns");
+  const tB = useTranslations("supplierBills");
   const queryClient = useQueryClient();
   const businessId = useAppStore((s) => s.activeBusinessId);
   const navigate = useAppStore((s) => s.navigate);
@@ -282,6 +283,48 @@ export function SupplierDetailView({
             trailing: `${tRt("totalReturned")}: ${ret.totalReturnedQty}`,
           }))}
           onOpenRow={(id) => navigate({ kind: "inventory-goods-return", id })}
+        />
+      ) : null}
+
+      {/* Prompt 48 (§8) — bounded supplier-bill history (≤10). Snapshot
+          identity; READ-ONLY document history — a DRAFT/CANCELLED bill is
+          NEVER shown as an outstanding payable and a bill is never an
+          inventory movement. The per-row payable badge reads the LIVE
+          linked Expense (paid state), never a copied bill balance. */}
+      {data.recentSupplierBills && data.recentSupplierBills.length > 0 ? (
+        <RelatedRecordList
+          title={tB("supplierHistory")}
+          entity={null}
+          emptyText={tB("noSupplierHistory")}
+          onOpen={() => undefined}
+          items={data.recentSupplierBills.map((bill) => ({
+            id: bill.id,
+            icon: ReceiptText,
+            primary: bill.reference,
+            secondary: [
+              fmtDate(business, bill.billDate),
+              `PO: ${bill.purchaseOrderReferenceAtBill}`,
+              bill.supplierInvoiceReference ?? null,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+            trailing: `${(bill.totalMinor / 10 ** bill.decimalPrecisionAtBill).toFixed(bill.decimalPrecisionAtBill)} ${bill.currencySymbolAtBill}`,
+            badge: (
+              <span className="flex items-center gap-1">
+                <Badge variant="outline" className="text-xs">
+                  {bill.status === "DRAFT"
+                    ? tB("status_DRAFT")
+                    : bill.status === "POSTED"
+                      ? tB("status_POSTED")
+                      : tB("status_CANCELLED")}
+                </Badge>
+                {bill.status === "POSTED" && bill.payableStatus ? (
+                  <FinanceStatusBadge status={bill.payableStatus as "UNPAID"} />
+                ) : null}
+              </span>
+            ),
+          }))}
+          onOpenRow={(id) => navigate({ kind: "supplier-bill", id })}
         />
       ) : null}
 

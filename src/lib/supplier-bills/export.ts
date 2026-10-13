@@ -118,7 +118,10 @@ export async function buildSupplierBillCsv(input: {
   }
 
   const m = messagesFor(input.locale).supplierBills;
-  const filename = `${m.csvFilenamePrefix}-${supplierBillReferenceSlug(header.reference)}.csv`;
+  // The FILENAME stays ASCII-hardcoded (P42/P47 law): a Persian prefix in a
+  // Content-Disposition header is an invalid ByteString (non-ASCII → 500).
+  // Locale governs the CSV HEADERS; the filename is locale-neutral.
+  const filename = `supplier-bill-${supplierBillReferenceSlug(header.reference)}.csv`;
 
   // Exact stored integer minor units — no float formatting anywhere.
   const rows = lineRows.map((line) => [

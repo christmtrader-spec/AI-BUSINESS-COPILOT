@@ -691,3 +691,68 @@ export function salesQuotationCandidate(row: SalesQuotationSearchRow): SearchCan
     method: null,
   };
 }
+
+/* ----------------------- Supplier bill (Prompt 48) ------------------------ */
+
+export type SupplierBillSearchRow = {
+  id: string;
+  reference: string;
+  supplierInvoiceReference: string | null;
+  status: string;
+  supplierNameAtBill: string;
+  createdAt: Date;
+  billDate: Date;
+  /** Line snapshot TEXT (never money/notes) feeds the ranker. */
+  lines?: ReadonlyArray<{ productNameAtBill: string; skuAtBill: string | null }>;
+};
+
+/**
+ * Closed-token guard for the bill lifecycle: an invalid persisted status is
+ * NOT mapped to Draft — the status token is omitted (null) and the bill
+ * still renders under its reference (same safe-omission policy as the
+ * order/quotation/receipt candidates). Prompt 48 §5: search is safe for
+ * corrupted persisted status values.
+ */
+function supplierBillStatusToken(status: string): SearchItemStatus | null {
+  return status === "DRAFT" || status === "POSTED" || status === "CANCELLED"
+    ? status
+    : null;
+}
+
+export function supplierBillCandidate(row: SupplierBillSearchRow): SearchCandidate {
+  const skuNorms = (row.lines ?? [])
+    .map((l) => l.skuAtBill)
+    .filter((v): v is string => Boolean(v))
+    .map(normalizeSearchText);
+  const productNorms = (row.lines ?? [])
+    .map((l) => l.productNameAtBill)
+    .filter((v): v is string => Boolean(v));
+  return {
+    id: row.id,
+    type: "SUPPLIER_BILL",
+    title: row.reference,
+    titleNorm: normalizeSearchText(row.reference),
+    // Supplier invoice reference is the business-facing identifier when
+    // present; the frozen supplier snapshot is the subtitle.
+    subtitle: row.supplierNameAtBill || null,
+    identifierNorm: normalizeSearchText(
+      row.supplierInvoiceReference ?? row.reference,
+    ),
+    identifierExtras: [
+      ...(row.supplierInvoiceReference
+        ? [normalizeSearchText(row.reference)]
+        : []),
+      ...skuNorms,
+    ],
+    numericIdentifier: null,
+    secondaryNorms: [row.supplierInvoiceReference, ...productNorms]
+      .filter((v): v is string => Boolean(v))
+      .map(normalizeSearchText),
+    createdAt: row.createdAt,
+    status: supplierBillStatusToken(row.status),
+    // billDate (the invoice date) is the document's relevant timestamp.
+    date: row.billDate.toISOString(),
+    direction: null,
+    method: null,
+  };
+}

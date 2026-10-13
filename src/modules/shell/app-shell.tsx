@@ -50,6 +50,9 @@ import { SalesOrdersView } from "../sales-orders/sales-orders-view";
 import { SalesOrderDetailView } from "../sales-orders/sales-order-detail-view";
 import { SalesQuotationsView } from "../sales-quotations/sales-quotations-view";
 import { SalesQuotationDetailView } from "../sales-quotations/sales-quotation-detail-view";
+// Prompt 48 — supplier-bill views (§4).
+import { SupplierBillsView } from "../supplier-bills/supplier-bills-view";
+import { SupplierBillDetailView } from "../supplier-bills/supplier-bill-detail-view";
 import { SubscriptionView } from "../billing/subscription-view";
 import { PaymentReturnView } from "../billing/payment-return-view";
 import { AuditView } from "../audit/audit-view";
@@ -118,6 +121,11 @@ function labelKeyOf(view: AppView): string {
       return "salesQuotations";
     case "sales-quotation":
       return "salesQuotations";
+    // Prompt 48 — supplier-bill document titles (§4.1).
+    case "supplier-bills":
+      return "supplierBills";
+    case "supplier-bill":
+      return "supplierBills";
     case "profile":
       return "profile";
     case "module": {
@@ -454,6 +462,31 @@ export function AppShell({
                   onDashboard={() => navigate({ kind: "dashboard" })}
                 >
                   <SalesQuotationDetailView id={view.id} role={role} />
+                </ModuleBoundary>
+              ) : null}
+              {/* Prompt 48 (§4.1) — supplier-bill list + detail views. */}
+              {view.kind === "supplier-bills" ? (
+                <ModuleBoundary
+                  moduleKey={viewKey}
+                  title={tBoundary("title")}
+                  description={tBoundary("description")}
+                  retry={tCommon("retry")}
+                  dashboardLabel={tNav("dashboard")}
+                  onDashboard={() => navigate({ kind: "dashboard" })}
+                >
+                  <SupplierBillsView role={role} />
+                </ModuleBoundary>
+              ) : null}
+              {view.kind === "supplier-bill" ? (
+                <ModuleBoundary
+                  moduleKey={viewKey}
+                  title={tBoundary("title")}
+                  description={tBoundary("description")}
+                  retry={tCommon("retry")}
+                  dashboardLabel={tNav("dashboard")}
+                  onDashboard={() => navigate({ kind: "dashboard" })}
+                >
+                  <SupplierBillDetailView id={view.id} role={role} />
                 </ModuleBoundary>
               ) : null}
               {view.kind === "profile" ? <ProfileView /> : null}

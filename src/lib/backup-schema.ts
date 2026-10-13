@@ -191,6 +191,73 @@ export const paymentRowSchema = z
     message: "payment amountMinor must be positive",
   });
 
+/* --------------------- Prompt 48 (§7) — supplier bills ---------------------
+ * Supplier-bill DOCUMENTS round-trip in the backup file for fidelity, but
+ * they are NEVER re-imported: the only sanctioned way a SupplierBill comes
+ * to exist is the posting transaction (which must also create exactly one
+ * linked Expense inside the same transaction — a bulk restore cannot
+ * reproduce that invariant without fabricating payables). The linked
+ * Expense itself round-trips through the existing `expenses` section (the
+ * sole payable authority); `expenseId` / `purchaseOrderId` are exported as
+ * stable relationship identifiers so the drill can verify the links.
+ * internalNotes are deliberately absent (staff-only, §16).
+ */
+export const supplierBillRowSchema = z.object({
+  id: z.string().min(1).max(64),
+  reference: z.string().min(1).max(80),
+  supplierInvoiceReference: nullableText(80),
+  supplierId: z.string().min(1).max(64),
+  supplierNameAtBill: z.string().min(1).max(160),
+  purchaseOrderId: z.string().min(1).max(64),
+  purchaseOrderReferenceAtBill: z.string().min(1).max(80),
+  status: z.enum(["DRAFT", "POSTED", "CANCELLED"]),
+  billDate: isoDate,
+  dueDate: isoDate,
+  currencyCodeAtBill: z.string().min(3).max(3),
+  currencySymbolAtBill: z.string().min(1).max(8),
+  decimalPrecisionAtBill: z.number().int().min(0).max(4),
+  subtotalMinor: moneyInt,
+  discountMinor: moneyInt,
+  totalMinor: moneyInt,
+  createdByUserId: z.string().min(1).max(64),
+  postedAt: isoDate,
+  cancelledAt: isoDate,
+  expenseId: nullableText(64),
+  createdAt: isoDate,
+  updatedAt: isoDate,
+})
+  .refine((b) => b.totalMinor === b.subtotalMinor - b.discountMinor, {
+    message: "totalMinor must equal subtotalMinor − discountMinor",
+  })
+  .refine(
+    (b) =>
+      (b.status === "POSTED") === (b.expenseId !== null) &&
+      (b.status === "POSTED") === (b.postedAt !== null) &&
+      (b.status === "CANCELLED") === (b.cancelledAt !== null),
+    {
+      message:
+        "status must agree with the lifecycle fields (POSTED ⇔ expenseId+postedAt; CANCELLED ⇔ cancelledAt)",
+    },
+  );
+
+export const supplierBillLineRowSchema = z.object({
+  id: z.string().min(1).max(64),
+  supplierBillId: z.string().min(1).max(64),
+  purchaseOrderLineId: z.string().min(1).max(64),
+  productId: z.string().min(1).max(64),
+  productNameAtBill: z.string().min(1).max(160),
+  skuAtBill: nullableText(60),
+  unitAtBill: nullableText(20),
+  billedQty: z.number().int().min(1).max(1_000_000),
+  unitPriceMinor: moneyInt,
+  purchaseOrderUnitPriceMinor: moneyInt,
+  lineTotalMinor: moneyInt,
+  createdAt: isoDate,
+  updatedAt: isoDate,
+}).refine((l) => l.lineTotalMinor === l.billedQty * l.unitPriceMinor, {
+  message: "lineTotalMinor must equal billedQty × unitPriceMinor (A08 integer math)",
+});
+
 export const backupV1Schema = z
   .object({
     $schema: z.literal(BACKUP_SCHEMA_ID),
@@ -215,6 +282,10 @@ export const backupV1Schema = z
     sales: z.array(saleRowSchema).max(20_000),
     expenses: z.array(expenseRowSchema).max(20_000),
     payments: z.array(paymentRowSchema).max(50_000),
+    // Prompt 48 (§7) — bill documents validate for round-trip fidelity but
+    // are NEVER imported (see supplierBillRowSchema note above).
+    supplierBills: z.array(supplierBillRowSchema).max(20_000).optional(),
+    supplierBillLines: z.array(supplierBillLineRowSchema).max(50_000).optional(),
   })
   .passthrough();
 
@@ -226,6 +297,8 @@ export type AdjustmentRow = z.infer<typeof adjustmentRowSchema>;
 export type SaleRow = z.infer<typeof saleRowSchema>;
 export type ExpenseRow = z.infer<typeof expenseRowSchema>;
 export type PaymentRow = z.infer<typeof paymentRowSchema>;
+export type SupplierBillRow = z.infer<typeof supplierBillRowSchema>;
+export type SupplierBillLineRow = z.infer<typeof supplierBillLineRowSchema>;
 
 export function emptyEntityReport(): Record<ImportEntity, EntityReport> {
   return {

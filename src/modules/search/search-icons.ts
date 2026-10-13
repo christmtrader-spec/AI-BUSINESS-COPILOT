@@ -14,6 +14,7 @@ import {
   PackageCheck,
   PackageMinus,
   PackageOpen,
+  ReceiptText,
   ShoppingCart,
   Target,
   TrendingUp,
@@ -44,6 +45,8 @@ export const SEARCH_TYPE_ICONS: Record<SearchEntityType, LucideIcon> = {
   SALES_ORDER: FileText,
   // Prompt 47 — commercial price offers in search results.
   SALES_QUOTATION: FileSignature,
+  // Prompt 48 (§5) — supplier invoice documents in search results.
+  SUPPLIER_BILL: ReceiptText,
 };
 
 /** Medium localized date for result rows (never raw ISO in the UI). */
