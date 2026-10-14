@@ -30,7 +30,7 @@ unlimited) or `BOOLEAN` (feature present or absent).
 | `AI_MESSAGES_MAX` | LIMIT | `MESSAGES` | Maximum user AI messages per usage period (**Prompt 21 — implemented**; metered together with the request under one idempotency key) |
 | `AI_COPILOT` | BOOLEAN | — | AI Copilot availability (presence gate; quantity metering is enforced by the two LIMIT rows above) |
 | `ADVANCED_REPORTS` | BOOLEAN | — | Advanced report insights (growth/concentration analytics) beyond the deterministic MVP reports |
-| `CSV_EXPORT` | BOOLEAN | — | Server-side CSV export (`GET /api/v1/reports/export`) |
+| `CSV_EXPORT` | BOOLEAN | — | Server-side CSV export on EVERY report CSV route (`/api/v1/reports/export`, `/api/v1/reports/monthly/[month]/export`, `/api/v1/reports/aging/*` exports, `/api/v1/reports/performance/export` — Prompt 50 made the gate uniform) |
 
 ## 2. Value per plan
 

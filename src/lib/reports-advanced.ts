@@ -1,5 +1,5 @@
 /**
- * Advanced report insights — Prompt 20 (§35).
+ * Advanced report insights — Prompt 20 (§35), Prompt 50 hardened (§6/§8).
  *
  * The gated "advanced" block of the reports summary: deterministic
  * comparisons the basic MVP reports do not include (growth vs the previous
@@ -7,13 +7,27 @@
  * computed by THIS server from recorded transactions with integer math
  * (A08/A11-A13) — the AI and the UI only narrate.
  *
+ * Prompt 50 corrections (all previously REPRODUCED defects, now fixed):
+ *  - D50-B: windows were anchored at `Date(localToday+"T00:00:00Z")` and
+ *    stepped in fixed 86_400_000 ms — wrong for every non-UTC timezone and
+ *    across DST. Now BOTH windows come from lib/report-periods.ts: exactly
+ *    N business-local calendar dates each, no overlap, no gap, exclusive
+ *    UTC database bounds (Gate D).
+ *  - D50-C: the customer lookup queried `id IN (...)` WITHOUT the tenant
+ *    scope. Every Customer row is now resolved with the authenticated
+ *    businessId (Gate P) — ids alone never prove ownership.
+ *  - Concentration rows carry the stable customerId (additive) so
+ *    drill-downs key on identity, never on a display name (Gate F), and
+ *    the unassigned-revenue share is exposed instead of redistributed.
+ *
  * Entitlement: ADVANCED_REPORTS (enforced in GET /api/v1/reports/summary —
  * the server OMITS this block entirely when not entitled, so hiding the
  * UI card without server enforcement can never happen the other way
  * around, §26).
  */
 import { db } from "@/lib/db";
-import { normalizeReportDays, type ReportDays } from "@/lib/reports";
+import { pctChange, resolvePreviousWindow, resolveRollingWindow, safeAdd, type ReportDays } from "@/lib/report-periods";
+import { normalizeReportDays } from "@/lib/reports";
 
 export type AdvancedInsights = {
   previousRange: { from: string; to: string };
@@ -29,21 +43,29 @@ export type AdvancedInsights = {
     expensesChangePct: number | null;
   };
   concentration: {
-    topCustomers: Array<{ name: string; revenueMinor: number; sharePct: number }>;
+    topCustomers: Array<{
+      // Prompt 50 additive — stable party identity for safe drill-down.
+      customerId: string;
+      name: string;
+      revenueMinor: number;
+      sharePct: number;
+    }>;
     top5SharePct: number;
     customerCount: number;
+    // Prompt 50 additive (§8) — issued revenue in the window with NO linked
+    // customer. Exposed so named customers' shares visibly do NOT have to
+    // add up to 100%; never redistributed across named customers.
+    unassignedRevenueMinor: number;
+    /** Denominator law: full window issued revenue (assigned + unassigned). */
+    totalRevenueMinor: number;
   };
 };
 
-function pctChange(current: number, previous: number): number | null {
-  if (previous <= 0) return null;
-  return Math.round(((current - previous) / previous) * 100);
-}
-
 /**
  * Deterministic advanced insights for the last `days` compared with the
- * preceding `days` window. Timezone-safe: windows use the business
- * timezone's local date keys, mirroring lib/reports.ts.
+ * preceding `days` window. Timezone-safe: both windows are exact
+ * business-local calendar-date ranges resolved by lib/report-periods.ts
+ * (same law as lib/reports.ts — one date authority for all reports).
  */
 export async function buildAdvancedInsights(
   businessId: string,
@@ -56,66 +78,89 @@ export async function buildAdvancedInsights(
   });
   const tz = business?.timezone || "UTC";
 
-  // Window boundaries in UTC instants matching local-day semantics used by
-  // lib/reports.ts (localDateKey). We compute the same "today" anchor.
-  const now = new Date();
-  const localToday = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now); // YYYY-MM-DD
-  const todayStart = new Date(`${localToday}T00:00:00Z`);
-  const windowFrom = new Date(todayStart.getTime() - (days - 1) * 86_400_000);
-  const prevFrom = new Date(windowFrom.getTime() - days * 86_400_000);
-  const prevUntil = new Date(windowFrom.getTime() - 1);
+  // Current window: the last N business-local dates ending today.
+  const current = resolveRollingWindow(tz, days, new Date());
+  // Previous window: the N business-local dates immediately before —
+  // exactly N local dates, no overlap, no gap (Gate D).
+  const previous = resolvePreviousWindow(tz, days, current.fromKey);
 
   const [sales, expenses, salesPrev, expensesPrev] = await Promise.all([
     db.sale.findMany({
-      where: { businessId, deletedAt: null, issueDate: { gte: windowFrom, lte: now } },
+      where: {
+        businessId,
+        deletedAt: null,
+        issueDate: { gte: current.fetchFrom, lt: current.fetchUntil },
+      },
       select: { totalMinor: true, customerId: true },
     }),
     db.expense.findMany({
-      where: { businessId, deletedAt: null, spentAt: { gte: windowFrom, lte: now } },
+      where: {
+        businessId,
+        deletedAt: null,
+        spentAt: { gte: current.fetchFrom, lt: current.fetchUntil },
+      },
       select: { amountMinor: true },
     }),
     db.sale.findMany({
-      where: { businessId, deletedAt: null, issueDate: { gte: prevFrom, lte: prevUntil } },
+      where: {
+        businessId,
+        deletedAt: null,
+        issueDate: { gte: previous.fetchFrom, lt: previous.fetchUntil },
+      },
       select: { totalMinor: true },
     }),
     db.expense.findMany({
-      where: { businessId, deletedAt: null, spentAt: { gte: prevFrom, lte: prevUntil } },
+      where: {
+        businessId,
+        deletedAt: null,
+        spentAt: { gte: previous.fetchFrom, lt: previous.fetchUntil },
+      },
       select: { amountMinor: true },
     }),
   ]);
 
-  const revenueMinor = sales.reduce((sum, s) => sum + s.totalMinor, 0);
-  const revenuePrevMinor = salesPrev.reduce((sum, s) => sum + s.totalMinor, 0);
-  const expensesMinor = expenses.reduce((sum, e) => sum + e.amountMinor, 0);
-  const expensesPrevMinor = expensesPrev.reduce((sum, e) => sum + e.amountMinor, 0);
+  let revenueMinor = 0;
+  for (const s of sales) revenueMinor = safeAdd(revenueMinor, s.totalMinor, "advanced revenue");
+  let revenuePrevMinor = 0;
+  for (const s of salesPrev) revenuePrevMinor = safeAdd(revenuePrevMinor, s.totalMinor, "advanced prev revenue");
+  let expensesMinor = 0;
+  for (const e of expenses) expensesMinor = safeAdd(expensesMinor, e.amountMinor, "advanced expenses");
+  let expensesPrevMinor = 0;
+  for (const e of expensesPrev) expensesPrevMinor = safeAdd(expensesPrevMinor, e.amountMinor, "advanced prev expenses");
 
   // ---- Customer concentration (current window) -----------------------------
+  // Group by the ACTUAL Customer id (§8) — display names are never identity.
   const byCustomer = new Map<string, number>();
+  let unassignedRevenueMinor = 0;
   for (const s of sales) {
-    if (!s.customerId) continue;
-    byCustomer.set(s.customerId, (byCustomer.get(s.customerId) ?? 0) + s.totalMinor);
+    if (!s.customerId) {
+      unassignedRevenueMinor = safeAdd(unassignedRevenueMinor, s.totalMinor, "unassigned revenue");
+      continue;
+    }
+    byCustomer.set(s.customerId, safeAdd(byCustomer.get(s.customerId) ?? 0, s.totalMinor, "customer revenue"));
   }
   const customerIds = [...byCustomer.keys()];
+  // TENANT LAW (D50-C fix): ids alone never prove ownership — every lookup
+  // carries the authenticated businessId (Gate P).
   const customers =
     customerIds.length > 0
       ? await db.customer.findMany({
-          where: { id: { in: customerIds } },
+          where: { id: { in: customerIds }, businessId },
           select: { id: true, name: true },
         })
       : [];
   const nameOf = new Map(customers.map((c) => [c.id, c.name]));
   const topCustomers = [...byCustomer.entries()]
-    .map(([id, minor]) => ({
-      name: nameOf.get(id) ?? "—",
+    .map(([customerId, minor]) => ({
+      customerId,
+      // Unreachable-by-construction fallback: the ids came from this
+      // business's own sales, so the scoped lookup must resolve them.
+      name: nameOf.get(customerId) ?? "—",
       revenueMinor: minor,
       sharePct: revenueMinor > 0 ? Math.round((minor / revenueMinor) * 100) : 0,
     }))
-    .sort((a, b) => b.revenueMinor - a.revenueMinor)
+    // Deterministic order: revenue desc, then the stable party id (§8).
+    .sort((a, b) => b.revenueMinor - a.revenueMinor || a.customerId.localeCompare(b.customerId))
     .slice(0, 5);
   const top5SharePct =
     revenueMinor > 0
@@ -126,8 +171,8 @@ export async function buildAdvancedInsights(
 
   return {
     previousRange: {
-      from: prevFrom.toISOString().slice(0, 10),
-      to: prevUntil.toISOString().slice(0, 10),
+      from: previous.fromKey,
+      to: previous.toKey,
     },
     growth: {
       revenueMinor,
@@ -144,6 +189,8 @@ export async function buildAdvancedInsights(
       topCustomers,
       top5SharePct,
       customerCount: customerIds.length,
+      unassignedRevenueMinor,
+      totalRevenueMinor: revenueMinor,
     },
   };
 }

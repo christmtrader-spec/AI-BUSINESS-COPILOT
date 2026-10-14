@@ -502,7 +502,15 @@ const HB = { "x-business-id": bizB.id };
 const ownCus = (await f("/api/v1/customers", { method: "POST", headers: HB, body: JSON.stringify({ name: "Isolated Customer B" }) })).body?.data?.id;
 const ownItems = await f("/api/v1/reports/aging/items?side=receivables&limit=100", { headers: HB });
 ok("K1. business B sees an EMPTY receivables detail (no A-data leak)", ownItems.body?.data?.items.length === 0 && ownItems.body?.data?.summary?.totalOutstandingMinor === 0);
-ok("M9. foreign party detail → 404 (no leak)", (await f(`/api/v1/customers/${ownCus}`, { headers: H })).status === 404);
+{
+  // P50 verification note: the cross-USER + cross-BUSINESS probe is stopped
+  // by the membership wall in getAuthContext (403 FORBIDDEN) BEFORE any
+  // record lookup — an equally leak-free outcome to the 404 that the
+  // same-tenant foreign-id probes (K2/K3) get. Both statuses disclose
+  // nothing; the assertion accepts the security-equivalent pair.
+  const m9 = await f(`/api/v1/customers/${ownCus}`, { headers: H });
+  ok("M9. foreign party detail leaks nothing (404 not-found | 403 no-access)", m9.status === 404 || m9.status === 403, `status=${m9.status} ${JSON.stringify(m9.body).slice(0, 120)}`);
+}
 ok("K2. business B cannot open A's customer (404, no existence leak)", (await f(`/api/v1/reports/aging/items?side=receivables&partyId=${cus1}`, { headers: HB })).status === 404);
 ok("K3. business B cannot open A's supplier (404)", (await f(`/api/v1/reports/aging/items?side=payables&partyId=${sup1}`, { headers: HB })).status === 404);
 // A cross-tenant cursor: A's cursor used under B's session → binding rejects.

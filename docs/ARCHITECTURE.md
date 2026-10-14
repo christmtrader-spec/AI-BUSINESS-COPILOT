@@ -182,7 +182,7 @@ offline mobile sync.
 | 01    | Foundation           | DB schema v1 (User/Business/BusinessMember/AuditLog + settings), NextAuth credentials auth, app shell (responsive sidebar layout, theme switcher, en/fa i18n + RTL, sticky footer), onboarding (create business), settings pages |
 | 02    | Master Data          | Customers, Suppliers, Products + basic inventory adjustments; real empty states |
 | 03    | Transactions         | Sales invoices, expenses, payments; receivables/payables views; audit coverage |
-| 04    | Dashboard & Reports  | KPI dashboard, charts (Recharts), reports from real data |
+| 04    | Dashboard & Reports  | KPI dashboard, charts (Recharts), reports from real data; Prompt 50: timezone-safe windows (lib/report-periods), identity-safe product/customer aggregation, honest category "Other", disclosed monthly previews + complete-or-reject CSV, ADVANCED_REPORTS performance drill-down (/api/v1/reports/performance) |
 | 05    | AI Copilot           | Provider abstraction, tool layer, deterministic metrics, chat UI, rate limiting |
 | 06    | Hardening & QA       | Full QA matrix (5 viewports × light/dark × LTR/RTL), security pass, polish, performance |
 

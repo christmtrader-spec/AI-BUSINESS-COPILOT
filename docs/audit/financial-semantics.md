@@ -62,7 +62,7 @@ The app computes **two clearly-labeled figures** (`reports.ts:222-223`):
 | Field | Formula | Honest meaning |
 |---|---|---|
 | `netCashMinor` | `collectedMinor − paidOutMinor` (`reports.ts:222`) | **NET CASH FLOW**: actual money in (payments IN) minus actual money out (payments OUT) in the period. The primary honest number. Label: "Net cash flow" (`en.ts:661`, fa `fa.ts:664`). |
-| `netAccrualMinor` | `revenueMinor − expensesMinor` (`reports.ts:223`) | **"Profit (issued basis)"** (`en.ts:662`, fa `fa.ts:665`): invoiced revenue minus *recorded expenses*. It is NOT a formal P&L: no COGS (§2.4), no depreciation, no accruals, no tax provision, no matching principle. |
+| `netAccrualMinor` | `revenueMinor − expensesMinor` (`reports.ts`, safe-integer-guarded since Prompt 50) | **"Revenue less recorded expenses {value}"** (`en.ts`/`fa.ts` reports.kpiNetAccrual, Prompt 50 wording): invoiced revenue minus *recorded expenses*. It is NOT a formal P&L: no COGS (§2.4), no depreciation, no accruals, no tax provision, no matching principle. The AI snapshot key is `revenueLessRecordedExpensesIssuedBasis` with an explicit anti-profit-framing rule. |
 
 **Plain statement:** the MVP shows **net cash flow** as the trustworthy bottom line. `netAccrualMinor` is a rough issued-basis indicator and must never be presented as accounting profit. There is **no formal gross profit anywhere** — no gross-margin figure is computed in `reports.ts` (nothing between revenue and expenses is netted; top products are ranked by revenue only, `reports.ts:166-176`).
 
@@ -204,7 +204,7 @@ Checked EN vs FA for the terms defined above; both dictionaries carry the honest
 |---|---|---|---|
 | Revenue (issued basis) | "Revenue (issued)" `en.ts:655` | "درآمد (فاکتورشده)" `fa.ts:658` | ✅ basis stated |
 | Net cash flow | `en.ts:661` | "جریان نقدی خالص" `fa.ts:664` | ✅ |
-| Issued-basis profit | "Profit (issued basis) {value}" `en.ts:662` | "سود (مبنای فاکتور)" `fa.ts:665` | ✅ labeled, not "net profit" |
+| Revenue less recorded expenses | "Revenue less recorded expenses {value}" `en.ts` | "درآمد منهای هزینه‌های ثبت‌شده {value}" `fa.ts` | ✅ Prompt 50: the word "profit"/"سود" is gone from every report surface |
 | Outstanding balance | "Balance due" `en.ts:506`, "Outstanding" `en.ts:600` | "مانده" `fa.ts:603` | ✅ |
 | Overpayment guard copy | "Payment cannot exceed the outstanding balance." `en.ts:601` | "پرداخت نمی‌تواند از مانده بیشتر باشد." `fa.ts:604` | ✅ |
 | Copilot grounding note | "Every figure comes from your recorded transactions — never invented." `en.ts:789` | "همه اعداد از تراکنش‌های ثبت‌شدهٔ شما می‌آیند — بدون ساختگی." `fa.ts:782` | ✅ |

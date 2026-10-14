@@ -67,6 +67,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { fmtCount, fmtMoney } from "../finance-shared/finance-kit";
+import { PerformancePanel } from "./performance-panel";
 import type { BusinessSummary } from "../shell/types";
 
 /**
@@ -95,8 +96,25 @@ type Summary = {
     collectedMinor: number;
     paidOutMinor: number;
   }>;
-  topProducts: Array<{ name: string; qty: number; revenueMinor: number }>;
+  // Prompt 50 additive: stable product identity + line-count metadata
+  // (name/qty/revenueMinor preserved verbatim for backward compatibility).
+  topProducts: Array<{
+    name: string;
+    qty: number;
+    revenueMinor: number;
+    productId: string | null;
+    kind: "catalog" | "unlinked";
+    unit: string | null;
+    sku: string | null;
+    invoiceCount: number;
+  }>;
   expensesByCategory: Array<{ category: string; totalMinor: number }>;
+  // Prompt 50 additive — server-computed "Other" bucket: SUM(top slice +
+  // Other) === expensesMinor exactly, so displayed shares have an honest
+  // denominator (Gate G).
+  expensesByCategoryOther: { category: string; totalMinor: number };
+  expensesByCategoryTotalMinor: number;
+  expensesCategoryCount: number;
   outstanding: {
     receivableMinor: number;
     receivableCount: number;
@@ -136,9 +154,16 @@ type AdvancedInsights = {
     expensesChangePct: number | null;
   };
   concentration: {
-    topCustomers: Array<{ name: string; revenueMinor: number; sharePct: number }>;
+    topCustomers: Array<{
+      customerId: string;
+      name: string;
+      revenueMinor: number;
+      sharePct: number;
+    }>;
     top5SharePct: number;
     customerCount: number;
+    unassignedRevenueMinor: number;
+    totalRevenueMinor: number;
   };
 };
 
@@ -192,6 +217,12 @@ type MonthDetail = {
     balanceMinor: number;
     status: string;
   }>;
+  // Prompt 50 (§10) — truthful preview metadata: the row lists are a
+  // bounded, DISCLOSED preview of the complete month.
+  preview: {
+    sales: { totalCount: number; displayedCount: number; hasMore: boolean };
+    expenses: { totalCount: number; displayedCount: number; hasMore: boolean };
+  };
 };
 
 /** Percent change between two minor-unit totals; null when undefined (÷0). */
@@ -438,6 +469,30 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
       data.kpis.collectedMinor > 0 ||
       data.kpis.paidOutMinor > 0);
 
+  // Prompt 50 (§9/§E-Gate) — category slices with an HONEST denominator:
+  // the donut shows the top slice PLUS a server-computed "Other" bucket,
+  // so every percentage is a share of ALL expenses in range and
+  // SUM(slices) === kpis.expensesMinor exactly.
+  const categorySlices = data
+    ? [
+        ...data.expensesByCategory.map((c) => ({
+          category: c.category,
+          totalMinor: c.totalMinor,
+          isOther: false,
+        })),
+        ...(data.expensesByCategoryOther.totalMinor > 0
+          ? [
+              {
+                category: t("categoryOther"),
+                totalMinor: data.expensesByCategoryOther.totalMinor,
+                isOther: true,
+              },
+            ]
+          : []),
+      ]
+    : [];
+  const categoryDenominator = data?.expensesByCategoryTotalMinor ?? 0;
+
   const kpiCards = data
     ? [
         {
@@ -573,7 +628,12 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
           {/* Prompt 20 — advanced insights: rendered ONLY from what the
               server entitled (§26). Locked teaser otherwise. */}
           {data.advancedAvailable && data.advanced ? (
-            <AdvancedInsightsCard data={data.advanced} fmt={fmt} uiLocale={uiLocale} />
+            <>
+              <AdvancedInsightsCard data={data.advanced} fmt={fmt} uiLocale={uiLocale} />
+              {/* Prompt 50 (§11/§16) — performance detail: same entitlement,
+                  source-level drill-down behind the summary. */}
+              <PerformancePanel business={business} />
+            </>
           ) : (
             <AdvancedLockedCard />
           )}
@@ -925,7 +985,7 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                 <CardDescription>{t("categoryDesc")}</CardDescription>
               </CardHeader>
               <CardContent>
-                {data.expensesByCategory.length === 0 ? (
+                {categorySlices.length === 0 ? (
                   <EmptyState icon={Layers} title={t("categoryEmpty")} className="border-0 p-6" />
                 ) : (
                   <div className="flex flex-col items-center gap-4 sm:flex-row">
@@ -937,7 +997,7 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                       <PieChart>
                         <ChartTooltip content={<MoneyTooltip fmt={fmt} />} />
                         <Pie
-                          data={data.expensesByCategory}
+                          data={categorySlices}
                           dataKey="totalMinor"
                           nameKey="category"
                           innerRadius={45}
@@ -945,18 +1005,26 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                           paddingAngle={2}
                           strokeWidth={0}
                         >
-                          {data.expensesByCategory.map((entry, i) => (
-                            <Cell key={entry.category} fill={CATEGORY_COLORS[i % CATEGORY_COLORS.length]} />
+                          {categorySlices.map((entry, i) => (
+                            <Cell
+                              key={`${entry.category}-${i}`}
+                              fill={CATEGORY_COLORS[i % CATEGORY_COLORS.length]}
+                            />
                           ))}
                         </Pie>
                       </PieChart>
                     </ChartContainer>
                     <ul className="w-full space-y-2">
-                      {data.expensesByCategory.map((cat, i) => {
-                        const total = data.expensesByCategory.reduce((s, c) => s + c.totalMinor, 0);
-                        const pct = total > 0 ? Math.round((cat.totalMinor / total) * 100) : 0;
+                      {categorySlices.map((cat, i) => {
+                        // Honest denominator (Gate G): the share is of ALL
+                        // expenses in range (server total), never of just
+                        // the displayed slices.
+                        const pct =
+                          categoryDenominator > 0
+                            ? Math.round((cat.totalMinor / categoryDenominator) * 100)
+                            : 0;
                         return (
-                          <li key={cat.category} className="flex items-center gap-2 text-sm">
+                          <li key={`${cat.category}-${i}`} className="flex items-center gap-2 text-sm">
                             <span
                               className="size-2.5 shrink-0 rounded-[3px]"
                               style={{ background: CATEGORY_COLORS[i % CATEGORY_COLORS.length] }}
@@ -964,6 +1032,9 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                             />
                             <span className="min-w-0 flex-1 truncate" dir="auto">
                               {cat.category}
+                              {cat.isOther ? (
+                                <span className="sr-only"> — {t("categoryOtherAria")}</span>
+                              ) : null}
                             </span>
                             <span className="text-muted-foreground text-xs tabular-nums">{pct}%</span>
                             <span className="font-medium tabular-nums" dir="ltr">
@@ -978,7 +1049,9 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
               </CardContent>
             </Card>
 
-            {/* Top products */}
+            {/* Top products — catalog rows deep-link by STABLE productId;
+                unlinked (no catalog identity) rows carry a truthful badge
+                and never fake a destination (§16). */}
             <Card className="min-w-0">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
@@ -1021,12 +1094,39 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                   </ChartContainer>
                 )}
                 {data.topProducts.length > 0 ? (
-                  <p className="text-muted-foreground mt-2 text-center text-xs">
-                    {t("topProductsQtyNote", {
-                      name: data.topProducts[0].name,
-                      qty: fmtCount(uiLocale, data.topProducts[0].qty),
-                    })}
-                  </p>
+                  <>
+                    <ul className="mt-2 space-y-1">
+                      {data.topProducts.map((p) => (
+                        <li key={p.productId ?? `u:${p.name}`} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            {p.productId ? (
+                              <button
+                                type="button"
+                                className="hover:text-foreground truncate rounded font-medium transition-colors focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2"
+                                onClick={() => navigate({ kind: "entity", entity: "product", id: p.productId! })}
+                                title={p.sku ? `${p.name} — ${p.sku}` : p.name}
+                              >
+                                {p.name}
+                              </button>
+                            ) : (
+                              <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+                                {p.name}
+                              </Badge>
+                            )}
+                          </span>
+                          <span className="text-muted-foreground shrink-0 tabular-nums" dir="ltr">
+                            {fmt(p.revenueMinor)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="text-muted-foreground mt-2 text-center text-xs">
+                      {t("topProductsQtyNote", {
+                        name: data.topProducts[0].name,
+                        qty: fmtCount(uiLocale, data.topProducts[0].qty),
+                      })}
+                    </p>
+                  </>
                 ) : null}
               </CardContent>
             </Card>
@@ -1253,12 +1353,20 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                 ))}
               </div>
 
-              {/* Sales in month */}
+              {/* Sales in month — bounded, DISCLOSED preview (§10). */}
               <div>
                 <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold">
                   <ReceiptText className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
                   {t("momDetailSales", { count: fmtCount(uiLocale, monthDetail.totals.salesCount) })}
                 </p>
+                {monthDetail.preview.sales.hasMore ? (
+                  <p className="text-muted-foreground mb-1.5 text-[11px]">
+                    {t("momDetailPreview", {
+                      shown: fmtCount(uiLocale, monthDetail.preview.sales.displayedCount),
+                      total: fmtCount(uiLocale, monthDetail.preview.sales.totalCount),
+                    })}
+                  </p>
+                ) : null}
                 {monthDetail.sales.length === 0 ? (
                   <p className="text-muted-foreground rounded-md border border-dashed px-3 py-3 text-xs">
                     {t("momDetailEmpty")}
@@ -1290,7 +1398,7 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                 )}
               </div>
 
-              {/* Expenses in month */}
+              {/* Expenses in month — bounded, DISCLOSED preview (§10). */}
               <div>
                 <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold">
                   <Coins className="size-3.5 text-rose-600 dark:text-rose-400" aria-hidden="true" />
@@ -1298,6 +1406,14 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                     count: fmtCount(uiLocale, monthDetail.totals.expensesCount),
                   })}
                 </p>
+                {monthDetail.preview.expenses.hasMore ? (
+                  <p className="text-muted-foreground mb-1.5 text-[11px]">
+                    {t("momDetailPreview", {
+                      shown: fmtCount(uiLocale, monthDetail.preview.expenses.displayedCount),
+                      total: fmtCount(uiLocale, monthDetail.preview.expenses.totalCount),
+                    })}
+                  </p>
+                ) : null}
                 {monthDetail.expenses.length === 0 ? (
                   <p className="text-muted-foreground rounded-md border border-dashed px-3 py-3 text-xs">
                     {t("momDetailEmpty")}
@@ -1355,6 +1471,8 @@ function AdvancedInsightsCard({
 }) {
   const tAdv = useTranslations("billing.advanced");
   const tBilling = useTranslations("billing");
+  const t = useTranslations("reports");
+  const navigate = useAppStore((s) => s.navigate);
 
   const pct = (v: number | null) =>
     v === null ? (
@@ -1434,10 +1552,18 @@ function AdvancedInsightsCard({
           ) : (
             <ul className="space-y-1.5">
               {data.concentration.topCustomers.map((c) => (
-                <li key={c.name} className="flex items-center gap-3 text-sm">
-                  <span className="w-28 shrink-0 truncate sm:w-40" title={c.name}>
+                <li key={c.customerId} className="flex items-center gap-3 text-sm">
+                  {/* Prompt 50 (§8) — identity-safe drill-down: the row
+                      navigates by the STABLE customerId (never the display
+                      name), so same-name customers stay distinct. */}
+                  <button
+                    type="button"
+                    className="hover:text-foreground w-28 shrink-0 truncate rounded text-start transition-colors focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 sm:w-40"
+                    title={c.name}
+                    onClick={() => navigate({ kind: "entity", entity: "customer", id: c.customerId })}
+                  >
                     {c.name}
-                  </span>
+                  </button>
                   <div className="bg-muted h-1.5 flex-1 overflow-hidden rounded-full">
                     <div
                       className="bg-primary/60 h-full rounded-full"
@@ -1457,6 +1583,13 @@ function AdvancedInsightsCard({
               ))}
             </ul>
           )}
+          {/* §8 — unassigned issued revenue is EXPOSED, never redistributed:
+              this is why named customers' shares need not add up to 100%. */}
+          {data.concentration.unassignedRevenueMinor > 0 ? (
+            <p className="text-muted-foreground mt-2 text-xs tabular-nums" dir="ltr">
+              {t("perfColNoCustomer")}: {fmt(data.concentration.unassignedRevenueMinor)}
+            </p>
+          ) : null}
           <p className="sr-only">
             {tBilling("advancedReports")} — {uiLocale}
           </p>
