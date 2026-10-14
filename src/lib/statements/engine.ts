@@ -98,6 +98,14 @@ export type StatementResult = {
   rows: Array<{
     id: string;
     eventType: StatementEventType;
+    /**
+     * Prompt 49 (§13) — the SOURCE identity behind the row (additive):
+     * navigation resolves documents from sourceType + sourceId, NEVER from
+     * client-rendered reference text. Additive fields — existing consumers
+     * keep their previous shape.
+     */
+    sourceType: StatementSourceType;
+    sourceId: string;
     occurredAt: string;
     reference: string | null;
     description: string | null;
@@ -424,6 +432,9 @@ export async function buildStatement(req: StatementRequest): Promise<StatementRe
     rows: rows.map((row) => ({
       id: row.id,
       eventType: row.eventType,
+      // Prompt 49 (§13) — source identity rides with the row.
+      sourceType: row.sourceType,
+      sourceId: row.sourceId,
       occurredAt: row.occurredAt.toISOString(),
       reference: row.reference,
       description: row.description,

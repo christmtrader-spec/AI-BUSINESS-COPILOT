@@ -128,6 +128,9 @@ export function mapCustomerDetail(
   // Prompt 47 (§19) — bounded quotation history passes through verbatim
   // (already mapped by the sales-quotation service).
   recentSalesQuotations: CustomerDetail["recentSalesQuotations"] = [],
+  // Prompt 49 (§17) — canonical receivables-aging overview for THIS customer
+  // (computed by the caller from the canonical aging engine; bounded scan).
+  receivablesAging: CustomerDetail["receivablesAging"] = undefined,
 ): CustomerDetail {
   return {
     customer: {
@@ -145,6 +148,7 @@ export function mapCustomerDetail(
     recentGoodsDispatches,
     recentSalesOrders,
     recentSalesQuotations,
+    receivablesAging,
     // §44 — present but EMPTY for legacy callers; the detail route always
     // supplies the real bounded section.
     crm: crm ?? {

@@ -27,6 +27,14 @@ export type AgingBucket = { key: AgingBucketKey; minor: number; count: number };
 export type AgingParty = {
   /** Customer/supplier name; null = no party recorded ("—"). */
   name: string | null;
+  /**
+   * Prompt 49 (§6) — the AUTHORITATIVE party id (customerId/supplierId)
+   * inside the requesting tenant; null = items with no linked party.
+   * Grouping is keyed by THIS id, never by the display name: two parties
+   * with identical names stay two distinct groups. Additive field —
+   * existing aggregate-API consumers keep their previous shape.
+   */
+  partyId: string | null;
   balanceMinor: number;
   openCount: number;
   /** Age in days of this party's OLDEST open item (0 when not yet due). */
@@ -49,6 +57,12 @@ export type AgingItem = {
   anchor: Date;
   balanceMinor: number;
   party: string | null;
+  /**
+   * Prompt 49 (§6) — authoritative tenant-scoped party id of the source
+   * record (Sale.customerId / Expense.supplierId); null when unlinked.
+   * REQUIRED for per-party drill-down — display names are not identity.
+   */
+  partyId?: string | null;
   /** Payables only — enables the past-due slice. */
   dueDate?: Date | null;
 };
@@ -114,7 +128,8 @@ export function agingBucketForAge(ageDays: number): AgingBucketKey {
 
 /**
  * Build one aging side (receivables OR payables) from open items.
- * Integer math only; parties aggregated by name; deterministic ordering.
+ * Integer math only; parties aggregated by AUTHORITATIVE PARTY ID
+ * (Prompt 49 §6 — never by display name alone); deterministic ordering.
  */
 export function buildAgingSide(
   items: AgingItem[],
@@ -133,7 +148,7 @@ export function buildAgingSide(
 
   const partyAgg = new Map<
     string,
-    { name: string | null; balanceMinor: number; openCount: number; oldestDays: number }
+    { partyId: string | null; name: string | null; balanceMinor: number; openCount: number; oldestDays: number }
   >();
 
   for (const item of items) {
@@ -146,7 +161,10 @@ export function buildAgingSide(
     b.count += 1;
     totalMinor += balance;
 
-    const partyKey = item.party ?? "\u0000";
+    // Prompt 49 (§6) — the group key is the party ID (tenant-scoped), not
+    // the name. Two same-name parties therefore NEVER merge, and every
+    // record without a linked party lands in one explicit unassigned group.
+    const partyKey = item.partyId ?? "\u0000";
     const agg = partyAgg.get(partyKey);
     if (agg) {
       agg.balanceMinor += balance;
@@ -154,6 +172,7 @@ export function buildAgingSide(
       agg.oldestDays = Math.max(agg.oldestDays, ageDays);
     } else {
       partyAgg.set(partyKey, {
+        partyId: item.partyId ?? null,
         name: item.party,
         balanceMinor: balance,
         openCount: 1,
@@ -174,6 +193,7 @@ export function buildAgingSide(
       (a, b2) =>
         b2.balanceMinor - a.balanceMinor ||
         compareNames(a.name, b2.name) ||
+        compareIds(a.partyId, b2.partyId) ||
         b2.oldestDays - a.oldestDays,
     )
     .slice(0, AGING_TOP_PARTIES)
@@ -197,4 +217,13 @@ function compareNames(a: string | null, b: string | null): number {
   if (a === null) return 1; // no-party sorts after named parties
   if (b === null) return -1;
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Prompt 49 (§6) — deterministic tie-break when two same-name parties tie:
+ * the authoritative ids order the groups (never merges them). */
+function compareIds(a: string | null, b: string | null): number {
+  if (a === b) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  return a < b ? -1 : 1;
 }

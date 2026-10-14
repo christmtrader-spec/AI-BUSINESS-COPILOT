@@ -36,7 +36,9 @@ export async function buildAgingReport(businessId: string, now: Date = new Date(
         totalMinor: true,
         paidMinor: true,
         issueDate: true,
-        customer: { select: { name: true } },
+        // Prompt 49 (§6) — the AUTHORITATIVE party id travels with the name:
+        // per-party drill-down keys on id, never on the display string.
+        customer: { select: { id: true, name: true } },
       },
     }),
     db.expense.findMany({
@@ -48,7 +50,7 @@ export async function buildAgingReport(businessId: string, now: Date = new Date(
         paidMinor: true,
         spentAt: true,
         dueDate: true,
-        supplier: { select: { name: true } },
+        supplier: { select: { id: true, name: true } },
       },
     }),
   ]);
@@ -57,12 +59,14 @@ export async function buildAgingReport(businessId: string, now: Date = new Date(
     anchor: s.issueDate,
     balanceMinor: s.totalMinor - s.paidMinor,
     party: s.customer?.name ?? null,
+    partyId: s.customer?.id ?? null,
   }));
 
   const payableItems: AgingItem[] = expenses.map((e) => ({
     anchor: e.dueDate ?? e.spentAt,
     balanceMinor: e.amountMinor - e.paidMinor,
     party: e.supplier?.name ?? null,
+    partyId: e.supplier?.id ?? null,
     dueDate: e.dueDate,
   }));
 

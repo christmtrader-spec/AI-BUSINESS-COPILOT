@@ -286,7 +286,7 @@ section("DTO");
   // Prompt 47 (§19) adds `recentSalesQuotations` (bounded ≤10, snapshot-faithful,
   // quantities + status only — offer references, never revenue) — keyed per the
   // authoritative src/lib/entities/customer.ts payload order.
-  check("C customer exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["customer", "summary", "recentSales", "recentPayments", "recentGoodsDispatches", "recentSalesOrders", "recentSalesQuotations", "crm"]), JSON.stringify(data && Object.keys(data)));
+  check("C customer exact top-level keys (P49 §17 adds receivablesAging)", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["customer", "summary", "recentSales", "recentPayments", "recentGoodsDispatches", "recentSalesOrders", "recentSalesQuotations", "receivablesAging", "crm"]), JSON.stringify(data && Object.keys(data)));
   check("C recentGoodsDispatches array", Array.isArray(data?.recentGoodsDispatches));
   check("C recentSalesOrders array", Array.isArray(data?.recentSalesOrders));
   check("C recentSalesQuotations array", Array.isArray(data?.recentSalesQuotations));
@@ -308,7 +308,7 @@ section("DTO");
   // Prompt 41 added the read-only `recentPurchaseOrders` section (≤10, bounded).
   // Prompt 42 (§121) added `recentGoodsReceipts`; Prompt 43 (§100) adds `recentGoodsReturns` (≤10,
   // snapshot identity, NO financial statement contamination) — appended last.
-  check("D supplier exact top-level keys", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["supplier", "summary", "recentExpenses", "recentPayments", "recentPurchaseOrders", "recentGoodsReceipts", "recentGoodsReturns", "recentSupplierBills"]));
+  check("D supplier exact top-level keys (P49 §17 adds payablesAging)", data && JSON.stringify(Object.keys(data)) === JSON.stringify(["supplier", "summary", "recentExpenses", "recentPayments", "recentPurchaseOrders", "recentGoodsReceipts", "recentGoodsReturns", "recentSupplierBills", "payablesAging"]));
   check("D summary keys", data && JSON.stringify(Object.keys(data.summary)) === JSON.stringify(["totalExpensesMinor", "paidExpensesMinor", "payableMinor", "expenseCount", "paidExpenseCount", "openExpenseCount"]));
 }
 {

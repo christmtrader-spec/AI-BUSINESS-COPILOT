@@ -697,7 +697,7 @@ async function main() {
   section("AN no sensitive fields");
   {
     const rowKeys = new Set((recFull?.rows ?? []).flatMap((row) => Object.keys(row)));
-    ok("AN1. rows carry exactly the §32 contract fields", [...rowKeys].every((k) => ["id", "eventType", "occurredAt", "reference", "description", "increaseMinor", "decreaseMinor", "movementMinor", "balanceAfterMinor"].includes(k)));
+    ok("AN1. rows carry exactly the §32 contract fields (+ P49 source identity)", [...rowKeys].every((k) => ["id", "eventType", "sourceType", "sourceId", "occurredAt", "reference", "description", "increaseMinor", "decreaseMinor", "movementMinor", "balanceAfterMinor"].includes(k)));
     ok("AN2. no note/actor/ip fields", [...rowKeys].every((k) => !("note" === k || "actorId" === k || "ip" === k || "userAgent" === k || /audit/i.test(k))));
   }
 

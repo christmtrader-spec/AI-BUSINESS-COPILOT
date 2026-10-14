@@ -14,6 +14,10 @@ import {
   isStatementTypeToken,
   type StatementTypeToken,
 } from "@/lib/statements/types";
+import {
+  AGING_BUCKET_KEYS,
+  type AgingBucketKey,
+} from "@/lib/aging";
 
 /**
  * Global client state (Zustand). Server data lives in TanStack Query;
@@ -123,6 +127,21 @@ export type AppView =
    */
   | { kind: "supplier-bills" }
   | { kind: "supplier-bill"; id: string }
+  /**
+   * Prompt 49 (§7/§11/§16) — DETAILED AGING drill-down: the open source
+   * documents behind the aggregate aging. Reached from AgingCard buckets /
+   * top parties / past-due chip and the 360 aging panels. Canonical filters
+   * persist in the hash (#/reports/aging-details?…) so refresh and
+   * back/forward stay correct; every filter is validated before it can
+   * become state (§18 — invalid filters fall back safely, never a blank page).
+   */
+  | {
+      kind: "aging-details";
+      side: "receivables" | "payables";
+      partyId?: string | null;
+      bucket?: AgingBucketKey | null;
+      pastDue?: boolean;
+    }
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
@@ -259,6 +278,10 @@ export function viewKeyOf(view: AppView): string {
       ? "supplier-bills"
     : view.kind === "supplier-bill"
       ? `supplier-bill:${view.id}`
+    // Prompt 49 — aging-details remounts on ANY filter change so each
+    // side/party/bucket view holds its own cursor stack and scroll state.
+    : view.kind === "aging-details"
+      ? `aging-details:${view.side}:${view.partyId ?? ""}:${view.bucket ?? ""}:${view.pastDue ? 1 : 0}`
       : view.kind === "join"
       ? `join:${view.token}`
       : view.kind === "reset-password"
@@ -323,6 +346,17 @@ export function sameView(a: AppView, b: AppView): boolean {
   // Prompt 48 — supplier-bill detail compares id (viewKey already carries it).
   if (a.kind === "supplier-bill" && b.kind === "supplier-bill") {
     return a.id === b.id;
+  }
+  // Prompt 49 — aging-details compare every canonical filter: a hash change
+  // on any of them re-enters the store (back/forward correctness, §18)
+  // while viewKeyOf keeps the mounted view stable per filter combination.
+  if (a.kind === "aging-details" && b.kind === "aging-details") {
+    return (
+      a.side === b.side &&
+      (a.partyId ?? null) === (b.partyId ?? null) &&
+      (a.bucket ?? null) === (b.bucket ?? null) &&
+      Boolean(a.pastDue) === Boolean(b.pastDue)
+    );
   }
   // Prompt 33 — hash query changes re-enter the store (back/forward must
   // update the Search Center) without remounting the view (§13/§33).
@@ -432,6 +466,21 @@ export function viewToHash(view: AppView): string | null {
       // Prompt 48 — only charset-safe ids ever become a hash.
       if (!isValidEntityId(view.id)) return null;
       return `#/supplier-bills/${view.id}`;
+    case "aging-details": {
+      // Prompt 49 (§18) — canonical filter hash. A partyId that cannot
+      // survive parsing produces NO hash (never a fake destination); the
+      // bucket rides only when it is a closed bucket key; pastDue only on
+      // the payables side (receivables have no authoritative due date).
+      if (view.side !== "receivables" && view.side !== "payables") return null;
+      if (view.partyId && !isValidEntityId(view.partyId)) return null;
+      const params = new URLSearchParams({ side: view.side });
+      if (view.partyId) params.set("party", view.partyId);
+      if (view.bucket && (AGING_BUCKET_KEYS as readonly string[]).includes(view.bucket)) {
+        params.set("bucket", view.bucket);
+      }
+      if (view.pastDue && view.side === "payables") params.set("pastDue", "1");
+      return `#/reports/aging-details?${params.toString()}`;
+    }
     case "platform":
       // #/platform itself resolves to the overview section (§15).
       return view.section === "overview" ? "#/platform" : `#/platform/${view.section}`;
@@ -529,6 +578,30 @@ export function hashToView(hash: string): AppView {
     }
     if (!isValidEntityId(id)) return { kind: "dashboard" };
     return { kind: "statements", statementType: type, id };
+  }
+  // Prompt 49 (§18) — detailed aging deep links:
+  //   #/reports/aging-details?side=…&party=…&bucket=…&pastDue=1
+  // EVERY filter falls back safely (never a blank page): an unknown side
+  // defaults to receivables, an unknown bucket / unsafe party id is dropped,
+  // pastDue is honored only on the payables side. The parsed party id is
+  // resolved server-side inside the tenant — a foreign id renders the
+  // honest not-found state (404), never another business's data.
+  if (path === "reports/aging-details") {
+    const side = query.get("side") === "payables" ? "payables" : "receivables";
+    const rawBucket = query.get("bucket") ?? "";
+    const bucket = (AGING_BUCKET_KEYS as readonly string[]).includes(rawBucket)
+      ? (rawBucket as AgingBucketKey)
+      : null;
+    const rawParty = query.get("party") ?? "";
+    let partyId: string | null = null;
+    try {
+      const decoded = rawParty ? decodeURIComponent(rawParty) : "";
+      partyId = decoded && isValidEntityId(decoded) ? decoded : null;
+    } catch {
+      partyId = null;
+    }
+    const pastDue = side === "payables" && (query.get("pastDue") === "1" || query.get("pastDue") === "true");
+    return { kind: "aging-details", side, bucket, partyId, pastDue };
   }
   // Prompt 40 (§76/§77/§136) — inventory stocktake deep links, matched
   // BEFORE the module/entity fallbacks: #/inventory/stocktakes opens the

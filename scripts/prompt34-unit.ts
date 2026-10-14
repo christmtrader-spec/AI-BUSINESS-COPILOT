@@ -188,7 +188,7 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
   // P44/P45/P47 — the DTO grew lawfully: dispatch history (P44), sales-order
   // history (P45 §71) and quotation history (P47 §19). Stale expectation
   // updated to the CURRENT canonical key set (was failing since P44).
-  eq(Object.keys(cust), ["customer", "summary", "recentSales", "recentPayments", "recentGoodsDispatches", "recentSalesOrders", "recentSalesQuotations", "crm"], "v14 CustomerDetail top-level keys (P35 crm §123 + P44 dispatches + P45 orders + P47 quotations)");
+  eq(Object.keys(cust), ["customer", "summary", "recentSales", "recentPayments", "recentGoodsDispatches", "recentSalesOrders", "recentSalesQuotations", "receivablesAging", "crm"], "v14 CustomerDetail top-level keys (P35 crm §123 + P44 dispatches + P45 orders + P47 quotations + P49 §17 receivablesAging)");
   eq(Object.keys(cust.customer), ["id", "name", "phone", "email", "address", "note", "createdAt"], "v14 customer sub-object keys");
   eq(cust.customer.createdAt, "2026-01-02T03:04:05.000Z", "v14 dates serialized as ISO");
 
@@ -201,7 +201,7 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
   // Prompt 41 added the read-only `recentPurchaseOrders` section (≤10, bounded).
   // Prompt 42 (§121) added `recentGoodsReceipts`; Prompt 43 (§100) appends `recentGoodsReturns`.
   // Prompt 48 (§8) appends `recentSupplierBills` (bounded read-only bill history).
-  eq(Object.keys(supp), ["supplier", "summary", "recentExpenses", "recentPayments", "recentPurchaseOrders", "recentGoodsReceipts", "recentGoodsReturns", "recentSupplierBills"], "v14 SupplierDetail top-level keys (P48 §8 adds recentSupplierBills)");
+  eq(Object.keys(supp), ["supplier", "summary", "recentExpenses", "recentPayments", "recentPurchaseOrders", "recentGoodsReceipts", "recentGoodsReturns", "recentSupplierBills", "payablesAging"], "v14 SupplierDetail top-level keys (P48 §8 recentSupplierBills + P49 §17 payablesAging)");
 
   const prod = mapProductDetail(
     { id: "pr1", name: "Widget", sku: "W1", unit: "pcs", salePriceMinor: 500, costPriceMinor: 300, stockQty: 9, lowStockAt: 5, isActive: true, createdAt: base, updatedAt: base },

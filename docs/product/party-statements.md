@@ -162,3 +162,20 @@ Any mismatch is a test failure, not a silent adjustment.
 - No PDF export; no email delivery of statements; no statement scheduling.
 - Cross-currency statements are impossible by construction — every statement
   row belongs to one business, hence one currency; no FX conversion exists.
+
+## 9. Prompt 49 additions (aging-details integration)
+
+- **Row source navigation:** every statement row now carries its SERVER
+  identity (`sourceType` + `sourceId`) alongside the composite event id, and
+  the view offers the authorized source document (SALE → invoice detail,
+  PAYMENT_RECEIVED/PAYMENT_MADE → payment detail, BILL → expense detail).
+  Targets resolve through the closed entity-route vocabulary from actual ids
+  — never from displayed reference text — and unsupported types remain
+  read-only.
+- **Reconciliation with aging:** the statement closing balance over full
+  recorded history equals the party's canonical open-item total in the
+  detailed aging (`/api/v1/reports/aging/items?partyId=…`), because both
+  derive from the same authoritative records (sales − customer payments /
+  expenses − supplier payments). The aging distribution, per-party
+  drill-down and detailed CSV are documented in `docs/product/aging-details.md`
+  and ADR 0049.

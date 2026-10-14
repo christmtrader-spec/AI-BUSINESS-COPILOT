@@ -44,6 +44,7 @@ import { invalidateCrmAfterMutation } from "../crm/crm-api";
 import { CrmTimelineCard } from "../crm/crm-timeline";
 import { PartyFormDialog } from "../parties/party-form-dialog";
 import { SaleFormDialog } from "../sales/sale-form-dialog";
+import { PartyAgingPanel } from "../balances/party-aging-panel";
 import type { CustomerDetail } from "@/lib/entities";
 
 export function CustomerDetailView({
@@ -171,6 +172,18 @@ export function CustomerDetailView({
           icon={ReceiptText}
         />
       </div>
+
+      {/* Prompt 49 (§17) — READ-ONLY receivables-aging overview for this
+          exact customer: canonical engine data, bucket drill-down + the
+          party-scoped detailed view + the statement. SalesOrders and
+          Quotations can NEVER appear here (§8). */}
+      <PartyAgingPanel
+        side="receivables"
+        partyId={c.id}
+        summary={data.receivablesAging}
+        business={business}
+        uiLocale={uiLocale}
+      />
 
       {/* Contact card */}
       <Card>

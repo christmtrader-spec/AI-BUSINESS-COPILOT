@@ -98,6 +98,9 @@ export function mapSupplierDetail(
   // mapped + status-parsed by the supplier-bill service; corrupt persisted
   // status surfaces the controlled integrity error — never a fake DRAFT).
   recentSupplierBills: SupplierDetail["recentSupplierBills"] = [],
+  // Prompt 49 (§17) — canonical payables-aging overview for THIS supplier
+  // (Expense authority only — a SupplierBill is never a second balance).
+  payablesAging: SupplierDetail["payablesAging"] = undefined,
 ): SupplierDetail {
   return {
     supplier: {
@@ -116,6 +119,7 @@ export function mapSupplierDetail(
     recentGoodsReceipts,
     recentGoodsReturns,
     recentSupplierBills,
+    payablesAging,
   };
 }
 

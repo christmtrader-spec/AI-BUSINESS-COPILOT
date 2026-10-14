@@ -667,14 +667,16 @@ console.log("[46 DTO contract]");
       closingBalanceMinor: 60, eventCount: 2, truncated: false, from: "2026-10-01", to: "2026-10-31", timezone: "UTC",
     },
     rows: [
-      { id: "SALE:a", eventType: "SALE" as const, occurredAt: "2026-10-02T10:00:00.000Z", reference: "INV-0001", description: "Invoice INV-0001", increaseMinor: 100, decreaseMinor: 0, movementMinor: 100, balanceAfterMinor: 100 },
-      { id: "PAYMENT_IN:b", eventType: "PAYMENT_RECEIVED" as const, occurredAt: "2026-10-03T10:00:00.000Z", reference: null, description: "Payment", increaseMinor: 0, decreaseMinor: 40, movementMinor: -40, balanceAfterMinor: 60 },
+      // Prompt 49 (§13) — the additive sourceType/sourceId identity fields.
+      { id: "SALE:a", eventType: "SALE" as const, sourceType: "SALE" as const, sourceId: "a", occurredAt: "2026-10-02T10:00:00.000Z", reference: "INV-0001", description: "Invoice INV-0001", increaseMinor: 100, decreaseMinor: 0, movementMinor: 100, balanceAfterMinor: 100 },
+      { id: "PAYMENT_IN:b", eventType: "PAYMENT_RECEIVED" as const, sourceType: "PAYMENT_IN" as const, sourceId: "b", occurredAt: "2026-10-03T10:00:00.000Z", reference: null, description: "Payment", increaseMinor: 0, decreaseMinor: 40, movementMinor: -40, balanceAfterMinor: 60 },
     ],
     nextCursor: null,
     balanceBeforePageMinor: 0,
   };
   const dto = toStatementResponse(page);
-  ok("46a. row DTO carries exactly the §32 fields", JSON.stringify(Object.keys(dto.rows[0])) === JSON.stringify(["id", "eventType", "occurredAt", "reference", "description", "increaseMinor", "decreaseMinor", "movementMinor", "balanceAfterMinor"]));
+  ok("46a. row DTO carries exactly the §32 fields (+ P49 source identity)", JSON.stringify(Object.keys(dto.rows[0])) === JSON.stringify(["id", "eventType", "sourceType", "sourceId", "occurredAt", "reference", "description", "increaseMinor", "decreaseMinor", "movementMinor", "balanceAfterMinor"]));
+  ok("46a2. row DTO source identity is exact (P49 §13)", dto.rows[0].sourceType === "SALE" && dto.rows[0].sourceId === "a" && dto.rows[1].sourceType === "PAYMENT_IN" && dto.rows[1].sourceId === "b");
   ok("46b. summary DTO carries the §30 fields", (() => {
     const keys = Object.keys(dto.summary);
     return ["openingBalanceMinor", "periodIncreaseMinor", "periodDecreaseMinor", "closingBalanceMinor", "eventCount", "truncated", "from", "to", "timezone"].every((k) => keys.includes(k));

@@ -133,3 +133,14 @@ export (`data.export` stores statement type + calendar range only).
 - Exports: 10 / 5 min / user (mirrors report exports).
 - Both fail with 429 + `retryAfterMs`; the limiter fails open by design
   (documented product-wide behavior, single-node deployment).
+
+
+## Prompt 49 additions
+
+Statement rows expose additive `sourceType` + `sourceId` fields for source
+navigation. These are the SAME opaque stable ids already present inside the
+composite event id (`SALE:<id>`); the additive form changes no confidentiality
+property. Navigation is bounded by the closed entity-route vocabulary and the
+entity detail routes re-verify tenant membership server-side, so a forged
+sourceId yields the standard not-found path — never foreign data. The
+financial figures of a row are unchanged.

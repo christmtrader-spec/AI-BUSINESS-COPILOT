@@ -25,6 +25,7 @@ import {
   mapCustomerDetail,
   toStatusToken,
 } from "@/lib/entities";
+import { buildCustomerAgingSummary } from "@/lib/party-aging";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +54,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   // §40 — independent bounded queries in parallel; aggregates via groupBy
   // (one round trip, no N+1); recent lists take ≤10 with deterministic
   // ordering; explicit select everywhere (§86).
-  const [statusBuckets, recentSales, recentPayments, openOppCount, recentOpps, leadOrigin, recentGoodsDispatches, recentSalesOrders, recentSalesQuotations] = await Promise.all([
+  const [statusBuckets, recentSales, recentPayments, openOppCount, recentOpps, leadOrigin, recentGoodsDispatches, recentSalesOrders, recentSalesQuotations, receivablesAging] = await Promise.all([
     db.sale.groupBy({
       by: ["status"],
       where: { businessId: ctx.businessId, customerId: id, deletedAt: null },
@@ -124,6 +125,9 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
     // Prompt 47 (§19) — ≤10 recent quotations (commercial offers, never
     // added to receivables or any financial summary §19).
     recentQuotationsForCustomer(ctx.businessId, id, 10),
+    // Prompt 49 (§17) — canonical receivables-aging overview for this exact
+    // customer (bounded scan, business timezone, integer money).
+    buildCustomerAgingSummary(ctx.businessId, id, ctx.business.timezone || "UTC"),
   ]);
 
   const summary = compute360Summary(
@@ -161,6 +165,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         totalQty: qt.totalQty,
         convertedOrderReference: qt.convertedOrderReference,
       })),
+      receivablesAging,
     ),
   );
 });

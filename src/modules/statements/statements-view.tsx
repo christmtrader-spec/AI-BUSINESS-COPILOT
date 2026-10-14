@@ -21,6 +21,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  ExternalLink,
   FileText,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
@@ -165,6 +166,30 @@ export function StatementsView({
       default:
         return eventType;
     }
+  };
+
+  /**
+   * Prompt 49 (§13) — authorized source-document navigation. The target is
+   * resolved from the row's SERVER-provided sourceType + sourceId (never
+   * from client text); unsupported source types keep the row read-only —
+   * no fake routes are invented.
+   */
+  const sourceTargetOf = (sourceType: string): "sale" | "expense" | "payment" | null => {
+    switch (sourceType) {
+      case "SALE":
+        return "sale";
+      case "BILL":
+        return "expense";
+      case "PAYMENT_IN":
+      case "PAYMENT_OUT":
+        return "payment";
+      default:
+        return null;
+    }
+  };
+  const openSource = (sourceType: string, sourceId: string) => {
+    const entity = sourceTargetOf(sourceType);
+    if (entity) navigateToEntity(entity, sourceId);
   };
 
   const increasesLabel = statementType === "customer" ? t("increasesCustomer") : t("increasesSupplier");
@@ -321,6 +346,9 @@ export function StatementsView({
                       <TableHead scope="col" className="text-end">
                         {t("balance")}
                       </TableHead>
+                      <TableHead scope="col" className="text-end">
+                        <span className="sr-only">{t("openSourceDocument")}</span>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -367,6 +395,23 @@ export function StatementsView({
                         <TableCell className="text-end font-medium tabular-nums">
                           <span dir="ltr">{fmtMoney(business, row.balanceAfterMinor)}</span>
                         </TableCell>
+                        <TableCell className="text-end">
+                          {sourceTargetOf(row.sourceType) ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8"
+                              onClick={() => openSource(row.sourceType, row.sourceId)}
+                              aria-label={`${t("openSourceDocument")}: ${row.reference ?? ""}`}
+                            >
+                              <ExternalLink className="size-4" aria-hidden="true" />
+                              <span className="sr-only">{t("openSourceDocument")}</span>
+                            </Button>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -410,9 +455,23 @@ export function StatementsView({
                             </span>
                           )}
                         </span>
-                        <span className="text-sm font-medium tabular-nums">
-                          <span className="text-muted-foreground sr-only">{t("balance")}: </span>
-                          <span dir="ltr">{fmtMoney(business, row.balanceAfterMinor)}</span>
+                        <span className="flex items-center gap-2">
+                          <span className="text-sm font-medium tabular-nums">
+                            <span className="text-muted-foreground sr-only">{t("balance")}: </span>
+                            <span dir="ltr">{fmtMoney(business, row.balanceAfterMinor)}</span>
+                          </span>
+                          {sourceTargetOf(row.sourceType) ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8"
+                              onClick={() => openSource(row.sourceType, row.sourceId)}
+                            >
+                              <ExternalLink className="size-4" aria-hidden="true" />
+                              <span className="sr-only">{t("openSourceDocument")}</span>
+                            </Button>
+                          ) : null}
                         </span>
                       </div>
                     </CardContent>

@@ -92,12 +92,14 @@ ok(
 );
 
 console.log("[4] party aggregation — merge, oldest-age, deterministic order");
+// Prompt 49 (§6) — items carry the AUTHORITATIVE party id; grouping keys
+// on id, never on the display name.
 const multi = buildAgingSide(
   [
-    { anchor: daysAgoTehranDay(5), balanceMinor: 50, party: "A" },
-    { anchor: daysAgoTehranDay(80), balanceMinor: 20, party: "A" }, // same party, oldest 80
-    { anchor: daysAgoTehranDay(1), balanceMinor: 10, party: "B" },
-    { anchor: daysAgoTehranDay(2), balanceMinor: 5, party: null },
+    { anchor: daysAgoTehranDay(5), balanceMinor: 50, party: "A", partyId: "id-a" },
+    { anchor: daysAgoTehranDay(80), balanceMinor: 20, party: "A", partyId: "id-a" }, // same party id, oldest 80
+    { anchor: daysAgoTehranDay(1), balanceMinor: 10, party: "B", partyId: "id-b" },
+    { anchor: daysAgoTehranDay(2), balanceMinor: 5, party: null, partyId: null },
   ],
   { timeZone: TZ, now },
 );
@@ -107,17 +109,41 @@ ok("4b. oldest age wins", pa?.oldestDays === 80);
 ok("4c. order: balance desc", multi.topParties[0]?.name === "A");
 ok("4d. no-party kept and sorted after named", multi.topParties[multi.topParties.length - 1]?.name === null);
 ok(
-  "4e. tie-break by name asc",
+  "4e. same display name + different party ids stays TWO groups (P49 §6)",
   (() => {
     const s = buildAgingSide(
       [
-        { anchor: daysAgoTehranDay(1), balanceMinor: 10, party: "Zeta" },
-        { anchor: daysAgoTehranDay(1), balanceMinor: 10, party: "Alpha" },
+        { anchor: daysAgoTehranDay(1), balanceMinor: 10, party: "Twin", partyId: "id-1" },
+        { anchor: daysAgoTehranDay(2), balanceMinor: 30, party: "Twin", partyId: "id-2" },
+      ],
+      { timeZone: TZ, now },
+    );
+    return (
+      s.topParties.length === 2 &&
+      s.topParties[0].partyId === "id-2" && // balance desc wins the tie-break first
+      s.topParties[0].balanceMinor === 30 &&
+      s.topParties[1].balanceMinor === 10
+    );
+  })(),
+);
+ok(
+  "4f. name asc orders distinct-name parties on a balance tie (kept law)",
+  (() => {
+    const s = buildAgingSide(
+      [
+        { anchor: daysAgoTehranDay(1), balanceMinor: 10, party: "Zeta", partyId: "id-z" },
+        { anchor: daysAgoTehranDay(1), balanceMinor: 10, party: "Alpha", partyId: "id-a" },
       ],
       { timeZone: TZ, now },
     );
     return s.topParties[0].name === "Alpha" && s.topParties[1].name === "Zeta";
   })(),
+);
+ok(
+  "4g. group carries the authoritative partyId (P49 §6)",
+  multi.topParties[0]?.partyId === "id-a" &&
+    multi.topParties.find((p) => p.name === "B")?.partyId === "id-b" &&
+    multi.topParties[multi.topParties.length - 1]?.partyId === null,
 );
 
 console.log("[5] caps + guards");
@@ -125,22 +151,23 @@ const many = Array.from({ length: AGING_TOP_PARTIES + 5 }, (_, i) => ({
   anchor: daysAgoTehranDay(i + 1),
   balanceMinor: 100 - i,
   party: `P${i}`,
+  partyId: `id-${i}`,
 }));
 ok("5a. topParties capped", buildAgingSide(many, { timeZone: TZ, now }).topParties.length === AGING_TOP_PARTIES);
 ok(
   "5b. non-positive balances are ignored (closed/noise guard)",
   buildAgingSide(
     [
-      { anchor: daysAgoTehranDay(1), balanceMinor: 0, party: "X" },
-      { anchor: daysAgoTehranDay(1), balanceMinor: -5, party: "X" },
-      { anchor: daysAgoTehranDay(1), balanceMinor: 7, party: "Y" },
+      { anchor: daysAgoTehranDay(1), balanceMinor: 0, party: "X", partyId: "id-x" },
+      { anchor: daysAgoTehranDay(1), balanceMinor: -5, party: "X", partyId: "id-x" },
+      { anchor: daysAgoTehranDay(1), balanceMinor: 7, party: "Y", partyId: "id-y" },
     ],
     { timeZone: TZ, now },
   ).openCount === 1,
 );
 ok(
   "5c. fractional money truncated to integer (A08)",
-  buildAgingSide([{ anchor: now, balanceMinor: 10.9, party: "F" }], { timeZone: TZ, now }).totalMinor === 10,
+  buildAgingSide([{ anchor: now, balanceMinor: 10.9, party: "F", partyId: "id-f" }], { timeZone: TZ, now }).totalMinor === 10,
 );
 
 console.log("[6] past-due slice — day-boundary semantics (payables)");

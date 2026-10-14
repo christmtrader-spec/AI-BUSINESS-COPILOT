@@ -53,6 +53,8 @@ import { SalesQuotationDetailView } from "../sales-quotations/sales-quotation-de
 // Prompt 48 — supplier-bill views (§4).
 import { SupplierBillsView } from "../supplier-bills/supplier-bills-view";
 import { SupplierBillDetailView } from "../supplier-bills/supplier-bill-detail-view";
+// Prompt 49 — detailed aging drill-down (§16).
+import { AgingDetailsView } from "../balances/aging-details-view";
 import { SubscriptionView } from "../billing/subscription-view";
 import { PaymentReturnView } from "../billing/payment-return-view";
 import { AuditView } from "../audit/audit-view";
@@ -126,6 +128,9 @@ function labelKeyOf(view: AppView): string {
       return "supplierBills";
     case "supplier-bill":
       return "supplierBills";
+    // Prompt 49 — detailed-aging document titles (the owning balances module).
+    case "aging-details":
+      return view.side === "payables" ? "payables" : "receivables";
     case "profile":
       return "profile";
     case "module": {
@@ -487,6 +492,26 @@ export function AppShell({
                   onDashboard={() => navigate({ kind: "dashboard" })}
                 >
                   <SupplierBillDetailView id={view.id} role={role} />
+                </ModuleBoundary>
+              ) : null}
+              {/* Prompt 49 (§16) — detailed aging drill-down view. */}
+              {view.kind === "aging-details" ? (
+                <ModuleBoundary
+                  moduleKey={viewKey}
+                  title={tBoundary("title")}
+                  description={tBoundary("description")}
+                  retry={tCommon("retry")}
+                  dashboardLabel={tNav("dashboard")}
+                  onDashboard={() => navigate({ kind: "dashboard" })}
+                >
+                  <AgingDetailsView
+                    side={view.side}
+                    business={membership!.business}
+                    role={role}
+                    partyId={view.partyId ?? null}
+                    bucket={view.bucket ?? null}
+                    pastDue={Boolean(view.pastDue)}
+                  />
                 </ModuleBoundary>
               ) : null}
               {view.kind === "profile" ? <ProfileView /> : null}

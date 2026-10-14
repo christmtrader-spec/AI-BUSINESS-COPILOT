@@ -8,6 +8,7 @@
  */
 
 import type { EntityType } from "@/lib/entity-routes";
+import type { AgingBucketKey } from "@/lib/aging";
 
 /** Closed status token (mirrors lib/money statusOf output). */
 export type PaymentStatusToken = "UNPAID" | "PARTIAL" | "PAID";
@@ -107,6 +108,35 @@ export type CustomerDetail = {
    * never mixed into receivable/sales math.
    */
   crm: CustomerCrmSection;
+  /**
+   * Prompt 49 (§17) — READ-ONLY receivables-aging panel data for this
+   * exact customer, derived from the canonical aging engine over the
+   * customer's open Sale invoices. SalesOrders/Quotations can never appear
+   * (separate tables). Additive optional field.
+   */
+  receivablesAging?: PartyAgingSummary;
+};
+
+/**
+ * Prompt 49 (§17) — party-scoped aging overview shared by the Customer 360
+ * and Supplier 360 panels. All money is exact integer minor units; ages and
+ * buckets come from the canonical aging engine in the business timezone.
+ */
+export type PartyAgingSummary = {
+  asOf: string;
+  timezone: string;
+  totalOutstandingMinor: number;
+  openItemCount: number;
+  buckets: Array<{ key: AgingBucketKey; minor: number; count: number }>;
+  oldestDays: number;
+  /**
+   * Payables ONLY (aggregate-aging vocabulary: the slice is PRESENT when the
+   * side has the stated-due-date law, ABSENT otherwise — never a fake null
+   * money value). Receivables carry no due-date semantics (§9).
+   */
+  pastDueMinor?: number;
+  pastDueCount?: number;
+  truncated: boolean;
 };
 
 /* ------------------------------------------------------------------ */
@@ -184,6 +214,13 @@ export type SupplierDetail = {
    * (paidMinor/status), never a copied bill balance.
    */
   recentSupplierBills?: SupplierRecentBill[];
+  /**
+   * Prompt 49 (§17) — READ-ONLY payables-aging panel data for this exact
+   * supplier, derived from the canonical aging engine over the supplier's
+   * open Expense payables (the SOLE payable authority — a SupplierBill is
+   * never a second balance). Additive optional field.
+   */
+  payablesAging?: PartyAgingSummary;
 };
 
 /** Prompt 48 (§8) — bounded supplier-bill row for Supplier 360. */

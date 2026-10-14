@@ -6,12 +6,19 @@
  * and no note/platform/security/AI field can ever appear here because the
  * shape is closed.
  */
-import type { StatementEventType } from "./types";
+import type { StatementEventType, StatementSourceType } from "./types";
 
 export type StatementRowDto = {
   /** Deterministic internal event id ("SALE:<id>", "PAYMENT_IN:<id>", …). */
   id: string;
   eventType: StatementEventType;
+  /**
+   * Prompt 49 (§13) — additive SOURCE identity for authorized navigation:
+   * SALE → sale detail · PAYMENT_IN/PAYMENT_OUT → payment detail ·
+   * BILL → expense detail. Never resolved from client text.
+   */
+  sourceType: StatementSourceType;
+  sourceId: string;
   /** ISO instant of the movement (business-timezone rendering is UI-only). */
   occurredAt: string;
   reference: string | null;

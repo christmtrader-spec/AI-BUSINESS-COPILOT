@@ -41,6 +41,7 @@ import { navigateToEntity, navigateToEntityList } from "./entity-route";
 import { PartyFormDialog } from "../parties/party-form-dialog";
 import { ExpenseFormDialog } from "../expenses/expense-form-dialog";
 import { InfoRow } from "./customer-detail-view";
+import { PartyAgingPanel } from "../balances/party-aging-panel";
 import type { SupplierDetail } from "@/lib/entities";
 
 export function SupplierDetailView({
@@ -168,6 +169,18 @@ export function SupplierDetailView({
           icon={ReceiptText}
         />
       </div>
+
+      {/* Prompt 49 (§17) — READ-ONLY payables-aging overview for this exact
+          supplier. The EXPENSE is the sole payable authority: this panel
+          derives from the canonical aging engine over open Expenses and can
+          never add a SupplierBill as a second balance (§8). */}
+      <PartyAgingPanel
+        side="payables"
+        partyId={s.id}
+        summary={data.payablesAging}
+        business={business}
+        uiLocale={uiLocale}
+      />
 
       {/* Contact card */}
       <Card>

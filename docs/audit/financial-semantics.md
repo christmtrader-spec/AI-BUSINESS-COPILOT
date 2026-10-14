@@ -346,3 +346,27 @@ inventory figure, because the quotation never fed one.
 FA استعلام قیمت / ثبت ارسال / ثبت پذیرش مشتری / تبدیل به سفارش فروش —
 never فاکتور (invoice) on the offer itself; the printable sheet is
 explicitly labelled as an offer, not an invoice.
+
+
+---
+
+## Prompt 49 — detailed aging: single-count and wording laws (verified)
+
+- **Party identity:** aging groups (aggregate top parties AND the detailed
+  item view) key on the authoritative `customerId`/`supplierId`; identical
+  display names never merge groups (two same-name customers and two
+  same-name suppliers are live-tested).
+- **Single count:** an open item appears EXACTLY once in the detailed view —
+  Sale contributes `totalMinor − paidMinor`, Expense contributes
+  `amountMinor − paidMinor`; Payment contributes NO item (it moves the
+  paid side of its target); a posted SupplierBill contributes NO item (its
+  linked Expense IS the payable); SalesOrders/SalesQuotations/Goods*
+  contribute nothing.
+- **Wording:** receivables expose invoice AGE only (no invented customer due
+  date, no overdue claim); payables past-due = stated dueDate AND business-
+  local today strictly after AND positive balance ("due today" is not past
+  due; no due date is never past due).
+- **Reconciliation:** statement closing (full recorded history) == party
+  open-item total; detailed summary totals == Σ items == aggregate aging for
+  the same scope; partial payment reduces the open balance once; full
+  payment removes the item from every open view.

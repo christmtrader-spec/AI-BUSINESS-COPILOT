@@ -12,7 +12,7 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { AlarmClock, CalendarClock, Download, Loader2 } from "lucide-react";
+import { AlarmClock, CalendarClock, ChevronRight, Download, Loader2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api } from "@/lib/api-client";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Ltr } from "@/components/shared/data-table";
+import { useAppStore } from "@/store/app-store";
 import { fmtMoney, txKeys } from "../finance-shared/finance-kit";
 import type { BusinessSummary } from "../shell/types";
 
@@ -29,7 +30,15 @@ type AgingSide = {
   totalMinor: number;
   openCount: number;
   buckets: AgingBucket[];
-  topParties: { name: string | null; balanceMinor: number; openCount: number; oldestDays: number }[];
+  topParties: {
+    name: string | null;
+    /** Prompt 49 (§6) — authoritative party id (null = unassigned; NO fake
+     *  destination is ever built for an unassigned group). */
+    partyId: string | null;
+    balanceMinor: number;
+    openCount: number;
+    oldestDays: number;
+  }[];
   pastDueMinor?: number;
   pastDueCount?: number;
 };
@@ -66,6 +75,19 @@ export function AgingCard({
   business: BusinessSummary;
 }) {
   const t = useTranslations("finance.aging");
+  const navigate = useAppStore((s) => s.navigate);
+
+  /** Prompt 49 (§11) — drill-down: bucket / party / past-due rows open the
+   *  detailed aging view carrying CANONICAL filters (never a display name). */
+  const openDetails = (filter: { bucket?: string; partyId?: string; pastDue?: boolean }) => {
+    navigate({
+      kind: "aging-details",
+      side: kind,
+      bucket: (filter.bucket as "D0_30" | "D31_60" | "D61_90" | "D90_PLUS" | undefined) ?? null,
+      partyId: filter.partyId ?? null,
+      pastDue: filter.pastDue ?? false,
+    });
+  };
 
   const { data, isLoading, error, refetch } = useQuery<AgingData>({
     queryKey: txKeys.aging,
@@ -169,13 +191,21 @@ export function AgingCard({
           <p className="text-muted-foreground text-sm">{t("allSettled")}</p>
         ) : (
           <div className="space-y-5">
-            {/* Buckets — label + count + amount + share bar (bar is decorative). */}
+            {/* Buckets — label + count + amount + share bar; each row is a
+                drill-down into the open documents of that bucket (§11). */}
             <div className="space-y-2" data-testid={`aging-buckets-${kind}`}>
               {side.buckets.map((b, idx) => {
                 const share =
                   side.totalMinor > 0 ? Math.round((b.minor / side.totalMinor) * 100) : 0;
                 return (
-                  <div key={b.key} className="flex items-center gap-3">
+                  <button
+                    key={b.key}
+                    type="button"
+                    className="flex w-full items-center gap-3 rounded-md px-1 py-1 text-start transition-colors hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    onClick={() => openDetails({ bucket: b.key })}
+                    data-testid={`aging-bucket-${kind}-${b.key}`}
+                    aria-label={`${t(BUCKET_LABEL_KEYS[b.key])} — ${t("openDetailsHint")}`}
+                  >
                     <div className="w-24 shrink-0 sm:w-28">
                       <span className="text-sm font-medium">{t(BUCKET_LABEL_KEYS[b.key])}</span>
                       <span className="text-muted-foreground block text-xs tabular-nums">
@@ -194,56 +224,96 @@ export function AgingCard({
                     <Ltr className="w-28 shrink-0 text-end text-sm font-medium tabular-nums sm:w-32">
                       {fmtMoney(business, b.minor)}
                     </Ltr>
-                  </div>
+                    <ChevronRight
+                      className="text-muted-foreground size-4 shrink-0 rtl:-scale-x-100"
+                      aria-hidden="true"
+                    />
+                  </button>
                 );
               })}
             </div>
 
-            {/* Payables past-due slice — server-derived, never color-only. */}
+            {/* Payables past-due slice — server-derived, never color-only;
+                a populated slice drills into the past-due documents (§11). */}
             {kind === "payables" && side.pastDueCount != null ? (
-              <div
-                className={
-                  side.pastDueCount > 0
-                    ? "border-destructive/30 bg-destructive/5 text-destructive inline-flex max-w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm"
-                    : "border-border bg-muted/40 text-muted-foreground inline-flex max-w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm"
-                }
-                data-testid="aging-past-due"
-              >
-                <AlarmClock className="size-4 shrink-0" aria-hidden="true" />
-                <span>
-                  {side.pastDueCount > 0
-                    ? t("pastDue", {
-                        count: side.pastDueCount,
-                        amount: fmtMoney(business, side.pastDueMinor ?? 0),
-                      })
-                    : t("nothingPastDue")}
-                </span>
-              </div>
+              side.pastDueCount > 0 ? (
+                <button
+                  type="button"
+                  className="border-destructive/30 bg-destructive/5 text-destructive inline-flex max-w-full items-center gap-2 rounded-lg border px-3 py-2 text-start text-sm transition-colors hover:bg-destructive/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  onClick={() => openDetails({ pastDue: true })}
+                  data-testid="aging-past-due"
+                >
+                  <AlarmClock className="size-4 shrink-0" aria-hidden="true" />
+                  <span>
+                    {t("pastDue", {
+                      count: side.pastDueCount,
+                      amount: fmtMoney(business, side.pastDueMinor ?? 0),
+                    })}
+                  </span>
+                  <ChevronRight className="ms-auto size-4 shrink-0 rtl:-scale-x-100" aria-hidden="true" />
+                </button>
+              ) : (
+                <div
+                  className="border-border bg-muted/40 text-muted-foreground inline-flex max-w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm"
+                  data-testid="aging-past-due"
+                >
+                  <AlarmClock className="size-4 shrink-0" aria-hidden="true" />
+                  <span>{t("nothingPastDue")}</span>
+                </div>
+              )
             ) : null}
 
-            {/* Top parties with oldest-age badge. */}
+            {/* Top parties with oldest-age badge — named parties drill into
+                THEIR aging by authoritative id (§6/§11); unassigned rows and
+                unlinked items never build a fake destination. */}
             {side.topParties.length > 0 ? (
               <div>
                 <p className="mb-2 text-sm font-semibold">{t("topParties")}</p>
                 <ul className="space-y-1.5">
-                  {side.topParties.slice(0, 5).map((p) => (
-                    <li
-                      key={p.name ?? "__none__"}
-                      className="flex items-center justify-between gap-2 text-sm"
-                    >
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span className="max-w-40 truncate sm:max-w-56" dir="auto">
-                          {p.name ?? t("noParty")}
+                  {side.topParties.slice(0, 5).map((p) => {
+                    const content = (
+                      <>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="max-w-40 truncate sm:max-w-56" dir="auto">
+                            {p.name ?? t("noParty")}
+                          </span>
+                          <Badge variant="outline" className="shrink-0 tabular-nums">
+                            {t("oldest", { days: p.oldestDays })}
+                          </Badge>
                         </span>
-                        <Badge variant="outline" className="shrink-0 tabular-nums">
-                          {t("oldest", { days: p.oldestDays })}
-                        </Badge>
-                      </span>
-                      <Ltr className="shrink-0 font-medium tabular-nums">
-                        {fmtMoney(business, p.balanceMinor)}
-                      </Ltr>
-                    </li>
-                  ))}
+                        <span className="flex shrink-0 items-center gap-1">
+                          <Ltr className="font-medium tabular-nums">
+                            {fmtMoney(business, p.balanceMinor)}
+                          </Ltr>
+                          {p.partyId ? (
+                            <ChevronRight
+                              className="text-muted-foreground size-4 rtl:-scale-x-100"
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                        </span>
+                      </>
+                    );
+                    return p.partyId ? (
+                      <li key={p.partyId}>
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-start text-sm transition-colors hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                          onClick={() => openDetails({ partyId: p.partyId! })}
+                          data-testid={`aging-party-${kind}-${p.partyId}`}
+                        >
+                          {content}
+                        </button>
+                      </li>
+                    ) : (
+                      <li
+                        key={`${p.name ?? "__none__"}`}
+                        className="flex items-center justify-between gap-2 px-1 py-1 text-sm"
+                      >
+                        {content}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             ) : null}
