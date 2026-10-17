@@ -2607,6 +2607,8 @@ const en = {
       payments: "Payments",
       crmLeads: "CRM leads",
       crmOpportunities: "CRM opportunities",
+      crmActivities: "CRM activities",
+      crmTasks: "CRM tasks",
       subscriptionSummary: "Subscription summary",
       usageSummary: "Usage summary",
     },

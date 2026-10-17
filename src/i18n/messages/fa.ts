@@ -2607,6 +2607,8 @@ const fa: Messages = {
       payments: "پرداخت‌ها",
       crmLeads: "سرنخ‌های CRM",
       crmOpportunities: "فرصت‌های CRM",
+      crmActivities: "فعالیت‌های CRM",
+      crmTasks: "وظایف CRM",
       subscriptionSummary: "خلاصه اشتراک",
       usageSummary: "خلاصه مصرف",
     },

@@ -9,7 +9,7 @@ import { useAppStore } from "@/store/app-store";
 import { useSidebar } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import type { NotificationDTO, ListNotificationsResult } from "./types";
 
@@ -275,7 +275,6 @@ export function NotificationBell() {
       className="relative"
       aria-label={t("bell")}
       data-testid="notification-bell"
-      onClick={() => setOpen((v) => !v)}
     >
       <Bell className="size-4" aria-hidden="true" />
       {count > 0 ? (
@@ -298,7 +297,9 @@ export function NotificationBell() {
   if (isMobile) {
     return (
       <Sheet open={open} onOpenChange={setOpen}>
-        {button}
+        {/* MUST be a real trigger: the raw child left the Sheet without an
+            anchor so the drawer never showed for taps on the bell. */}
+        <SheetTrigger asChild>{button}</SheetTrigger>
         <SheetContent side="bottom" className="h-[75vh] rounded-t-2xl p-0" role="dialog" aria-label={t("panelTitle")}>
           <SheetHeader className="sr-only">
             <SheetTitle>{t("panelTitle")}</SheetTitle>
@@ -320,7 +321,11 @@ export function NotificationBell() {
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      {button}
+      {/* MUST be a real trigger: without it Radix has no anchor — the panel
+          rendered detached from the bell (effectively invisible) and the
+          click appeared dead. The controlled open state is driven purely by
+          onOpenChange now (no custom onClick — that would double-toggle). */}
+      <PopoverTrigger asChild>{button}</PopoverTrigger>
       <PopoverContent align="end" className="w-[380px] p-0" role="dialog" aria-label={t("panelTitle")}>
         <BellPanelContent
           onItemNavigate={(item) => {

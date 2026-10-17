@@ -5165,3 +5165,25 @@ Work Log:
 
 Stage Summary:
 - USER BLOCKER RESOLVED: business creation works again (catalog restored; FREE grants 1 business, upgrade path restored). /pricing shows all plans with real prices again. The limit error is now actionable (inline alert → pricing) instead of a dead-end toast. No schema changes, no API contract changes; regression suites green (90/90 e2e, 56/0 billing, i18n clean). Real account christm.trader@gmail.com owns 0 businesses and can create theirs immediately after login.
+
+---
+Task ID: 53
+Agent: Z.ai Code (main)
+Task: USER BUG REPORT (fa): "2 تا ارور داده و بخش اعلانات که عکسشو دادم کار نمی کنه" — 2 console errors (MISSING_MESSAGE portability.datasetsLabels.crmActivities / crmTasks for locale 'fa' in export-panel.tsx:252) + the notification bell (badge "2") appearing dead. Plus a full-project deep analysis/test request.
+
+Work Log:
+- ERROR 1 ROOT CAUSE: export-panel.tsx builds i18n keys DYNAMICALLY (t(`datasetsLabels.${datasetLabelKey(key)}`)) for EXPORT_DATASETS incl. crm_activities→crmActivities and crm_tasks→crmTasks. portability.datasetsLabels in BOTH en.ts and fa.ts ended at crmOpportunities — crmActivities/crmTasks were never added when the CRM export datasets shipped. The i18n audit can't see dynamically-constructed keys (static usages only), which is why it reported clean. FIX: added crmActivities ("CRM activities" / "فعالیت‌های CRM") + crmTasks ("CRM tasks" / "وظایف CRM") to portability.datasetsLabels in BOTH locales, mirroring the existing wording in the other datasets section (en.ts:4291).
+- ERROR 2 (BELL) ROOT CAUSE: NotificationBell rendered its Button as a RAW child of <Popover>/<Sheet> — NOT wrapped in PopoverTrigger/SheetTrigger asChild. Radix had no anchor: the popover technically "opened" (dialog in the a11y tree) but PopoverContent rendered detached/off-view → the click LOOKED dead and no panel was ever visible (reproduced live pre-fix; screenshot qa-bell-before-fix.png shows no visible panel). FIX: wrapped the button in <PopoverTrigger asChild> (desktop) and <SheetTrigger asChild> (mobile), REMOVED the custom onClick (would double-toggle against Radix's controlled onOpenChange), commented why.
+- PROJECT-WIDE scan for the same pattern: every PopoverContent file has a PopoverTrigger; the only Sheet-without-trigger is components/ui/sidebar.tsx which is the standard shadcn controlled-mobile-sidebar pattern (SidebarTrigger calls setOpenMobile) — NOT a bug.
+- BROWSER VERIFICATION (agent-browser, real session):
+  * Desktop: bell click → popover opens anchored under the bell, lists notifications (badge 2 matched), "Mark all as read" → unread-count API returns 0, badge clears; "View all notifications" → navigates to #/notifications (qa-bell-after-fix.png, qa-bell-marked2.png).
+  * Mobile 390×844: bell click → bottom Sheet drawer renders the same panel (qa-bell-mobile.png).
+  * FA/RTL: language switched to فارسی → bell popover opens top-right, RTL layout correct, Persian relative times ("۴۱ دقیقه پیش") (qa-bell-fa-rtl.png).
+  * Data-portability page in FA: ALL 15 dataset labels + sensitivity render, ZERO MISSING_MESSAGE (qa-export-fa5.png); EN spot-check also 0.
+- FULL-PROJECT CONSOLE SWEEP (FA locale): 29 routes + 3 deep links (#/dashboard, #/crm, #/crm?tab=activities, #/crm?tab=tasks, customers, suppliers, purchase-orders, goods-receipts/returns/dispatches, sales-orders, sales-quotations, products, inventory, sales, expenses, payments, receivables, payables, supplier-bills, #/reports, #/reports?inventory=1, #/audit, #/notifications, #/settings, #/settings/members, #/settings/billing, #/settings/security, #/data, #/settings/notifications, #/profile, #/search) — ALL clean: no MISSING_MESSAGE, no Uncaught/TypeError/ReferenceError.
+- REGRESSION (executed this round): bunx tsc --noEmit 0 errors · bun run lint clean · i18n audit 2,820 usages / 0 missing / 0 parity · data-portability-audit 53/53 PASS · prompt20-billing-check 56/0 · e2e-smoke 90/90 ALL GREEN · dev.log clean (no fatal/unexpected errors; smoke's own 4xx probes only).
+
+Stage Summary:
+- BOTH user-reported errors FIXED and browser-verified: (1) the two MISSING_MESSAGE console errors are gone in fa AND en (dynamic-key gap closed at the source); (2) the notification bell now opens its panel correctly on desktop (popover), mobile (sheet), in RTL, with working mark-all-read/view-all/settings actions.
+- Systemic sweep found no other trigger-less Popover/Sheet and no console errors on any of 32 checked routes; full regression battery green.
+- LESSON (standing): dynamic t(`ns.${var}`) key families are invisible to the i18n audit — when adding a new dataset/status enum, ALWAYS add the label to BOTH locales' closed vocabulary sections AND check datasetLabelKey-style mappings.
