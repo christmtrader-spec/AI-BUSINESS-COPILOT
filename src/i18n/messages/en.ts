@@ -318,6 +318,7 @@ const en = {
     creating: "Creating…",
     successToast: "Business created. Welcome aboard!",
     signOutInstead: "Sign out instead",
+    plansLink: "Plans & pricing",
     steps: {
       account: "Account",
       business: "Business",
@@ -1632,6 +1633,9 @@ const en = {
     trialDisabled: "Free trials are not available right now.",
     noBusiness: "Create your business first — trials belong to a business, not an account.",
     businessNotEligible: "This business cannot start a free trial (already used or currently on a paid plan).",
+    planLimitTitle: "Plan limit reached",
+    upgradeAction: "View plans & upgrade",
+    dismiss: "Dismiss",
   },
   copilot: {
     title: "AI Copilot",

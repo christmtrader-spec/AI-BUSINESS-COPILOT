@@ -21,6 +21,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import {
   ArrowRight,
+  ArrowUpRight,
   Building2,
   CheckCircle2,
   Circle,
@@ -28,6 +29,7 @@ import {
   Globe2,
   Loader2,
   PartyPopper,
+  ShieldAlert,
   Sparkles,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
@@ -40,6 +42,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 
@@ -155,6 +158,10 @@ export function OnboardingView({
   const [locale, setLocale] = useState<"en" | "fa">("en");
   const [timezone, setTimezone] = useState("UTC");
   const [previewValue, setPreviewValue] = useState("1234.5");
+  // Plan-limit errors render INLINE (persistent + actionable) instead of a
+  // toast that auto-dismisses into a dead end — the user must be able to
+  // reach the pricing page from the exact moment they are blocked.
+  const [limitError, setLimitError] = useState<string | null>(null);
 
   const selectedCurrency = findCurrency(currencyCode);
 
@@ -182,6 +189,7 @@ export function OnboardingView({
         }),
       }),
     onSuccess: (data) => {
+      setLimitError(null);
       toast({ title: t("successToast"), description: data.business.name });
       // NOTE: the businesses query is NOT invalidated here — refreshing it
       // would make the app shell take over and skip the (optional) trial and
@@ -198,8 +206,19 @@ export function OnboardingView({
         .catch(() => setStep("done"));
     },
     onError: (err) => {
+      const text =
+        billingErrorText(err) || (err instanceof ApiClientError ? err.message : tErrors("generic"));
+      // Entitlement/limit errors → persistent inline alert with an upgrade
+      // CTA (the toast variant auto-dismissed and left the user stranded).
+      if (
+        err instanceof ApiClientError &&
+        (err.code === "ENTITLEMENT_LIMIT_REACHED" || err.code === "ENTITLEMENT_NOT_AVAILABLE")
+      ) {
+        setLimitError(text);
+        return;
+      }
       toast({
-        title: billingErrorText(err) || (err instanceof ApiClientError ? err.message : tErrors("generic")),
+        title: text,
         variant: "destructive",
       });
     },
@@ -423,6 +442,34 @@ export function OnboardingView({
 
                 <Separator />
 
+                {limitError ? (
+                  <Alert variant="destructive" role="alert" data-testid="plan-limit-alert">
+                    <ShieldAlert className="size-4" aria-hidden="true" />
+                    <AlertTitle>{tErrors("planLimitTitle")}</AlertTitle>
+                    <AlertDescription>
+                      <div className="flex flex-col gap-3">
+                        <span>{limitError}</span>
+                        <div className="flex flex-wrap gap-2">
+                          <Button asChild size="sm" variant="outline">
+                            <a href="/pricing" target="_blank" rel="noopener noreferrer">
+                              <ArrowUpRight className="size-4" aria-hidden="true" />
+                              {tErrors("upgradeAction")}
+                            </a>
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setLimitError(null)}
+                          >
+                            {tErrors("dismiss")}
+                          </Button>
+                        </div>
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+
                 <div className="bg-muted/40 flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4">
                   <div className="flex items-center gap-2">
                     <Coins className="text-muted-foreground size-4" aria-hidden="true" />
@@ -445,14 +492,25 @@ export function OnboardingView({
                 </div>
 
                 <div className="flex flex-col-reverse items-center justify-between gap-3 sm:flex-row">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void signOutWithRevoke("/")}
-                  >
-                    {t("signOutInstead")}
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <a
+                      href="/pricing"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-sm underline-offset-4 transition-colors hover:underline"
+                    >
+                      <ArrowUpRight className="size-3.5" aria-hidden="true" />
+                      {t("plansLink")}
+                    </a>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void signOutWithRevoke("/")}
+                    >
+                      {t("signOutInstead")}
+                    </Button>
+                  </div>
                   <Button type="submit" disabled={createMutation.isPending || !name.trim()} className="w-full sm:w-auto">
                     {createMutation.isPending ? (
                       <Loader2 className="size-4 animate-spin" aria-hidden="true" />

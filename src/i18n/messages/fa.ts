@@ -321,6 +321,7 @@ const fa: Messages = {
     creating: "در حال ساخت…",
     successToast: "کسب‌وکار ساخته شد. خوش آمدید!",
     signOutInstead: "خروج از حساب",
+    plansLink: "پلن‌ها و قیمت‌ها",
     steps: {
       account: "حساب",
       business: "کسب‌وکار",
@@ -1632,6 +1633,9 @@ const fa: Messages = {
     trialDisabled: "دورهٔ آزمایشی رایگان در حال حاضر در دسترس نیست.",
     noBusiness: "اول کسب‌وکارتان را بسازید — دورهٔ آزمایشی متعلق به کسب‌وکار است، نه حساب کاربری.",
     businessNotEligible: "این کسب‌وکار نمی‌تواند دورهٔ آزمایشی شروع کند (قبلاً استفاده شده یا در حال حاضر پلن پولی دارد).",
+    planLimitTitle: "به سقف پلن رسیده‌اید",
+    upgradeAction: "مشاهده پلن‌ها و ارتقا",
+    dismiss: "بستن",
   },
   copilot: {
     title: "دستیار هوشمند",

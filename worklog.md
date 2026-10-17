@@ -5136,3 +5136,32 @@ Stage Summary:
   29/29 unchanged; (O) no unrequested scope — no ledger/COGS/costing/
   entitlement/migration; (P) honest closure — this section distinguishes
   EXECUTED results from worklog history. Prompt 52 NOT started.
+
+---
+Task ID: 52
+Agent: Z.ai Code (main)
+Task: USER BUG REPORT (fa): "اجازه نمیده بهم تا کسب و کارم رو بسازم و ارور میده و جای برای خرید و یا تمدید اکانت نداره" — screenshot showed the onboarding "Create your business" page rejecting creation with the BUSINESSES_MAX plan-limit toast, and no visible place to buy/renew a plan. Analyze the screenshot and fix.
+
+Work Log:
+- DIAGNOSIS (db probes via bun+Prisma, scripts/qa/inspect-billing-state.mjs):
+  * The billing catalog was WIPED from the DB: Plan=0, EntitlementDefinition=0, PlanEntitlement=0, PlanPrice=0. Only 1 user (christm.trader@gmail.com) with 0 owned businesses.
+  * Effect: assertWithinBusinessesLimitTx fail-CLOSES (no plans → FREE fallback = 0 → owned 0 >= limit 0) so EVERY business creation was rejected with the plan-limit error; and /pricing rendered nothing (no place to buy/renew) — exactly the user's two complaints.
+  * Root cause of the wipe: the catalog is seeded ONLY by explicit scripts (§118 "do not rely on startup"), never by migrations — any db reset/rebuild loses it silently. (The same wipe removed the e2e-smoke fixture users, surfacing later as e2e 401s.)
+- RESTORE (idempotent, repo-convention): bun scripts/seed-billing.ts (5 plans × 9 entitlements verified) + bun scripts/seed-pricing.ts (EUR baseline: STARTER 9/90, BUSINESS 19/190, PRO 49/490; FREE/ENTERPRISE unpurchasable). Verified: FREE BUSINESSES_MAX=1, STARTER=2, BUSINESS=5, PRO=10, ENTERPRISE=null.
+- UX FIX (the dead-end): the limit error used to be a toast that auto-dismissed with NO way to reach pricing. src/modules/onboarding/onboarding-view.tsx now:
+  * renders ENTITLEMENT_LIMIT_REACHED / ENTITLEMENT_NOT_AVAILABLE errors as a persistent inline destructive Alert ("Plan limit reached" + localized body) with an outlined CTA "View plans & upgrade" → /pricing (new tab) + a Dismiss button (data-testid=plan-limit-alert);
+  * keeps the destructive toast for all other errors (unchanged behavior);
+  * adds a persistent "Plans & pricing" link next to "Sign out instead" on the onboarding card.
+  * i18n: errors.planLimitTitle / errors.upgradeAction / errors.dismiss / onboarding.plansLink (EN+FA).
+- GUARD: new scripts/qa/verify-billing-catalog.mjs — fails loudly (exit 1) with repair commands when the catalog is empty or FREE lacks BUSINESSES_MAX>=1. RUN IT AFTER ANY db reset/rebuild.
+- FIXTURES: scripts/qa/onboarding-qa-fixture.mjs (onboarding-qa@fixture.local / testpass123, no business; --teardown deletes owned businesses first — Business.owner is Restrict) + ran scripts/dev-baseline-fixture.mjs and scripts/e2e-smoke-fixture.mjs to restore the standing fixture contract after the wipe.
+- BROWSER QA (agent-browser, real session, real clicks):
+  * logged in as QA user → onboarding renders; "Plans & pricing" link present → opens /pricing (new tab) showing Free/Starter/Business/Pro with live prices + Monthly/Yearly toggle;
+  * filled the form EXACTLY like the user's screenshot (Artwoodlaser, IRR ﷼, precision auto→0, Persian RTL, Asia/Tehran) → Create business SUCCEEDED → "Your workspace is ready" checklist → dashboard loads, zero console errors;
+  * limit path: via the header switcher "New business" (view.kind==="onboarding" with 1 owned business) → submit → inline alert rendered ("Plan limit reached — Your current plan allows up to 1 business…") with working "View plans & upgrade" CTA (opens /pricing) and Dismiss (screenshots: /tmp/qa-onboarding-before.png, qa-pricing-page.png, qa-onboarding-filled.png, qa-onboarding-success.png, qa-limit-alert.png);
+  * teardown: QA user + QA business deleted; catalog guard OK; real user owns 0 → unblocked.
+- REGRESSION (executed this round): i18n audit 2,820 usages / 0 missing / 0 parity gaps · prompt20-billing-check 56/0 · e2e-smoke 90/90 (after e2e-smoke-fixture repair; the initial 4/6 run was the missing-fixture-users issue documented in the fixture script, NOT a code regression) · bunx tsc --noEmit 0 errors · bun run lint clean.
+- NOTE for future sessions: the catalog + fixture users vanish on any DB revert/rebuild. Recovery order: bun scripts/seed-billing.ts && bun scripts/seed-pricing.ts && bun scripts/dev-baseline-fixture.mjs && bun scripts/e2e-smoke-fixture.mjs && bun scripts/qa/verify-billing-catalog.mjs.
+
+Stage Summary:
+- USER BLOCKER RESOLVED: business creation works again (catalog restored; FREE grants 1 business, upgrade path restored). /pricing shows all plans with real prices again. The limit error is now actionable (inline alert → pricing) instead of a dead-end toast. No schema changes, no API contract changes; regression suites green (90/90 e2e, 56/0 billing, i18n clean). Real account christm.trader@gmail.com owns 0 businesses and can create theirs immediately after login.
