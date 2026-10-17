@@ -27,6 +27,19 @@
 
 ## Current Project Status (assessment)
 
+- STATUS (Prompt 51 close, 2026-10-17): **PROMPT 48-C CLOSED · PROMPT 49
+  CLOSED · PROMPT 50 COMPLETE · PROMPT 51 COMPLETE** (final appended
+  section: detailed inventory valuation report — current-operational-
+  estimate basis disclosed, zero-cost ≠ error neutral cost-quality
+  semantics, negative-stock honesty, summary reconciliation Gate D exact,
+  bounded complete scans with controlled 413s, complete-or-reject CSV,
+  CSV_EXPORT-only export gate, read-only verified by byte-identical
+  snapshots, cross-tenant isolation live-probed, EN/FA + RTL +
+  responsive browser-verified, no new entitlement, NO schema migration,
+  253 fresh P51 assertions + full regression battery green). The older
+  bullets below were true when written and are superseded by the
+  appended PROMPT 48-C, 49, 50, and 51 sections. Prompt 52 NOT started.
+
 - STATUS (Prompt 50 close, 2026-10-15): **PROMPT 48-C CLOSED · PROMPT 49
   CLOSED · PROMPT 50 COMPLETE** (final appended section: all release gates
   A–V green — future rows excluded, KPI==timeline, exact local-calendar
@@ -36,8 +49,8 @@
   integers, EN/FA + responsive browser-verified, dependent regressions
   green, DB intact, fixtures zeroed, docs match). The older bullets below
   were true when written and are superseded by the appended PROMPT 48-C,
-  PROMPT 49, and PROMPT 50 sections at the bottom of this file. Prompt 51
-  NOT started.
+  PROMPT 49, and PROMPT 50 sections at the bottom of this file.
+  [SUPERSEDED — Prompt 51 now complete, see above.]
 
 - STATUS CORRECTION (Prompt 49 preflight, 2026-10-14): the older bullet
   below said "Prompt 48 NOT started" — that was TRUE WHEN WRITTEN but the
@@ -97,9 +110,9 @@
 
 ## Next-Phase Priorities
 
-1. PROMPT 50 is COMPLETE (see its appended section — all gates A–V green).
-   The agreed 48→49→50 sequence is CLOSED. Do NOT start Prompt 51 unless
-   the user explicitly requests it.
+1. PROMPT 51 is COMPLETE (see its appended section — all gates A–P green
+   with fresh evidence). Do NOT start Prompt 52 unless the user explicitly
+   requests it.
 2. Keep the env-repair baseline law: every applied migration stays in
    scripts/env-repair.mjs (currently through 20261012090000_prompt47).
 3. DONE (48-round-1): session-start guard shipped as
@@ -4924,3 +4937,202 @@ Stage Summary:
   compatible (R), all runnable suites green with documented invocation
   (S), DB integrity clean (T), fixtures zeroed (U), docs match the
   implementation (V). Prompt 51 NOT started.
+
+---
+Task ID: P51
+Agent: Z.ai Code (main orchestrator)
+Task: PROMPT 51 — Detailed Inventory Valuation & Cost Data Quality: searchable
+valuation report over the current operational estimate (stockQty ×
+costPriceMinor), cost-quality semantics (zero cost ≠ error), reconciliation
+with the summary, bounded complete scans, complete-or-reject CSV, tenant
+isolation, EN/FA, browser QA, regression battery, documentation, release
+closure (user-authorized)
+
+Work Log:
+- AUDIT (§2): git tree clean (main); worklog tail read (P50 COMPLETE, gates
+  A–V, "Prompt 51 NOT started" — user then explicitly authorized 51);
+  ADR 0050 + business-reports + financial-semantics docs; prisma Product
+  (stockQty/costPriceMinor/salePriceMinor/lowStockAt/isActive/deletedAt/
+  unit/sku — exactly as the prompt assumed); lib/reports.ts summary
+  inclusion rule identified as THE reconciliation authority (businessId +
+  deletedAt: null, INCLUDING inactive; Σ safeMul(stockQty, costPriceMinor));
+  all report routes + CSV/cursor/rate-limit/audit conventions; AI snapshot
+  rule 6b already preserves the operational-estimate qualification (NO AI
+  changes needed — §12 satisfied by leaving it untouched); i18n structure;
+  navigation store. ENVIRONMENT REPAIR FIRST: _prisma_migrations table was
+  MISSING (the recurring sandbox revert, deeper than the usual ledger
+  wipe — session-guard's probe itself crashed) → node scripts/env-repair.mjs
+  re-baselined 29/29 migrations, re-seeded billing/pricing/baseline/e2e
+  fixtures, health 200 → bash scripts/session-guard.sh 29 = GUARD-OK.
+- ADR 0051 written BEFORE implementation (docs/adr/
+  0051-inventory-valuation-report.md): valuation basis + historical-cost
+  limitation (no "as of" selector, no reconstructed costs), cost-quality
+  semantics (zero cost = measured state; neutral review, never accused,
+  never auto-corrected; NEGATIVE_STOCK row state for negative recorded
+  stock; negative cost = integrity error), inclusion rules (summary-
+  identical, inactive included), closed filters/sorts, page-number
+  pagination over a bounded complete scan (HMAC cursors deliberately NOT
+  used — no resumable scan exists to anchor; documented in the ADR),
+  complete-or-reject export, data:read JSON / CSV_EXPORT export (the
+  detailed view is a BASIC-summary drill-down — no ADVANCED_REPORTS gate,
+  no new entitlement), read-only law, excluded-forever list (no ledger/
+  COGS/FIFO/LIFO/WAC/P&L/asset recognition/auto-correction).
+- SERVER: src/lib/inventory-valuation-report.ts (ONE calculation for JSON
+  + CSV): pure row semantics (rowStockState/rowCostState),
+  filterInventoryRows (single filtering law), sortInventoryRows (all 7
+  sorts, stable id tie-break, non-mutating), computeInventoryTotals
+  (safeAdd everywhere, zero/negative/inactive/low/zero-cost counts),
+  parseInventoryFilters/parseInventoryPage (closed enums, q ≤ 80 strict,
+  page/pageSize bounds → ReportRangeError), scanInventoryValuationRows
+  (chunked keyset reads take=500, INVENTORY_SCAN_CAP envClamped 50,000 →
+  InventoryReportTooLargeError, negative-cost → ReportIntegrityError),
+  buildInventoryValuationReport (aggregates over the COMPLETE filtered
+  set + page slice + pagination truth), buildInventoryValuationExport
+  (all matching rows). Routes: GET /api/v1/reports/inventory-valuation
+  (data:read, 60/min limiter, 422 mapping, 413 REPORT_TOO_LARGE, private
+  no-store) and .../export (data:read + assertFeatureAccess CSV_EXPORT,
+  shared 10/5min export limiter, 413 EXPORT_TOO_LARGE, BOM+CRLF+csvCell,
+  meta basis/limitation block, reconciling summary section, data.export
+  audit "InventoryValuationCSV").
+- UI: src/modules/reports/inventory-valuation-panel.tsx (back button,
+  always-visible basis disclosure, closed filter Selects + debounced
+  search + reset, 4 summary cards labeled "Cards reflect the current
+  filters." vs "Cards cover all included products.", neutral zero-cost
+  notice + negative-stock notice, sticky-header DataTable with NO client
+  sortValue (server sort law), stable-id product navigation
+  (#/products/<id>), pagination footer with aria-live, export mutation
+  with localized failure/too-large toasts, loading/empty/no-match/error
+  states, no placeholderData so stale totals never masquerade under new
+  filters); reports-view.tsx (param="inventory" sub-view replacing the
+  summary content; month dialog now month-SHAPED-guarded — mutually
+  exclusive sub-views; "Detailed valuation" button in the Inventory
+  health card); app-store.ts viewToHash/hashToView deep-link
+  #/reports?inventory=1 (guarded to reports + exact param).
+- i18n: 63 new invVal* keys × EN/FA (professional Persian financial
+  terminology; basis disclosure, neutral zero-cost wording, no
+  سود/ترازنامه/FIFO claims); interpolation parity verified.
+- TESTS (all with real assertions; every failure reproduced then fixed):
+  * prompt51-inventory-valuation-unit.ts 120/0 — states, all filter
+    combos, 7 sorts + id tie-break (3 test-expectation bugs found and
+    fixed during authoring: NAME_DESC tie order, fixture miscounts, and
+    the 9f "error" negation false-positive — the IMPLEMENTATION was never
+    wrong on these), exact aggregates + overflow integrity, parsing
+    bounds, reconciliation law, EN/FA parity.
+  * prompt51-inventory-valuation-check.mjs 71/0 (live server, P51QA
+    fixture: 10 products covering every state — duplicate names, unicode,
+    formula-injection name, zero-cost stock, zero stock, low stock,
+    inactive-with-stock (db), negative stock (db), BIZ-B cross-tenant,
+    P51-TINY CSV_EXPORT=false plan): 401; exact totals 17,100 + counts;
+    row==total and summary==report reconciliation (Gate D); identity;
+    zero-cost/negative honesty; no-store; every filter + 422 probes
+    (enums, q length, page/pageSize); all sorts; deterministic repeats +
+    id-ascending ties; pagination no-dup/skip incl. beyond-end honesty;
+    complete CSV (BOM bytes, CRLF, 10 rows, summary 171.00/10, formula
+    guard apostrophe, filtered export == filtered JSON, filter echo);
+    CSV_EXPORT=false → 403 with JSON 200; read-only (products
+    byte-identical incl. updatedAt; zero new Sale/Expense/Payment/
+    Adjustment/Bill rows); cross-tenant (B sees only 9,000; A's searches
+    for B's name → 0; B's CSV = B's rows only); teardown to zero residue.
+    HARNESS BUG fixed during authoring: mkProduct returned the id STRING
+    so `pNegative.id` was undefined (product creates succeeded but the
+    db-level state updates crashed) — now returns the full object; 4
+    expectation fixes (ZERO_COST is {Beta} only — Gamma cost 999;
+    POSITIVE_STOCK excludes LOW; COST_DESC first = Delta 2500; CSV
+    row-count regex excludes the header line).
+  * prompt51-inventory-valuation-cap-check.ts 18/0 (INVENTORY_SCAN_CAP=100
+    INVENTORY_EXPORT_MAX_ROWS=10): over-cap scan → controlled
+    InventoryReportTooLargeError; at-cap (100) → complete:true, count ==
+    DB count; export over-cap reject law + under-cap complete (9 ≤ 10,
+    reconciling); pagination walk over 100 products no-dup/skip +
+    reconciling; envCap clamps. (One expectation fix: 9 not 8 — product
+    000 deleted earlier in the same run.)
+  * prompt51-inventory-valuation-static-scan.mjs 44/0 — tenant scope, safe
+    money, single calculation, entitlement (exactly ONE code in the export
+    route = CSV_EXPORT), complete-or-reject, NO mutation calls in
+    service+routes, no accounting claims in RENDERED strings (comments
+    stripped), closed vocabularies, no-store, rate limits + audit, no new
+    billing surface, bounded reads, 8-field select projection, stable-id
+    navigation + no client sortValue, deep-link guards.
+- BROWSER QA (agent-browser, real session, P51QA-VISUAL fixture —
+  scripts/prompt51-inventory-valuation-browser-fixture.mjs: 27 products
+  incl. every state, 3 sales + 2 expenses so the reports module renders
+  its full content; BUSINESSES_MAX bump to PRO during creation, restored):
+  * Screenshots (9): qa-p51-inventory-en-light (1920×1080),
+    qa-p51-inventory-en-dark (1920), qa-p51-inventory-en-light-1366,
+    qa-p51-inventory-fa-rtl-light, qa-p51-inventory-fa-rtl-dark,
+    qa-p51-inventory-mobile-fa-dark (390×844), qa-p51-inventory-mobile-en
+    (412×915), qa-p51-inventory-mobile-en-360 (360×800).
+  * Interactions verified live: deep link #/reports?inventory=1; entry
+    button in the Inventory health card; back button → #/reports; search
+    "alpha" → 2 rows + "Cards reflect the current filters."; no-match
+    state + "Clear filters" reset → ""; pagination 27 products page
+    1→2 ("Showing 1–25 of 27 · Page 1 of 2" → "Showing 26–27 of 27 ·
+    Page 2 of 2"); complete CSV download (27 rows, BOM, '=SOMEFORMULA()
+    guard, summary 462.55 reconciling, truthful negative -8.00 row);
+    product drill-down → #/products/<id> renders the product page;
+    business switch VISUAL↔BIZ-A → tenant-scoped refetch ($462.55/27 ↔
+    $0.00/0 — never stale data); CSV_EXPORT=false plan → live 403 on the
+    export (network-verified) while JSON stays 200; zero console errors;
+    zero horizontal overflow at 1920/1366/412/390/360; RTL layout
+    correct (sidebar right, money stays LTR, Persian digits in counts).
+  * FIXTURE SCRIPT BUG: browser fixture initially created only products →
+    the Reports empty-state hid the inventory card → added sales/expenses
+    to the fixture (the deep link always worked regardless).
+- UI POLISH during QA: "Products in stock" card hint was a duplicate of
+  the zero-cost hint → new key invValCardPositiveStockHint ("{count} at
+  or below their low-stock threshold" / FA) using lowStockCount; export
+  URL no longer carries page/pageSize (dataset filters only — pagination
+  is meaningless for a complete-file export).
+- REGRESSION (all executed this round, real commands): prompt50-reports-
+  unit 148/0 · prompt50-reports-check 93/0 (re-created the P50QA owner
+  the env repair had wiped — the P50 cap check's fixture dependency) ·
+  prompt50-reports-cap-check 12/0 (PERFORMANCE_ROW_CAP=10
+  PERFORMANCE_GROUP_CAP=3 MONTH_EXPORT_MAX_ROWS=10) ·
+  prompt50-reports-static-scan 49/0 · prompt49-aging-details-unit 71/0
+  (bun --preload ./scripts/lib/register-server-only-shim.ts) ·
+  prompt49-aging-details-check 108/0 · prompt48-supplier-bill-check
+  212/0 · prompt39-statement-check 117/117 · payables-aging-check 39/0 ·
+  e2e-smoke 90/90.
+- PLATFORM: bunx tsc --noEmit 0 errors; bun run lint 0 problems; prisma
+  validate OK; migrations 29/29 up to date (UNCHANGED — no new migration;
+  no schema change); SQLite quick_check ok; foreign_key_check 0
+  violations; i18n audit 2,816 usages / 0 missing / 0 parity gaps.
+  bun run build: NOT EXECUTED (sandbox policy, standing limitation).
+- FIXTURE SAFETY: P51QA E2E rows wiped to zero (I1/I2 green; P51-TINY
+  plan removed); P51QA-VISUAL deliberately KEPT as the user-facing demo
+  state per the standing P47–P50 browser-fixture convention (27 products
+  + 3 sales + 2 expenses; reproducible/tearable via
+  bun scripts/prompt51-inventory-valuation-browser-fixture.mjs
+  [--teardown]); P51QA-BIZ-A/BIZ-B kept as EMPTY business rows (limiter
+  hygiene, zero financial rows); P50QA/P49QA/P48QA/P47QA residue zero.
+  NOTE: the check's purge wipes ALL P51QA-* product data (including the
+  visual business) — the browser fixture is self-healing and MUST be
+  re-run (`bun scripts/prompt51-inventory-valuation-browser-fixture.mjs`)
+  after any check run to restore the demo state (verified live after the
+  final check: 25 rows page 1, $462.55 — same adopt/self-heal pattern as
+  the P50 check↔fixture pair).
+
+Stage Summary:
+- PROMPT 51 COMPLETE. Gates A–P all PASSING with fresh evidence:
+  (A) incremental — no existing feature rewritten, all regression suites
+  green; (B) semantics — every surface labels the report a CURRENT
+  OPERATIONAL ESTIMATE, never historical/accounting value (ADR 0051 §3.4
+  exclusions hold; no FIFO/LIFO/WAC/COGS/P&L anywhere rendered); (C) exact
+  arithmetic — safeMul/safeAdd everywhere, overflow → controlled error;
+  (D) reconciliation — row Σ == report total == summary.inventory.valueMinor
+  (live-verified); (E) identity — stable product ids, duplicate names never
+  merge; (F) tenant isolation — businessId from auth context only,
+  cross-tenant probes empty both directions; (G) complete data — bounded
+  complete scans, over-cap → controlled 413, never a partial total;
+  (H) export integrity — CSV_EXPORT server-side, complete-or-reject,
+  formula-guard, BOM/CRLF, reconciling summary; (I) read-only — no
+  mutation calls (static) + byte-identical product snapshots (live);
+  (J) API safety — closed enums, strict bounds 422, rate limits, no-store,
+  projection hygiene; (K) UI/i18n — EN/FA, RTL/LTR, light/dark, 5
+  viewports, no overflow, honest states; (L) accessibility — keyboard
+  focus states, aria-labels, aria-live pagination, sr-only content
+  preserved; (M) regression evidence — every selected suite executed with
+  exact counts; (N) DB integrity — quick_check ok, fk 0, migrations
+  29/29 unchanged; (O) no unrequested scope — no ledger/COGS/costing/
+  entitlement/migration; (P) honest closure — this section distinguishes
+  EXECUTED results from worklog history. Prompt 52 NOT started.

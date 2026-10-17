@@ -1,10 +1,11 @@
 # Business Reports — Financial Semantics, Windows, and Exports
 
-**Status:** Prompt 50 · **Authority:** implementation (code is the law)
-**Scope:** `/api/v1/reports/*` (summary, export, monthly, aging, performance),
-`src/lib/reports.ts`, `src/lib/reports-advanced.ts`,
+**Status:** Prompt 50 + Prompt 51 · **Authority:** implementation (code is the law)
+**Scope:** `/api/v1/reports/*` (summary, export, monthly, aging, performance,
+inventory-valuation), `src/lib/reports.ts`, `src/lib/reports-advanced.ts`,
 `src/lib/report-performance.ts`, `src/lib/report-periods.ts`,
-`src/modules/reports/*`, `src/lib/ai/snapshot.ts`.
+`src/lib/inventory-valuation-report.ts`, `src/modules/reports/*`,
+`src/lib/ai/snapshot.ts`.
 
 ---
 
@@ -172,3 +173,61 @@ existing section names. Prompt 50 changes are additive only:
 - The monthly CSV KPI block derives collected/paidOut from Payment
   aggregates (never invoice totals) so the two bases stay labeled and
   separate.
+
+## 9. Detailed inventory valuation report (Prompt 51)
+
+`GET /api/v1/reports/inventory-valuation` and
+`GET /api/v1/reports/inventory-valuation/export` — the row-level truth
+behind the summary's `inventory.valueMinor` KPI. ADR 0051 is the design
+record; the operative laws:
+
+- **Valuation basis (the only one this report may claim):**
+  `operationalEstimatedValueMinor = stockQty × costPriceMinor` per product
+  via `safeMul`, summed via `safeAdd`. A **current operational estimate**
+  built from two current, mutable fields — NOT a historical valuation,
+  NOT a balance-sheet asset value, NOT FIFO/LIFO/weighted-average,
+  NOT COGS, NOT profit. The cost price is mutable with no history, so the
+  report offers NO "as of" selector and never reconstructs past costs.
+- **Product inclusion (the reconciliation contract):** `businessId` +
+  `deletedAt: null`, INCLUDING inactive products (they can still hold
+  stock). With default filters the report total reconciles EXACTLY with
+  `summary.inventory.valueMinor` (verified live, Gate D).
+- **Cost-quality semantics:** zero current cost is a MEASURED state
+  (free samples/promotional/intentional zeros are valid) — the report
+  counts "positive stock with zero current cost" and surfaces a neutral
+  review notice; it never rewrites costs, infers reasons, or suggests a
+  purchase price. Negative stock is a truthful `NEGATIVE_STOCK` row with
+  a (possibly negative) honest value and a data-quality count. A negative
+  cost price is financial corruption → controlled integrity error.
+- **Closed filters (422 on anything else):** `q` (≤80 chars, name OR SKU,
+  case-insensitive), `costState=ALL|POSITIVE_COST|ZERO_COST`,
+  `stockState=ALL|POSITIVE_STOCK|ZERO_STOCK|LOW_STOCK` (LOW = 0 < qty ≤
+  lowStockAt, matching the low-stock alert convention),
+  `activity=ALL|ACTIVE|INACTIVE`,
+  `sort=VALUE_DESC(default)|VALUE_ASC|NAME_ASC|NAME_DESC|QUANTITY_DESC|QUANTITY_ASC|COST_DESC`,
+  `page ≥ 1`, `pageSize 1..100` (default 25). `businessId` is NEVER a
+  client parameter — scope comes from `getAuthContext()`.
+- **Bounded complete scan:** the whole matching set is read in id-ordered
+  chunks of ≤500 up to `INVENTORY_SCAN_CAP` (50,000, envClamped);
+  over-cap → 413 `REPORT_TOO_LARGE` (never a partial total posing as
+  complete). Sorting/aggregation happen server-side over the complete
+  set with the stable `id` tie-break; JSON pages are slices. Page-number
+  pagination is used (no cursor): the complete set is scanned inside one
+  request, so there is no resumable scan for a cursor to anchor.
+- **No cross-unit quantity totals:** products use pieces/kg/meters/hours;
+  the UI sums MONEY only, quantities stay per-row.
+- **Authorization:** `data:read` (a drill-down of the BASIC summary KPI —
+  no `ADVANCED_REPORTS` gate; no new entitlement). The export enforces
+  the existing `CSV_EXPORT` server-side, uses the shared 10/5min export
+  limiter + `data.export` audit, and is complete-or-reject:
+  `INVENTORY_EXPORT_MAX_ROWS` (10,000, envClamped) → 413
+  `EXPORT_TOO_LARGE` beyond. CSV columns include product id/name/sku/
+  unit/qty/unit-cost/estimated-value/active/cost-state/stock-state, a
+  meta block (basis + limitation), and a summary section reconciling
+  with the exported rows only.
+- **UI:** Reports → Inventory health → "Detailed valuation"
+  (`#/reports?inventory=1`, deep-linkable, back/forward safe). Server
+  sorts (no client-side page sorting), stable-id product navigation
+  (`#/products/<id>`), summary cards labeled as reflecting the current
+  filters, valuation-basis disclosure always visible, EN/FA + RTL +
+  light/dark + responsive.

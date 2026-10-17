@@ -61,3 +61,41 @@ server-side per request (`§111` fresh-read law).
   no unbounded `findMany` remains in the report paths (static scan [1]).
 - The 366-day custom cap applies to NEW advanced endpoints; legacy
   endpoints keep their documented parameters (backward compatibility).
+
+## 6. Inventory valuation report (Prompt 51 — security contract)
+
+- **Tenant isolation:** the product scan is `businessId`-scoped on every
+  chunk (keyset `id >` cursor); `businessId` is never a query parameter —
+  the scope comes from `getAuthContext()` membership resolution. Live
+  tests: business B's catalog never appears in A's report; A's search for
+  B's unique product name returns zero rows in both full and partial-name
+  probes; B's CSV contains exactly B's rows.
+- **Input validation:** closed enums for `costState/stockState/activity/
+  sort` (422 `VALIDATION_ERROR`), `q` bounded at 80 chars (422 beyond),
+  strict integer `page ≥ 1` and `pageSize ∈ [1,100]` (422 on malformed or
+  out-of-range — never silently clamped).
+- **Authorization:** JSON report = `data:read` (a drill-down of the basic
+  summary KPI; deliberately NO `ADVANCED_REPORTS` gate — the gate protects
+  the ADVANCED block, not basic detail). Export = `data:read` + the
+  existing `CSV_EXPORT` entitlement enforced server-side (fresh read).
+  Verified live: `CSV_EXPORT=false` plan → 403 on the export while the
+  JSON stays 200.
+- **Bounded reads:** chunked keyset scan (≤500/chunk) capped at
+  `INVENTORY_SCAN_CAP` (50,000, env-clamped) — over-cap is a controlled
+  413 `REPORT_TOO_LARGE`; exports cap at `INVENTORY_EXPORT_MAX_ROWS`
+  (10,000) → 413 `EXPORT_TOO_LARGE`. A partial total or a partial file is
+  never served as complete.
+- **Rate limits:** JSON 60/min per user+business; export 10/5min per user
+  (the shared `report-export:` limiter). Both responses `private,
+  no-store`.
+- **Read-only:** the service and both routes contain no mutation calls
+  (static scan §6); live before/after snapshots show product rows
+  byte-identical (including `updatedAt`) and zero new
+  Sale/Expense/Payment/SupplierBill/InventoryAdjustment rows.
+- **CSV safety:** shared `csvCell` formula-injection guard (verified with
+  a product literally named `=SOMEFORMULA()` — downloaded as
+  `'=SOMEFORMULA()`), UTF-8 BOM, CRLF, safe attachment filename, meta
+  block stating the basis and limitation, no debug output.
+- **Response hygiene:** the select projection carries exactly the eight
+  safe product fields (no notes, no supplier relations, no audit
+  payloads).

@@ -67,6 +67,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { fmtCount, fmtMoney } from "../finance-shared/finance-kit";
+import { InventoryValuationPanel } from "./inventory-valuation-panel";
 import { PerformancePanel } from "./performance-panel";
 import type { BusinessSummary } from "../shell/types";
 
@@ -291,8 +292,15 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
   // dialog is a DERIVED view of the store: row clicks navigate({param}),
   // close navigates back to the bare module; hashchange (Back/Forward,
   // external deep links) flows through app-root's replaceView into here.
+  // Prompt 51: the param can also be "inventory" (the detailed valuation
+  // sub-view, #/reports?inventory=1) — the two sub-views are mutually
+  // exclusive and only month-SHAPED params open the month dialog.
+  const isInvDetail =
+    view.kind === "module" && view.module === "reports" && view.param === "inventory";
   const detailMonth =
-    view.kind === "module" && view.module === "reports" ? (view.param ?? null) : null;
+    view.kind === "module" && view.module === "reports" && view.param && /^\d{4}-\d{2}$/.test(view.param)
+      ? view.param
+      : null;
   const openMonth = (month: string) =>
     navigate({ kind: "module", module: "reports", param: month }, { replace: true });
   const closeMonth = () =>
@@ -570,16 +578,23 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
         }
       />
 
-      {error ? (
-        <div className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm">
-          {t("loadFailed")}{" "}
-          <button className="underline" onClick={() => void refetch()}>
-            {t("retry")}
-          </button>
-        </div>
-      ) : null}
+      {isInvDetail ? (
+        /* Prompt 51 — detailed inventory valuation sub-view (deep-linkable
+           via #/reports?inventory=1). Replaces the summary content; the
+           panel owns its own loading/error/empty/export states. */
+        <InventoryValuationPanel business={business} />
+      ) : (
+        <>
+          {error ? (
+            <div className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm">
+              {t("loadFailed")}{" "}
+              <button className="underline" onClick={() => void refetch()}>
+                {t("retry")}
+              </button>
+            </div>
+          ) : null}
 
-      {isLoading ? (
+          {isLoading ? (
         <div className="space-y-4" aria-busy="true">
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {[0, 1, 2, 3].map((i) => (
@@ -1195,6 +1210,21 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                       ))}
                     </ul>
                   ) : null}
+                  {/* Prompt 51 (§8.1) — the summary estimate now drills down
+                      into the detailed valuation (stable-id navigation). */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 w-full gap-1.5"
+                    data-testid="inventory-valuation-open"
+                    onClick={() =>
+                      navigate({ kind: "module", module: "reports", param: "inventory" }, { replace: true })
+                    }
+                  >
+                    <Boxes className="size-3.5" aria-hidden="true" />
+                    {t("invValViewDetails")}
+                    <ChevronRight className="ms-auto size-3.5 rtl:rotate-180" aria-hidden="true" />
+                  </Button>
                 </CardContent>
               </Card>
 
@@ -1245,6 +1275,8 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
           </div>
 
           <p className="text-muted-foreground text-center text-xs">{t("derivedNote")}</p>
+        </>
+      )}
         </>
       )}
 
