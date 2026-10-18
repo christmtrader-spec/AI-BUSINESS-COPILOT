@@ -186,11 +186,13 @@ export function PricingPublicView() {
               aria-label={t("toggleTheme")}
               onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
             >
-              {resolvedTheme === "dark" ? (
-                <Sun className="size-4" aria-hidden="true" />
-              ) : (
-                <Moon className="size-4" aria-hidden="true" />
-              )}
+              {/* Hydration-safe icon pair (BUGFIX P51-R1-USER-BUG3): the
+                  resolvedTheme ternary rendered Moon on the server and Sun on
+                  the client (theme resolves from localStorage post-hydration).
+                  CSS class switching renders IDENTICAL HTML on both sides —
+                  same pattern as shell/header.tsx. */}
+              <Sun className="size-4 dark:hidden" aria-hidden="true" />
+              <Moon className="hidden size-4 dark:block" aria-hidden="true" />
             </Button>
             <Button asChild size="sm">
               <a href="/">{t("openApp")}</a>

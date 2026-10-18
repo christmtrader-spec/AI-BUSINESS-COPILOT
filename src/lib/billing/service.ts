@@ -591,7 +591,16 @@ export async function assertWithinBusinessesLimitTx(tx: Tx, userId: string): Pro
       include: { planEntitlements: { include: { entitlement: true } } },
     });
     const row = free?.planEntitlements.find((pe) => pe.entitlement.code === "BUSINESSES_MAX");
-    limit = row?.value ?? 0;
+    if (!row) {
+      // BUGFIX P51-R1-USER-BUG3: an EMPTY/CORRUPT catalog is an OPERATIONAL
+      // failure, not a user-facing plan limit. The previous `row?.value ?? 0`
+      // made every fresh user (0 owned businesses) hit `0 >= 0` and receive a
+      // FALSE "plan limit reached" alert on their very first business. Honest
+      // fail-closed per §68 — same semantics as the other catalog guards above.
+      throw new BillingError("BILLING_UNAVAILABLE", "Billing catalog is not initialized.");
+    }
+    if (row.value === null) return; // FREE configured unlimited — mirrors getLimitIn (§472)
+    limit = row.value;
   }
 
   if (owned.length >= limit) {

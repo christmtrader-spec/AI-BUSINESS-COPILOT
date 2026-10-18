@@ -90,7 +90,18 @@ export function formatMoney(
     maximumFractionDigits: precision,
   }).format(Math.abs(major));
   const sign = major < 0 ? "-" : "";
-  const withSymbol = `${sign}${config.currencySymbol}${formatted}`;
+  // BUGFIX P51-R1-USER-BUG3 (RTL currency words): glyph symbols ($ € ﷼-style
+  // prefixed currencies excepted below) keep the historic PREFIX layout, but
+  // WORD symbols written in an RTL script (ریال، د.إ، ر.ق …) must follow the
+  // amount as a SUFFIX with a separating space — "۱٬۲۳۵ ریال", never the
+  // glued, backwards-reading "ریال۱٬۲۳۵". Presentation-only: storage stays
+  // integer minor units.
+  const symbol = config.currencySymbol;
+  if (symbol.length > 0 && /\p{Script=Arab}/u.test(symbol)) {
+    const withSymbol = `${sign}${formatted} ${symbol}`;
+    return options?.withCode ? `${withSymbol} ${config.currencyCode}` : withSymbol;
+  }
+  const withSymbol = `${sign}${symbol}${formatted}`;
   return options?.withCode ? `${withSymbol} ${config.currencyCode}` : withSymbol;
 }
 

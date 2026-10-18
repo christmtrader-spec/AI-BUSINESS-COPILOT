@@ -186,11 +186,10 @@ export function LegalDocView({
               aria-label={t("toggleTheme")}
               onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
             >
-              {resolvedTheme === "dark" ? (
-                <Sun className="size-4" aria-hidden="true" />
-              ) : (
-                <Moon className="size-4" aria-hidden="true" />
-              )}
+              {/* Hydration-safe icon pair — same fix as pricing-view.tsx:
+                  CSS class switching instead of a resolvedTheme ternary. */}
+              <Sun className="size-4 dark:hidden" aria-hidden="true" />
+              <Moon className="hidden size-4 dark:block" aria-hidden="true" />
             </Button>
             <Button asChild size="sm">
               <a href="/">{t("openApp")}</a>
