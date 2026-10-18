@@ -5187,3 +5187,31 @@ Stage Summary:
 - BOTH user-reported errors FIXED and browser-verified: (1) the two MISSING_MESSAGE console errors are gone in fa AND en (dynamic-key gap closed at the source); (2) the notification bell now opens its panel correctly on desktop (popover), mobile (sheet), in RTL, with working mark-all-read/view-all/settings actions.
 - Systemic sweep found no other trigger-less Popover/Sheet and no console errors on any of 32 checked routes; full regression battery green.
 - LESSON (standing): dynamic t(`ns.${var}`) key families are invisible to the i18n audit — when adding a new dataset/status enum, ALWAYS add the label to BOTH locales' closed vocabulary sections AND check datasetLabelKey-style mappings.
+
+---
+Task ID: P51-R1-USER-BUG2
+Agent: Z.ai Code (main)
+Task: USER REPORT (fa) with screenshot: signup fails with the generic error «درخواست انجام نشد. لطفاً دوباره تلاش کنید.» and the user asked to (1) fix the error and (2) remove the footer note "انگلیسی · فارسی · روشن / تیره · طراحی RTL-first" from the auth page.
+
+Work Log:
+- REPRODUCED FROM dev.log FIRST: POST /api/v1/auth/register 422 VALIDATION_ERROR issueCount:1 right at the user's signup attempt. Root cause: the server password policy (src/lib/auth-security.ts passwordSchema: min 8 chars + /[a-zA-Z]/ + /[0-9]/) rejected the submitted password, and auth-view.tsx mapApiError mapped 422 VALIDATION_ERROR → errors.generic, hiding the real reason. The form is noValidate, and the client pre-submit checks only mismatch+legal — no policy check — so the server was the FIRST place the policy was enforced.
+- API repro (curl): password "abcdABCDEFGH" (no digit) → 422 with details[0].path=["password"], message "Password must contain a number" — confirms field-path payload.
+- FIX (src/modules/auth/auth-view.tsx):
+  * onSubmit (signup): client-side mirror of passwordSchema → specific errors.passwordPolicy message BEFORE any network call.
+  * mapApiError: new VALIDATION_ERROR branch using details issue paths (hasValidationPath helper) → password issue → errors.passwordPolicy; other 422 → new errors.invalidData. Defense-in-depth so a server-side 422 can never again surface as the generic message on auth screens.
+  * AuthErrors type + authErrorMessages extended (passwordPolicy, invalidData).
+- REMOVED footer note: deleted the localesNote <p> from the auth brand panel and the common.marketing.localesNote key from BOTH en.ts and fa.ts (was only used there; key removal keeps EN/FA parity — i18n audit re-run CLEAN: 170 files, 2821 usages, 0 missing, 0 parity gaps).
+- NEW i18n keys (EN+FA): auth.errors.passwordPolicy ("Password must be at least 8 characters and include a letter and a number." / «رمز عبور باید حداقل ۸ نویسه باشد و شامل حداقل یک حرف و یک رقم باشد.»), auth.errors.invalidData.
+- BROWSER VERIFICATION (agent-browser, real session):
+  * FA RTL: weak password "abcdefgh" → inline role=alert shows the SPECIFIC Persian policy message; NO network call (dev.log register count unchanged) (qa-screenshots/p51r1-fa-signup-password-policy-error.png).
+  * EN: digits-only "12345678" → English policy message, same behavior (qa-screenshots/p51r1-en-signup-password-policy-error.png).
+  * Golden path FA: qa-p51r1-signup@test.local + "QaTest1234" → 201, auto sign-in, landed on onboarding (کسب‌وکار خود را بسازید), console clean (qa-screenshots/p51r1-fa-signup-success-onboarding.png).
+  * Footer note absent in FA and EN (DOM find "انگلیسی · فارسی" → not found) (qa-screenshots/p51r1-fa-signup-final-state.png).
+- HYGIENE: QA user deleted via prisma (cascades sessions), PRAGMA quick_check=ok, foreign_key_check=0 violations, user's real email (minassianchrist@gmail.com) verified still FREE for their own signup. Temp scripts removed.
+- REGRESSION: bunx tsc --noEmit 0 · bun run lint clean · i18n audit CLEAN.
+
+Stage Summary:
+- Signup failure root-caused (server password policy + generic-error masking) and FIXED at both layers (client pre-validation + honest 422 mapping). The generic "درخواست انجام نشد" no longer appears for policy failures; users now see exactly why.
+- Footer localesNote removed from both locales per user request; parity kept.
+- User should retry signup with a password that has 8+ characters INCLUDING at least one Latin letter and one digit (their email was never registered and is still available).
+- 4 new evidence screenshots in qa-screenshots/p51r1-*.

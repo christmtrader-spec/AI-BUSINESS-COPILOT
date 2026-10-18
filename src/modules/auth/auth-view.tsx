@@ -19,9 +19,28 @@ type AuthErrors = {
   rateLimited: string;
   emailTaken: string;
   passwordMismatch: string;
+  passwordPolicy: string;
+  invalidData: string;
   network: string;
   generic: string;
 };
+
+/**
+ * Server 422 envelopes carry the zod issues in `details`. When the failed
+ * field is the password we can give the user the REAL reason instead of a
+ * generic "try again" (BUGFIX P51-R1: signup showed a useless generic error
+ * when the password policy rejected the submitted password).
+ */
+function hasValidationPath(details: unknown, field: string): boolean {
+  if (!Array.isArray(details)) return false;
+  return details.some(
+    (issue) =>
+      issue !== null &&
+      typeof issue === "object" &&
+      Array.isArray((issue as { path?: unknown }).path) &&
+      (issue as { path: unknown[] }).path[0] === field,
+  );
+}
 
 function mapSignInError(error: string | null | undefined, t: AuthErrors): string {
   if (error === "CredentialsSignin") return t.invalidCredentials;
@@ -33,6 +52,10 @@ function mapApiError(err: unknown, t: AuthErrors): string {
     if (err.status === 0) return t.network;
     if (err.code === "EMAIL_TAKEN") return t.emailTaken;
     if (err.code === "RATE_LIMITED") return t.rateLimited;
+    if (err.code === "VALIDATION_ERROR") {
+      if (hasValidationPath(err.details, "password")) return t.passwordPolicy;
+      return t.invalidData;
+    }
   }
   return t.generic;
 }
@@ -337,6 +360,8 @@ export function AuthView() {
     rateLimited: t("errors.rateLimited"),
     emailTaken: t("errors.emailTaken"),
     passwordMismatch: t("errors.passwordMismatch"),
+    passwordPolicy: t("errors.passwordPolicy"),
+    invalidData: t("errors.invalidData"),
     network: t("errors.network"),
     generic: t("errors.generic"),
   };
@@ -535,6 +560,13 @@ export function AuthView() {
         setError(t("errors.passwordMismatch"));
         return;
       }
+      // Client-side mirror of the server password policy (auth-security
+      // passwordSchema): min 8 chars, at least one letter and one digit.
+      // Without this the server 422 was surfaced as a useless generic error.
+      if (password.length < 8 || !/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+        setError(t("errors.passwordPolicy"));
+        return;
+      }
       if (!acceptedLegal) {
         // Honest gate: the product requires explicit acceptance before an
         // account is created (Prompt 27 §53) — the API records the versions.
@@ -595,10 +627,6 @@ export function AuthView() {
             ))}
           </ul>
         </div>
-
-        <p className="text-muted-foreground/70 relative text-xs">
-          {tCommon("marketing.localesNote")}
-        </p>
       </div>
 
       {/* Form panel — password flows (forgot/reset) swap the card; the

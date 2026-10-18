@@ -1,0 +1,963 @@
+     1→"use client";
+     2→
+     3→import { useState } from "react";
+     4→import { signIn, signOut, useSession } from "next-auth/react";
+     5→import { useMutation, useQueryClient } from "@tanstack/react-query";
+     6→import { useTranslations } from "next-intl";
+     7→import { KeyRound, Loader2, LogIn, MailCheck, ShieldCheck, Sparkles, UserPlus, TrendingUp } from "lucide-react";
+     8→import { api, ApiClientError } from "@/lib/api-client";
+     9→import { useAppStore } from "@/store/app-store";
+    10→import { Button } from "@/components/ui/button";
+    11→import { Input } from "@/components/ui/input";
+    12→import { Label } from "@/components/ui/label";
+    13→import { Checkbox } from "@/components/ui/checkbox";
+    14→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+    15→import { InputOTP, InputOTPGroup, InputOTPSlot, InputOTPSeparator } from "@/components/ui/input-otp";
+    16→
+    17→type AuthErrors = {
+    18→  invalidCredentials: string;
+    19→  rateLimited: string;
+    20→  emailTaken: string;
+    21→  passwordMismatch: string;
+    22→  network: string;
+    23→  generic: string;
+    24→};
+    25→
+    26→function mapSignInError(error: string | null | undefined, t: AuthErrors): string {
+    27→  if (error === "CredentialsSignin") return t.invalidCredentials;
+    28→  return t.generic;
+    29→}
+    30→
+    31→function mapApiError(err: unknown, t: AuthErrors): string {
+    32→  if (err instanceof ApiClientError) {
+    33→    if (err.status === 0) return t.network;
+    34→    if (err.code === "EMAIL_TAKEN") return t.emailTaken;
+    35→    if (err.code === "RATE_LIMITED") return t.rateLimited;
+    36→  }
+    37→  return t.generic;
+    38→}
+    39→
+    40→/** Shared styling for inline auth error boxes (role="alert"). */
+    41→const errorBoxClass =
+    42→  "text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm";
+    43→
+    44→/**
+    45→ * "Forgot password" flow — requests a reset link. The server ALWAYS answers
+    46→ * 200 (never confirms whether the account exists), so the success state is a
+    47→ * generic reassurance card, never a claim about the account.
+    48→ */
+    49→function ForgotPasswordCard({ onBackToSignIn }: { onBackToSignIn: () => void }) {
+    50→  const t = useTranslations("auth");
+    51→  const [email, setEmail] = useState("");
+    52→  const [sentMessage, setSentMessage] = useState<string | null>(null);
+    53→  const [error, setError] = useState<string | null>(null);
+    54→
+    55→  const requestMutation = useMutation({
+    56→    mutationFn: async () =>
+    57→      api<{ message?: string }>("/api/v1/auth/password-reset/request", {
+    58→        method: "POST",
+    59→        body: JSON.stringify({ email }),
+    60→      }),
+    61→    onSuccess: () => {
+    62→      setError(null);
+    63→      // Generic by design — never claim whether the account exists, and UI
+    64→      // copy is always locale-driven (server message is for API consumers).
+    65→      setSentMessage(t("resetSentGeneric"));
+    66→    },
+    67→    onError: (err) => {
+    68→      if (err instanceof ApiClientError) {
+    69→        if (err.status === 0) setError(t("errors.network"));
+    70→        else if (err.code === "RESET_DELIVERY_UNAVAILABLE") setError(t("errors.resetUnavailable"));
+    71→        else if (err.code === "RATE_LIMITED") setError(t("errors.rateLimited"));
+    72→        else setError(t("errors.generic"));
+    73→      } else {
+    74→        setError(t("errors.generic"));
+    75→      }
+    76→    },
+    77→  });
+    78→
+    79→  return (
+    80→    <Card className="w-full max-w-md shadow-sm">
+    81→      <CardHeader className="space-y-1.5">
+    82→        <CardTitle className="text-2xl">{t("forgotTitle")}</CardTitle>
+    83→        <CardDescription>{t("forgotSubtitle")}</CardDescription>
+    84→      </CardHeader>
+    85→      <CardContent>
+    86→        {sentMessage ? (
+    87→          <div className="space-y-5 py-2 text-center">
+    88→            <div
+    89→              className="bg-primary/10 mx-auto flex size-12 items-center justify-center rounded-full"
+    90→              aria-hidden="true"
+    91→            >
+    92→              <MailCheck className="text-primary size-6" />
+    93→            </div>
+    94→            <div className="space-y-2">
+    95→              <p className="text-foreground text-sm" role="status">
+    96→                {sentMessage}
+    97→              </p>
+    98→              <p className="text-muted-foreground text-xs">{t("resetLinkExpiryNote")}</p>
+    99→            </div>
+   100→            <Button type="button" variant="outline" className="w-full" onClick={onBackToSignIn}>
+   101→              <LogIn className="size-4" aria-hidden="true" />
+   102→              {t("backToSignIn")}
+   103→            </Button>
+   104→          </div>
+   105→        ) : (
+   106→          <form
+   107→            onSubmit={(e) => {
+   108→              e.preventDefault();
+   109→              setError(null);
+   110→              requestMutation.mutate();
+   111→            }}
+   112→            className="space-y-4"
+   113→            noValidate
+   114→          >
+   115→            <div className="space-y-2">
+   116→              <Label htmlFor="forgot-email">{t("email")}</Label>
+   117→              <Input
+   118→                id="forgot-email"
+   119→                type="email"
+   120→                inputMode="email"
+   121→                autoComplete="email"
+   122→                dir="ltr"
+   123→                placeholder={t("emailPlaceholder")}
+   124→                value={email}
+   125→                onChange={(e) => setEmail(e.target.value)}
+   126→                required
+   127→              />
+   128→            </div>
+   129→
+   130→            {error ? (
+   131→              <p className={errorBoxClass} role="alert">
+   132→                {error}
+   133→              </p>
+   134→            ) : null}
+   135→
+   136→            <Button type="submit" className="w-full" disabled={requestMutation.isPending}>
+   137→              {requestMutation.isPending ? (
+   138→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   139→              ) : (
+   140→                <MailCheck className="size-4" aria-hidden="true" />
+   141→              )}
+   142→              {t("sendResetLink")}
+   143→            </Button>
+   144→
+   145→            <p className="text-center text-sm">
+   146→              <button
+   147→                type="button"
+   148→                className="text-primary font-medium underline-offset-4 hover:underline"
+   149→                onClick={onBackToSignIn}
+   150→              >
+   151→                {t("backToSignIn")}
+   152→              </button>
+   153→            </p>
+   154→
+   155→            <div className="bg-muted/50 text-muted-foreground rounded-md px-3 py-2 text-xs">
+   156→              <ShieldCheck className="me-1.5 inline size-3.5" aria-hidden="true" />
+   157→              {t("privacyNote")}
+   158→            </div>
+   159→          </form>
+   160→        )}
+   161→      </CardContent>
+   162→    </Card>
+   163→  );
+   164→}
+   165→
+   166→/**
+   167→ * "Reset password" flow — consumes a single-use token from the deep link
+   168→ * (#/reset-password/<token>). On success every previous session is dead:
+   169→ * any stale local session is cleared immediately and the user is sent to
+   170→ * sign-in via the success card button.
+   171→ */
+   172→function ResetPasswordCard({
+   173→  token,
+   174→  onGoToSignIn,
+   175→  onRequestNewLink,
+   176→}: {
+   177→  token: string;
+   178→  onGoToSignIn: () => void;
+   179→  onRequestNewLink: () => void;
+   180→}) {
+   181→  const t = useTranslations("auth");
+   182→  const queryClient = useQueryClient();
+   183→  const [newPassword, setNewPassword] = useState("");
+   184→  const [confirmPassword, setConfirmPassword] = useState("");
+   185→  const [error, setError] = useState<string | null>(null);
+   186→  const [tokenInvalid, setTokenInvalid] = useState(false);
+   187→  const [doneMessage, setDoneMessage] = useState<string | null>(null);
+   188→
+   189→  const resetMutation = useMutation({
+   190→    mutationFn: async () =>
+   191→      api<{ message?: string }>("/api/v1/auth/password-reset/confirm", {
+   192→        method: "POST",
+   193→        body: JSON.stringify({ token, newPassword, confirmPassword }),
+   194→      }),
+   195→    onSuccess: () => {
+   196→      setError(null);
+   197→      setTokenInvalid(false);
+   198→      setDoneMessage(t("resetSuccessBody"));
+   199→      // The server killed every session for this user — clear any stale
+   200→      // local one right away (the success card below routes to sign-in).
+   201→      void signOut({ redirect: false });
+   202→      void queryClient.invalidateQueries();
+   203→    },
+   204→    onError: (err) => {
+   205→      if (err instanceof ApiClientError) {
+   206→        if (err.code === "INVALID_RESET_TOKEN") {
+   207→          setTokenInvalid(true);
+   208→          setError(null);
+   209→        } else if (err.status === 0) {
+   210→          setTokenInvalid(false);
+   211→          setError(t("errors.network"));
+   212→        } else if (err.code === "RATE_LIMITED") {
+   213→          setTokenInvalid(false);
+   214→          setError(t("errors.rateLimited"));
+   215→        } else {
+   216→          setTokenInvalid(false);
+   217→          setError(t("errors.generic"));
+   218→        }
+   219→      } else {
+   220→        setTokenInvalid(false);
+   221→        setError(t("errors.generic"));
+   222→      }
+   223→    },
+   224→  });
+   225→
+   226→  return (
+   227→    <Card className="w-full max-w-md shadow-sm">
+   228→      <CardHeader className="space-y-1.5">
+   229→        <CardTitle className="text-2xl">
+   230→          {doneMessage ? t("resetSuccessTitle") : t("resetTitle")}
+   231→        </CardTitle>
+   232→        {doneMessage ? null : <CardDescription>{t("resetSubtitle")}</CardDescription>}
+   233→      </CardHeader>
+   234→      <CardContent>
+   235→        {doneMessage ? (
+   236→          <div className="space-y-5 py-2 text-center">
+   237→            <div
+   238→              className="bg-primary/10 mx-auto flex size-12 items-center justify-center rounded-full"
+   239→              aria-hidden="true"
+   240→            >
+   241→              <KeyRound className="text-primary size-6" />
+   242→            </div>
+   243→            <p className="text-foreground text-sm" role="status">
+   244→              {doneMessage}
+   245→            </p>
+   246→            <Button type="button" className="w-full" onClick={onGoToSignIn}>
+   247→              <LogIn className="size-4" aria-hidden="true" />
+   248→              {t("goToSignIn")}
+   249→            </Button>
+   250→          </div>
+   251→        ) : (
+   252→          <form
+   253→            onSubmit={(e) => {
+   254→              e.preventDefault();
+   255→              setError(null);
+   256→              setTokenInvalid(false);
+   257→              if (newPassword !== confirmPassword) {
+   258→                setError(t("errors.passwordMismatch"));
+   259→                return;
+   260→              }
+   261→              resetMutation.mutate();
+   262→            }}
+   263→            className="space-y-4"
+   264→            noValidate
+   265→          >
+   266→            <div className="space-y-2">
+   267→              <Label htmlFor="reset-password">{t("newPassword")}</Label>
+   268→              <Input
+   269→                id="reset-password"
+   270→                type="password"
+   271→                autoComplete="new-password"
+   272→                dir="ltr"
+   273→                placeholder={t("passwordPlaceholder")}
+   274→                value={newPassword}
+   275→                onChange={(e) => setNewPassword(e.target.value)}
+   276→                required
+   277→                minLength={8}
+   278→              />
+   279→              <p className="text-muted-foreground text-xs">{t("passwordHint")}</p>
+   280→            </div>
+   281→
+   282→            <div className="space-y-2">
+   283→              <Label htmlFor="reset-confirm">{t("confirmNewPassword")}</Label>
+   284→              <Input
+   285→                id="reset-confirm"
+   286→                type="password"
+   287→                autoComplete="new-password"
+   288→                dir="ltr"
+   289→                value={confirmPassword}
+   290→                onChange={(e) => setConfirmPassword(e.target.value)}
+   291→                required
+   292→              />
+   293→            </div>
+   294→
+   295→            {tokenInvalid ? (
+   296→              <div className={errorBoxClass} role="alert">
+   297→                <p>{t("errors.invalidResetToken")}</p>
+   298→                <button
+   299→                  type="button"
+   300→                  className="text-primary mt-1.5 font-medium underline-offset-4 hover:underline"
+   301→                  onClick={onRequestNewLink}
+   302→                >
+   303→                  {t("sendResetLink")}
+   304→                </button>
+   305→              </div>
+   306→            ) : error ? (
+   307→              <p className={errorBoxClass} role="alert">
+   308→                {error}
+   309→              </p>
+   310→            ) : null}
+   311→
+   312→            <Button type="submit" className="w-full" disabled={resetMutation.isPending}>
+   313→              {resetMutation.isPending ? (
+   314→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   315→              ) : (
+   316→                <KeyRound className="size-4" aria-hidden="true" />
+   317→              )}
+   318→              {t("resetSubmit")}
+   319→            </Button>
+   320→          </form>
+   321→        )}
+   322→      </CardContent>
+   323→    </Card>
+   324→  );
+   325→}
+   326→
+   327→export function AuthView() {
+   328→  const t = useTranslations("auth");
+   329→  const tCommon = useTranslations("common");
+   330→  const view = useAppStore((s) => s.view);
+   331→  const navigate = useAppStore((s) => s.navigate);
+   332→  // next-intl's t is a function — nested property access (t.errors) is
+   333→  // undefined at runtime, which crashed the onError handlers. Build the
+   334→  // message map with explicit t() calls instead (BUGFIX r8).
+   335→  const authErrorMessages: AuthErrors = {
+   336→    invalidCredentials: t("errors.invalidCredentials"),
+   337→    rateLimited: t("errors.rateLimited"),
+   338→    emailTaken: t("errors.emailTaken"),
+   339→    passwordMismatch: t("errors.passwordMismatch"),
+   340→    network: t("errors.network"),
+   341→    generic: t("errors.generic"),
+   342→  };
+   343→  const { status } = useSession();
+   344→  const queryClient = useQueryClient();
+   345→  const [mode, setMode] = useState<"signin" | "signup">("signin");
+   346→  const [name, setName] = useState("");
+   347→  const [email, setEmail] = useState("");
+   348→  const [password, setPassword] = useState("");
+   349→  const [confirmPassword, setConfirmPassword] = useState("");
+   350→  const [error, setError] = useState<string | null>(null);
+   351→
+   352→  // Prompt 30 §46/§109 — the MFA login step machine. Password success with
+   353→  // MFA enabled NEVER creates a session (authorize throws the fixed
+   354→  // MFA_REQUIRED code); the client then obtains a SHORT-LIVED challenge,
+   355→  // collects the TOTP/recovery code, and exchanges it for a ONE-TIME
+   356→  // assertion that completes the real NextAuth login.
+   357→  const [mfaStage, setMfaStage] = useState<"idle" | "challenge" | "code">("idle");
+   358→  const [mfaChallenge, setMfaChallenge] = useState<string | null>(null);
+   359→  const [mfaMethod, setMfaMethod] = useState<"TOTP" | "RECOVERY_CODE">("TOTP");
+   360→  const [mfaCode, setMfaCode] = useState("");
+   361→  // Prompt 27 §53/§58: explicit legal acceptance — UNCHECKED by default, with
+   362→  // links to the actual documents BEFORE acceptance. Required by the signup UI.
+   363→  const [acceptedLegal, setAcceptedLegal] = useState(false);
+   364→  const tLegal = useTranslations("legal.auth");
+   365→
+   366→  const signInMutation = useMutation({
+   367→    mutationFn: async () => {
+   368→      const res = await signIn("credentials", { redirect: false, email, password });
+   369→      if (!res || res.error) throw new Error(res?.error ?? "CredentialsSignin");
+   370→      return res;
+   371→    },
+   372→    onSuccess: () => {
+   373→      setError(null);
+   374→      void queryClient.invalidateQueries({ queryKey: ["businesses"] });
+   375→      void queryClient.invalidateQueries({ queryKey: ["me"] });
+   376→    },
+   377→    onError: (err) => {
+   378→      // Prompt 30 §110 — MFA_REQUIRED arrives ONLY after the password was
+   379→      // verified inside authorize(); switch to the bounded MFA step.
+   380→      if (err.message === "MFA_REQUIRED") {
+   381→        void startMfaChallenge();
+   382→        return;
+   383→      }
+   384→      setError(
+   385→        err instanceof ApiClientError
+   386→          ? mapApiError(err, authErrorMessages)
+   387→          : mapSignInError(err.message, authErrorMessages),
+   388→      );
+   389→    },
+   390→  });
+   391→
+   392→  // Step 2 of the MFA flow (§46): re-verify the password at the dedicated
+   393→  // endpoint to obtain the challenge token (rate-limited, hash-only server
+   394→  // state, bound to the user's sessionVersion).
+   395→  const startMfaChallenge = () => {
+   396→    setMfaStage("challenge");
+   397→    mfaChallengeMutation.mutate();
+   398→  };
+   399→
+   400→  const mfaChallengeMutation = useMutation({
+   401→    mutationFn: async () =>
+   402→      api<{ mfaRequired: boolean; challenge: string; expiresAt: string }>(
+   403→        "/api/v1/auth/mfa/challenge",
+   404→        { method: "POST", body: JSON.stringify({ email, password }), businessId: null },
+   405→      ),
+   406→    onSuccess: (res) => {
+   407→      setMfaChallenge(res.challenge);
+   408→      setMfaStage("code");
+   409→      setMfaCode("");
+   410→      setError(null);
+   411→    },
+   412→    onError: (err) => {
+   413→      setMfaStage("idle");
+   414→      if (err instanceof ApiClientError) {
+   415→        if (err.code === "MFA_NOT_ENABLED") {
+   416→          // The account has no MFA (state changed mid-flow) — retry plain.
+   417→          signInMutation.mutate();
+   418→          return;
+   419→        }
+   420→        if (err.code === "RATE_LIMITED") {
+   421→          setError(t("mfaRateLimited"));
+   422→          return;
+   423→        }
+   424→        if (err.code === "INVALID_CREDENTIALS") {
+   425→          setError(authErrorMessages.invalidCredentials);
+   426→          return;
+   427→        }
+   428→      }
+   429→      setError(authErrorMessages.generic);
+   430→    },
+   431→  });
+   432→
+   433→  // Step 3 (§51): exchange challenge + code for the one-time assertion,
+   434→  // then complete the REAL NextAuth sign-in with it (§52 — the final JWT
+   435→  // is still issued by NextAuth only).
+   436→  const mfaCompleteMutation = useMutation({
+   437→    mutationFn: async () => {
+   438→      const assertion = await api<{ assertion: string }>("/api/v1/auth/mfa/complete", {
+   439→        method: "POST",
+   440→        body: JSON.stringify({ challenge: mfaChallenge, code: mfaCode, method: mfaMethod }),
+   441→        businessId: null,
+   442→      });
+   443→      const res = await signIn("credentials", {
+   444→        redirect: false,
+   445→        email,
+   446→        mfaAssertion: assertion.assertion,
+   447→      });
+   448→      if (!res || res.error) throw new Error(res?.error ?? "CredentialsSignin");
+   449→      return res;
+   450→    },
+   451→    onSuccess: () => {
+   452→      setMfaStage("idle");
+   453→      setMfaChallenge(null);
+   454→      setMfaCode("");
+   455→      setError(null);
+   456→      void queryClient.invalidateQueries({ queryKey: ["businesses"] });
+   457→      void queryClient.invalidateQueries({ queryKey: ["me"] });
+   458→    },
+   459→    onError: (err) => {
+   460→      if (err instanceof ApiClientError) {
+   461→        if (err.code === "MFA_INVALID_CODE") {
+   462→          setError(t("mfaInvalidCode"));
+   463→          setMfaCode("");
+   464→          return;
+   465→        }
+   466→        if (err.code === "MFA_CHALLENGE_EXPIRED" || err.code === "MFA_CHALLENGE_INVALID") {
+   467→          setError(t("mfaChallengeExpired"));
+   468→          return;
+   469→        }
+   470→        if (err.code === "MFA_RATE_LIMITED" || err.code === "RATE_LIMITED") {
+   471→          setError(t("mfaRateLimited"));
+   472→          return;
+   473→        }
+   474→        if (err.code === "MFA_RECOVERY_CODE_INVALID" || err.code === "MFA_RECOVERY_CODE_USED") {
+   475→          setError(t("mfaInvalidCode"));
+   476→          setMfaCode("");
+   477→          return;
+   478→        }
+   479→      }
+   480→      // Assertion replay/expiry inside authorize(): restart the MFA step.
+   481→      if (err.message === "MFA_REQUIRED") {
+   482→        setError(t("mfaChallengeExpired"));
+   483→        setMfaStage("idle");
+   484→        setMfaChallenge(null);
+   485→        return;
+   486→      }
+   487→      setError(authErrorMessages.generic);
+   488→    },
+   489→  });
+   490→
+   491→  const registerMutation = useMutation({
+   492→    mutationFn: async () => {
+   493→      await api("/api/v1/auth/register", {
+   494→        method: "POST",
+   495→        body: JSON.stringify({
+   496→          name,
+   497→          email,
+   498→          password,
+   499→          // Server resolves the accepted document versions (Prompt 27 §163).
+   500→          acceptedLegal: acceptedLegal ? { terms: true, privacy: true } : undefined,
+   501→        }),
+   502→      });
+   503→      const res = await signIn("credentials", { redirect: false, email, password });
+   504→      if (!res || res.error) throw new Error(res?.error ?? "CredentialsSignin");
+   505→      return res;
+   506→    },
+   507→    onSuccess: () => {
+   508→      setError(null);
+   509→      void queryClient.invalidateQueries();
+   510→    },
+   511→    onError: (err) => {
+   512→      setError(
+   513→        err instanceof ApiClientError
+   514→          ? mapApiError(err, authErrorMessages)
+   515→          : mapSignInError(err.message, authErrorMessages),
+   516→      );
+   517→    },
+   518→  });
+   519→
+   520→  const busy = signInMutation.isPending || registerMutation.isPending || status === "loading";
+   521→
+   522→  // Store-driven mode switches (hash updates): password flows always route
+   523→  // through navigate() so deep links, back/forward and refresh all work.
+   524→  function goBackToSignIn() {
+   525→    setMode("signin");
+   526→    setError(null);
+   527→    navigate({ kind: "dashboard" });
+   528→  }
+   529→
+   530→  function onSubmit(e: React.FormEvent) {
+   531→    e.preventDefault();
+   532→    setError(null);
+   533→    if (mode === "signup") {
+   534→      if (password !== confirmPassword) {
+   535→        setError(t("errors.passwordMismatch"));
+   536→        return;
+   537→      }
+   538→      if (!acceptedLegal) {
+   539→        // Honest gate: the product requires explicit acceptance before an
+   540→        // account is created (Prompt 27 §53) — the API records the versions.
+   541→        setError(tLegal("acceptRequired"));
+   542→        return;
+   543→      }
+   544→      registerMutation.mutate();
+   545→    } else {
+   546→      signInMutation.mutate();
+   547→    }
+   548→  }
+   549→
+   550→  return (
+   551→    <div className="bg-muted/30 flex min-h-svh flex-col lg:flex-row" data-view="auth">
+   552→      {/* Brand panel */}
+   553→      <div className="from-primary/5 via-primary/10 to-primary/5 relative flex flex-1 flex-col justify-between overflow-hidden p-8 lg:p-14">
+   554→        <div
+   555→          className="bg-primary/5 pointer-events-none absolute -top-24 -end-24 size-72 rounded-full blur-3xl"
+   556→          aria-hidden="true"
+   557→        />
+   558→        <div
+   559→          className="bg-primary/5 pointer-events-none absolute -bottom-24 -start-24 size-72 rounded-full blur-3xl"
+   560→          aria-hidden="true"
+   561→        />
+   562→        <div className="flex items-center gap-3">
+   563→          <div className="bg-background shadow-sm flex size-11 items-center justify-center rounded-xl border">
+   564→            <img src="/logo.svg" alt="" className="size-6" aria-hidden="true" />
+   565→          </div>
+   566→          <div>
+   567→            <p className="text-lg font-semibold tracking-tight gradient-text">
+   568→              {tCommon("appName")}
+   569→            </p>
+   570→            <p className="text-muted-foreground text-xs">{tCommon("tagline")}</p>
+   571→          </div>
+   572→        </div>
+   573→
+   574→        <div className="relative mx-auto w-full max-w-md space-y-8 py-12">
+   575→          <div className="space-y-3">
+   576→            <h2 className="text-3xl font-semibold tracking-tight gradient-text gradient-shimmer lg:text-4xl">
+   577→              {tCommon("tagline")}
+   578→            </h2>
+   579→            <p className="text-muted-foreground text-base">
+   580→              {tCommon("marketing.sub")}
+   581→            </p>
+   582→          </div>
+   583→          <ul className="space-y-4">
+   584→            {[
+   585→              { icon: ShieldCheck, text: tCommon("marketing.point1") },
+   586→              { icon: TrendingUp, text: tCommon("marketing.point2") },
+   587→              { icon: Sparkles, text: tCommon("marketing.point3") },
+   588→            ].map(({ icon: Icon, text }) => (
+   589→              <li key={text} className="flex items-center gap-3">
+   590→                <span className="bg-background text-primary flex size-9 shrink-0 items-center justify-center rounded-lg border shadow-sm">
+   591→                  <Icon className="size-4" aria-hidden="true" />
+   592→                </span>
+   593→                <span className="text-muted-foreground text-sm">{text}</span>
+   594→              </li>
+   595→            ))}
+   596→          </ul>
+   597→        </div>
+   598→
+   599→        <p className="text-muted-foreground/70 relative text-xs">
+   600→          {tCommon("marketing.localesNote")}
+   601→        </p>
+   602→      </div>
+   603→
+   604→      {/* Form panel — password flows (forgot/reset) swap the card; the
+   605→          sign-in/sign-up card is unchanged apart from the reset link. */}
+   606→      <div className="flex flex-1 items-center justify-center p-6 lg:p-10">
+   607→        {view.kind === "forgot-password" ? (
+   608→          <ForgotPasswordCard onBackToSignIn={goBackToSignIn} />
+   609→        ) : view.kind === "reset-password" ? (
+   610→          <ResetPasswordCard
+   611→            token={view.token}
+   612→            onGoToSignIn={goBackToSignIn}
+   613→            onRequestNewLink={() => {
+   614→              setError(null);
+   615→              navigate({ kind: "forgot-password" });
+   616→            }}
+   617→          />
+   618→        ) : mfaStage === "code" ? (
+   619→          <MfaLoginCard
+   620→            error={error}
+   621→            method={mfaMethod}
+   622→            setMethod={setMfaMethod}
+   623→            code={mfaCode}
+   624→            setCode={setMfaCode}
+   625→            busy={mfaCompleteMutation.isPending}
+   626→            onSubmit={() => mfaCompleteMutation.mutate()}
+   627→            onRestart={() => {
+   628→              setMfaStage("idle");
+   629→              setMfaChallenge(null);
+   630→              setMfaCode("");
+   631→              setError(null);
+   632→            }}
+   633→          />
+   634→        ) : (
+   635→        <Card className="w-full max-w-md shadow-sm">
+   636→          <CardHeader className="space-y-1.5">
+   637→            <CardTitle className="text-2xl">
+   638→              {mode === "signin" ? t("signInTitle") : t("signUpTitle")}
+   639→            </CardTitle>
+   640→            <CardDescription>
+   641→              {mode === "signin" ? t("signInSubtitle") : t("signUpSubtitle")}
+   642→            </CardDescription>
+   643→          </CardHeader>
+   644→          <CardContent>
+   645→            <form onSubmit={onSubmit} className="space-y-4" noValidate>
+   646→              {mode === "signup" ? (
+   647→                <div className="space-y-2">
+   648→                  <Label htmlFor="name">{t("name")}</Label>
+   649→                  <Input
+   650→                    id="name"
+   651→                    autoComplete="name"
+   652→                    placeholder={t("namePlaceholder")}
+   653→                    value={name}
+   654→                    onChange={(e) => setName(e.target.value)}
+   655→                    required
+   656→                    maxLength={80}
+   657→                  />
+   658→                </div>
+   659→              ) : null}
+   660→
+   661→              <div className="space-y-2">
+   662→                <Label htmlFor="email">{t("email")}</Label>
+   663→                <Input
+   664→                  id="email"
+   665→                  type="email"
+   666→                  inputMode="email"
+   667→                  autoComplete="email"
+   668→                  dir="ltr"
+   669→                  placeholder={t("emailPlaceholder")}
+   670→                  value={email}
+   671→                  onChange={(e) => setEmail(e.target.value)}
+   672→                  required
+   673→                />
+   674→              </div>
+   675→
+   676→              <div className="space-y-2">
+   677→                <Label htmlFor="password">{t("password")}</Label>
+   678→                <Input
+   679→                  id="password"
+   680→                  type="password"
+   681→                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
+   682→                  dir="ltr"
+   683→                  placeholder={t("passwordPlaceholder")}
+   684→                  value={password}
+   685→                  onChange={(e) => setPassword(e.target.value)}
+   686→                  required
+   687→                  minLength={mode === "signup" ? 8 : undefined}
+   688→                />
+   689→                {mode === "signup" ? (
+   690→                  <p className="text-muted-foreground text-xs">{t("passwordHint")}</p>
+   691→                ) : null}
+   692→              </div>
+   693→
+   694→              {mode === "signin" ? (
+   695→                <div className="flex justify-end">
+   696→                  <button
+   697→                    type="button"
+   698→                    className="text-primary text-sm underline-offset-4 hover:underline"
+   699→                    onClick={() => {
+   700→                      setError(null);
+   701→                      navigate({ kind: "forgot-password" });
+   702→                    }}
+   703→                  >
+   704→                    {t("forgotPassword")}
+   705→                  </button>
+   706→                </div>
+   707→              ) : null}
+   708→
+   709→              {mode === "signup" ? (
+   710→                <div className="space-y-2">
+   711→                  <Label htmlFor="confirmPassword">{t("confirmPassword")}</Label>
+   712→                  <Input
+   713→                    id="confirmPassword"
+   714→                    type="password"
+   715→                    autoComplete="new-password"
+   716→                    dir="ltr"
+   717→                    value={confirmPassword}
+   718→                    onChange={(e) => setConfirmPassword(e.target.value)}
+   719→                    required
+   720→                  />
+   721→                </div>
+   722→              ) : null}
+   723→
+   724→              {mode === "signup" ? (
+   725→                <div className="flex items-start gap-2.5">
+   726→                  <Checkbox
+   727→                    id="acceptLegal"
+   728→                    checked={acceptedLegal}
+   729→                    onCheckedChange={(v) => setAcceptedLegal(v === true)}
+   730→                    className="mt-0.5"
+   731→                    required
+   732→                  />
+   733→                  <Label
+   734→                    htmlFor="acceptLegal"
+   735→                    className="text-muted-foreground text-start text-xs leading-5 font-normal"
+   736→                  >
+   737→                    {tLegal("acceptPrefix")}{" "}
+   738→                    <a
+   739→                      href="/terms"
+   740→                      target="_blank"
+   741→                      rel="noopener noreferrer"
+   742→                      className="text-primary underline-offset-4 hover:underline"
+   743→                    >
+   744→                      {tLegal("acceptTerms")}
+   745→                    </a>{" "}
+   746→                    {tLegal("acceptAnd")}{" "}
+   747→                    <a
+   748→                      href="/privacy"
+   749→                      target="_blank"
+   750→                      rel="noopener noreferrer"
+   751→                      className="text-primary underline-offset-4 hover:underline"
+   752→                    >
+   753→                      {tLegal("acceptPrivacy")}
+   754→                    </a>
+   755→                  </Label>
+   756→                </div>
+   757→              ) : null}
+   758→
+   759→              {error ? (
+   760→                <p className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm" role="alert">
+   761→                  {error}
+   762→                </p>
+   763→              ) : null}
+   764→
+   765→              <Button type="submit" className="w-full" disabled={busy}>
+   766→                {busy ? (
+   767→                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   768→                ) : mode === "signin" ? (
+   769→                  <LogIn className="size-4" aria-hidden="true" />
+   770→                ) : (
+   771→                  <UserPlus className="size-4" aria-hidden="true" />
+   772→                )}
+   773→                {mode === "signin"
+   774→                  ? busy
+   775→                    ? t("signingIn")
+   776→                    : t("signIn")
+   777→                  : busy
+   778→                    ? t("creatingAccount")
+   779→                    : t("signUp")}
+   780→              </Button>
+   781→
+   782→              <p className="text-center text-sm">
+   783→                {mode === "signin" ? t("noAccount") : t("haveAccount")}{" "}
+   784→                <button
+   785→                  type="button"
+   786→                  className="text-primary font-medium underline-offset-4 hover:underline"
+   787→                  onClick={() => {
+   788→                    setMode(mode === "signin" ? "signup" : "signin");
+   789→                    setError(null);
+   790→                  }}
+   791→                >
+   792→                  {mode === "signin" ? t("signUp") : t("signIn")}
+   793→                </button>
+   794→              </p>
+   795→
+   796→              <div className="bg-muted/50 text-muted-foreground rounded-md px-3 py-2 text-xs">
+   797→                <ShieldCheck className="me-1.5 inline size-3.5" aria-hidden="true" />
+   798→                {t("privacyNote")}
+   799→              </div>
+   800→
+   801→              {/* Legal links (Prompt 27 §60/§149) — real public documents,
+   802→                  localized labels, new tab so form state survives. */}
+   803→              <p className="text-muted-foreground text-center text-xs">
+   804→                {tLegal("legalLinksLabel")}:{" "}
+   805→                <a
+   806→                  href="/privacy"
+   807→                  target="_blank"
+   808→                  rel="noopener noreferrer"
+   809→                  className="hover:text-foreground underline-offset-4 hover:underline"
+   810→                >
+   811→                  {tLegal("acceptPrivacy")}
+   812→                </a>
+   813→                {" · "}
+   814→                <a
+   815→                  href="/terms"
+   816→                  target="_blank"
+   817→                  rel="noopener noreferrer"
+   818→                  className="hover:text-foreground underline-offset-4 hover:underline"
+   819→                >
+   820→                  {tLegal("acceptTerms")}
+   821→                </a>
+   822→                {" · "}
+   823→                <a
+   824→                  href="/ai-data-use"
+   825→                  target="_blank"
+   826→                  rel="noopener noreferrer"
+   827→                  className="hover:text-foreground underline-offset-4 hover:underline"
+   828→                >
+   829→                  {tLegal("aiDataUseLink")}
+   830→                </a>
+   831→              </p>
+   832→            </form>
+   833→          </CardContent>
+   834→        </Card>
+   835→        )}
+   836→      </div>
+   837→    </div>
+   838→  );
+   839→}
+   840→
+   841→/* ------------------------- MFA login card (§110-§111) ---------------------- */
+   842→
+   843→/**
+   844→ * Second-factor step — rendered ONLY after the password was verified inside
+   845→ * authorize() (the MFA_REQUIRED code never leaks account state before that,
+   846→ * §280). Generic error copy (§111); OTP input accepts digits + paste
+   847→ * (§101); proper labels beyond placeholders (§102); the code is never
+   848→ * placed in any URL (§101).
+   849→ */
+   850→function MfaLoginCard({
+   851→  error,
+   852→  method,
+   853→  setMethod,
+   854→  code,
+   855→  setCode,
+   856→  busy,
+   857→  onSubmit,
+   858→  onRestart,
+   859→}: {
+   860→  error: string | null;
+   861→  method: "TOTP" | "RECOVERY_CODE";
+   862→  setMethod: (m: "TOTP" | "RECOVERY_CODE") => void;
+   863→  code: string;
+   864→  setCode: (c: string) => void;
+   865→  busy: boolean;
+   866→  onSubmit: () => void;
+   867→  onRestart: () => void;
+   868→}) {
+   869→  const t = useTranslations("auth");
+   870→
+   871→  return (
+   872→    <Card className="w-full max-w-md shadow-sm">
+   873→      <CardHeader className="space-y-1.5">
+   874→        <CardTitle className="flex items-center gap-2 text-2xl">
+   875→          <ShieldCheck className="h-5 w-5 text-primary" aria-hidden />
+   876→          {t("mfaTitle")}
+   877→        </CardTitle>
+   878→        <CardDescription>{t("mfaSubtitle")}</CardDescription>
+   879→      </CardHeader>
+   880→      <CardContent>
+   881→        <form
+   882→          onSubmit={(e) => {
+   883→            e.preventDefault();
+   884→            if (!busy) onSubmit();
+   885→          }}
+   886→          className="space-y-4"
+   887→          noValidate
+   888→        >
+   889→          {method === "TOTP" ? (
+   890→            <div className="space-y-2">
+   891→              <Label htmlFor="mfa-otp">{t("mfaCodeLabel")}</Label>
+   892→              <InputOTP
+   893→                maxLength={6}
+   894→                value={code}
+   895→                onChange={setCode}
+   896→                containerClassName="justify-start"
+   897→              >
+   898→                <InputOTPGroup dir="ltr">
+   899→                  <InputOTPSlot index={0} />
+   900→                  <InputOTPSlot index={1} />
+   901→                  <InputOTPSlot index={2} />
+   902→                </InputOTPGroup>
+   903→                <InputOTPSeparator />
+   904→                <InputOTPGroup dir="ltr">
+   905→                  <InputOTPSlot index={3} />
+   906→                  <InputOTPSlot index={4} />
+   907→                  <InputOTPSlot index={5} />
+   908→                </InputOTPGroup>
+   909→              </InputOTP>
+   910→            </div>
+   911→          ) : (
+   912→            <div className="space-y-2">
+   913→              <Label htmlFor="mfa-recovery">{t("mfaRecoveryLabel")}</Label>
+   914→              <Input
+   915→                id="mfa-recovery"
+   916→                value={code}
+   917→                onChange={(e) => setCode(e.target.value)}
+   918→                placeholder={t("mfaRecoveryPlaceholder")}
+   919→                autoComplete="off"
+   920→                className="font-mono"
+   921→                dir="ltr"
+   922→                maxLength={64}
+   923→              />
+   924→            </div>
+   925→          )}
+   926→          {error ? (
+   927→            <p className={errorBoxClass} role="alert">
+   928→              {error}
+   929→            </p>
+   930→          ) : null}
+   931→          <Button type="submit" className="w-full" disabled={busy || code.length === 0}>
+   932→            {busy ? (
+   933→              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+   934→            ) : (
+   935→              <LogIn className="h-4 w-4" aria-hidden="true" />
+   936→            )}
+   937→            {t("mfaVerify")}
+   938→          </Button>
+   939→          <div className="flex items-center justify-between text-sm">
+   940→            <button
+   941→              type="button"
+   942→              className="text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
+   943→              onClick={() => {
+   944→                setMethod(method === "TOTP" ? "RECOVERY_CODE" : "TOTP");
+   945→                setCode("");
+   946→              }}
+   947→            >
+   948→              {method === "TOTP" ? t("mfaUseRecovery") : t("mfaUseAuthenticator")}
+   949→            </button>
+   950→            <button
+   951→              type="button"
+   952→              className="text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
+   953→              onClick={onRestart}
+   954→            >
+   955→              {t("mfaRestart")}
+   956→            </button>
+   957→          </div>
+   958→        </form>
+   959→      </CardContent>
+   960→    </Card>
+   961→  );
+   962→}
+   963→
