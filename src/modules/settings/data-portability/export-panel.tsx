@@ -61,6 +61,11 @@ const SENSITIVITIES: Record<string, "PUBLIC_BUSINESS" | "CONFIDENTIAL"> = {
 };
 
 /** i18n label key for a dataset (machine key → camelCase message key). */
+// P51-R1: this map MUST cover EVERY key in the backend EXPORT_DATASET_KEYS
+// (src/lib/data-portability/export-catalog.ts) — the API accepts all of
+// them and the job history renders labels through datasetLabelKey().
+// The unmapped fallback (`?? key`) leaks snake_case into t() and throws
+// MISSING_MESSAGE — the same defect family as crmActivities/crmTasks.
 const DATASET_LABEL_KEYS: Record<string, string> = {
   business: "business",
   members: "members",
@@ -76,6 +81,22 @@ const DATASET_LABEL_KEYS: Record<string, string> = {
   crm_opportunities: "crmOpportunities",
   crm_activities: "crmActivities",
   crm_tasks: "crmTasks",
+  inventory_stocktakes: "stocktakes",
+  inventory_stocktake_lines: "stocktakeLines",
+  purchase_orders: "purchaseOrders",
+  purchase_order_lines: "purchaseOrderLines",
+  inventory_goods_receipts: "inventoryGoodsReceipts",
+  inventory_goods_receipt_lines: "inventoryGoodsReceiptLines",
+  inventory_goods_returns: "inventoryGoodsReturns",
+  inventory_goods_return_lines: "inventoryGoodsReturnLines",
+  inventory_goods_dispatches: "inventoryGoodsDispatches",
+  inventory_goods_dispatch_lines: "inventoryGoodsDispatchLines",
+  sales_orders: "salesOrders",
+  sales_order_lines: "salesOrderLines",
+  sales_quotations: "salesQuotations",
+  sales_quotation_lines: "salesQuotationLines",
+  supplier_bills: "supplierBills",
+  supplier_bill_lines: "supplierBillLines",
   subscription_summary: "subscriptionSummary",
   usage_summary: "usageSummary",
 };

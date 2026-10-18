@@ -364,6 +364,54 @@ console.log("[9] EN/FA parity — invVal keys + valuation wording (Gate J)");
   ok("9j. interpolation params identical across EN/FA", bad.length === 0, bad.join(","));
 }
 
+// ---------------------------------------------------------------------------
+// [10] P51-R1 — EXACT money serialization for the inventory CSV boundary.
+// The export route must serialize minor units via the shared exact
+// serializer (formatMinorToDecimal, src/lib/data-portability/money-csv) —
+// never via a float round-trip (the old fromMinor().toFixed() printed
+// 90071992547400.02 for the exact 90071992547400.01 — verified before the
+// fix). These cases pin the serializer contract itself; the LIVE endpoint
+// case runs in prompt51-inventory-valuation-check.mjs (P51-R1 section).
+// ---------------------------------------------------------------------------
+{
+  const { formatMinorToDecimal, parseDecimalToMinor, MoneyParseError } = await import(
+    "../src/lib/data-portability/money-csv"
+  );
+
+  // Case A — the reported precision-loss example (exact, no float drift).
+  ok("10a. precision-loss boundary 9007199254740001@2 → '90071992547400.01'", formatMinorToDecimal(9007199254740001, 2) === "90071992547400.01");
+  // The old float path provably differed at this boundary (documented in
+  // the worklog): (9007199254740001 / 100).toFixed(2) === "90071992547400.02".
+  ok("10b. the lossy float path WOULD differ here (guard evidence)", (9007199254740001 / 100).toFixed(2) !== formatMinorToDecimal(9007199254740001, 2));
+  // Case B — ordinary amount.
+  ok("10c. ordinary 17100@2 → '171.00'", formatMinorToDecimal(17100, 2) === "171.00");
+  // Case C — zero.
+  ok("10d. zero 0@2 → '0.00'", formatMinorToDecimal(0, 2) === "0.00");
+  // Case D — negative sign handling (contract: leading minus, no sign drift).
+  ok("10e. negative -12550@2 → '-125.50'", formatMinorToDecimal(-12550, 2) === "-125.50");
+  ok("10f. negative zero-decimal -5@0 → '-5'", formatMinorToDecimal(-5, 0) === "-5");
+  // Case E — zero-decimal currency fabricates no decimal places.
+  ok("10g. 0-decimal 17100@0 → '17100' (no '.00' fabricated)", formatMinorToDecimal(17100, 0) === "17100");
+  // Case F — a supported precision other than 2 (contract range 0..4).
+  ok("10h. 4-decimal 17100@4 → '1.7100'", formatMinorToDecimal(17100, 4) === "1.7100");
+  // Case G — maximum safe integer stays exact (no exponent, no rounding).
+  const maxStr = formatMinorToDecimal(Number.MAX_SAFE_INTEGER, 2);
+  ok("10i. MAX_SAFE_INTEGER@2 → '90071992547409.91'", maxStr === "90071992547409.91");
+  ok("10j. never exponent notation", !/e/i.test(maxStr));
+  // Case H — invalid inputs keep the established validation behavior
+  // (MoneyParseError — the helper is NOT weakened for these cases).
+  // NOTE: a literal like 9007199254740001.5 is NOT a valid case — doubles
+  // near 2^53 have ulp=1 so it silently becomes the integer ...002 at
+  // parse time; a genuinely non-integer value must be small enough to be
+  // exactly representable (e.g. 12550.5).
+  throws("10k. non-integer minor rejected", () => formatMinorToDecimal(12550.5, 2), MoneyParseError);
+  throws("10l. unsafe integer rejected", () => formatMinorToDecimal(Number.MAX_SAFE_INTEGER + 1, 2), MoneyParseError);
+  throws("10m. NaN rejected", () => formatMinorToDecimal(Number.NaN, 2), MoneyParseError);
+  // Round-trip: the exact string parses back to the identical minor unit.
+  ok("10n. case A round-trips via parseDecimalToMinor", parseDecimalToMinor(formatMinorToDecimal(9007199254740001, 2), 2) === 9007199254740001);
+  ok("10o. case G round-trips via parseDecimalToMinor", parseDecimalToMinor(formatMinorToDecimal(Number.MAX_SAFE_INTEGER, 2), 2) === Number.MAX_SAFE_INTEGER);
+}
+
 console.log(`\n=== ${passed} passed, ${failed} failed ===`);
 if (failed > 0) {
   console.log("FAILURES:\n" + failures.map((f) => `  - ${f}`).join("\n"));

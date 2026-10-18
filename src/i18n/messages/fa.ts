@@ -1628,7 +1628,10 @@ const fa: Messages = {
     planLimitTeamMembers: "پلن فعلی شما تا {limit} عضو تیم را اجازه می‌دهد. برای افزودن بیشتر، پلن را ارتقا دهید.",
     planLimitCustomers: "پلن فعلی شما تا {limit} مشتری را اجازه می‌دهد. برای افزودن بیشتر، پلن را ارتقا دهید.",
     planLimitProducts: "پلن فعلی شما تا {limit} کالا را اجازه می‌دهد. برای افزودن بیشتر، پلن را ارتقا دهید.",
-    planLimitBusinesses: "پلن فعلی شما تا {limit} کسب‌وکار را اجازه می‌دهد. برای بیشتر، پلن را ارتقا دهید.",
+    // P51-R1: count-safe wording (هم‌تراز با EN) — «تا {limit} کسب‌وکار» در
+    // فارسی برای هر عددی درست است، اما برای هم‌ترازی معنایی با متن جدید EN
+    // خنثی‌سازی شد.
+    planLimitBusinesses: "سقف کسب‌وکار در پلن فعلی شما {limit} است. برای بیشتر، پلن را ارتقا دهید.",
     featureLockedCsv: "خروجی CSV در پلن فعلی شما موجود نیست. با ارتقای پلن فعالش کنید.",
     trialDisabled: "دورهٔ آزمایشی رایگان در حال حاضر در دسترس نیست.",
     noBusiness: "اول کسب‌وکارتان را بسازید — دورهٔ آزمایشی متعلق به کسب‌وکار است، نه حساب کاربری.",
@@ -2609,6 +2612,25 @@ const fa: Messages = {
       crmOpportunities: "فرصت‌های CRM",
       crmActivities: "فعالیت‌های CRM",
       crmTasks: "وظایف CRM",
+      // P51-R1: واژگان کامل EXPORT_DATASET_KEYS سمت سرور — هر مجموعه‌داده‌ای
+      // که API خروجی می‌پذیرد باید در هر دو زبان برچسب داشته باشد (تاریخچه
+      // کارها از طریق datasetLabelKey() پویا رندر می‌شود).
+      stocktakes: "شمارش‌های انبار",
+      stocktakeLines: "ردیف‌های شمارش انبار",
+      purchaseOrders: "سفارش‌های خرید",
+      purchaseOrderLines: "ردیف‌های سفارش خرید",
+      inventoryGoodsReceipts: "رسیدهای انبار",
+      inventoryGoodsReceiptLines: "ردیف‌های رسید انبار",
+      inventoryGoodsReturns: "مرجوعی کالا",
+      inventoryGoodsReturnLines: "ردیف‌های مرجوعی کالا",
+      inventoryGoodsDispatches: "خروج کالا",
+      inventoryGoodsDispatchLines: "ردیف‌های خروج کالا",
+      salesOrders: "سفارش‌های فروش",
+      salesOrderLines: "ردیف‌های سفارش فروش",
+      salesQuotations: "استعلام‌های قیمت",
+      salesQuotationLines: "ردیف‌های استعلام قیمت",
+      supplierBills: "صورت‌حساب تأمین‌کنندگان",
+      supplierBillLines: "ردیف‌های صورت‌حساب تأمین‌کننده",
       subscriptionSummary: "خلاصه اشتراک",
       usageSummary: "خلاصه مصرف",
     },

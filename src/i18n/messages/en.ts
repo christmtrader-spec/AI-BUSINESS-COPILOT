@@ -1628,7 +1628,11 @@ const en = {
     planLimitTeamMembers: "Your current plan allows up to {limit} team members. Upgrade your plan to add more.",
     planLimitCustomers: "Your current plan allows up to {limit} customers. Upgrade your plan to add more.",
     planLimitProducts: "Your current plan allows up to {limit} products. Upgrade your plan to add more.",
-    planLimitBusinesses: "Your current plan allows up to {limit} business. Upgrade your plan for more.",
+    // P51-R1: count-safe wording — the old "up to {limit} business" broke
+    // English pluralization at limit 2 ("2 business") and the plural form
+    // broke at limit 1 ("1 businesses"). Neutral phrasing is correct for
+    // every limit value without ICU plural machinery.
+    planLimitBusinesses: "Your current plan's business limit is {limit}. Upgrade your plan for more.",
     featureLockedCsv: "CSV export is not available on your current plan. Upgrade to unlock it.",
     trialDisabled: "Free trials are not available right now.",
     noBusiness: "Create your business first — trials belong to a business, not an account.",
@@ -2609,6 +2613,25 @@ const en = {
       crmOpportunities: "CRM opportunities",
       crmActivities: "CRM activities",
       crmTasks: "CRM tasks",
+      // P51-R1: the full backend EXPORT_DATASET_KEYS vocabulary — every
+      // dataset the export API accepts must have a label in BOTH locales
+      // (job history renders them through the dynamic datasetLabelKey()).
+      stocktakes: "Stocktakes",
+      stocktakeLines: "Stocktake lines",
+      purchaseOrders: "Purchase orders",
+      purchaseOrderLines: "Purchase order lines",
+      inventoryGoodsReceipts: "Goods receipts",
+      inventoryGoodsReceiptLines: "Goods receipt lines",
+      inventoryGoodsReturns: "Goods returns",
+      inventoryGoodsReturnLines: "Goods return lines",
+      inventoryGoodsDispatches: "Goods dispatches",
+      inventoryGoodsDispatchLines: "Goods dispatch lines",
+      salesOrders: "Sales orders",
+      salesOrderLines: "Sales order lines",
+      salesQuotations: "Sales quotations",
+      salesQuotationLines: "Sales quotation lines",
+      supplierBills: "Supplier bills",
+      supplierBillLines: "Supplier bill lines",
       subscriptionSummary: "Subscription summary",
       usageSummary: "Usage summary",
     },

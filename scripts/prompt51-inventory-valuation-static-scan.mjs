@@ -7,7 +7,10 @@
  *   [1] tenant law — every product query in the valuation service carries
  *       businessId; the builder never resolves products without scope
  *   [2] money law — the valuation service computes with safeMul/safeAdd
- *       guards; no parseFloat/float money, no silent Math.round totals
+ *       guards; no parseFloat/float money, no silent Math.round totals;
+ *       the CSV serializes money via the exact shared serializer
+ *       formatMinorToDecimal and the lossy fromMinor().toFixed() float
+ *       path never returns to this boundary (P51-R1)
  *   [3] single-calculation law — JSON and CSV routes import the SAME
  *       builders from the same module (no second calculation)
  *   [4] entitlement law — the export route enforces the EXISTING
@@ -66,7 +69,13 @@ console.log("== [2] money law ==");
 ok("2a. per-row value uses safeMul", has(service, 'safeMul(p.stockQty, p.costPriceMinor'));
 ok("2b. aggregate total uses safeAdd", has(service, 'safeAdd(estimatedValueMinor, r.estimatedValueMinor'));
 ok("2c. no float money in the valuation service", !has(service, "parseFloat") && !has(service, "Math.round"));
-ok("2d. CSV money converts once at output via fromMinor (never float math)", has(csvRoute, "fromMinor(minor, precision).toFixed(precision)"));
+ok("2d. CSV money serializes via the exact shared serializer formatMinorToDecimal (P51-R1)", has(csvRoute, "formatMinorToDecimal(minor, precision)") && has(csvRoute, 'from "@/lib/data-portability/money-csv"'));
+{
+  // Strip line comments first — a historical NOTE that names the old
+  // pattern must not trip the guard (the boundary itself is what matters).
+  const csvCode = csvRoute.replace(/^\s*\/\/.*$/gm, "");
+  ok("2e. the lossy float path fromMinor(...).toFixed(...) never returns to this serialization boundary (P51-R1)", !/fromMinor\([^)]*\)\s*\.toFixed\(/.test(csvCode));
+}
 
 console.log("== [3] single-calculation law ==");
 ok("3a. JSON route uses buildInventoryValuationReport", has(jsonRoute, "buildInventoryValuationReport("));

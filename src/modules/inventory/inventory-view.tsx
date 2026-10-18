@@ -237,8 +237,15 @@ export function InventoryView({
                     sortValue: (p) => p.stockQty,
                     cell: (p) => (
                       <>
-                        <Ltr className="font-semibold">{p.stockQty}</Ltr>{" "}
-                        <span className="text-muted-foreground text-xs">{p.unit ?? t("units")}</span>
+                        {/* P51-R1: number AND unit inside ONE directional
+                        boundary — with the unit outside the isolate, RTL
+                        bidi placed the unit BEFORE the number for Latin
+                        unit labels (verified live: "kg 3"). Same correction
+                        as the inventory-valuation panel. */}
+                        <Ltr className="font-semibold">
+                          {p.stockQty}
+                          <span className="text-muted-foreground ms-1 text-xs font-normal">{p.unit ?? t("units")}</span>
+                        </Ltr>{" "}
                         {p.stockQty <= 0 ? (
                           <Badge variant="destructive" className="ms-2">{t("stockOut")}</Badge>
                         ) : p.stockQty <= p.lowStockAt ? (

@@ -98,19 +98,54 @@ if (!biz) {
     const sub = await db.subscription.findUnique({ where: { businessId: b.id } });
     if (sub && sub.planId !== bumpPlan.id) {
       await db.subscription.update({ where: { businessId: b.id }, data: { planId: bumpPlan.id } });
+      // P51-R1: raw fixture plan bumps stay AUDITABLE (P48 fixture law —
+      // prompt20-billing-check B2 counts non-FREE subscriptions without a
+      // PLAN_CHANGED event as a failure).
+      await db.subscriptionEvent.create({ data: { businessId: b.id, subscriptionId: sub.id, type: "PLAN_CHANGED", toStatus: "ACTIVE", fromPlanCode: "FREE", toPlanCode: "PRO", dataJson: '{"source":"p51r1-browser-fixture-bump"}' } });
       bumped.push(b.id);
     }
   }
   const res = await f("/api/v1/businesses", { method: "POST", body: JSON.stringify({ name: BIZ_NAME, currencyCode: "USD", locale: "en", timezone: "Asia/Tehran" }) });
-  for (const b of bumped) await db.subscription.update({ where: { businessId: b }, data: { planId: freePlan.id } }).catch(() => {});
-  if (res.status !== 201) throw new Error(`business create failed: ${res.status} ${JSON.stringify(res.body).slice(0, 200)}`);
-  biz = await db.business.findUnique({ where: { id: res.body.data.business.id } });
+  for (const b of bumped) {
+    const sub = await db.subscription.findUnique({ where: { businessId: b.id } });
+    await db.subscription.update({ where: { businessId: b.id }, data: { planId: freePlan.id } }).catch(() => {});
+    if (sub) {
+      await db.subscriptionEvent.create({ data: { businessId: b.id, subscriptionId: sub.id, type: "PLAN_CHANGED", toStatus: "ACTIVE", fromPlanCode: "PRO", toPlanCode: "FREE", dataJson: '{"source":"p51r1-browser-fixture-restore"}' } }).catch(() => {});
+    }
+  }
+  if (res.status === 201) {
+    biz = await db.business.findUnique({ where: { id: res.body.data.business.id } });
+  } else if (res.status === 429 && res.body?.error?.code === "RATE_LIMITED") {
+    // P51-R1: rate-limit-aware fallback (mirrors the main check harness) —
+    // the user-scoped business-create limiter is long-window; after heavy
+    // QA the API create can 429 for a long time. The API create path is
+    // proven live; mirror its result at the db level (business + OWNER
+    // membership), keeping the subsequent STARTER subscription step and
+    // its audit events.
+    const ownerUser = owner;
+    biz = await db.business.create({ data: { name: BIZ_NAME, slug: `p51qa-visual-${Date.now()}`, currencyCode: "USD", currencySymbol: "$", decimalPrecision: 2, locale: "en", timezone: "Asia/Tehran", ownerId: ownerUser.id } });
+    await db.businessMember.create({ data: { businessId: biz.id, userId: ownerUser.id, role: "OWNER" } });
+  } else {
+    throw new Error(`business create failed: ${res.status} ${JSON.stringify(res.body).slice(0, 200)}`);
+  }
 }
 // STARTER (CSV_EXPORT visible for the export QA).
+// P51-R1: the raw fixture path stays AUDITABLE and mirrors the real
+// billing flow (prompt20 B2/B3 invariants): the subscription is created
+// as FREE with a CREATED event, then lifted to STARTER with a
+// PLAN_CHANGED event — never a silent raw plan write.
 const starter = await db.plan.findUnique({ where: { code: "STARTER" } });
-const subA = await db.subscription.findUnique({ where: { businessId: biz.id } });
-if (!subA) await db.subscription.create({ data: { businessId: biz.id, planId: starter.id, status: "ACTIVE", billingPeriod: "MONTHLY" } });
-else if (subA.planId !== starter.id) await db.subscription.update({ where: { businessId: biz.id }, data: { planId: starter.id } });
+let subA = await db.subscription.findUnique({ where: { businessId: biz.id } });
+if (!subA) {
+  const free = await db.plan.findUnique({ where: { code: "FREE" } });
+  subA = await db.subscription.create({ data: { businessId: biz.id, planId: free.id, status: "ACTIVE", billingPeriod: "MONTHLY" } });
+  await db.subscriptionEvent.create({ data: { businessId: biz.id, subscriptionId: subA.id, type: "CREATED", toStatus: "ACTIVE", toPlanCode: "FREE", dataJson: '{"source":"p51q-browser-fixture-bootstrap"}' } });
+}
+if (subA.planId !== starter.id) {
+  const fromPlan = await db.plan.findUnique({ where: { id: subA.planId } });
+  await db.subscription.update({ where: { businessId: biz.id }, data: { planId: starter.id } });
+  await db.subscriptionEvent.create({ data: { businessId: biz.id, subscriptionId: subA.id, type: "PLAN_CHANGED", toStatus: "ACTIVE", fromPlanCode: fromPlan?.code ?? null, toPlanCode: "STARTER", dataJson: '{"source":"p51q-browser-fixture-plan-set"}' } });
+}
 
 // Wipe previous fixture products (idempotent re-runs).
 await db.inventoryAdjustment.deleteMany({ where: { businessId: biz.id } }).catch(() => {});

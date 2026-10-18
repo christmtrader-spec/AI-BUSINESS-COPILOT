@@ -153,7 +153,15 @@ is deliberately **read-only reporting** over existing Product data.
   qa-p51-inventory-en-light-1366 (1366×768), qa-p51-inventory-fa-rtl-light,
   qa-p51-inventory-fa-rtl-dark, qa-p51-inventory-mobile-fa-dark (390×844),
   qa-p51-inventory-mobile-en (412×915), qa-p51-inventory-mobile-en-360
-  (360×800). Interactions verified: deep link `#/reports?inventory=1`,
+  (360×800).
+  > P51-R1 CORRECTION (verified 2026-10-18): the repository holds exactly
+  > EIGHT qa-p51-*.png files — the list above names eight images and no
+  > ninth exists anywhere in the repo or in any browser report, so the
+  > original "9" was a miscount; the verified historical count is 8.
+  > Fresh P51-R1 evidence: 10 new genuine screenshots (qa-p51r1-*.png)
+  > covering EN/FA × light/dark × 1920/1366/412/390/360 plus the fixed
+  > inventory-table RTL view.
+  Historical-session interactions verified: deep link `#/reports?inventory=1`,
   entry button, back button, search (2 alphas + "Cards reflect the
   current filters"), no-match + Clear filters reset, pagination 1→2
   (27 products), complete CSV download (27 rows, BOM, formula guard,

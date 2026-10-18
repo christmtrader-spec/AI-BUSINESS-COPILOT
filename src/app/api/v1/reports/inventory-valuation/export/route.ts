@@ -24,7 +24,7 @@ import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { rateLimit } from "@/lib/rate-limit";
 import { assertFeatureAccess } from "@/lib/billing";
-import { fromMinor } from "@/lib/money";
+import { formatMinorToDecimal } from "@/lib/data-portability/money-csv";
 import { csvCell } from "@/lib/csv";
 import {
   INVENTORY_EXPORT_MAX_ROWS,
@@ -94,7 +94,13 @@ export const GET = route(async (req: NextRequest) => {
   const precision = business.decimalPrecision ?? 2;
   // Integer-minor → decimal-string presentation (A08: conversion happens
   // once, deterministically, at output — never float arithmetic).
-  const money = (minor: number) => fromMinor(minor, precision).toFixed(precision);
+  // P51-R1: exact pure-integer string math (formatMinorToDecimal) — the
+  // previous fromMinor().toFixed() path round-tripped the exact integer
+  // through a float and lost precision for large amounts (verified: minor
+  // 9007199254740001 @ precision 2 printed 90071992547400.02 instead of
+  // the exact 90071992547400.01). Same shared serializer as statements
+  // and data-portability exports.
+  const money = (minor: number) => formatMinorToDecimal(minor, precision);
   const B = business.currencyCode;
 
   const lines: string[] = [];

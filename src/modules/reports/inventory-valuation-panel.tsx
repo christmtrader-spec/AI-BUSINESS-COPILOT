@@ -281,10 +281,18 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
       header: t("invValColQty"),
       align: "end" as const,
       cell: (r: InvValRow) => (
-        <span className="tabular-nums">
-          <Ltr>{count(r.stockQty)}</Ltr>
+        // P51-R1: the number AND its unit live inside ONE directional
+        // boundary. Previously only the number was isolated (<Ltr>) while
+        // the unit sat outside; in RTL paragraphs the isolate severed the
+        // bidi run and the unit could visually jump BEFORE the number
+        // (e.g. "m ۳"). One LTR boundary locks the logical order
+        // (quantity → unit) for Latin and Persian unit labels alike —
+        // the unit text itself still renders RTL internally when Persian —
+        // and keeps negative quantities from splitting ("۵-").
+        <Ltr>
+          {count(r.stockQty)}
           {r.unit ? <span className="text-muted-foreground ms-1 text-xs">{r.unit}</span> : null}
-        </span>
+        </Ltr>
       ),
     },
     {

@@ -71,7 +71,12 @@ async function purge() {
     await db.subscriptionEvent.deleteMany({ where: { subscription: { businessId: b.id } } }).catch(() => {});
     await db.subscription.deleteMany({ where: { businessId: b.id } }).catch(() => {});
     await db.customer.deleteMany({ where: { businessId: b.id } });
-    // Business rows stay (limiter hygiene) — data is wiped.
+    // P51-R1: full teardown (P43/P45/P48 pattern) — the previous purge kept
+    // the business row while deleting its subscription/events, leaving an
+    // unauditable husk that poisons prompt20 B3 counting and the main
+    // check's fail-closed BUSINESSES_MAX math.
+    await db.businessMember.deleteMany({ where: { businessId: b.id } }).catch(() => {});
+    await db.business.delete({ where: { id: b.id } }).catch(() => {});
   }
 }
 await purge();
@@ -84,7 +89,13 @@ async function ensureBiz() {
     data: { name: `${TAG}-${Date.now()}`, slug: `p51qa-cap-${Date.now()}`, currencyCode: "USD", currencySymbol: "$", decimalPrecision: 2, locale: "en", timezone: "Asia/Tehran", ownerId: (await db.user.findFirst({ where: { email: "dev-baseline@test.local" } }))?.id ?? (await db.user.findFirst())!.id },
   });
   if (freePlan) {
-    await db.subscription.create({ data: { businessId: biz.id, planId: freePlan.id, status: "ACTIVE", billingPeriod: "MONTHLY" } }).catch(() => {});
+    // P51-R1: raw fixture subscriptions stay AUDITABLE (P48 fixture law —
+    // prompt20-billing-check B3 counts subscriptions without a CREATED
+    // event as failures).
+    const sub = await db.subscription.create({ data: { businessId: biz.id, planId: freePlan.id, status: "ACTIVE", billingPeriod: "MONTHLY" } }).catch(() => null);
+    if (sub) {
+      await db.subscriptionEvent.create({ data: { businessId: biz.id, subscriptionId: sub.id, type: "CREATED", toStatus: "ACTIVE", toPlanCode: "FREE", dataJson: '{"source":"p51r1-cap-fixture-bootstrap"}' } }).catch(() => {});
+    }
   }
   return biz;
 }

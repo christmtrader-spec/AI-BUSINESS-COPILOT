@@ -94,6 +94,18 @@ async function purge() {
     // Business rows stay (business:create limiter hygiene) — the next run
     // adopts them.
   }
+  // P51-R1: purge husks — after the subscription wipe above, an owned
+  // P51QA-* business WITHOUT a subscription counts toward
+  // assertWithinBusinessesLimitTx's owned.length but contributes NOTHING
+  // to the limit (documented fail-closed billing law), which poisons the
+  // fresh BIZ-A creation below (owned=1, limit=FREE-fallback=1 → 422).
+  // A subscription-less fixture row is a husk; remove it so the next run
+  // starts from a coherent ownership state (the browser fixture
+  // self-heals P51QA-VISUAL, and this check re-adopts/re-creates BIZ-A/B).
+  const husks = await db.business.findMany({ where: { name: { startsWith: `${TAG}-` }, subscription: null }, select: { id: true } });
+  for (const h of husks) {
+    await db.business.delete({ where: { id: h.id } }).catch(() => {});
+  }
   const tiny = await db.plan.findUnique({ where: { code: "P51-TINY" } });
   if (tiny) {
     await db.planEntitlement.deleteMany({ where: { planId: tiny.id } });
@@ -148,8 +160,23 @@ async function ensureFixtureBusiness(suffix, tz) {
   for (const b of bumped) {
     await db.subscription.update({ where: { businessId: b }, data: { planId: freePlan.id } }).catch(() => {});
   }
-  if (res.status !== 201) throw new Error(`business ${suffix} create failed: ${res.status} ${JSON.stringify(res.body).slice(0, 200)}`);
-  return db.business.findUnique({ where: { id: res.body.data.business.id } });
+  if (res.status === 201) return db.business.findUnique({ where: { id: res.body.data.business.id } });
+  // P51-R1: rate-limit-aware fallback. The user-scoped business-create
+  // limiter is long-window; a heavy QA day (onboarding rounds, fixture
+  // rebuilds, repeated check runs) can exhaust it with a multi-hour retry.
+  // The suite's create-API path is proven by earlier runs — under a 429
+  // RATE_LIMITED we mirror the API result at the db level (business +
+  // OWNER membership + evented FREE subscription) so the harness stays
+  // runnable and prompt20's auditability invariants hold. Any OTHER
+  // failure (validation/entitlement) still throws.
+  if (res.status === 429 && res.body?.error?.code === "RATE_LIMITED") {
+    const biz = await db.business.create({ data: { name: `${TAG}-${suffix}-${stamp}`, slug: `p51qa-${suffix.toLowerCase()}-${stamp}`, currencyCode: "USD", currencySymbol: "$", decimalPrecision: 2, locale: "en", timezone: tz, ownerId: owner.id } });
+    await db.businessMember.create({ data: { businessId: biz.id, userId: owner.id, role: "OWNER" } });
+    const sub = await db.subscription.create({ data: { businessId: biz.id, planId: freePlan.id, status: "ACTIVE", billingPeriod: "MONTHLY" } });
+    await db.subscriptionEvent.create({ data: { businessId: biz.id, subscriptionId: sub.id, type: "CREATED", toStatus: "ACTIVE", toPlanCode: "FREE", dataJson: '{"source":"p51r1-check-rate-limit-fallback"}' } });
+    return db.business.findUnique({ where: { id: biz.id } });
+  }
+  throw new Error(`business ${suffix} create failed: ${res.status} ${JSON.stringify(res.body).slice(0, 200)}`);
 }
 const bizA = await ensureFixtureBusiness("BIZ-A", "Asia/Tehran");
 ok("F2. business A ready (Asia/Tehran, USD)", Boolean(bizA?.id) && bizA.timezone === "Asia/Tehran" && bizA.currencyCode === "USD");
@@ -348,6 +375,52 @@ console.log("\n== §E CSV export (complete-or-reject) ==");
   ok("E9. export echoes the applied filters in meta", csvFiltered.text.includes("meta,cost_state,ZERO_COST"));
 }
 
+// ================= §E2 P51-R1 live precision export =================
+// The exact serializer (formatMinorToDecimal) must survive the REAL
+// endpoint for the largest magnitudes the application can actually hold.
+// STORAGE CONTRACT (verified this round): Product.costPriceMinor is a
+// SQLite INT column (max 2147483647) — the reported 9.007e15 example is
+// NOT storable and therefore not endpoint-reachable; its divergence is
+// pinned at the serializer unit level (prompt51-inventory-valuation-unit
+// 10a/10b: old float path printed 90071992547400.02 for exact ...400.01).
+// The LIVE case drives the endpoint to its true reachable boundary:
+// INT32-max unit cost × 1,000,000 stock → a 16-digit estimatedValueMinor
+// (2,147,483,647,000,000 < 2^53, safeMul-legal) that must serialize
+// EXACTLY, reconcile in the summary, and round-trip with the JSON minor.
+console.log("\n== §E2 P51-R1 live CSV precision (exact serializer) ==");
+{
+  const r1 = await f("/api/v1/products", { method: "POST", headers: HA, body: JSON.stringify({ name: "Precision Boundary Product", sku: "SKU-P51R1", unit: "piece", salePriceMinor: 1_000, costPriceMinor: 2147483647, stockQty: 1, lowStockAt: 0 }) });
+  ok("E2-1. precision product created via API (INT32-max cost)", r1.status === 201, JSON.stringify(r1.body).slice(0, 120));
+  const maxCost = 2147483647;
+  await db.product.update({ where: { id: r1.body.data.id }, data: { stockQty: 1000000 } }); // db-level: API caps stockQty growth patterns
+  const evMinor = maxCost * 1000000; // 2147483647000000 — the exact safe integer
+
+  // JSON keeps the EXACT integer (no float anywhere in the report core).
+  const j = await f("/api/v1/reports/inventory-valuation?q=SKU-P51R1", { headers: HA });
+  ok("E2-2. JSON estimatedValueMinor stays the exact safe integer", j.status === 200 && j.body.data?.rows?.[0]?.estimatedValueMinor === evMinor && j.body.data?.rows?.[0]?.costPriceMinor === maxCost, JSON.stringify(j.body.data?.rows?.[0] ?? {}).slice(0, 200));
+  ok("E2-3. JSON totals stay exact (no float drift)", j.body.data?.totals?.estimatedValueMinor === evMinor);
+
+  // Filtered CSV: exactly this product; both money columns + summary exact.
+  const csv = await ftext("/api/v1/reports/inventory-valuation/export?q=SKU-P51R1", HA);
+  ok("E2-4. filtered export 200", csv.status === 200, String(csv.status));
+  const prodRows = csv.text.split("\r\n").filter((l) => /^product,cm/.test(l));
+  ok("E2-5. filtered CSV contains exactly the precision product", prodRows.length === 1, String(prodRows.length));
+  ok("E2-6. unit cost cell exact '21474836.47' (INT32-max minor)", csv.text.includes("21474836.47"), prodRows[0] ?? "");
+  ok("E2-7. estimated value cell exact '21474836470000.00' (16-digit minor)", /product,[^,]+,Precision Boundary Product,SKU-P51R1,piece,1000000,21474836\.47,21474836470000\.00,active,positive_cost,positive_stock/.test(csv.text), prodRows[0] ?? "");
+  ok("E2-8. summary reconciles EXACTLY with the row integer", csv.text.includes("summary,total_operational_value_USD,21474836470000.00") && csv.text.includes("summary,products_exported,1"));
+  ok("E2-9. no exponent notation anywhere in the CSV", !/\d[eE][+-]?\d/.test(csv.text));
+
+  // Unfiltered export still reconciles: prior total + precision product.
+  const csvAll = await ftext("/api/v1/reports/inventory-valuation/export", HA);
+  ok("E2-10. complete export grows to 11 rows and stays reconciling", csvAll.text.includes("summary,products_exported,11") && csvAll.text.includes("summary,total_operational_value_USD,21474836470171.00"), "17100 minor (171.00) + 2147483647000000 minor = 21474836470171.00");
+  const allRows = csvAll.text.split("\r\n").filter((l) => /^product,cm/.test(l));
+  ok("E2-11. no duplicate/skipped rows with the precision product included", allRows.length === 11, String(allRows.length));
+
+  // §E2 cleanup — remove the precision product so the later read-only
+  // snapshot (§G) compares the same catalog it captured at fixture time.
+  await db.product.delete({ where: { id: r1.body.data.id } });
+}
+
 // ================= §F entitlements =================
 console.log("\n== §F entitlements (server-side) ==");
 {
@@ -421,10 +494,20 @@ console.log("\n== §I teardown ==");
   await db.supplier.deleteMany({ where: { businessId: bizA.id } });
   await db.product.deleteMany({ where: { businessId: bizA.id } });
   await db.product.deleteMany({ where: { businessId: bizB.id } });
+  // P51-R1: FULL teardown for BIZ-A/B (the same pattern as the P43/P45/P48
+  // check suites). The previous teardown deleted the subscriptions'
+  // CREATED/PLAN_CHANGED events while KEEPING the subscription rows — a
+  // subscription whose creation is unauditable — which broke
+  // prompt20-billing-check B2/B3 on every run AFTER this suite. Deleting
+  // the businesses cascades members/subscriptions/events atomically; the
+  // next run re-creates them through the real API (fully evented).
   await db.subscriptionEvent.deleteMany({ where: { subscription: { businessId: bizA.id } } }).catch(() => {});
   await db.subscriptionEvent.deleteMany({ where: { subscription: { businessId: bizB.id } } }).catch(() => {});
-  await db.subscription.update({ where: { businessId: bizA.id }, data: { planId: freePlan.id } }).catch(() => {});
-  await db.subscription.update({ where: { businessId: bizB.id }, data: { planId: freePlan.id } }).catch(() => {});
+  await db.subscription.deleteMany({ where: { businessId: bizA.id } }).catch(() => {});
+  await db.subscription.deleteMany({ where: { businessId: bizB.id } }).catch(() => {});
+  await db.businessMember.deleteMany({ where: { businessId: { in: [bizA.id, bizB.id] } } }).catch(() => {});
+  await db.business.delete({ where: { id: bizA.id } }).catch(() => {});
+  await db.business.delete({ where: { id: bizB.id } }).catch(() => {});
   const tiny = await db.plan.findUnique({ where: { code: "P51-TINY" } });
   if (tiny) {
     await db.planEntitlement.deleteMany({ where: { planId: tiny.id } });
@@ -434,7 +517,7 @@ console.log("\n== §I teardown ==");
   const leftAdj = await db.inventoryAdjustment.count({ where: { businessId: bizA.id } });
   const leftPlan = await db.plan.count({ where: { code: "P51-TINY" } });
   const leftBiz = await db.business.count({ where: { name: { startsWith: `${TAG}-` } } });
-  ok("I1. zero fixture financial/product rows remain (businesses kept)", leftProducts === 0 && leftAdj === 0, `products=${leftProducts} adj=${leftAdj} biz=${leftBiz}`);
+  ok("I1. zero fixture financial/product rows remain (BIZ-A/B fully deleted, P51-R1)", leftProducts === 0 && leftAdj === 0, `products=${leftProducts} adj=${leftAdj} biz=${leftBiz}`);
   ok("I2. P51-TINY harness plan removed", leftPlan === 0, String(leftPlan));
 }
 
