@@ -80,6 +80,7 @@ export const POST = route(async (req: NextRequest) => {
     },
     days: input.days,
     uiLocale: ctx.business.locale === "fa" ? "fa" : "en",
+    latestQuestion: input.question,
   });
 
   // Replay a bounded slice of the conversation for follow-up questions.

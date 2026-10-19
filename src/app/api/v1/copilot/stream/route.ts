@@ -92,6 +92,7 @@ export const POST = route(async (req: NextRequest) => {
     },
     days: input.days,
     uiLocale: authCtx.business.locale === "fa" ? "fa" : "en",
+    latestQuestion: input.question,
   });
 
   const history: AiMessage[] = input.history

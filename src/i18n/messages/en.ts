@@ -480,7 +480,7 @@ const en = {
     dataSection: "Data & backups",
     dataSectionDesc: "Download a complete, portable copy of this business — every record, computed money fields included, in one JSON file.",
     dataIncludes1: "Customers, suppliers, products, stock history, sales with line items, expenses, payments",
-    dataIncludes2: "Full audit trail and schema notes — amounts as exact integer minor units (A08)",
+    dataIncludes2: "Full audit trail and schema notes — amounts as exact integer minor units",
     dataNote: "Exports are audited and rate-limited. Only owners and admins can download.",
     exportAction: "Download JSON backup",
     exporting: "Preparing…",
@@ -659,7 +659,7 @@ const en = {
     stockOut: "Out of stock",
     inStock: "{qty} in stock",
     invalidMoney: "Enter a valid amount (e.g. 12.50).",
-    priceNote: "Stored as exact integer minor units — no floating-point (A08).",
+    priceNote: "Stored as exact integer minor units — no floating-point.",
     adjust: "Stock",
   },
   inventory: {

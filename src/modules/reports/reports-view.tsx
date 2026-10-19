@@ -822,6 +822,16 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                               aria-label={t("momRowOpen", {
                                 month: fmtMonth(row.month),
                               })}
+                              onClick={(e) => {
+                                // The month label OWNS the row's activation
+                                // semantics (it reads as the row's "open
+                                // details" control). Without its own onClick
+                                // the DataTable interactive-element guard
+                                // swallows the click and the row never opens
+                                // — the visible affordance did nothing.
+                                e.stopPropagation();
+                                openMonth(row.month);
+                              }}
                             >
                               {fmtMonth(row.month)}
                               <ChevronRight

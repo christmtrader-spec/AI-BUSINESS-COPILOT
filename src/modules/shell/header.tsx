@@ -7,7 +7,7 @@ import { useTranslations } from "next-intl";
 import { Check, ChevronsUpDown, Languages, LogOut, Moon, Plus, Search, Settings, Sun, UserRound } from "lucide-react";
 import { useTheme } from "next-themes";
 import { api } from "@/lib/api-client";
-import { isLocale, localeLabel, LOCALES } from "@/i18n/config";
+import { isLocale, localeLabel, LOCALES, type Locale } from "@/i18n/config";
 import { useAppStore } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,6 +29,19 @@ export function LocaleSwitcher() {
   const locale = useAppStore((s) => s.locale);
   const setLocale = useAppStore((s) => s.setLocale);
 
+  // Persist the choice so SERVER-rendered content (notifications, emails,
+  // exports) follows the UI language too. The profile page persists the
+  // same way (PATCH /me); the quick switcher previously changed ONLY the
+  // client store, leaving notifications in the old language. Fire-safe:
+  // a failed persist never blocks or reverts the UI switch.
+  const persistLocale = (next: Locale) => {
+    void api("/api/v1/me", {
+      method: "PATCH",
+      businessId: null,
+      body: JSON.stringify({ locale: next }),
+    }).catch(() => undefined);
+  };
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -40,7 +53,10 @@ export function LocaleSwitcher() {
         {LOCALES.map((l) => (
           <DropdownMenuItem
             key={l}
-            onClick={() => setLocale(l)}
+            onClick={() => {
+              setLocale(l);
+              if (l !== locale) persistLocale(l);
+            }}
             className={l === locale ? "bg-accent" : ""}
           >
             <Check className={`size-4 ${l === locale ? "opacity-100" : "opacity-0"}`} aria-hidden="true" />
