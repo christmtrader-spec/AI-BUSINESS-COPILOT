@@ -1635,6 +1635,11 @@ const en = {
     // every limit value without ICU plural machinery.
     planLimitBusinesses: "Your current plan's business limit is {limit}. Upgrade your plan for more.",
     featureLockedCsv: "CSV export is not available on your current plan. Upgrade to unlock it.",
+    // P51-R1-FINAL: honest localized copy for the §68 fail-closed state — a
+    // missing/invalid billing CATALOG is an operational failure, never a
+    // user-facing plan limit; without this key the FA UI leaked the English
+    // server message verbatim.
+    billingUnavailable: "Billing is temporarily unavailable. Please try again in a few moments — if it persists, contact support.",
     trialDisabled: "Free trials are not available right now.",
     noBusiness: "Create your business first — trials belong to a business, not an account.",
     businessNotEligible: "This business cannot start a free trial (already used or currently on a paid plan).",

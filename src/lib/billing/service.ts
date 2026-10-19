@@ -554,6 +554,32 @@ export async function countEntitlementUsage(
 // ---------------------------------------------------------------------------
 
 /**
+ * P51-R1-FINAL: a finite BUSINESSES_MAX value is usable ONLY when it is a
+ * positive integer inside the supported integer domain. The documented
+ * contract (prisma/schema.prisma PlanEntitlement, entitlements.md,
+ * scripts/qa/verify-billing-catalog.mjs):
+ *   - LIMIT rows: value = the numeric limit; null = UNLIMITED (legitimate,
+ *     e.g. ENTERPRISE — preserved, never rejected here);
+ *   - every plan that documents a business-count limit must grant ≥ 1
+ *     (FREE included), so ZERO and NEGATIVE values are CATALOG CONFIGURATION
+ *     FAILURES — not reachable limits. The previous `limit = row.value`
+ *     accepted 0/-n and forged a misleading "plan limit reached" for users
+ *     who own nothing (defect §7 / USER-BUG3 family).
+ * Non-integers, NaN/Infinity (Number.isInteger rejects both) and values
+ * beyond Number.MAX_SAFE_INTEGER cannot persist through the Prisma `Int?`
+ * column (SQLite 32-bit), but are rejected here as defense-in-depth for
+ * any transformation that might introduce them.
+ */
+function isUsableBusinessesLimit(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= Number.MAX_SAFE_INTEGER
+  );
+}
+
+/**
  * BUSINESSES_MAX is special: it caps how many businesses a USER may OWN,
  * so it cannot be read from one business's subscription. Deterministic
  * policy (documented in entitlements.md): the effective limit is the
@@ -580,9 +606,14 @@ export async function assertWithinBusinessesLimitTx(tx: Tx, userId: string): Pro
     if (!sub) continue; // grandfathered mid-backfill rows contribute nothing
     const row = sub.plan.planEntitlements.find((pe) => pe.entitlement.code === "BUSINESSES_MAX");
     if (!row) continue; // fail-closed: corrupt plan contributes nothing
-    const planLimit = row.value; // null = unlimited
-    if (planLimit === null) return; // any unlimited plan lifts the cap
-    limit = Math.max(limit, planLimit);
+    // P51-R1-FINAL: a PRESENT row with a malformed shape is a catalog
+    // integrity failure — honest controlled error (§68), never silently
+    // zeroed and never presented as a genuine user-facing limit.
+    if (row.entitlement.type !== "LIMIT" || !isUsableBusinessesLimit(row.value)) {
+      throw new BillingError("BILLING_UNAVAILABLE", "Billing catalog configuration is invalid.");
+    }
+    if (row.value === null) return; // any unlimited plan lifts the cap
+    limit = Math.max(limit, row.value);
   }
   if (limit === 0) {
     // No owned business (or none with a valid subscription) → FREE limit.
@@ -599,7 +630,22 @@ export async function assertWithinBusinessesLimitTx(tx: Tx, userId: string): Pro
       // fail-closed per §68 — same semantics as the other catalog guards above.
       throw new BillingError("BILLING_UNAVAILABLE", "Billing catalog is not initialized.");
     }
+    // P51-R1-FINAL: BUSINESSES_MAX must be a LIMIT-typed row. A BOOLEAN-typed
+    // row (value null) must NOT pass as "unlimited" — that is malformed
+    // catalog data (§2.3 type mismatch), fail closed with §68.
+    if (row.entitlement.type !== "LIMIT") {
+      throw new BillingError("BILLING_UNAVAILABLE", "Billing catalog configuration is invalid.");
+    }
     if (row.value === null) return; // FREE configured unlimited — mirrors getLimitIn (§472)
+    if (!isUsableBusinessesLimit(row.value)) {
+      // BUGFIX P51-R1-FINAL: FREE BUSINESSES_MAX = 0 / negative / malformed
+      // is a CONFIGURATION failure (documented contract: FREE ≥ 1), NOT a
+      // genuine limit. The previous `limit = row.value` made a fresh user
+      // hit `0 >= 0` again and forged "plan limit reached". Fail closed
+      // with the established controlled error — never fabricate a limit,
+      // never silently fall back, never auto-repair catalog data (§2.3).
+      throw new BillingError("BILLING_UNAVAILABLE", "Billing catalog configuration is invalid.");
+    }
     limit = row.value;
   }
 

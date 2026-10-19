@@ -47,6 +47,11 @@ export function useBillingErrorText() {
           return t("featureLockedCsv");
         }
         break;
+      // P51-R1-FINAL: §68 fail-closed (missing/invalid billing catalog) gets
+      // honest localized copy — previously it fell through to the raw English
+      // server message, leaking API text into the fa-RTL UI.
+      case "BILLING_UNAVAILABLE":
+        return t("billingUnavailable");
       // Prompt 25 — trial funnel errors (honest, localized).
       case "TRIAL_DISABLED":
         return t("trialDisabled");

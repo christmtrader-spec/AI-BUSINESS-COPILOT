@@ -42,17 +42,51 @@ if (plans > 0 && planPrices === 0)
 
 // FREE plan must define BUSINESSES_MAX ≥ 1, otherwise even the FIRST business
 // creation is blocked (limiter fails closed → owned 0 ≥ limit 0).
+// P51-R1-FINAL: the guard now validates the BUSINESSES_MAX rows of EVERY
+// plan against the runtime contract enforced by
+// src/lib/billing/service.ts::assertWithinBusinessesLimitTx:
+//   - the row's entitlement type must be LIMIT (a BOOLEAN-typed row is
+//     malformed and would fail closed at runtime with BILLING_UNAVAILABLE);
+//   - value null  = UNLIMITED (legitimate, e.g. ENTERPRISE — never rejected);
+//   - value ≥ 1 integer = usable limit;
+//   - value 0 / negative / malformed = catalog corruption → actionable fail.
 if (plans > 0 && planEntitlements > 0) {
-  const free = await db.plan.findUnique({
-    where: { code: "FREE" },
-    select: { active: true, planEntitlements: { select: { value: true, entitlement: { select: { code: true } } } } },
+  const plansWithRows = await db.plan.findMany({
+    select: {
+      code: true,
+      active: true,
+      planEntitlements: {
+        select: { value: true, entitlement: { select: { code: true, type: true } } },
+      },
+    },
   });
+
+  const beOf = (p) => p.planEntitlements.find((pe) => pe.entitlement.code === "BUSINESSES_MAX");
+
+  const free = plansWithRows.find((p) => p.code === "FREE");
   if (!free) {
     problems.push("FREE plan row is missing.");
   } else {
-    const be = free.planEntitlements.find((pe) => pe.entitlement.code === "BUSINESSES_MAX");
+    const be = beOf(free);
     if (!be || (be.value ?? 0) < 1) {
       problems.push("FREE plan does not grant BUSINESSES_MAX ≥ 1 — first business creation is blocked.");
+    }
+  }
+
+  for (const p of plansWithRows) {
+    const be = beOf(p);
+    if (!be) continue; // no BUSINESSES_MAX row on a plan is tolerated (runtime: contributes nothing)
+    if (be.entitlement.type !== "LIMIT") {
+      problems.push(
+        `Plan ${p.code}: BUSINESSES_MAX entitlement type is "${be.entitlement.type}" (must be LIMIT) — runtime fails closed with BILLING_UNAVAILABLE.`,
+      );
+      continue;
+    }
+    if (be.value !== null && (!Number.isInteger(be.value) || be.value < 1)) {
+      problems.push(
+        `Plan ${p.code}: BUSINESSES_MAX value is ${JSON.stringify(be.value)} — zero/negative/malformed limits are invalid ` +
+          `(null = unlimited, integer ≥ 1 = limit). Runtime fails closed with BILLING_UNAVAILABLE.`,
+      );
     }
   }
 }
