@@ -28,15 +28,13 @@ import {
 } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/shared/primitives";
 import { ApiClientError } from "@/lib/api-client";
+import { formatMoney } from "@/lib/money";
+import { useAppStore } from "@/store/app-store";
 import {
   fetchSalesQuotationPrint,
   salesQuotationKeys,
   type SalesQuotationPrint,
 } from "./sales-quotations-api";
-
-function formatMinor(minor: number): string {
-  return minor.toLocaleString("en-US");
-}
 
 function dateLabel(iso: string): string {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(iso));
@@ -53,6 +51,7 @@ export function SalesQuotationPrintDialog({
 }) {
   const t = useTranslations("salesQuotations");
   const tCommon = useTranslations("common");
+  const locale = useAppStore((s) => s.locale);
 
   const print = useQuery({
     queryKey: salesQuotationKeys.print(businessId, id),
@@ -62,6 +61,18 @@ export function SalesQuotationPrintDialog({
 
   const data: SalesQuotationPrint | undefined = print.data;
   const notFound = print.error instanceof ApiClientError && print.error.status === 404;
+
+  // r56 — the customer-facing sheet renders REAL currency (symbol + decimals)
+  // from the quotation's frozen snapshot (§12) instead of raw minor units.
+  const money = (minor: number): string => {
+    if (!data) return minor.toLocaleString("en-US");
+    return formatMoney(minor, {
+      currencyCode: data.currencyCodeAtQuotation,
+      currencySymbol: data.currencySymbolAtQuotation,
+      decimalPrecision: data.decimalPrecisionAtQuotation,
+      locale,
+    });
+  };
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -159,8 +170,8 @@ export function SalesQuotationPrintDialog({
                         ) : null}
                       </td>
                       <td className="py-2 text-end tabular-nums" dir="ltr">{line.qty}</td>
-                      <td className="py-2 text-end tabular-nums" dir="ltr">{formatMinor(line.unitPriceMinor)}</td>
-                      <td className="py-2 text-end tabular-nums" dir="ltr">{formatMinor(line.lineTotalMinor)}</td>
+                      <td className="py-2 text-end tabular-nums" dir="ltr">{money(line.unitPriceMinor)}</td>
+                      <td className="py-2 text-end tabular-nums" dir="ltr">{money(line.lineTotalMinor)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -169,19 +180,19 @@ export function SalesQuotationPrintDialog({
               <section className="quotation-print-avoid-break ms-auto mt-4 w-full max-w-64 space-y-1 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">{t("subtotal")}</span>
-                  <span className="tabular-nums" dir="ltr">{formatMinor(data.subtotalMinor)}</span>
+                  <span className="tabular-nums" dir="ltr">{money(data.subtotalMinor)}</span>
                 </div>
                 {/* A zero discount line would render as "‑0" on a customer-facing
                     offer — the row is only meaningful when a discount exists. */}
                 {data.discountMinor > 0 && (
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">{t("discount")}</span>
-                    <span className="tabular-nums" dir="ltr">-{formatMinor(data.discountMinor)}</span>
+                    <span className="tabular-nums" dir="ltr">-{money(data.discountMinor)}</span>
                   </div>
                 )}
                 <div className="flex justify-between border-t pt-1 font-semibold">
                   <span>{t("total")}</span>
-                  <span className="tabular-nums" dir="ltr">{formatMinor(data.totalMinor)}</span>
+                  <span className="tabular-nums" dir="ltr">{money(data.totalMinor)}</span>
                 </div>
                 <p className="text-muted-foreground text-end text-xs" dir="ltr">
                   {data.currencySymbolAtQuotation} · {data.currencyCodeAtQuotation}

@@ -227,7 +227,7 @@ record("90. deep link #/sales-orders/<id> allowlisted in the entity router", rea
 /* ---------------------- 19. store/shell/UI wiring -------------------------- */
 record("91. AppView kinds sales-orders + sales-order with safe deep links (§88)", STORE.includes('{ kind: "sales-orders" }') && STORE.includes('{ kind: "sales-order"; id: string }') && STORE.includes("isValidEntityId(id)"));
 record("92. sidebar + command palette expose the module", SIDEBAR.includes('labelKey: "salesOrders"') && read("src/modules/shell/command-palette.tsx").includes('"salesOrders"'));
-record("93. shell renders both views inside ModuleBoundary", SHELL.includes("<SalesOrdersView role={role} />") && SHELL.includes("<SalesOrderDetailView id={view.id} role={role} />"));
+record("93. shell renders both views inside ModuleBoundary", /<SalesOrdersView role=\{role\}[^/]*\/>/.test(SHELL) && SHELL.includes("<SalesOrderDetailView id={view.id} role={role} />"));
 record("94. UI request bodies never carry authority fields (§112)", (() => {
   // Extract ONLY the literal object inside each JSON.stringify(...) call.
   const bodies = [...UI_API.matchAll(/body:\s*JSON\.stringify\((\{[\s\S]*?\})\)/g)]

@@ -37,11 +37,15 @@ type ProductOption = {
 export function SalesOrderProductPicker({
   businessId,
   existingProductIds,
+  formatPrice,
   onPick,
   onClose,
 }: {
   businessId: string;
   existingProductIds: ReadonlySet<string>;
+  /** r56 — currency-aware price formatter from the parent; falls back to
+   *  grouped integers (legacy display) when not provided. */
+  formatPrice?: (minor: number) => string;
   onPick: (product: ProductOption) => void;
   onClose: () => void;
 }) {
@@ -110,7 +114,7 @@ export function SalesOrderProductPicker({
                     </span>
                     <span className="text-muted-foreground flex items-center gap-3 text-xs tabular-nums" dir="ltr">
                       <span className="font-medium">
-                        {t("unitPrice")}: {product.salePriceMinor.toLocaleString("en-US")}
+                        {t("unitPrice")}: {formatPrice ? formatPrice(product.salePriceMinor) : product.salePriceMinor.toLocaleString("en-US")}
                       </span>
                       {alreadyOnOrder ? <span className="text-xs">· {t("duplicateProduct")}</span> : null}
                     </span>

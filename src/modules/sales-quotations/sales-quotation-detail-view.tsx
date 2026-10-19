@@ -45,6 +45,7 @@ import { toast } from "@/hooks/use-toast";
 import { can, type Role } from "@/lib/rbac";
 import { ApiClientError } from "@/lib/api-client";
 import { useAppStore } from "@/store/app-store";
+import { formatMoney } from "@/lib/money";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -159,6 +160,20 @@ export function SalesQuotationDetailView({ id, role }: { id: string; role: Role 
   const [lineError, setLineError] = useState<string | null>(null);
 
   const dateFmt = useMemo(() => new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }), []);
+
+  // r56 — display formatter built from the quotation's frozen currency
+  // snapshot (…AtQuotation fields). Presentation only — the underlying
+  // integers are untouched; falls back to grouped integers while loading.
+  const quote = detail.data?.quotation;
+  const money = (minor: number): string =>
+    quote
+      ? formatMoney(minor, {
+          currencyCode: quote.currencyCodeAtQuotation,
+          currencySymbol: quote.currencySymbolAtQuotation,
+          decimalPrecision: quote.decimalPrecisionAtQuotation,
+          locale,
+        })
+      : minor.toLocaleString("en-US");
 
   function invalidateQuotationSurfaces(converted = false) {
     void queryClient.invalidateQueries({ queryKey: ["sales-quotations"] });
@@ -420,7 +435,7 @@ export function SalesQuotationDetailView({ id, role }: { id: string; role: Role 
       align: "end" as const,
       hideBelow: "md" as const,
       cell: (l: SalesQuotationLineDto) => (
-        <span className="tabular-nums" dir="ltr">{l.unitPriceMinor.toLocaleString("en-US")}</span>
+        <span className="tabular-nums" dir="ltr">{money(l.unitPriceMinor)}</span>
       ),
     },
     {
@@ -428,7 +443,7 @@ export function SalesQuotationDetailView({ id, role }: { id: string; role: Role 
       header: t("lineTotal"),
       align: "end" as const,
       cell: (l: SalesQuotationLineDto) => (
-        <span className="tabular-nums" dir="ltr">{l.lineTotalMinor.toLocaleString("en-US")}</span>
+        <span className="tabular-nums" dir="ltr">{money(l.lineTotalMinor)}</span>
       ),
     },
     ...(editable
@@ -738,10 +753,10 @@ export function SalesQuotationDetailView({ id, role }: { id: string; role: Role 
                           <p className="text-muted-foreground text-xs" dir="ltr">{l.skuAtQuotation}</p>
                         ) : null}
                       </div>
-                      <span className="tabular-nums text-sm" dir="ltr">{l.lineTotalMinor.toLocaleString("en-US")}</span>
+                      <span className="tabular-nums text-sm" dir="ltr">{money(l.lineTotalMinor)}</span>
                     </div>
                     <p className="text-muted-foreground mt-1 text-xs tabular-nums" dir="ltr">
-                      {t("qty")}: {l.qty} · {t("unitPrice")}: {l.unitPriceMinor.toLocaleString("en-US")}
+                      {t("qty")}: {l.qty} · {t("unitPrice")}: {money(l.unitPriceMinor)}
                     </p>
                     {editable ? (
                       <div className="mt-2 flex justify-end gap-1">
@@ -764,15 +779,15 @@ export function SalesQuotationDetailView({ id, role }: { id: string; role: Role 
           <dl className="ms-auto grid w-full max-w-xs grid-cols-1 gap-1 text-sm">
             <div className="flex justify-between">
               <dt className="text-muted-foreground">{t("subtotal")}</dt>
-              <dd className="tabular-nums" dir="ltr">{data.summary.subtotalMinor.toLocaleString("en-US")}</dd>
+              <dd className="tabular-nums" dir="ltr">{money(data.summary.subtotalMinor)}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-muted-foreground">{t("discount")}</dt>
-              <dd className="tabular-nums" dir="ltr">-{data.summary.discountMinor.toLocaleString("en-US")}</dd>
+              <dd className="tabular-nums" dir="ltr">-{money(data.summary.discountMinor)}</dd>
             </div>
             <div className="flex justify-between border-t pt-1 font-semibold">
               <dt>{t("total")}</dt>
-              <dd className="tabular-nums" dir="ltr">{data.summary.totalMinor.toLocaleString("en-US")}</dd>
+              <dd className="bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-base font-bold tabular-nums text-transparent dark:from-emerald-400 dark:to-teal-300" dir="ltr">{money(data.summary.totalMinor)}</dd>
             </div>
           </dl>
         </CardContent>
@@ -810,6 +825,7 @@ export function SalesQuotationDetailView({ id, role }: { id: string; role: Role 
         <SalesQuotationProductPicker
           businessId={businessId}
           existingProductIds={existingProductIds}
+          formatPrice={money}
           onPick={(product) => {
             setPickerOpen(false);
             setLineError(null);
@@ -829,6 +845,7 @@ export function SalesQuotationDetailView({ id, role }: { id: string; role: Role 
           initial={{ qty: 1, unitPriceMinor: addTarget.salePriceMinor }}
           submitting={addLine.isPending}
           errorText={lineError}
+          formatTotal={money}
           onSubmit={({ qty, unitPriceMinor }) =>
             addLine.mutate({ productId: addTarget.id, qty, unitPriceMinor })
           }
@@ -849,6 +866,7 @@ export function SalesQuotationDetailView({ id, role }: { id: string; role: Role 
           initial={{ qty: editTarget.qty, unitPriceMinor: editTarget.unitPriceMinor }}
           submitting={updateLine.isPending}
           errorText={lineError}
+          formatTotal={money}
           onSubmit={({ qty, unitPriceMinor }) =>
             updateLine.mutate({ lineId: editTarget.id, qty, unitPriceMinor })
           }

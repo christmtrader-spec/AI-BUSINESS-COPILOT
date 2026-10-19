@@ -81,13 +81,21 @@ export function PurchaseOrderCreateDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{t("createTitle")}</DialogTitle>
+      <DialogContent className="max-h-[90vh] gap-0 overflow-y-auto p-6 pb-0 sm:max-w-lg">
+        <DialogHeader className="gap-3 text-start">
+          <DialogTitle className="flex items-center gap-2.5">
+            <span
+              aria-hidden="true"
+              className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-600 to-teal-600 text-white shadow-sm dark:from-emerald-500 dark:to-teal-400"
+            >
+              <Truck className="size-4.5" />
+            </span>
+            {t("createTitle")}
+          </DialogTitle>
           <DialogDescription>{t("createDesc")}</DialogDescription>
         </DialogHeader>
         <form
-          className="space-y-4"
+          className="mt-4 space-y-4 pb-4"
           onSubmit={(e) => {
             e.preventDefault();
             if (supplier && !mutation.isPending) mutation.mutate();
@@ -167,12 +175,12 @@ export function PurchaseOrderCreateDialog({
             />
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="sticky bottom-0 -mx-6 border-t bg-background/95 px-6 py-4 backdrop-blur sm:flex-row sm:justify-end">
             <Button type="button" variant="outline" onClick={onClose}>
               {tCommon("cancel")}
             </Button>
-            <Button type="submit" disabled={!supplier || mutation.isPending}>
-              {mutation.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+            <Button type="submit" disabled={!supplier || mutation.isPending} className="min-w-32">
+              {mutation.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Truck className="size-4" aria-hidden />}
               {t("createAction")}
             </Button>
           </DialogFooter>

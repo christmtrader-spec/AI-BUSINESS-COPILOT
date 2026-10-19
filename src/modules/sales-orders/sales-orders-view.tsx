@@ -33,6 +33,8 @@ import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
+import { fmtMoney } from "../finance-shared/finance-kit";
+import type { BusinessSummary } from "../shell/types";
 import type { SalesOrderListItem } from "./sales-orders-api";
 import type { SalesOrderStatus } from "@/lib/sales-orders/types";
 import { fetchSalesOrders, salesOrderKeys } from "./sales-orders-api";
@@ -46,7 +48,7 @@ const STATUS_FILTERS: Array<SalesOrderStatus | "ALL"> = [
   "CANCELLED",
 ];
 
-export function SalesOrdersView({ role }: { role: Role }) {
+export function SalesOrdersView({ role, business }: { role: Role; business?: BusinessSummary }) {
   const t = useTranslations("salesOrders");
   const tCommon = useTranslations("common");
   const navigate = useAppStore((s) => s.navigate);
@@ -231,7 +233,7 @@ export function SalesOrdersView({ role }: { role: Role }) {
                   align: "end",
                   hideBelow: "lg",
                   cell: (r: SalesOrderListItem) => (
-                    <span className="tabular-nums" dir="ltr">{r.totalMinor.toLocaleString("en-US")}</span>
+                    <span className="tabular-nums" dir="ltr">{business ? fmtMoney(business, r.totalMinor) : r.totalMinor.toLocaleString("en-US")}</span>
                   ),
                 },
                 {

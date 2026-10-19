@@ -441,7 +441,7 @@ export function AppShell({
                   dashboardLabel={tNav("dashboard")}
                   onDashboard={() => navigate({ kind: "dashboard" })}
                 >
-                  <SalesOrdersView role={role} />
+                  <SalesOrdersView role={role} business={membership!.business} />
                 </ModuleBoundary>
               ) : null}
               {view.kind === "sales-order" ? (
@@ -465,7 +465,7 @@ export function AppShell({
                   dashboardLabel={tNav("dashboard")}
                   onDashboard={() => navigate({ kind: "dashboard" })}
                 >
-                  <SalesQuotationsView role={role} />
+                  <SalesQuotationsView role={role} business={membership!.business} />
                 </ModuleBoundary>
               ) : null}
               {view.kind === "sales-quotation" ? (

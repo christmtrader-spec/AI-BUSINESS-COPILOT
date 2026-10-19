@@ -27,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2 } from "lucide-react";
+import { Loader2, Banknote } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { fmtMoney, useInvalidateFinance } from "../finance-shared/finance-kit";
 import type { BusinessSummary } from "../shell/types";
@@ -206,9 +206,17 @@ export function PaymentFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85svh] overflow-y-auto sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{t("title")}</DialogTitle>
+      <DialogContent className="max-h-[85svh] gap-0 overflow-y-auto p-6 pb-0 sm:max-w-lg">
+        <DialogHeader className="gap-3 text-start">
+          <DialogTitle className="flex items-center gap-2.5">
+            <span
+              aria-hidden="true"
+              className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-600 to-teal-600 text-white shadow-sm dark:from-emerald-500 dark:to-teal-400"
+            >
+              <Banknote className="size-4.5" />
+            </span>
+            {t("title")}
+          </DialogTitle>
           <DialogDescription>{t("description")}</DialogDescription>
         </DialogHeader>
         <form
@@ -216,7 +224,7 @@ export function PaymentFormDialog({
             e.preventDefault();
             if (canSubmit) mutation.mutate();
           }}
-          className="space-y-4"
+          className="mt-4 space-y-4"
           noValidate
         >
           <div className="space-y-2">
@@ -324,9 +332,12 @@ export function PaymentFormDialog({
           </div>
 
           {selected ? (
-            <p className="text-muted-foreground text-xs tabular-nums" dir="auto">
-              {t("outstanding")}: <span className="font-medium">{fmtMoney(business, selected.balanceMinor)}</span>
-            </p>
+            <div className="bg-muted/30 flex items-center justify-between gap-3 rounded-xl border px-4 py-3">
+              <span className="text-muted-foreground text-sm">{t("outstanding")}</span>
+              <span className="text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400" dir="ltr">
+                {fmtMoney(business, selected.balanceMinor)}
+              </span>
+            </div>
           ) : null}
           {overLimit ? (
             <p className="text-destructive text-xs" role="alert">
@@ -334,14 +345,16 @@ export function PaymentFormDialog({
             </p>
           ) : null}
 
-          <DialogFooter className="gap-2">
+          <DialogFooter className="sticky bottom-0 -mx-6 gap-2 border-t bg-background/95 px-6 py-4 backdrop-blur sm:flex-row sm:justify-end">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {tCommon("cancel")}
             </Button>
-            <Button type="submit" disabled={!canSubmit || mutation.isPending}>
+            <Button type="submit" disabled={!canSubmit || mutation.isPending} className="min-w-32">
               {mutation.isPending ? (
                 <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-              ) : null}
+              ) : (
+                <Banknote className="size-4" aria-hidden="true" />
+              )}
               {t("submit")}
             </Button>
           </DialogFooter>

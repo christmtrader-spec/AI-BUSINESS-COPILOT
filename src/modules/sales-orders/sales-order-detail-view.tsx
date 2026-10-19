@@ -31,6 +31,7 @@ import { toast } from "@/hooks/use-toast";
 import { can, type Role } from "@/lib/rbac";
 import { ApiClientError } from "@/lib/api-client";
 import { useAppStore } from "@/store/app-store";
+import { formatMoney } from "@/lib/money";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -98,6 +99,7 @@ export function SalesOrderDetailView({ id, role }: { id: string; role: Role }) {
   const tErrors = useTranslations("errors");
   const navigate = useAppStore((s) => s.navigate);
   const businessId = useAppStore((s) => s.activeBusinessId) ?? "";
+  const locale = useAppStore((s) => s.locale);
   const queryClient = useQueryClient();
   const writable = can(role, "data:write");
 
@@ -128,7 +130,6 @@ export function SalesOrderDetailView({ id, role }: { id: string; role: Role }) {
   const remainingQty = data?.summary.remainingToDispatchQty ?? 0;
   const fullyDispatched = data?.summary.fullyDispatched ?? false;
 
-  const moneyFmt = useMemo(() => new Intl.NumberFormat("en-US"), []);
   const dateFmt = useMemo(() => new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }), []);
 
   const invalidateAll = async () => {
@@ -305,8 +306,9 @@ export function SalesOrderDetailView({ id, role }: { id: string; role: Role }) {
     currencySymbol: data.order.currencySymbolAtOrder,
     decimalPrecision: data.order.decimalPrecisionAtOrder,
   };
-  const money = (minor: number) =>
-    `${currency.currencySymbol}${moneyFmt.format(minor / 10 ** currency.decimalPrecision)}`;
+  // r56 — canonical formatter (money.ts) so RTL word-currencies (e.g. ریال)
+  // render suffix-correct on every surface, matching the rest of the app.
+  const money = (minor: number) => formatMoney(minor, currency, { locale });
 
   return (
     <div className="space-y-6" data-view="sales-order-detail">
@@ -641,6 +643,7 @@ export function SalesOrderDetailView({ id, role }: { id: string; role: Role }) {
         <SalesOrderProductPicker
           businessId={businessId}
           existingProductIds={new Set(data.lines.map((l) => l.productId))}
+          formatPrice={money}
           onPick={(p) => {
             setPickerOpen(false);
             setAddTarget(p);
@@ -658,6 +661,7 @@ export function SalesOrderDetailView({ id, role }: { id: string; role: Role }) {
           unit={addTarget.unit}
           initial={{ orderedQty: 1, unitPriceMinor: addTarget.salePriceMinor }}
           submitting={addLine.isPending}
+          formatTotal={money}
           errorText={
             addLine.error
               ? salesOrderLineErrorText(addLine.error, {
@@ -691,6 +695,7 @@ export function SalesOrderDetailView({ id, role }: { id: string; role: Role }) {
           unit={editTarget.unitAtOrder}
           initial={{ orderedQty: editTarget.orderedQty, unitPriceMinor: editTarget.unitPriceMinor }}
           submitting={updateLine.isPending}
+          formatTotal={money}
           errorText={
             updateLine.error
               ? salesOrderLineErrorText(updateLine.error, {

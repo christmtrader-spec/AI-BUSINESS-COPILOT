@@ -11,7 +11,7 @@
  */
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { Loader2 } from "lucide-react";
+import { ClipboardList, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -40,6 +40,7 @@ export function SalesOrderLineEditor({
   initial,
   submitting,
   errorText,
+  formatTotal,
   onSubmit,
   onClose,
 }: {
@@ -50,6 +51,9 @@ export function SalesOrderLineEditor({
   initial?: Partial<SalesOrderLineEditorValue>;
   submitting: boolean;
   errorText: string | null;
+  /** r56 — currency-aware formatter for the live line-total preview
+   *  (falls back to grouped integers, the historic display). */
+  formatTotal?: (minor: number) => string;
   onSubmit: (value: SalesOrderLineEditorValue) => void;
   onClose: () => void;
 }) {
@@ -72,73 +76,109 @@ export function SalesOrderLineEditor({
     }
   }
 
+  // First letters of the product name for the avatar tile (presentation only).
+  const initials = (productName ?? "").trim().split(/\s+/).slice(0, 2).map((w) => w[0] ?? "").join("").toUpperCase();
+  const totalText =
+    lineTotal !== null ? (formatTotal ? formatTotal(lineTotal) : lineTotal.toLocaleString("en-US")) : null;
+
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md" data-testid="sales-order-line-editor">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
+      <DialogContent className="max-h-[90dvh] gap-0 overflow-y-auto p-6 pb-0 sm:max-w-md" data-testid="sales-order-line-editor">
+        <DialogHeader className="gap-3 text-start">
+          <DialogTitle className="flex items-center gap-2.5">
+            <span
+              aria-hidden="true"
+              className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-600 to-teal-600 text-white shadow-sm dark:from-emerald-500 dark:to-teal-400"
+            >
+              <ClipboardList className="size-4.5" />
+            </span>
+            {title}
+          </DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="mt-4 space-y-4 pb-4">
           {productName ? (
-            <p className="text-sm font-medium" dir="auto">
-              {productName}
-              {unit ? <span className="text-muted-foreground font-normal"> · {unit}</span> : null}
-            </p>
+            <div className="bg-card/60 flex items-center gap-3 rounded-xl border p-3">
+              <span
+                aria-hidden="true"
+                className="bg-muted text-muted-foreground grid size-9 shrink-0 place-items-center rounded-lg text-xs font-bold"
+              >
+                {initials || <ClipboardList className="size-4" />}
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium" dir="auto">
+                  {productName}
+                </p>
+                {unit ? <p className="text-muted-foreground text-xs">{unit}</p> : null}
+              </div>
+            </div>
           ) : null}
 
-          <div className="space-y-1.5">
-            <Label htmlFor="so-line-qty">{t("qty")}</Label>
-            <Input
-              id="so-line-qty"
-              type="number"
-              min={ORDER_QTY_MIN}
-              max={SALES_ORDER_QTY_MAX}
-              step={1}
-              value={qtyText}
-              onChange={(e) => setQtyText(e.target.value)}
-              inputMode="numeric"
-              dir="ltr"
-              aria-invalid={!qtyValid}
-            />
-            {!qtyValid ? (
-              <p className="text-destructive text-xs" role="alert">{t("invalidQty")}</p>
-            ) : null}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="so-line-qty">{t("qty")}</Label>
+              <Input
+                id="so-line-qty"
+                type="number"
+                min={ORDER_QTY_MIN}
+                max={SALES_ORDER_QTY_MAX}
+                step={1}
+                value={qtyText}
+                onChange={(e) => setQtyText(e.target.value)}
+                inputMode="numeric"
+                dir="ltr"
+                className="text-center tabular-nums"
+                aria-invalid={!qtyValid}
+              />
+              {!qtyValid ? (
+                <p className="text-destructive text-xs" role="alert">{t("invalidQty")}</p>
+              ) : null}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="so-line-price">{t("unitPrice")}</Label>
+              <Input
+                id="so-line-price"
+                type="number"
+                min={0}
+                step={1}
+                value={priceText}
+                onChange={(e) => setPriceText(e.target.value)}
+                inputMode="numeric"
+                dir="ltr"
+                className="text-end tabular-nums"
+                aria-invalid={!priceValid}
+              />
+              {!priceValid ? (
+                <p className="text-destructive text-xs" role="alert">{t("invalidPrice")}</p>
+              ) : null}
+            </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="so-line-price">{t("unitPrice")}</Label>
-            <Input
-              id="so-line-price"
-              type="number"
-              min={0}
-              step={1}
-              value={priceText}
-              onChange={(e) => setPriceText(e.target.value)}
-              inputMode="numeric"
-              dir="ltr"
-              aria-invalid={!priceValid}
-            />
-            {!priceValid ? (
-              <p className="text-destructive text-xs" role="alert">{t("invalidPrice")}</p>
-            ) : null}
+          {/* Live line total — summary card with the brand gradient */}
+          <div className="bg-muted/30 rounded-xl border p-4">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted-foreground shrink-0 text-sm">{t("lineTotal")}</span>
+              {totalText !== null ? (
+                <span
+                  className="bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-lg font-bold tabular-nums text-transparent dark:from-emerald-400 dark:to-teal-300"
+                  dir="ltr"
+                >
+                  {totalText}
+                </span>
+              ) : (
+                <span className="text-destructive text-xs" role="alert">{t("totalOverflow")}</span>
+              )}
+            </div>
           </div>
-
-          {lineTotal !== null ? (
-            <p className="text-muted-foreground text-sm" dir="ltr">
-              {t("lineTotal")}: {lineTotal.toLocaleString("en-US")}
-            </p>
-          ) : (
-            <p className="text-destructive text-xs" role="alert">{t("totalOverflow")}</p>
-          )}
 
           {errorText ? (
             <p className="text-destructive text-sm" role="alert">{errorText}</p>
           ) : null}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="sticky bottom-0 -mx-6 border-t bg-background/95 px-6 py-4 backdrop-blur sm:flex-row sm:justify-end">
           <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
             {tCommon("cancel")}
           </Button>
@@ -146,6 +186,7 @@ export function SalesOrderLineEditor({
             type="button"
             onClick={() => onSubmit({ orderedQty: qty, unitPriceMinor: price })}
             disabled={submitting || !qtyValid || !priceValid || lineTotal === null}
+            className="min-w-28"
           >
             {submitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
             {tCommon("save")}

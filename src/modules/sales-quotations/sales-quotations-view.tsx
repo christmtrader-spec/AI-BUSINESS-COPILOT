@@ -33,6 +33,8 @@ import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
+import { fmtMoney } from "../finance-shared/finance-kit";
+import type { BusinessSummary } from "../shell/types";
 import type { SalesQuotationListItem } from "./sales-quotations-api";
 import type { SalesQuotationStatus } from "@/lib/sales-quotations/types";
 import { fetchSalesQuotations, salesQuotationKeys } from "./sales-quotations-api";
@@ -76,7 +78,7 @@ export function SalesQuotationStatusBadge({
   );
 }
 
-export function SalesQuotationsView({ role }: { role: Role }) {
+export function SalesQuotationsView({ role, business }: { role: Role; business?: BusinessSummary }) {
   const t = useTranslations("salesQuotations");
   const tCommon = useTranslations("common");
   const navigate = useAppStore((s) => s.navigate);
@@ -256,7 +258,7 @@ export function SalesQuotationsView({ role }: { role: Role }) {
                   header: t("total"),
                   align: "end",
                   cell: (r: SalesQuotationListItem) => (
-                    <span className="tabular-nums" dir="ltr">{r.totalMinor.toLocaleString("en-US")}</span>
+                    <span className="tabular-nums" dir="ltr">{business ? fmtMoney(business, r.totalMinor) : r.totalMinor.toLocaleString("en-US")}</span>
                   ),
                 },
                 {
@@ -317,7 +319,7 @@ export function SalesQuotationsView({ role }: { role: Role }) {
                     <div className="text-muted-foreground mt-2 flex items-center justify-between text-xs">
                       <span dir="auto">{r.customerNameAtQuotation || "—"}</span>
                       <span dir="ltr" className="tabular-nums">
-                        {r.totalMinor.toLocaleString("en-US")}
+                        {business ? fmtMoney(business, r.totalMinor) : r.totalMinor.toLocaleString("en-US")}
                       </span>
                     </div>
                     <p className="text-muted-foreground mt-1 text-xs" dir="ltr">
