@@ -1,0 +1,632 @@
+     1→"use client";
+     2→
+     3→import { useCallback, useEffect, useRef, useState } from "react";
+     4→import { useQuery, useQueryClient } from "@tanstack/react-query";
+     5→import { useTranslations } from "next-intl";
+     6→import { api } from "@/lib/api-client";
+     7→import { useAppStore, viewKeyOf, type AppView } from "@/store/app-store";
+     8→import { asRole, type Role } from "@/lib/rbac";
+     9→import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+    10→import { AppHeader } from "./header";
+    11→import { AppSidebar } from "./app-sidebar";
+    12→import { CommandPalette } from "./command-palette";
+    13→import { ModuleBoundary } from "./module-boundary";
+    14→import { warmHeavyQueries, onIdle } from "./prefetch";
+    15→import type { BusinessListItem } from "./types";
+    16→import { DashboardView } from "../dashboard/dashboard-view";
+    17→import { PartyView } from "../parties/party-view";
+    18→import { ProductsView } from "../products/products-view";
+    19→import { InventoryView } from "../inventory/inventory-view";
+    20→import { SalesView } from "../sales/sales-view";
+    21→import { ExpensesView } from "../expenses/expenses-view";
+    22→import { PaymentsView } from "../payments/payments-view";
+    23→import { BalancesView } from "../balances/balances-view";
+    24→import { ReportsView } from "../reports/reports-view";
+    25→import { CopilotView } from "../copilot/copilot-view";
+    26→import { BusinessSettingsView } from "../settings/business-settings-view";
+    27→import { MembersView } from "../settings/members-view";
+    28→import { ProfileView } from "../settings/profile-view";
+    29→import { SecurityCenterView } from "../settings/security-view";
+    30→import { DataPortabilityView } from "../settings/data-portability/data-portability-view";
+    31→import { NotificationsPreferencesView } from "../settings/notifications-preferences-view";
+    32→import { NotificationsView } from "../notifications/notifications-view";
+    33→import { SearchCenterView } from "../search/search-view";
+    34→import { EntityDetailView } from "../entities/entity-detail-view";
+    35→import { ENTITY_ROUTES } from "@/lib/entity-routes";
+    36→import { CrmView } from "../crm/crm-view";
+    37→import { StatementsView } from "../statements/statements-view";
+    38→import { StocktakesView } from "../inventory/stocktakes/stocktakes-view";
+    39→import { StocktakeDetailView } from "../inventory/stocktakes/stocktake-detail-view";
+    40→import { PurchaseOrdersView } from "../purchase-orders/purchase-orders-view";
+    41→import { PurchaseOrderDetailView } from "../purchase-orders/purchase-order-detail-view";
+    42→import { GoodsReceiptsView } from "../inventory/goods-receipts/goods-receipts-view";
+    43→import { GoodsReceiptDetailView } from "../inventory/goods-receipts/goods-receipt-detail-view";
+    44→import { GoodsReturnsView } from "../inventory/goods-returns/goods-returns-view";
+    45→import { GoodsReturnDetailView } from "../inventory/goods-returns/goods-return-detail-view";
+    46→import { GoodsDispatchesView } from "../inventory/goods-dispatches/goods-dispatches-view";
+    47→import { GoodsDispatchDetailView } from "../inventory/goods-dispatches/goods-dispatch-detail-view";
+    48→// Prompt 45 — sales-order views.
+    49→import { SalesOrdersView } from "../sales-orders/sales-orders-view";
+    50→import { SalesOrderDetailView } from "../sales-orders/sales-order-detail-view";
+    51→import { SalesQuotationsView } from "../sales-quotations/sales-quotations-view";
+    52→import { SalesQuotationDetailView } from "../sales-quotations/sales-quotation-detail-view";
+    53→// Prompt 48 — supplier-bill views (§4).
+    54→import { SupplierBillsView } from "../supplier-bills/supplier-bills-view";
+    55→import { SupplierBillDetailView } from "../supplier-bills/supplier-bill-detail-view";
+    56→// Prompt 49 — detailed aging drill-down (§16).
+    57→import { AgingDetailsView } from "../balances/aging-details-view";
+    58→import { SubscriptionView } from "../billing/subscription-view";
+    59→import { PaymentReturnView } from "../billing/payment-return-view";
+    60→import { AuditView } from "../audit/audit-view";
+    61→import { ComingSoonView } from "./coming-soon-view";
+    62→
+    63→/** Sidebar label key for the current view (used for <title> too). */
+    64→function labelKeyOf(view: AppView): string {
+    65→  switch (view.kind) {
+    66→    case "dashboard":
+    67→      return "dashboard";
+    68→    case "audit":
+    69→      return "audit";
+    70→    case "settings:business":
+    71→      return "settings";
+    72→    case "settings:members":
+    73→      return "teamMembers";
+    74→    case "settings:billing":
+    75→      return "billing";
+    76→    case "settings:security":
+    77→      return "security";
+    78→    case "settings:data":
+    79→      return "dataPortability";
+    80→    case "notifications":
+    81→      return "notifications";
+    82→    case "settings:notifications":
+    83→      return "notifications";
+    84→    // Prompt 33 — Search Results Center document title.
+    85→    case "search":
+    86→      return "search";
+    87→    // Prompt 35 (§36) — CRM module document title.
+    88→    case "crm":
+    89→      return "crm";
+    90→    // Prompt 34 — entity detail titles reuse the owning module's nav label.
+    91→    case "entity":
+    92→      return ENTITY_ROUTES[view.entity].labelKey;
+    93→    // Prompt 39 — party statement document title (§57).
+    94→    case "statements":
+    95→      return "statements";
+    96→    // Prompt 41 — purchase-order document titles (§71).
+    97→    case "purchase-orders":
+    98→      return "purchaseOrders";
+    99→    case "purchase-order":
+   100→      return "purchaseOrders";
+   101→    // Prompt 42 — goods-receipt document titles (§117).
+   102→    case "inventory-goods-receipts":
+   103→      return "goodsReceipts";
+   104→    case "inventory-goods-receipt":
+   105→      return "goodsReceipts";
+   106→    // Prompt 43 — goods-return document titles (§91).
+   107→    case "inventory-goods-returns":
+   108→      return "goodsReturns";
+   109→    case "inventory-goods-return":
+   110→      return "goodsReturns";
+   111→    // Prompt 44 — goods-dispatch document titles.
+   112→    case "inventory-goods-dispatches":
+   113→      return "goodsDispatches";
+   114→    case "inventory-goods-dispatch":
+   115→      return "goodsDispatches";
+   116→    // Prompt 45 — sales-order document titles.
+   117→    case "sales-orders":
+   118→      return "salesOrders";
+   119→    case "sales-order":
+   120→      return "salesOrders";
+   121→    // Prompt 47 — sales-quotation document titles.
+   122→    case "sales-quotations":
+   123→      return "salesQuotations";
+   124→    case "sales-quotation":
+   125→      return "salesQuotations";
+   126→    // Prompt 48 — supplier-bill document titles (§4.1).
+   127→    case "supplier-bills":
+   128→      return "supplierBills";
+   129→    case "supplier-bill":
+   130→      return "supplierBills";
+   131→    // Prompt 49 — detailed-aging document titles (the owning balances module).
+   132→    case "aging-details":
+   133→      return view.side === "payables" ? "payables" : "receivables";
+   134→    case "profile":
+   135→      return "profile";
+   136→    case "module": {
+   137→      const map: Record<string, string> = {
+   138→        customers: "customers",
+   139→        suppliers: "suppliers",
+   140→        products: "products",
+   141→        inventory: "inventory",
+   142→        sales: "sales",
+   143→        expenses: "expenses",
+   144→        payments: "payments",
+   145→        receivables: "receivables",
+   146→        payables: "payables",
+   147→        reports: "reports",
+   148→        copilot: "copilot",
+   149→      };
+   150→      return map[view.module] ?? "dashboard";
+   151→    }
+   152→    default:
+   153→      return "dashboard";
+   154→  }
+   155→}
+   156→
+   157→export function AppShell({
+   158→  memberships,
+   159→  dir,
+   160→}: {
+   161→  memberships: BusinessListItem[];
+   162→  dir: "ltr" | "rtl";
+   163→}) {
+   164→  const tCommon = useTranslations("common");
+   165→  const tNav = useTranslations("nav");
+   166→  const tBoundary = useTranslations("boundary");
+   167→  const tSkip = useTranslations("common");
+   168→  const view = useAppStore((s) => s.view);
+   169→  const activeId = useAppStore((s) => s.activeBusinessId);
+   170→  const navigate = useAppStore((s) => s.navigate);
+   171→
+   172→  const membership =
+   173→    memberships.find((m) => m.business.id === activeId) ?? memberships[0] ?? null;
+   174→  const role: Role = asRole(membership?.role);
+   175→
+   176→  // Phase 06 — per-module document titles (localized: "Sales · Business · App").
+   177→  const moduleLabel = tNav(labelKeyOf(view) as "dashboard");
+   178→  useEffect(() => {
+   179→    const parts = [
+   180→      moduleLabel,
+   181→      membership?.business.name,
+   182→      tCommon("appName"),
+   183→    ].filter(Boolean);
+   184→    document.title = parts.join(" · ");
+   185→  }, [moduleLabel, membership?.business.name, tCommon]);
+   186→
+   187→  // Phase 06 — idle prefetch warming: reports/summary + balances are the
+   188→  // heaviest deterministic queries; warm them once per business so deep
+   189→  // links into Reports/Receivables/Payables render from cache instantly.
+   190→  const queryClient = useQueryClient();
+   191→  const activeBusinessId = membership?.business.id;
+   192→  useEffect(() => {
+   193→    if (!activeBusinessId) return;
+   194→    const cancel = onIdle(() => warmHeavyQueries(queryClient));
+   195→    return cancel;
+   196→  }, [activeBusinessId, queryClient]);
+   197→
+   198→  const viewKey = viewKeyOf(view);
+   199→
+   200→  // Prompt 23 §41 — the provider-callback return page. `?payment_return=<id>`
+   201→  // is set by OUR callback API (built from the configured base URL, never a
+   202→  // user-supplied URL). The view renders ONLY server-verified state.
+   203→  const [paymentReturnSessionId, clearPaymentReturn] = usePaymentReturnSessionId();
+   204→
+   205→  // Dismiss the return view as soon as the user navigates elsewhere.
+   206→  // Navigation is compared by VIEW OBJECT IDENTITY, not viewKey: on a fresh
+   207→  // `/?payment_return=<id>` load the underlying view is already the default
+   208→  // dashboard, so clicking «Dashboard» produces the SAME viewKey and would
+   209→  // never dismiss. navigate()/replaceView() always pass a fresh object.
+   210→  const prevViewRef = useRef<AppView | null>(null);
+   211→  useEffect(() => {
+   212→    if (prevViewRef.current === null) {
+   213→      prevViewRef.current = view;
+   214→      return;
+   215→    }
+   216→    if (prevViewRef.current !== view) {
+   217→      prevViewRef.current = view;
+   218→      clearPaymentReturn();
+   219→    }
+   220→  }, [view, clearPaymentReturn]);
+   221→
+   222→  return (
+   223→    <SidebarProvider>
+   224→      <AppSidebar membership={membership} side={dir === "rtl" ? "right" : "left"} />
+   225→      <SidebarInset>
+   226→        {/* a11y: keyboard users can jump past the navigation chrome */}
+   227→        <a
+   228→          href="#main-content"
+   229→          className="bg-primary text-primary-foreground sr-only focus:not-sr-only focus:fixed focus:start-3 focus:top-3 focus:z-50 focus:rounded-md focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg"
+   230→        >
+   231→          {tSkip("skipToContent")}
+   232→        </a>
+   233→        <AppHeader />
+   234→        <main id="main-content" className="flex-1 p-4 sm:p-6">
+   235→          {paymentReturnSessionId ? (
+   236→            <div className="mx-auto w-full max-w-6xl">
+   237→              <PaymentReturnView
+   238→                sessionId={paymentReturnSessionId}
+   239→                onDone={clearPaymentReturn}
+   240→              />
+   241→            </div>
+   242→          ) : (
+   243→          <div className="mx-auto w-full max-w-6xl">
+   244→            <div key={viewKey} className="animate-in fade-in slide-in-from-bottom-1 duration-300">
+   245→              {view.kind === "dashboard" ? <DashboardView membership={membership!} /> : null}
+   246→              {view.kind === "settings:business" ? (
+   247→                <BusinessSettingsView business={membership!.business} />
+   248→              ) : null}
+   249→              {view.kind === "settings:members" ? <MembersView membership={membership!} /> : null}
+   250→              {view.kind === "settings:billing" ? (
+   251→                <SubscriptionView business={membership!.business} role={role} />
+   252→              ) : null}
+   253→              {view.kind === "settings:security" ? <SecurityCenterView /> : null}
+   254→              {view.kind === "settings:data" ? <DataPortabilityView role={role} /> : null}
+   255→              {view.kind === "notifications" ? <NotificationsView /> : null}
+   256→              {view.kind === "settings:notifications" ? <NotificationsPreferencesView /> : null}
+   257→              {view.kind === "search" ? <SearchCenterView /> : null}
+   258→              {view.kind === "crm" ? (
+   259→                <ModuleBoundary
+   260→                  moduleKey={viewKey}
+   261→                  title={tBoundary("title")}
+   262→                  description={tBoundary("description")}
+   263→                  retry={tCommon("retry")}
+   264→                  dashboardLabel={tNav("dashboard")}
+   265→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   266→                >
+   267→                  <CrmView business={membership!.business} role={role} tab={view.tab} />
+   268→                </ModuleBoundary>
+   269→              ) : null}
+   270→              {view.kind === "entity" ? (
+   271→                <ModuleBoundary
+   272→                  moduleKey={viewKey}
+   273→                  title={tBoundary("title")}
+   274→                  description={tBoundary("description")}
+   275→                  retry={tCommon("retry")}
+   276→                  dashboardLabel={tNav("dashboard")}
+   277→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   278→                >
+   279→                  <EntityDetailView
+   280→                    entity={view.entity}
+   281→                    id={view.id}
+   282→                    business={membership!.business}
+   283→                    role={role}
+   284→                  />
+   285→                </ModuleBoundary>
+   286→              ) : null}
+   287→              {view.kind === "statements" ? (
+   288→                <ModuleBoundary
+   289→                  moduleKey={viewKey}
+   290→                  title={tBoundary("title")}
+   291→                  description={tBoundary("description")}
+   292→                  retry={tCommon("retry")}
+   293→                  dashboardLabel={tNav("dashboard")}
+   294→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   295→                >
+   296→                  <StatementsView
+   297→                    business={membership!.business}
+   298→                    role={role}
+   299→                    statementType={view.statementType}
+   300→                    partyId={view.id}
+   301→                  />
+   302→                </ModuleBoundary>
+   303→              ) : null}
+   304→              {view.kind === "inventory-stocktakes" ? (
+   305→                <ModuleBoundary
+   306→                  moduleKey={viewKey}
+   307→                  title={tBoundary("title")}
+   308→                  description={tBoundary("description")}
+   309→                  retry={tCommon("retry")}
+   310→                  dashboardLabel={tNav("dashboard")}
+   311→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   312→                >
+   313→                  <StocktakesView role={role} />
+   314→                </ModuleBoundary>
+   315→              ) : null}
+   316→              {view.kind === "inventory-stocktake" ? (
+   317→                <ModuleBoundary
+   318→                  moduleKey={viewKey}
+   319→                  title={tBoundary("title")}
+   320→                  description={tBoundary("description")}
+   321→                  retry={tCommon("retry")}
+   322→                  dashboardLabel={tNav("dashboard")}
+   323→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   324→                >
+   325→                  <StocktakeDetailView id={view.id} role={role} />
+   326→                </ModuleBoundary>
+   327→              ) : null}
+   328→              {view.kind === "purchase-orders" ? (
+   329→                <ModuleBoundary
+   330→                  moduleKey={viewKey}
+   331→                  title={tBoundary("title")}
+   332→                  description={tBoundary("description")}
+   333→                  retry={tCommon("retry")}
+   334→                  dashboardLabel={tNav("dashboard")}
+   335→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   336→                >
+   337→                  <PurchaseOrdersView role={role} />
+   338→                </ModuleBoundary>
+   339→              ) : null}
+   340→              {view.kind === "purchase-order" ? (
+   341→                <ModuleBoundary
+   342→                  moduleKey={viewKey}
+   343→                  title={tBoundary("title")}
+   344→                  description={tBoundary("description")}
+   345→                  retry={tCommon("retry")}
+   346→                  dashboardLabel={tNav("dashboard")}
+   347→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   348→                >
+   349→                  <PurchaseOrderDetailView id={view.id} role={role} />
+   350→                </ModuleBoundary>
+   351→              ) : null}
+   352→              {view.kind === "inventory-goods-receipts" ? (
+   353→                <ModuleBoundary
+   354→                  moduleKey={viewKey}
+   355→                  title={tBoundary("title")}
+   356→                  description={tBoundary("description")}
+   357→                  retry={tCommon("retry")}
+   358→                  dashboardLabel={tNav("dashboard")}
+   359→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   360→                >
+   361→                  <GoodsReceiptsView role={role} />
+   362→                </ModuleBoundary>
+   363→              ) : null}
+   364→              {view.kind === "inventory-goods-receipt" ? (
+   365→                <ModuleBoundary
+   366→                  moduleKey={viewKey}
+   367→                  title={tBoundary("title")}
+   368→                  description={tBoundary("description")}
+   369→                  retry={tCommon("retry")}
+   370→                  dashboardLabel={tNav("dashboard")}
+   371→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   372→                >
+   373→                  <GoodsReceiptDetailView id={view.id} role={role} />
+   374→                </ModuleBoundary>
+   375→              ) : null}
+   376→              {view.kind === "inventory-goods-returns" ? (
+   377→                <ModuleBoundary
+   378→                  moduleKey={viewKey}
+   379→                  title={tBoundary("title")}
+   380→                  description={tBoundary("description")}
+   381→                  retry={tCommon("retry")}
+   382→                  dashboardLabel={tNav("dashboard")}
+   383→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   384→                >
+   385→                  <GoodsReturnsView role={role} />
+   386→                </ModuleBoundary>
+   387→              ) : null}
+   388→              {view.kind === "inventory-goods-return" ? (
+   389→                <ModuleBoundary
+   390→                  moduleKey={viewKey}
+   391→                  title={tBoundary("title")}
+   392→                  description={tBoundary("description")}
+   393→                  retry={tCommon("retry")}
+   394→                  dashboardLabel={tNav("dashboard")}
+   395→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   396→                >
+   397→                  <GoodsReturnDetailView id={view.id} role={role} />
+   398→                </ModuleBoundary>
+   399→              ) : null}
+   400→              {view.kind === "inventory-goods-dispatches" ? (
+   401→                <ModuleBoundary
+   402→                  moduleKey={viewKey}
+   403→                  title={tBoundary("title")}
+   404→                  description={tBoundary("description")}
+   405→                  retry={tCommon("retry")}
+   406→                  dashboardLabel={tNav("dashboard")}
+   407→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   408→                >
+   409→                  <GoodsDispatchesView role={role} />
+   410→                </ModuleBoundary>
+   411→              ) : null}
+   412→              {view.kind === "inventory-goods-dispatch" ? (
+   413→                <ModuleBoundary
+   414→                  moduleKey={viewKey}
+   415→                  title={tBoundary("title")}
+   416→                  description={tBoundary("description")}
+   417→                  retry={tCommon("retry")}
+   418→                  dashboardLabel={tNav("dashboard")}
+   419→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   420→                >
+   421→                  <GoodsDispatchDetailView id={view.id} role={role} />
+   422→                </ModuleBoundary>
+   423→              ) : null}
+   424→              {view.kind === "sales-orders" ? (
+   425→                <ModuleBoundary
+   426→                  moduleKey={viewKey}
+   427→                  title={tBoundary("title")}
+   428→                  description={tBoundary("description")}
+   429→                  retry={tCommon("retry")}
+   430→                  dashboardLabel={tNav("dashboard")}
+   431→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   432→                >
+   433→                  <SalesOrdersView role={role} />
+   434→                </ModuleBoundary>
+   435→              ) : null}
+   436→              {view.kind === "sales-order" ? (
+   437→                <ModuleBoundary
+   438→                  moduleKey={viewKey}
+   439→                  title={tBoundary("title")}
+   440→                  description={tBoundary("description")}
+   441→                  retry={tCommon("retry")}
+   442→                  dashboardLabel={tNav("dashboard")}
+   443→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   444→                >
+   445→                  <SalesOrderDetailView id={view.id} role={role} />
+   446→                </ModuleBoundary>
+   447→              ) : null}
+   448→              {view.kind === "sales-quotations" ? (
+   449→                <ModuleBoundary
+   450→                  moduleKey={viewKey}
+   451→                  title={tBoundary("title")}
+   452→                  description={tBoundary("description")}
+   453→                  retry={tCommon("retry")}
+   454→                  dashboardLabel={tNav("dashboard")}
+   455→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   456→                >
+   457→                  <SalesQuotationsView role={role} />
+   458→                </ModuleBoundary>
+   459→              ) : null}
+   460→              {view.kind === "sales-quotation" ? (
+   461→                <ModuleBoundary
+   462→                  moduleKey={viewKey}
+   463→                  title={tBoundary("title")}
+   464→                  description={tBoundary("description")}
+   465→                  retry={tCommon("retry")}
+   466→                  dashboardLabel={tNav("dashboard")}
+   467→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   468→                >
+   469→                  <SalesQuotationDetailView id={view.id} role={role} />
+   470→                </ModuleBoundary>
+   471→              ) : null}
+   472→              {/* Prompt 48 (§4.1) — supplier-bill list + detail views. */}
+   473→              {view.kind === "supplier-bills" ? (
+   474→                <ModuleBoundary
+   475→                  moduleKey={viewKey}
+   476→                  title={tBoundary("title")}
+   477→                  description={tBoundary("description")}
+   478→                  retry={tCommon("retry")}
+   479→                  dashboardLabel={tNav("dashboard")}
+   480→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   481→                >
+   482→                  <SupplierBillsView role={role} />
+   483→                </ModuleBoundary>
+   484→              ) : null}
+   485→              {view.kind === "supplier-bill" ? (
+   486→                <ModuleBoundary
+   487→                  moduleKey={viewKey}
+   488→                  title={tBoundary("title")}
+   489→                  description={tBoundary("description")}
+   490→                  retry={tCommon("retry")}
+   491→                  dashboardLabel={tNav("dashboard")}
+   492→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   493→                >
+   494→                  <SupplierBillDetailView id={view.id} role={role} />
+   495→                </ModuleBoundary>
+   496→              ) : null}
+   497→              {/* Prompt 49 (§16) — detailed aging drill-down view. */}
+   498→              {view.kind === "aging-details" ? (
+   499→                <ModuleBoundary
+   500→                  moduleKey={viewKey}
+   501→                  title={tBoundary("title")}
+   502→                  description={tBoundary("description")}
+   503→                  retry={tCommon("retry")}
+   504→                  dashboardLabel={tNav("dashboard")}
+   505→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   506→                >
+   507→                  <AgingDetailsView
+   508→                    side={view.side}
+   509→                    business={membership!.business}
+   510→                    role={role}
+   511→                    partyId={view.partyId ?? null}
+   512→                    bucket={view.bucket ?? null}
+   513→                    pastDue={Boolean(view.pastDue)}
+   514→                  />
+   515→                </ModuleBoundary>
+   516→              ) : null}
+   517→              {view.kind === "profile" ? <ProfileView /> : null}
+   518→              {view.kind === "audit" ? <AuditView membership={membership!} /> : null}
+   519→              {view.kind === "module" ? (
+   520→                <ModuleBoundary
+   521→                  moduleKey={viewKey}
+   522→                  title={tBoundary("title")}
+   523→                  description={tBoundary("description")}
+   524→                  retry={tCommon("retry")}
+   525→                  dashboardLabel={tNav("dashboard")}
+   526→                  onDashboard={() => navigate({ kind: "dashboard" })}
+   527→                >
+   528→                  {view.module === "customers" ? (
+   529→                    <PartyView kind="customer" business={membership!.business} role={role} />
+   530→                  ) : view.module === "suppliers" ? (
+   531→                    <PartyView kind="supplier" business={membership!.business} role={role} />
+   532→                  ) : view.module === "products" ? (
+   533→                    <ProductsView business={membership!.business} role={role} />
+   534→                  ) : view.module === "inventory" ? (
+   535→                    <InventoryView business={membership!.business} role={role} />
+   536→                  ) : view.module === "sales" ? (
+   537→                    <SalesView business={membership!.business} role={role} />
+   538→                  ) : view.module === "expenses" ? (
+   539→                    <ExpensesView business={membership!.business} role={role} />
+   540→                  ) : view.module === "payments" ? (
+   541→                    <PaymentsView business={membership!.business} role={role} />
+   542→                  ) : view.module === "receivables" ? (
+   543→                    <BalancesView kind="receivables" business={membership!.business} role={role} />
+   544→                  ) : view.module === "payables" ? (
+   545→                    <BalancesView kind="payables" business={membership!.business} role={role} />
+   546→                  ) : view.module === "reports" ? (
+   547→                    <ReportsView business={membership!.business} />
+   548→                  ) : view.module === "copilot" ? (
+   549→                    <CopilotView business={membership!.business} role={role} />
+   550→                  ) : (
+   551→                    <ComingSoonView module={view.module} />
+   552→                  )}
+   553→                </ModuleBoundary>
+   554→              ) : null}
+   555→            </div>
+   556→          </div>
+   557→          )}
+   558→        </main>
+   559→        <footer className="border-t">
+   560→          <div className="text-muted-foreground mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-1 px-4 py-3 text-xs sm:flex-row">
+   561→            <p>
+   562→              {tCommon("appName")}
+   563→            </p>
+   564→            <p>© {new Date().getFullYear()} — {tCommon("tagline")}</p>
+   565→          </div>
+   566→        </footer>
+   567→      </SidebarInset>
+   568→      <CommandPalette membership={membership} />
+   569→    </SidebarProvider>
+   570→  );
+   571→}
+   572→
+   573→export function useMembershipsQuery(enabled: boolean) {
+   574→  const queryClient = useQueryClient();
+   575→  return useQuery<BusinessListItem[]>({
+   576→    queryKey: ["businesses"],
+   577→    queryFn: async () => {
+   578→      const res = await fetch("/api/v1/businesses", { credentials: "same-origin" });
+   579→      let body: unknown = null;
+   580→      try { body = await res.json(); } catch { /* non-JSON */ };
+   581→      const err = (body as { error?: { code?: string } } | null)?.error;
+   582→      if (!res.ok) {
+   583→        // Prompt 30 §83/§229 — a globally invalidated session (password
+   584→        // change / MFA enable / admin kill switch) must land the user on
+   585→        // the sign-in view, never a permanent splash. Clear the stale
+   586→        // cookie client-side; NextAuth's session state flips to signed-out.
+   587→        if (res.status === 401 || err?.code === "SESSION_INVALIDATED" || err?.code === "SESSION_REVOKED") {
+   588→          queryClient.clear();
+   589→          void import("next-auth/react").then((m) => m.signOut({ redirect: false }));
+   590→        }
+   591→        throw new Error(err?.code ?? `HTTP_${res.status}`);
+   592→      }
+   593→      return (body as { data: BusinessListItem[] }).data;
+   594→    },
+   595→    enabled,
+   596→    staleTime: 60_000,
+   597→    retry: false,
+   598→  });
+   599→}
+   600→
+   601→/**
+   602→ * Prompt 23 §41 — reads `?payment_return=<sessionId>` (set ONLY by our own
+   603→ * callback API). Value is validated shape-wise (cuid-ish length bound);
+   604→ * the session itself is re-authorized server-side, so a forged id simply
+   605→ * renders a 404-ish "unknown" state — never another tenant's data.
+   606→ * Listens to popstate so browser back/forward and the view's own
+   607→ * clear() stay in sync.
+   608→ */
+   609→function usePaymentReturnSessionId(): [string | null, () => void] {
+   610→  const read = () => {
+   611→    try {
+   612→      const raw = new URLSearchParams(window.location.search).get("payment_return");
+   613→      return raw && raw.length >= 20 && raw.length <= 40 && /^[a-zA-Z0-9_-]+$/.test(raw) ? raw : null;
+   614→    } catch {
+   615→      return null;
+   616→    }
+   617→  };
+   618→  const [sessionId, setSessionId] = useState<string | null>(read);
+   619→  useEffect(() => {
+   620→    const sync = () => setSessionId(read());
+   621→    window.addEventListener("popstate", sync);
+   622→    return () => window.removeEventListener("popstate", sync);
+   623→  }, []);
+   624→  const clear = useCallback(() => {
+   625→    // Strip ONLY the ?payment_return query — never touch the hash (the view
+   626→    // may be navigating via the app hash-router at the same time).
+   627→    window.history.replaceState(null, "", `${window.location.pathname}${window.location.hash}`);
+   628→    setSessionId(null);
+   629→  }, []);
+   630→  return [sessionId, clear];
+   631→}
+   632→

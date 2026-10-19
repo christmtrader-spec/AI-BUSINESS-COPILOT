@@ -9,8 +9,11 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
+        // r52 brand restyle: primary actions get the emerald→teal signature
+        // gradient (mirrors .gradient-text). Presentation only — size, focus
+        // ring and every other variant are untouched.
         default:
-          "bg-primary text-primary-foreground shadow-xs hover:bg-primary/90",
+          "bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-xs shadow-emerald-600/25 hover:from-emerald-500 hover:to-teal-500 hover:shadow-md hover:shadow-emerald-600/30 hover:brightness-[1.03] active:scale-[0.99] dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400 dark:shadow-emerald-400/20",
         destructive:
           "bg-destructive text-white shadow-xs hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
         outline:

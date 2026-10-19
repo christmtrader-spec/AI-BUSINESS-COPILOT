@@ -62,7 +62,8 @@
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  /* Brand focus ring — emerald (matches .gradient-text stops). */
+  --ring: oklch(0.627 0.17 149);
   /* Brand chart palette — emerald / teal / amber / rose / orange (no blue). */
   --chart-1: oklch(0.627 0.17 149);
   --chart-2: oklch(0.6 0.118 184.704);
@@ -97,7 +98,8 @@
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  /* Brand focus ring (dark) — brighter emerald for near-black surfaces. */
+  --ring: oklch(0.696 0.17 162.48);
   /* Brand chart palette (dark) — brighter steps of the same hues. */
   --chart-1: oklch(0.696 0.17 162.48);
   --chart-2: oklch(0.75 0.13 190);
@@ -144,7 +146,7 @@
     font-variant-numeric: tabular-nums;
   }
   ::selection {
-    background: color-mix(in oklch, var(--primary) 18%, transparent);
+    background: color-mix(in oklch, var(--chart-1) 22%, transparent);
   }
   /* Custom scrollbars for long lists (per UI standards) */
   * {
@@ -284,6 +286,25 @@
 }
 .dark .gradient-neg {
   background-image: linear-gradient(100deg, #fb7185, #fb923c);
+}
+
+/* ── App-shell ambient fallback (r52) ──────────────────────────────────
+   Painted behind the whole authenticated app (fixed, −z-20). When WebGL is
+   unavailable the canvas hides itself and this whisper of the brand
+   gradient remains; when WebGL runs it sits under it harmlessly. Purely
+   decorative — neutral enough to never hurt text contrast. */
+.bg-app-fallback {
+  background:
+    radial-gradient(
+      120% 90% at 50% -10%,
+      color-mix(in oklch, var(--chart-1) 12%, transparent),
+      transparent 62%
+    ),
+    radial-gradient(
+      85% 60% at 88% 112%,
+      color-mix(in oklch, var(--chart-2) 9%, transparent),
+      transparent 60%
+    );
 }
 
 /* Gentle shimmer reserved for hero headings (dashboard welcome, landing).

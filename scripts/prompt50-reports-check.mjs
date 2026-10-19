@@ -128,7 +128,43 @@ async function purge() {
     const freePlan = await db.plan.findUnique({ where: { code: "FREE" } });
     await db.subscription.deleteMany({ where: { businessId: b.id } }).catch(() => {});
     if (freePlan) {
-      await db.subscription.create({ data: { businessId: b.id, planId: freePlan.id, status: "ACTIVE", billingPeriod: "MONTHLY" } }).catch(() => {});
+      const sub = await db.subscription
+        .create({ data: { businessId: b.id, planId: freePlan.id, status: "ACTIVE", billingPeriod: "MONTHLY" } })
+        .catch(() => null);
+      // r52 harness fix: the platform invariant "every existing subscription
+      // is auditable (CREATED event)" applies to fixture subscriptions too.
+      // Mint the same event shape seed-billing's backfill writes — with a
+      // truthful harness source — so the billing check's B3 is independent
+      // of suite execution order.
+      if (sub) {
+        await db.subscriptionEvent
+          .create({
+            data: {
+              businessId: b.id,
+              subscriptionId: sub.id,
+              type: "CREATED",
+              toStatus: "ACTIVE",
+              toPlanCode: freePlan.code,
+              dataJson: JSON.stringify({ source: "p50-purge-rebaseline" }),
+            },
+          })
+          .catch(() => {});
+        await db.auditLog
+          .create({
+            data: {
+              businessId: b.id,
+              action: "billing.subscription_created",
+              entityType: "Subscription",
+              entityId: sub.id,
+              afterJson: JSON.stringify({
+                planCode: freePlan.code,
+                status: "ACTIVE",
+                source: "p50-purge-rebaseline",
+              }),
+            },
+          })
+          .catch(() => {});
+      }
     }
     // NOTE: the business row itself is KEPT (see header).
   }
@@ -699,6 +735,39 @@ console.log("\n== §I teardown ==");
   // every FINANCIAL row is wiped — zero residue of fixture data.
   await db.subscription.update({ where: { businessId: bizA.id }, data: { planId: (await db.plan.findUnique({ where: { code: "FREE" } })).id } }).catch(() => {});
   await db.subscription.update({ where: { businessId: bizB.id }, data: { planId: (await db.plan.findUnique({ where: { code: "FREE" } })).id } }).catch(() => {});
+  // r52 harness fix: re-mint the auditable CREATED event after the event
+  // wipe + FREE rebaseline — the platform invariant "every existing
+  // subscription has a CREATED event" holds for the FINAL state too, so
+  // the billing check's B3 stays order-independent (same convention as
+  // seed-billing's backfill, truthful harness source).
+  for (const bizId of [bizA.id, bizB.id]) {
+    const sub = await db.subscription.findUnique({ where: { businessId: bizId } });
+    const hasCreated = sub
+      ? (await db.subscriptionEvent.count({ where: { subscriptionId: sub.id, type: "CREATED" } })) > 0
+      : true;
+    if (sub && !hasCreated) {
+      const free = await db.plan.findUnique({ where: { code: "FREE" } });
+      await db.subscriptionEvent.create({
+        data: {
+          businessId: bizId,
+          subscriptionId: sub.id,
+          type: "CREATED",
+          toStatus: sub.status,
+          toPlanCode: free?.code ?? "FREE",
+          dataJson: JSON.stringify({ source: "p50-purge-rebaseline" }),
+        },
+      });
+      await db.auditLog.create({
+        data: {
+          businessId: bizId,
+          action: "billing.subscription_created",
+          entityType: "Subscription",
+          entityId: sub.id,
+          afterJson: JSON.stringify({ planCode: free?.code ?? "FREE", status: sub.status, source: "p50-purge-rebaseline" }),
+        },
+      });
+    }
+  }
   const leftBiz = await db.business.count({ where: { name: { startsWith: `${TAG}-` } } });
   const leftSales = await db.sale.count({ where: { businessId: { in: [bizA.id, bizB.id] } } });
   const leftItems = await db.saleItem.count({ where: { sale: { businessId: { in: [bizA.id, bizB.id] } } } });

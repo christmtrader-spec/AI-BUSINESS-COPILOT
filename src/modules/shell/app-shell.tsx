@@ -7,6 +7,7 @@ import { api } from "@/lib/api-client";
 import { useAppStore, viewKeyOf, type AppView } from "@/store/app-store";
 import { asRole, type Role } from "@/lib/rbac";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { BusinessWebGLBackground } from "@/components/fx/business-webgl-bg";
 import { AppHeader } from "./header";
 import { AppSidebar } from "./app-sidebar";
 import { CommandPalette } from "./command-palette";
@@ -221,8 +222,18 @@ export function AppShell({
 
   return (
     <SidebarProvider>
+      {/* r52 ambient app background — PRESENTATION ONLY. A whisper of the
+          brand gradient (CSS fallback, −z-20) under the business WebGL
+          "growth field" (−z-10, decorative, aria-hidden, pauses when the
+          tab is hidden, static frame under prefers-reduced-motion, and it
+          hides itself entirely when WebGL is unavailable). The content
+          surfaces above stay readable: SidebarInset is slightly translucent
+          so the aurora shows through subtly, while cards/popovers remain
+          opaque. Nothing here affects data flow, routing or logic. */}
+      <div aria-hidden="true" className="bg-app-fallback pointer-events-none fixed inset-0 -z-20" />
+      <BusinessWebGLBackground className="opacity-35 dark:opacity-30" />
       <AppSidebar membership={membership} side={dir === "rtl" ? "right" : "left"} />
-      <SidebarInset>
+      <SidebarInset className="bg-background/85 dark:bg-background/80">
         {/* a11y: keyboard users can jump past the navigation chrome */}
         <a
           href="#main-content"
