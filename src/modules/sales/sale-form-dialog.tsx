@@ -3,10 +3,10 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, ReceiptText, Trash2 } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
 import { toMinor } from "@/lib/money";
-import { MoneyInput, moneyToMinorOrNull } from "@/components/shared/table-kit";
+import { moneyToMinorOrNull } from "@/components/shared/table-kit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -58,10 +58,19 @@ function newLine(): LineDraft {
 const NONE = "__none__";
 const CUSTOM = "__custom__";
 
+/** Tiny visible caption above an inline field (qty / unit price / amount). */
+function FieldCaption({ children }: { children: React.ReactNode }) {
+  return <span className="text-muted-foreground block text-[11px] leading-none">{children}</span>;
+}
+
 /**
  * Create-invoice dialog. Line totals and the grand total are computed with
  * integer math (toMinor per row) and RECOMPUTED server-side — the client
  * preview is presentational only (A08).
+ *
+ * Presentation: every invoice line renders as a self-contained framed card
+ * (identical structure on mobile and desktop), so fields can never drift out
+ * of alignment regardless of direction (RTL/LTR) or viewport.
  */
 export function SaleFormDialog({
   open,
@@ -211,27 +220,47 @@ export function SaleFormDialog({
     }
   }
 
+  // Show the completion hint only once the user has started filling lines —
+  // avoids nagging on a freshly opened, intentionally empty draft.
+  const linesTouched = lines.some(
+    (l) =>
+      l.name.trim() !== "" ||
+      l.unitPrice.trim() !== "" ||
+      (l.qty.trim() !== "" && l.qty.trim() !== "1"),
+  );
+  const showLinesHint = linesTouched && !parsed.allValid;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{t("title")}</DialogTitle>
+      <DialogContent className="max-h-[92svh] gap-0 overflow-y-auto p-6 pb-0 sm:max-w-2xl">
+        <DialogHeader className="gap-3 text-start">
+          <DialogTitle className="flex items-center gap-2.5">
+            <span
+              aria-hidden="true"
+              className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-600 to-teal-600 text-white shadow-sm dark:from-emerald-500 dark:to-teal-400"
+            >
+              <ReceiptText className="size-4.5" />
+            </span>
+            {t("title")}
+          </DialogTitle>
           <DialogDescription>{t("description")}</DialogDescription>
         </DialogHeader>
+
         <form
           onSubmit={(e) => {
             e.preventDefault();
             if (canSubmit) mutation.mutate();
           }}
-          className="space-y-4"
+          className="mt-4 space-y-5"
           noValidate
         >
+          {/* Customer */}
           <div className="space-y-2">
             <Label htmlFor="sale-customer">
               {t("customer")} <span className="text-muted-foreground">({tCommon("optional")})</span>
             </Label>
             <Select value={customerId || NONE} onValueChange={(v) => setCustomerId(v === NONE ? "" : v)}>
-              <SelectTrigger id="sale-customer" className="w-full">
+              <SelectTrigger id="sale-customer" className="h-10 w-full">
                 <SelectValue placeholder={t("customerPlaceholder")} />
               </SelectTrigger>
               <SelectContent>
@@ -245,9 +274,15 @@ export function SaleFormDialog({
             </Select>
           </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>{t("items")}</Label>
+          {/* Line items — framed cards, identical structure at every viewport */}
+          <section aria-label={t("items")} className="space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Label className="text-sm font-semibold">{t("items")}</Label>
+                <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium tabular-nums">
+                  {lines.length}
+                </span>
+              </div>
               <Button
                 type="button"
                 variant="outline"
@@ -261,84 +296,59 @@ export function SaleFormDialog({
               </Button>
             </div>
 
-            <div className="hidden text-muted-foreground gap-2 px-1 text-xs sm:grid sm:grid-cols-[minmax(0,1fr)_4.5rem_7.5rem_7.5rem_2rem]">
-              <span>{t("colItem")}</span>
-              <span>{t("colQty")}</span>
-              <span>{t("colUnitPrice")}</span>
-              <span>{t("colLineTotal")}</span>
-              <span />
-            </div>
-
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               {lines.map((l, idx) => {
                 const row = parsed.rows[idx];
+                const qtyInvalid = row?.qty == null || row.qty < 1;
                 return (
                   <div
                     key={l.key}
-                    className="grid gap-2 rounded-lg border p-2 sm:grid-cols-[minmax(0,1fr)_4.5rem_7.5rem_7.5rem_2rem] sm:items-start sm:border-0 sm:p-0"
+                    className="bg-card/60 focus-within:border-ring/60 hover:border-border/90 rounded-xl border p-3 shadow-xs transition-colors"
                   >
-                    <div className="space-y-1.5">
-                      <Select
-                        value={l.productId || CUSTOM}
-                        onValueChange={(v) => pickProduct(l.key, v === CUSTOM ? "" : v)}
-                      >
-                        <SelectTrigger className="h-9 w-full" aria-label={t("colItem")}>
-                          <SelectValue placeholder={t("pickProduct")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={CUSTOM} dir="auto">
-                            {t("customItem")}
-                          </SelectItem>
-                          {(products ?? []).map((p) => (
-                            <SelectItem key={p.id} value={p.id} dir="auto">
-                              {p.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {l.productId === "" ? (
-                        <Input
-                          value={l.name}
-                          onChange={(e) => updateLine(l.key, { name: e.target.value })}
-                          placeholder={t("itemNamePlaceholder")}
-                          maxLength={160}
-                          className="h-9"
-                          dir="auto"
-                        />
-                      ) : null}
-                    </div>
-                    <Input
-                      value={l.qty}
-                      onChange={(e) => updateLine(l.key, { qty: e.target.value })}
-                      inputMode="numeric"
-                      className="h-9"
-                      aria-label={t("colQty")}
-                      dir="ltr"
-                    />
-                    <MoneyInputMini
-                      id={`price-${l.key}`}
-                      symbol={business.currencySymbol}
-                      value={l.unitPrice}
-                      onChange={(v) => updateLine(l.key, { unitPrice: v })}
-                      label={t("colUnitPrice")}
-                      precision={precision}
-                    />
-                    <div className="flex items-center justify-between gap-2 sm:justify-start">
+                    {/* Line head: order badge + item picker + remove */}
+                    <div className="flex items-center gap-2">
                       <span
-                        className={`text-sm font-medium tabular-nums sm:mt-2 ${
-                          row?.lineTotalMinor == null ? "text-muted-foreground" : ""
-                        }`}
-                        dir="ltr"
+                        aria-hidden="true"
+                        className="bg-muted text-muted-foreground grid size-6 shrink-0 place-items-center rounded-md text-xs font-semibold tabular-nums"
                       >
-                        {row?.lineTotalMinor != null
-                          ? fmtMoney(business, row.lineTotalMinor)
-                          : "—"}
+                        {idx + 1}
                       </span>
+                      <div className="min-w-0 flex-1">
+                        <Select
+                          value={l.productId || CUSTOM}
+                          onValueChange={(v) => pickProduct(l.key, v === CUSTOM ? "" : v)}
+                        >
+                          <SelectTrigger className="h-9 w-full" aria-label={t("colItem")}>
+                            <SelectValue placeholder={t("pickProduct")} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={CUSTOM} dir="auto">
+                              {t("customItem")}
+                            </SelectItem>
+                            {(products ?? []).map((p) => (
+                              <SelectItem key={p.id} value={p.id} dir="auto">
+                                {p.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {l.productId === "" ? (
+                          <Input
+                            value={l.name}
+                            onChange={(e) => updateLine(l.key, { name: e.target.value })}
+                            placeholder={t("itemNamePlaceholder")}
+                            maxLength={160}
+                            className="mt-1.5 h-9"
+                            dir="auto"
+                            aria-label={t("itemNamePlaceholder")}
+                          />
+                        ) : null}
+                      </div>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="text-destructive hover:text-destructive size-8 sm:hidden"
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10 size-8 shrink-0"
                         onClick={() => setLines((prev) => prev.filter((x) => x.key !== l.key))}
                         aria-label={tCommon("delete")}
                         disabled={lines.length <= 1}
@@ -346,71 +356,122 @@ export function SaleFormDialog({
                         <Trash2 className="size-4" />
                       </Button>
                     </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="text-destructive hover:text-destructive mt-2 hidden size-8 sm:block"
-                      onClick={() => setLines((prev) => prev.filter((x) => x.key !== l.key))}
-                      aria-label={tCommon("delete")}
-                      disabled={lines.length <= 1}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
+
+                    {/* Qty / unit price / line total */}
+                    <div className="mt-2.5 grid grid-cols-[3.5rem_minmax(0,1fr)] gap-x-2 gap-y-2 sm:grid-cols-[3.5rem_10rem_minmax(0,1fr)]">
+                      <div className="space-y-1">
+                        <FieldCaption>{t("colQty")}</FieldCaption>
+                        <Input
+                          value={l.qty}
+                          onChange={(e) => updateLine(l.key, { qty: e.target.value })}
+                          inputMode="numeric"
+                          className={`h-9 text-center tabular-nums ${qtyInvalid ? "border-destructive focus-visible:ring-destructive" : ""}`}
+                          aria-label={t("colQty")}
+                          aria-invalid={qtyInvalid}
+                          dir="ltr"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <FieldCaption>{t("colUnitPrice")}</FieldCaption>
+                        <MoneyInputMini
+                          id={`price-${l.key}`}
+                          symbol={business.currencySymbol}
+                          value={l.unitPrice}
+                          onChange={(v) => updateLine(l.key, { unitPrice: v })}
+                          label={t("colUnitPrice")}
+                          precision={precision}
+                        />
+                      </div>
+                      <div className="col-span-2 flex items-end justify-between gap-2 sm:col-span-1">
+                        <FieldCaption>{t("colLineTotal")}</FieldCaption>
+                        <span
+                          className={`pb-1.5 text-sm font-semibold tabular-nums ${
+                            row?.lineTotalMinor == null ? "text-muted-foreground font-normal" : ""
+                          }`}
+                          dir="ltr"
+                        >
+                          {row?.lineTotalMinor != null
+                            ? fmtMoney(business, row.lineTotalMinor)
+                            : "—"}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 );
               })}
             </div>
+
+            {showLinesHint ? (
+              <p className="text-amber-700 dark:text-amber-400 flex items-center gap-1.5 text-xs">
+                <span aria-hidden="true" className="size-1.5 rounded-full bg-amber-500" />
+                {t("fixLinesHint")}
+              </p>
+            ) : null}
+          </section>
+
+          {/* Totals summary — discount edits inline, total gets the brand gradient */}
+          <div className="bg-muted/30 ms-auto w-full max-w-sm space-y-3 rounded-xl border p-4">
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-muted-foreground shrink-0">{t("subtotal")}</span>
+              <span className="font-medium tabular-nums" dir="ltr">
+                {fmtMoney(business, parsed.subtotalMinor)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-muted-foreground shrink-0">{t("discount")}</span>
+              <div className="w-32">
+                <MoneyInputMini
+                  id="sale-discount"
+                  symbol={business.currencySymbol}
+                  value={discount}
+                  onChange={setDiscount}
+                  label={t("discount")}
+                  precision={precision}
+                  forceInvalid={!parsed.discountValid}
+                />
+              </div>
+            </div>
+            {!parsed.discountValid ? (
+              <p className="text-destructive text-end text-xs">{t("invalidDiscount")}</p>
+            ) : null}
+            <Separator />
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-semibold">{t("total")}</span>
+              <span
+                className="bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-lg font-bold tabular-nums text-transparent dark:from-emerald-400 dark:to-teal-300"
+                dir="ltr"
+              >
+                {parsed.totalMinor != null ? fmtMoney(business, parsed.totalMinor) : "—"}
+              </span>
+            </div>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <MoneyInput
-              id="sale-discount"
-              label={t("discount")}
-              symbol={business.currencySymbol}
-              value={discount}
-              precision={precision}
-              onChange={setDiscount}
-              invalidMsg={t("invalidDiscount")}
+          {/* Note */}
+          <div className="space-y-2">
+            <Label htmlFor="sale-note">
+              {t("note")} <span className="text-muted-foreground">({tCommon("optional")})</span>
+            </Label>
+            <Textarea
+              id="sale-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+              maxLength={1000}
+              className="resize-y"
             />
-            <div className="space-y-2">
-              <Label htmlFor="sale-note">
-                {t("note")} <span className="text-muted-foreground">({tCommon("optional")})</span>
-              </Label>
-              <Textarea
-                id="sale-note"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                rows={2}
-                maxLength={1000}
-              />
-            </div>
           </div>
 
-          <Separator />
-          <div className="space-y-1 text-sm tabular-nums" dir="ltr">
-            <div className="text-muted-foreground flex justify-between">
-              <span>{t("subtotal")}</span>
-              <span>{fmtMoney(business, parsed.subtotalMinor)}</span>
-            </div>
-            <div className="text-muted-foreground flex justify-between">
-              <span>{t("discount")}</span>
-              <span>−{fmtMoney(business, Math.max(parsed.discountMinor, 0))}</span>
-            </div>
-            <div className="flex justify-between text-base font-semibold">
-              <span>{t("total")}</span>
-              <span>{parsed.totalMinor != null ? fmtMoney(business, parsed.totalMinor) : "—"}</span>
-            </div>
-          </div>
-
-          <DialogFooter className="gap-2">
+          {/* Sticky action bar — always reachable while the dialog scrolls */}
+          <DialogFooter className="sticky bottom-0 -mx-6 gap-2 border-t bg-background/95 px-6 py-4 backdrop-blur sm:flex-row sm:justify-end">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {tCommon("cancel")}
             </Button>
-            <Button type="submit" disabled={!canSubmit || mutation.isPending}>
+            <Button type="submit" disabled={!canSubmit || mutation.isPending} className="min-w-32">
               {mutation.isPending ? (
                 <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-              ) : null}
+              ) : (
+                <ReceiptText className="size-4" aria-hidden="true" />
+              )}
               {t("submit")}
             </Button>
           </DialogFooter>
@@ -428,6 +489,7 @@ function MoneyInputMini({
   onChange,
   label,
   precision,
+  forceInvalid = false,
 }: {
   id: string;
   symbol: string;
@@ -435,6 +497,8 @@ function MoneyInputMini({
   onChange: (v: string) => void;
   label: string;
   precision: number;
+  /** Semantic invalidity beyond parsing (e.g. discount > subtotal). */
+  forceInvalid?: boolean;
 }) {
   let valid = true;
   try {
@@ -442,8 +506,9 @@ function MoneyInputMini({
   } catch {
     valid = false;
   }
+  valid = valid && !forceInvalid;
   return (
-    <div className="relative sm:mt-0">
+    <div className="relative">
       <span className="text-muted-foreground pointer-events-none absolute start-2.5 top-1/2 z-10 -translate-y-1/2 text-xs">
         {symbol}
       </span>
@@ -454,7 +519,7 @@ function MoneyInputMini({
         dir="ltr"
         inputMode="decimal"
         aria-label={label}
-        className={`h-9 ps-6 text-end ${!valid ? "border-destructive" : ""}`}
+        className={`h-9 text-end ltr:pl-9 rtl:pr-9 ${!valid ? "border-destructive" : ""}`}
       />
     </div>
   );

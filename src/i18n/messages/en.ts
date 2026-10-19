@@ -868,7 +868,7 @@ const en = {
     },
     saleForm: {
       title: "New invoice",
-      description: "Totals are computed exactly on the server from integer minor units (A08).",
+      description: "Totals are computed exactly on the server from integer minor units.",
       customer: "Customer",
       customerPlaceholder: "Select a customer…",
       walkIn: "Walk-in customer",
@@ -888,6 +888,7 @@ const en = {
       total: "Total",
       submit: "Create invoice",
       savedToast: "Invoice created",
+      fixLinesHint: "Complete every line — item, quantity and unit price — to issue the invoice.",
       invalidAmount: "Enter a valid amount.",
     },
     saleDetail: {

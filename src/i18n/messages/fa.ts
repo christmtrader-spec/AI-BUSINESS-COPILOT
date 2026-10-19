@@ -870,7 +870,7 @@ const fa: Messages = {
     },
     saleForm: {
       title: "فاکتور جدید",
-      description: "جمع‌ها روی سرور با واحدهای صحیح دقیق محاسبه می‌شوند (A08).",
+      description: "جمع‌ها روی سرور با واحدهای صحیح دقیق محاسبه می‌شوند.",
       customer: "مشتری",
       customerPlaceholder: "انتخاب مشتری…",
       walkIn: "مشتری حضوری",
@@ -890,6 +890,7 @@ const fa: Messages = {
       total: "جمع کل",
       submit: "صدور فاکتور",
       savedToast: "فاکتور صادر شد",
+      fixLinesHint: "برای صدور فاکتور، قلم، تعداد و قیمت واحد همهٔ ردیف‌ها را کامل کنید.",
       invalidAmount: "مبلغ معتبر وارد کنید.",
     },
     saleDetail: {

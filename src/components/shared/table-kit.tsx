@@ -253,7 +253,7 @@ export function MoneyInput({
           onChange={(e) => onChange(e.target.value)}
           dir="ltr"
           inputMode="decimal"
-          className={cn("ps-8 text-end", !valid && "border-destructive focus-visible:ring-destructive")}
+          className={cn("text-end ltr:pl-10 rtl:pr-10", !valid && "border-destructive focus-visible:ring-destructive")}
           aria-invalid={!valid}
         />
       </div>

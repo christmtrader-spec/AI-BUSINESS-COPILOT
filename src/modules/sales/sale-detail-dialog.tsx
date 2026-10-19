@@ -358,35 +358,46 @@ export function SaleDetailDialog({
                 skeletonRows={4}
               />
 
-              <div className="space-y-1 text-sm tabular-nums" dir="ltr">
-                <div className="text-muted-foreground flex justify-between">
-                  <span>{t("subtotal")}</span>
-                  <span>{fmtMoney(business, data.sale.subtotalMinor)}</span>
+              <div className="bg-muted/30 ms-auto w-full max-w-sm space-y-2.5 rounded-xl border p-4 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground shrink-0">{t("subtotal")}</span>
+                  <span className="font-medium tabular-nums" dir="ltr">
+                    {fmtMoney(business, data.sale.subtotalMinor)}
+                  </span>
                 </div>
                 {data.sale.discountMinor > 0 ? (
-                  <div className="text-muted-foreground flex justify-between">
-                    <span>{t("discount")}</span>
-                    <span>−{fmtMoney(business, data.sale.discountMinor)}</span>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground shrink-0">{t("discount")}</span>
+                    <span className="tabular-nums" dir="ltr">
+                      −{fmtMoney(business, data.sale.discountMinor)}
+                    </span>
                   </div>
                 ) : null}
-                <div className="flex justify-between text-base font-semibold">
-                  <span>{t("total")}</span>
-                  <span>{fmtMoney(business, data.sale.totalMinor)}</span>
+                <Separator />
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-semibold">{t("total")}</span>
+                  <span
+                    className="bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-base font-bold tabular-nums text-transparent dark:from-emerald-400 dark:to-teal-300"
+                    dir="ltr"
+                  >
+                    {fmtMoney(business, data.sale.totalMinor)}
+                  </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t("paid")}</span>
-                  <span className="text-emerald-700 dark:text-emerald-400">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground shrink-0">{t("paid")}</span>
+                  <span className="tabular-nums text-emerald-700 dark:text-emerald-400" dir="ltr">
                     {fmtMoney(business, data.sale.paidMinor)}
                   </span>
                 </div>
-                <div className="flex justify-between font-medium">
-                  <span>{t("balance")}</span>
+                <div className="flex items-center justify-between gap-3 font-medium">
+                  <span className="shrink-0">{t("balance")}</span>
                   <span
                     className={
                       data.sale.balanceMinor > 0
-                        ? "text-amber-700 dark:text-amber-400"
-                        : "text-emerald-700 dark:text-emerald-400"
+                        ? "tabular-nums text-amber-700 dark:text-amber-400"
+                        : "tabular-nums text-emerald-700 dark:text-emerald-400"
                     }
+                    dir="ltr"
                   >
                     {fmtMoney(business, data.sale.balanceMinor)}
                   </span>
