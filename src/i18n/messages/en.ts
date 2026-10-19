@@ -1471,6 +1471,7 @@ const en = {
     usageBar: "Plan usage",
     changePlan: "Switch plan",
     changePlanTitle: "Switch plan (internal)",
+    selectPlanAria: "Select plan {plan}",
     changePlanDesc: "Internal tooling: switches this business's plan immediately. No payment is taken and nothing is recorded as paid.",
     changePlanConfirm: "Switch to {plan}",
     planChangedToast: "Plan switched to {plan}",

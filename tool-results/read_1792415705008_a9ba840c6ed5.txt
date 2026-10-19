@@ -1,0 +1,1210 @@
+     1→"use client";
+     2→
+     3→import { useState } from "react";
+     4→import { signIn, signOut, useSession } from "next-auth/react";
+     5→import { useMutation, useQueryClient } from "@tanstack/react-query";
+     6→import { useTranslations } from "next-intl";
+     7→import {
+     8→  Eye,
+     9→  EyeOff,
+    10→  KeyRound,
+    11→  Loader2,
+    12→  Lock,
+    13→  LogIn,
+    14→  Mail,
+    15→  MailCheck,
+    16→  ShieldCheck,
+    17→  Sparkles,
+    18→  User,
+    19→  UserPlus,
+    20→  TrendingUp,
+    21→  type LucideIcon,
+    22→} from "lucide-react";
+    23→import { motion, useReducedMotion } from "framer-motion";
+    24→import { api, ApiClientError } from "@/lib/api-client";
+    25→import { useAppStore } from "@/store/app-store";
+    26→import { Button } from "@/components/ui/button";
+    27→import { Input } from "@/components/ui/input";
+    28→import { Label } from "@/components/ui/label";
+    29→import { Checkbox } from "@/components/ui/checkbox";
+    30→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+    31→import { InputOTP, InputOTPGroup, InputOTPSlot, InputOTPSeparator } from "@/components/ui/input-otp";
+    32→import { LocaleSwitcher, ThemeToggle } from "@/modules/shell/header";
+    33→import { BusinessWebGLBackground } from "@/components/fx/business-webgl-bg";
+    34→
+    35→type AuthErrors = {
+    36→  invalidCredentials: string;
+    37→  rateLimited: string;
+    38→  emailTaken: string;
+    39→  passwordMismatch: string;
+    40→  passwordPolicy: string;
+    41→  invalidData: string;
+    42→  network: string;
+    43→  generic: string;
+    44→};
+    45→
+    46→/**
+    47→ * Server 422 envelopes carry the zod issues in `details`. When the failed
+    48→ * field is the password we can give the user the REAL reason instead of a
+    49→ * generic "try again" (BUGFIX P51-R1: signup showed a useless generic error
+    50→ * when the password policy rejected the submitted password).
+    51→ */
+    52→function hasValidationPath(details: unknown, field: string): boolean {
+    53→  if (!Array.isArray(details)) return false;
+    54→  return details.some(
+    55→    (issue) =>
+    56→      issue !== null &&
+    57→      typeof issue === "object" &&
+    58→      Array.isArray((issue as { path?: unknown }).path) &&
+    59→      (issue as { path: unknown[] }).path[0] === field,
+    60→  );
+    61→}
+    62→
+    63→function mapSignInError(error: string | null | undefined, t: AuthErrors): string {
+    64→  if (error === "CredentialsSignin") return t.invalidCredentials;
+    65→  return t.generic;
+    66→}
+    67→
+    68→function mapApiError(err: unknown, t: AuthErrors): string {
+    69→  if (err instanceof ApiClientError) {
+    70→    if (err.status === 0) return t.network;
+    71→    if (err.code === "EMAIL_TAKEN") return t.emailTaken;
+    72→    if (err.code === "RATE_LIMITED") return t.rateLimited;
+    73→    if (err.code === "VALIDATION_ERROR") {
+    74→      if (hasValidationPath(err.details, "password")) return t.passwordPolicy;
+    75→      return t.invalidData;
+    76→    }
+    77→  }
+    78→  return t.generic;
+    79→}
+    80→
+    81→/** Shared styling for inline auth error boxes (role="alert"). */
+    82→const errorBoxClass =
+    83→  "text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm";
+    84→
+    85→/* ─────────────── Modern auth presentation helpers (r52) ───────────────
+    86→   Glass card + hairline + icon badge + leading field icons + password
+    87→   visibility toggles. Presentation ONLY — zero auth logic changes. */
+    88→
+    89→/** Glassmorphism card surface shared by every auth card. */
+    90→const glassCardClass =
+    91→  "relative w-full overflow-hidden border-border/60 bg-background/75 shadow-xl shadow-black/5 backdrop-blur-xl dark:bg-card/60 dark:shadow-black/30";
+    92→
+    93→/** Top hairline accent — a subtle brand gradient across the card top. */
+    94→function CardTopHairline() {
+    95→  return (
+    96→    <div
+    97→      aria-hidden="true"
+    98→      className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/60 to-transparent"
+    99→    />
+   100→  );
+   101→}
+   102→
+   103→/** Icon badge above the card title (modern auth-card signature). */
+   104→function AuthCardBadge({ children }: { children: React.ReactNode }) {
+   105→  return (
+   106→    <div
+   107→      aria-hidden="true"
+   108→      className="bg-primary/10 text-primary border-primary/20 mb-2 flex size-11 items-center justify-center rounded-xl border"
+   109→    >
+   110→      {children}
+   111→    </div>
+   112→  );
+   113→}
+   114→
+   115→/** Leading icon inside a form field (absolute, RTL-aware via start-*). */
+   116→function FieldIcon({ icon: Icon }: { icon: LucideIcon }) {
+   117→  return (
+   118→    <Icon
+   119→      aria-hidden="true"
+   120→      className="text-muted-foreground pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2"
+   121→    />
+   122→  );
+   123→}
+   124→
+   125→/** Password show/hide toggle — 44px hit area, aria-pressed + label. */
+   126→function PasswordVisibilityButton({
+   127→  show,
+   128→  onClick,
+   129→  labels,
+   130→}: {
+   131→  show: boolean;
+   132→  onClick: () => void;
+   133→  labels: { show: string; hide: string };
+   134→}) {
+   135→  return (
+   136→    <button
+   137→      type="button"
+   138→      onClick={onClick}
+   139→      aria-label={show ? labels.hide : labels.show}
+   140→      aria-pressed={show}
+   141→      className="text-muted-foreground hover:text-foreground focus-visible:ring-ring absolute end-1.5 top-1/2 -translate-y-1/2 rounded-md p-2 outline-none focus-visible:ring-2"
+   142→    >
+   143→      {show ? <EyeOff className="size-4" aria-hidden="true" /> : <Eye className="size-4" aria-hidden="true" />}
+   144→    </button>
+   145→  );
+   146→}
+   147→
+   148→/** Entrance motion helper — honors prefers-reduced-motion (no animation). */
+   149→const EASE_OUT: [number, number, number, number] = [0.22, 1, 0.36, 1];
+   150→function useEnterMotion() {
+   151→  const reduceMotion = useReducedMotion();
+   152→  return (delay = 0) =>
+   153→    reduceMotion
+   154→      ? {}
+   155→      : {
+   156→          initial: { opacity: 0, y: 14 },
+   157→          animate: { opacity: 1, y: 0 },
+   158→          transition: { duration: 0.5, delay, ease: EASE_OUT },
+   159→        };
+   160→}
+   161→
+   162→/**
+   163→ * "Forgot password" flow — requests a reset link. The server ALWAYS answers
+   164→ * 200 (never confirms whether the account exists), so the success state is a
+   165→ * generic reassurance card, never a claim about the account.
+   166→ */
+   167→function ForgotPasswordCard({ onBackToSignIn }: { onBackToSignIn: () => void }) {
+   168→  const t = useTranslations("auth");
+   169→  const [email, setEmail] = useState("");
+   170→  const [sentMessage, setSentMessage] = useState<string | null>(null);
+   171→  const [error, setError] = useState<string | null>(null);
+   172→
+   173→  const requestMutation = useMutation({
+   174→    mutationFn: async () =>
+   175→      api<{ message?: string }>("/api/v1/auth/password-reset/request", {
+   176→        method: "POST",
+   177→        body: JSON.stringify({ email }),
+   178→      }),
+   179→    onSuccess: () => {
+   180→      setError(null);
+   181→      // Generic by design — never claim whether the account exists, and UI
+   182→      // copy is always locale-driven (server message is for API consumers).
+   183→      setSentMessage(t("resetSentGeneric"));
+   184→    },
+   185→    onError: (err) => {
+   186→      if (err instanceof ApiClientError) {
+   187→        if (err.status === 0) setError(t("errors.network"));
+   188→        else if (err.code === "RESET_DELIVERY_UNAVAILABLE") setError(t("errors.resetUnavailable"));
+   189→        else if (err.code === "RATE_LIMITED") setError(t("errors.rateLimited"));
+   190→        else setError(t("errors.generic"));
+   191→      } else {
+   192→        setError(t("errors.generic"));
+   193→      }
+   194→    },
+   195→  });
+   196→
+   197→  return (
+   198→    <Card className={glassCardClass}>
+   199→      <CardTopHairline />
+   200→      <CardHeader className="space-y-1.5">
+   201→        <AuthCardBadge>
+   202→          <MailCheck className="size-5" />
+   203→        </AuthCardBadge>
+   204→        <CardTitle className="text-2xl">{t("forgotTitle")}</CardTitle>
+   205→        <CardDescription>{t("forgotSubtitle")}</CardDescription>
+   206→      </CardHeader>
+   207→      <CardContent>
+   208→        {sentMessage ? (
+   209→          <div className="space-y-5 py-2 text-center">
+   210→            <div
+   211→              className="bg-primary/10 mx-auto flex size-12 items-center justify-center rounded-full"
+   212→              aria-hidden="true"
+   213→            >
+   214→              <MailCheck className="text-primary size-6" />
+   215→            </div>
+   216→            <div className="space-y-2">
+   217→              <p className="text-foreground text-sm" role="status">
+   218→                {sentMessage}
+   219→              </p>
+   220→              <p className="text-muted-foreground text-xs">{t("resetLinkExpiryNote")}</p>
+   221→            </div>
+   222→            <Button type="button" variant="outline" className="w-full" onClick={onBackToSignIn}>
+   223→              <LogIn className="size-4" aria-hidden="true" />
+   224→              {t("backToSignIn")}
+   225→            </Button>
+   226→          </div>
+   227→        ) : (
+   228→          <form
+   229→            onSubmit={(e) => {
+   230→              e.preventDefault();
+   231→              setError(null);
+   232→              requestMutation.mutate();
+   233→            }}
+   234→            className="space-y-4"
+   235→            noValidate
+   236→          >
+   237→            <div className="space-y-2">
+   238→              <Label htmlFor="forgot-email">{t("email")}</Label>
+   239→              <div className="relative">
+   240→                <FieldIcon icon={Mail} />
+   241→                <Input
+   242→                  id="forgot-email"
+   243→                  type="email"
+   244→                  inputMode="email"
+   245→                  autoComplete="email"
+   246→                  dir="ltr"
+   247→                  placeholder={t("emailPlaceholder")}
+   248→                  value={email}
+   249→                  onChange={(e) => setEmail(e.target.value)}
+   250→                  required
+   251→                  className="h-11 ps-9"
+   252→                />
+   253→              </div>
+   254→            </div>
+   255→
+   256→            {error ? (
+   257→              <p className={errorBoxClass} role="alert">
+   258→                {error}
+   259→              </p>
+   260→            ) : null}
+   261→
+   262→            <Button
+   263→              type="submit"
+   264→              className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400"
+   265→              disabled={requestMutation.isPending}
+   266→            >
+   267→              {requestMutation.isPending ? (
+   268→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   269→              ) : (
+   270→                <MailCheck className="size-4" aria-hidden="true" />
+   271→              )}
+   272→              {t("sendResetLink")}
+   273→            </Button>
+   274→
+   275→            <p className="text-center text-sm">
+   276→              <button
+   277→                type="button"
+   278→                className="text-primary font-medium underline-offset-4 hover:underline"
+   279→                onClick={onBackToSignIn}
+   280→              >
+   281→                {t("backToSignIn")}
+   282→              </button>
+   283→            </p>
+   284→
+   285→            <div className="bg-muted/50 text-muted-foreground rounded-md px-3 py-2 text-xs">
+   286→              <ShieldCheck className="me-1.5 inline size-3.5" aria-hidden="true" />
+   287→              {t("privacyNote")}
+   288→            </div>
+   289→          </form>
+   290→        )}
+   291→      </CardContent>
+   292→    </Card>
+   293→  );
+   294→}
+   295→
+   296→/**
+   297→ * "Reset password" flow — consumes a single-use token from the deep link
+   298→ * (#/reset-password/<token>). On success every previous session is dead:
+   299→ * any stale local session is cleared immediately and the user is sent to
+   300→ * sign-in via the success card button.
+   301→ */
+   302→function ResetPasswordCard({
+   303→  token,
+   304→  onGoToSignIn,
+   305→  onRequestNewLink,
+   306→}: {
+   307→  token: string;
+   308→  onGoToSignIn: () => void;
+   309→  onRequestNewLink: () => void;
+   310→}) {
+   311→  const t = useTranslations("auth");
+   312→  const queryClient = useQueryClient();
+   313→  const [newPassword, setNewPassword] = useState("");
+   314→  const [confirmPassword, setConfirmPassword] = useState("");
+   315→  const [error, setError] = useState<string | null>(null);
+   316→  const [tokenInvalid, setTokenInvalid] = useState(false);
+   317→  const [doneMessage, setDoneMessage] = useState<string | null>(null);
+   318→  // Password visibility toggles (presentation only — never affects logic).
+   319→  const [showNew, setShowNew] = useState(false);
+   320→  const [showConfirm, setShowConfirm] = useState(false);
+   321→  const pwLabels = { show: t("showPassword"), hide: t("hidePassword") };
+   322→
+   323→  const resetMutation = useMutation({
+   324→    mutationFn: async () =>
+   325→      api<{ message?: string }>("/api/v1/auth/password-reset/confirm", {
+   326→        method: "POST",
+   327→        body: JSON.stringify({ token, newPassword, confirmPassword }),
+   328→      }),
+   329→    onSuccess: () => {
+   330→      setError(null);
+   331→      setTokenInvalid(false);
+   332→      setDoneMessage(t("resetSuccessBody"));
+   333→      // The server killed every session for this user — clear any stale
+   334→      // local one right away (the success card below routes to sign-in).
+   335→      void signOut({ redirect: false });
+   336→      void queryClient.invalidateQueries();
+   337→    },
+   338→    onError: (err) => {
+   339→      if (err instanceof ApiClientError) {
+   340→        if (err.code === "INVALID_RESET_TOKEN") {
+   341→          setTokenInvalid(true);
+   342→          setError(null);
+   343→        } else if (err.status === 0) {
+   344→          setTokenInvalid(false);
+   345→          setError(t("errors.network"));
+   346→        } else if (err.code === "RATE_LIMITED") {
+   347→          setTokenInvalid(false);
+   348→          setError(t("errors.rateLimited"));
+   349→        } else {
+   350→          setTokenInvalid(false);
+   351→          setError(t("errors.generic"));
+   352→        }
+   353→      } else {
+   354→        setTokenInvalid(false);
+   355→        setError(t("errors.generic"));
+   356→      }
+   357→    },
+   358→  });
+   359→
+   360→  return (
+   361→    <Card className={glassCardClass}>
+   362→      <CardTopHairline />
+   363→      <CardHeader className="space-y-1.5">
+   364→        <AuthCardBadge>
+   365→          <KeyRound className="size-5" />
+   366→        </AuthCardBadge>
+   367→        <CardTitle className="text-2xl">
+   368→          {doneMessage ? t("resetSuccessTitle") : t("resetTitle")}
+   369→        </CardTitle>
+   370→        {doneMessage ? null : <CardDescription>{t("resetSubtitle")}</CardDescription>}
+   371→      </CardHeader>
+   372→      <CardContent>
+   373→        {doneMessage ? (
+   374→          <div className="space-y-5 py-2 text-center">
+   375→            <div
+   376→              className="bg-primary/10 mx-auto flex size-12 items-center justify-center rounded-full"
+   377→              aria-hidden="true"
+   378→            >
+   379→              <KeyRound className="text-primary size-6" />
+   380→            </div>
+   381→            <p className="text-foreground text-sm" role="status">
+   382→              {doneMessage}
+   383→            </p>
+   384→            <Button type="button" className="w-full" onClick={onGoToSignIn}>
+   385→              <LogIn className="size-4" aria-hidden="true" />
+   386→              {t("goToSignIn")}
+   387→            </Button>
+   388→          </div>
+   389→        ) : (
+   390→          <form
+   391→            onSubmit={(e) => {
+   392→              e.preventDefault();
+   393→              setError(null);
+   394→              setTokenInvalid(false);
+   395→              if (newPassword !== confirmPassword) {
+   396→                setError(t("errors.passwordMismatch"));
+   397→                return;
+   398→              }
+   399→              resetMutation.mutate();
+   400→            }}
+   401→            className="space-y-4"
+   402→            noValidate
+   403→          >
+   404→            <div className="space-y-2">
+   405→              <Label htmlFor="reset-password">{t("newPassword")}</Label>
+   406→              <div className="relative">
+   407→                <FieldIcon icon={Lock} />
+   408→                <Input
+   409→                  id="reset-password"
+   410→                  type={showNew ? "text" : "password"}
+   411→                  autoComplete="new-password"
+   412→                  dir="ltr"
+   413→                  placeholder={t("passwordPlaceholder")}
+   414→                  value={newPassword}
+   415→                  onChange={(e) => setNewPassword(e.target.value)}
+   416→                  required
+   417→                  minLength={8}
+   418→                  className="h-11 ps-9 pe-10"
+   419→                />
+   420→                <PasswordVisibilityButton
+   421→                  show={showNew}
+   422→                  onClick={() => setShowNew((v) => !v)}
+   423→                  labels={pwLabels}
+   424→                />
+   425→              </div>
+   426→              <p className="text-muted-foreground text-xs">{t("passwordHint")}</p>
+   427→            </div>
+   428→
+   429→            <div className="space-y-2">
+   430→              <Label htmlFor="reset-confirm">{t("confirmNewPassword")}</Label>
+   431→              <div className="relative">
+   432→                <FieldIcon icon={Lock} />
+   433→                <Input
+   434→                  id="reset-confirm"
+   435→                  type={showConfirm ? "text" : "password"}
+   436→                  autoComplete="new-password"
+   437→                  dir="ltr"
+   438→                  value={confirmPassword}
+   439→                  onChange={(e) => setConfirmPassword(e.target.value)}
+   440→                  required
+   441→                  className="h-11 ps-9 pe-10"
+   442→                />
+   443→                <PasswordVisibilityButton
+   444→                  show={showConfirm}
+   445→                  onClick={() => setShowConfirm((v) => !v)}
+   446→                  labels={pwLabels}
+   447→                />
+   448→              </div>
+   449→            </div>
+   450→
+   451→            {tokenInvalid ? (
+   452→              <div className={errorBoxClass} role="alert">
+   453→                <p>{t("errors.invalidResetToken")}</p>
+   454→                <button
+   455→                  type="button"
+   456→                  className="text-primary mt-1.5 font-medium underline-offset-4 hover:underline"
+   457→                  onClick={onRequestNewLink}
+   458→                >
+   459→                  {t("sendResetLink")}
+   460→                </button>
+   461→              </div>
+   462→            ) : error ? (
+   463→              <p className={errorBoxClass} role="alert">
+   464→                {error}
+   465→              </p>
+   466→            ) : null}
+   467→
+   468→            <Button
+   469→              type="submit"
+   470→              className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400"
+   471→              disabled={resetMutation.isPending}
+   472→            >
+   473→              {resetMutation.isPending ? (
+   474→                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   475→              ) : (
+   476→                <KeyRound className="size-4" aria-hidden="true" />
+   477→              )}
+   478→              {t("resetSubmit")}
+   479→            </Button>
+   480→          </form>
+   481→        )}
+   482→      </CardContent>
+   483→    </Card>
+   484→  );
+   485→}
+   486→
+   487→export function AuthView() {
+   488→  const t = useTranslations("auth");
+   489→  const tCommon = useTranslations("common");
+   490→  const view = useAppStore((s) => s.view);
+   491→  const navigate = useAppStore((s) => s.navigate);
+   492→  // next-intl's t is a function — nested property access (t.errors) is
+   493→  // undefined at runtime, which crashed the onError handlers. Build the
+   494→  // message map with explicit t() calls instead (BUGFIX r8).
+   495→  const authErrorMessages: AuthErrors = {
+   496→    invalidCredentials: t("errors.invalidCredentials"),
+   497→    rateLimited: t("errors.rateLimited"),
+   498→    emailTaken: t("errors.emailTaken"),
+   499→    passwordMismatch: t("errors.passwordMismatch"),
+   500→    passwordPolicy: t("errors.passwordPolicy"),
+   501→    invalidData: t("errors.invalidData"),
+   502→    network: t("errors.network"),
+   503→    generic: t("errors.generic"),
+   504→  };
+   505→  const { status } = useSession();
+   506→  const queryClient = useQueryClient();
+   507→  const [mode, setMode] = useState<"signin" | "signup">("signin");
+   508→  const [name, setName] = useState("");
+   509→  const [email, setEmail] = useState("");
+   510→  const [password, setPassword] = useState("");
+   511→  const [confirmPassword, setConfirmPassword] = useState("");
+   512→  const [error, setError] = useState<string | null>(null);
+   513→
+   514→  // Prompt 30 §46/§109 — the MFA login step machine. Password success with
+   515→  // MFA enabled NEVER creates a session (authorize throws the fixed
+   516→  // MFA_REQUIRED code); the client then obtains a SHORT-LIVED challenge,
+   517→  // collects the TOTP/recovery code, and exchanges it for a ONE-TIME
+   518→  // assertion that completes the real NextAuth login.
+   519→  const [mfaStage, setMfaStage] = useState<"idle" | "challenge" | "code">("idle");
+   520→  const [mfaChallenge, setMfaChallenge] = useState<string | null>(null);
+   521→  const [mfaMethod, setMfaMethod] = useState<"TOTP" | "RECOVERY_CODE">("TOTP");
+   522→  const [mfaCode, setMfaCode] = useState("");
+   523→  // Prompt 27 §53/§58: explicit legal acceptance — UNCHECKED by default, with
+   524→  // links to the actual documents BEFORE acceptance. Required by the signup UI.
+   525→  const [acceptedLegal, setAcceptedLegal] = useState(false);
+   526→  // Password visibility toggles (presentation only — never affects logic).
+   527→  const [showPassword, setShowPassword] = useState(false);
+   528→  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+   529→  const pwLabels = { show: t("showPassword"), hide: t("hidePassword") };
+   530→  const tLegal = useTranslations("legal.auth");
+   531→  const enter = useEnterMotion();
+   532→
+   533→  const signInMutation = useMutation({
+   534→    mutationFn: async () => {
+   535→      const res = await signIn("credentials", { redirect: false, email, password });
+   536→      if (!res || res.error) throw new Error(res?.error ?? "CredentialsSignin");
+   537→      return res;
+   538→    },
+   539→    onSuccess: () => {
+   540→      setError(null);
+   541→      void queryClient.invalidateQueries({ queryKey: ["businesses"] });
+   542→      void queryClient.invalidateQueries({ queryKey: ["me"] });
+   543→    },
+   544→    onError: (err) => {
+   545→      // Prompt 30 §110 — MFA_REQUIRED arrives ONLY after the password was
+   546→      // verified inside authorize(); switch to the bounded MFA step.
+   547→      if (err.message === "MFA_REQUIRED") {
+   548→        void startMfaChallenge();
+   549→        return;
+   550→      }
+   551→      setError(
+   552→        err instanceof ApiClientError
+   553→          ? mapApiError(err, authErrorMessages)
+   554→          : mapSignInError(err.message, authErrorMessages),
+   555→      );
+   556→    },
+   557→  });
+   558→
+   559→  // Step 2 of the MFA flow (§46): re-verify the password at the dedicated
+   560→  // endpoint to obtain the challenge token (rate-limited, hash-only server
+   561→  // state, bound to the user's sessionVersion).
+   562→  const startMfaChallenge = () => {
+   563→    setMfaStage("challenge");
+   564→    mfaChallengeMutation.mutate();
+   565→  };
+   566→
+   567→  const mfaChallengeMutation = useMutation({
+   568→    mutationFn: async () =>
+   569→      api<{ mfaRequired: boolean; challenge: string; expiresAt: string }>(
+   570→        "/api/v1/auth/mfa/challenge",
+   571→        { method: "POST", body: JSON.stringify({ email, password }), businessId: null },
+   572→      ),
+   573→    onSuccess: (res) => {
+   574→      setMfaChallenge(res.challenge);
+   575→      setMfaStage("code");
+   576→      setMfaCode("");
+   577→      setError(null);
+   578→    },
+   579→    onError: (err) => {
+   580→      setMfaStage("idle");
+   581→      if (err instanceof ApiClientError) {
+   582→        if (err.code === "MFA_NOT_ENABLED") {
+   583→          // The account has no MFA (state changed mid-flow) — retry plain.
+   584→          signInMutation.mutate();
+   585→          return;
+   586→        }
+   587→        if (err.code === "RATE_LIMITED") {
+   588→          setError(t("mfaRateLimited"));
+   589→          return;
+   590→        }
+   591→        if (err.code === "INVALID_CREDENTIALS") {
+   592→          setError(authErrorMessages.invalidCredentials);
+   593→          return;
+   594→        }
+   595→      }
+   596→      setError(authErrorMessages.generic);
+   597→    },
+   598→  });
+   599→
+   600→  // Step 3 (§51): exchange challenge + code for the one-time assertion,
+   601→  // then complete the REAL NextAuth sign-in with it (§52 — the final JWT
+   602→  // is still issued by NextAuth only).
+   603→  const mfaCompleteMutation = useMutation({
+   604→    mutationFn: async () => {
+   605→      const assertion = await api<{ assertion: string }>("/api/v1/auth/mfa/complete", {
+   606→        method: "POST",
+   607→        body: JSON.stringify({ challenge: mfaChallenge, code: mfaCode, method: mfaMethod }),
+   608→        businessId: null,
+   609→      });
+   610→      const res = await signIn("credentials", {
+   611→        redirect: false,
+   612→        email,
+   613→        mfaAssertion: assertion.assertion,
+   614→      });
+   615→      if (!res || res.error) throw new Error(res?.error ?? "CredentialsSignin");
+   616→      return res;
+   617→    },
+   618→    onSuccess: () => {
+   619→      setMfaStage("idle");
+   620→      setMfaChallenge(null);
+   621→      setMfaCode("");
+   622→      setError(null);
+   623→      void queryClient.invalidateQueries({ queryKey: ["businesses"] });
+   624→      void queryClient.invalidateQueries({ queryKey: ["me"] });
+   625→    },
+   626→    onError: (err) => {
+   627→      if (err instanceof ApiClientError) {
+   628→        if (err.code === "MFA_INVALID_CODE") {
+   629→          setError(t("mfaInvalidCode"));
+   630→          setMfaCode("");
+   631→          return;
+   632→        }
+   633→        if (err.code === "MFA_CHALLENGE_EXPIRED" || err.code === "MFA_CHALLENGE_INVALID") {
+   634→          setError(t("mfaChallengeExpired"));
+   635→          return;
+   636→        }
+   637→        if (err.code === "MFA_RATE_LIMITED" || err.code === "RATE_LIMITED") {
+   638→          setError(t("mfaRateLimited"));
+   639→          return;
+   640→        }
+   641→        if (err.code === "MFA_RECOVERY_CODE_INVALID" || err.code === "MFA_RECOVERY_CODE_USED") {
+   642→          setError(t("mfaInvalidCode"));
+   643→          setMfaCode("");
+   644→          return;
+   645→        }
+   646→      }
+   647→      // Assertion replay/expiry inside authorize(): restart the MFA step.
+   648→      if (err.message === "MFA_REQUIRED") {
+   649→        setError(t("mfaChallengeExpired"));
+   650→        setMfaStage("idle");
+   651→        setMfaChallenge(null);
+   652→        return;
+   653→      }
+   654→      setError(authErrorMessages.generic);
+   655→    },
+   656→  });
+   657→
+   658→  const registerMutation = useMutation({
+   659→    mutationFn: async () => {
+   660→      await api("/api/v1/auth/register", {
+   661→        method: "POST",
+   662→        body: JSON.stringify({
+   663→          name,
+   664→          email,
+   665→          password,
+   666→          // Server resolves the accepted document versions (Prompt 27 §163).
+   667→          acceptedLegal: acceptedLegal ? { terms: true, privacy: true } : undefined,
+   668→        }),
+   669→      });
+   670→      const res = await signIn("credentials", { redirect: false, email, password });
+   671→      if (!res || res.error) throw new Error(res?.error ?? "CredentialsSignin");
+   672→      return res;
+   673→    },
+   674→    onSuccess: () => {
+   675→      setError(null);
+   676→      void queryClient.invalidateQueries();
+   677→    },
+   678→    onError: (err) => {
+   679→      setError(
+   680→        err instanceof ApiClientError
+   681→          ? mapApiError(err, authErrorMessages)
+   682→          : mapSignInError(err.message, authErrorMessages),
+   683→      );
+   684→    },
+   685→  });
+   686→
+   687→  const busy = signInMutation.isPending || registerMutation.isPending || status === "loading";
+   688→
+   689→  // Store-driven mode switches (hash updates): password flows always route
+   690→  // through navigate() so deep links, back/forward and refresh all work.
+   691→  function goBackToSignIn() {
+   692→    setMode("signin");
+   693→    setError(null);
+   694→    navigate({ kind: "dashboard" });
+   695→  }
+   696→
+   697→  function onSubmit(e: React.FormEvent) {
+   698→    e.preventDefault();
+   699→    setError(null);
+   700→    if (mode === "signup") {
+   701→      if (password !== confirmPassword) {
+   702→        setError(t("errors.passwordMismatch"));
+   703→        return;
+   704→      }
+   705→      // Client-side mirror of the server password policy (auth-security
+   706→      // passwordSchema): min 8 chars, at least one letter and one digit.
+   707→      // Without this the server 422 was surfaced as a useless generic error.
+   708→      if (password.length < 8 || !/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+   709→        setError(t("errors.passwordPolicy"));
+   710→        return;
+   711→      }
+   712→      if (!acceptedLegal) {
+   713→        // Honest gate: the product requires explicit acceptance before an
+   714→        // account is created (Prompt 27 §53) — the API records the versions.
+   715→        setError(tLegal("acceptRequired"));
+   716→        return;
+   717→      }
+   718→      registerMutation.mutate();
+   719→    } else {
+   720→      signInMutation.mutate();
+   721→    }
+   722→  }
+   723→
+   724→  return (
+   725→    <div className="relative flex min-h-svh flex-col lg:flex-row" data-view="auth">
+   726→      {/* Layer −z-20: CSS gradient fallback — also the base the WebGL canvas
+   727→          composites on top of (and the only background when WebGL is
+   728→          unavailable). */}
+   729→      <div
+   730→        aria-hidden="true"
+   731→        className="bg-muted/30 from-primary/5 via-primary/10 to-primary/5 pointer-events-none fixed inset-0 -z-20 bg-gradient-to-br"
+   732→      />
+   733→      {/* Layer −z-10: business WebGL "growth field" (decorative, aria-hidden,
+   734→          pauses off-tab, static under prefers-reduced-motion). */}
+   735→      <BusinessWebGLBackground />
+   736→
+   737→      {/* Locale + theme switches (icon-only) — the auth page previously had
+   738→          no way to switch language/theme at all; icon-only buttons keep it
+   739→          capability-complete without re-adding the removed text line. */}
+   740→      <div className="bg-background/60 absolute end-3 top-3 z-20 flex items-center gap-0.5 rounded-full border p-1 backdrop-blur-md sm:end-4 sm:top-4">
+   741→        <LocaleSwitcher />
+   742→        <ThemeToggle />
+   743→      </div>
+   744→
+   745→      {/* Brand panel — marketing is vertically CENTERED between the logo
+   746→          header and the footer on desktop (fixes the old bottom-stuck
+   747→          "empty middle" imbalance) and hidden on mobile so the form is
+   748→          immediately reachable instead of pushed below the fold. */}
+   749→      <aside className="relative flex flex-col p-6 sm:p-8 lg:w-[46%] lg:flex-none lg:p-14">
+   750→        <div className="flex items-center gap-3">
+   751→          <div className="bg-background/80 shadow-sm flex size-11 items-center justify-center rounded-xl border backdrop-blur">
+   752→            <img src="/logo.svg" alt="" className="size-6" aria-hidden="true" />
+   753→          </div>
+   754→          <div>
+   755→            <p className="text-lg font-semibold tracking-tight gradient-text">
+   756→              {tCommon("appName")}
+   757→            </p>
+   758→            <p className="text-muted-foreground text-xs">{tCommon("tagline")}</p>
+   759→          </div>
+   760→        </div>
+   761→
+   762→        <motion.div
+   763→          {...enter(0.05)}
+   764→          className="relative my-auto hidden w-full max-w-lg py-10 lg:block"
+   765→        >
+   766→          <div className="space-y-7">
+   767→            <div className="space-y-4">
+   768→              <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+   769→                <Sparkles className="size-3.5" aria-hidden="true" />
+   770→                {tCommon("marketing.badge")}
+   771→              </span>
+   772→              <h2 className="text-3xl font-semibold tracking-tight gradient-text gradient-shimmer lg:text-4xl">
+   773→                {tCommon("tagline")}
+   774→              </h2>
+   775→              <p className="text-muted-foreground text-base leading-relaxed">
+   776→                {tCommon("marketing.sub")}
+   777→              </p>
+   778→            </div>
+   779→            <ul className="space-y-3">
+   780→              {[
+   781→                { icon: ShieldCheck, text: tCommon("marketing.point1") },
+   782→                { icon: TrendingUp, text: tCommon("marketing.point2") },
+   783→                { icon: Sparkles, text: tCommon("marketing.point3") },
+   784→              ].map(({ icon: Icon, text }) => (
+   785→                <li
+   786→                  key={text}
+   787→                  className="group flex items-center gap-3.5 rounded-xl border border-border/50 bg-background/40 p-3.5 backdrop-blur-sm transition-colors duration-200 hover:border-primary/40 hover:bg-primary/5"
+   788→                >
+   789→                  <span className="bg-primary/10 text-primary border-primary/20 flex size-10 shrink-0 items-center justify-center rounded-lg border transition-transform duration-200 group-hover:scale-105">
+   790→                    <Icon className="size-[18px]" aria-hidden="true" />
+   791→                  </span>
+   792→                  <span className="text-muted-foreground text-sm leading-relaxed">{text}</span>
+   793→                </li>
+   794→              ))}
+   795→            </ul>
+   796→            <p className="text-muted-foreground/80 flex items-center gap-2 text-xs">
+   797→              <ShieldCheck className="size-3.5 text-primary" aria-hidden="true" />
+   798→              {tCommon("marketing.trustLine")}
+   799→            </p>
+   800→          </div>
+   801→        </motion.div>
+   802→
+   803→        <p className="text-muted-foreground/70 relative hidden text-xs lg:block">
+   804→          © {new Date().getFullYear()} {tCommon("appName")}
+   805→        </p>
+   806→      </aside>
+   807→
+   808→      {/* Form panel — `m-auto` centering (NOT items-center): when the card
+   809→          is taller than the viewport (e.g. signup on small phones) the auto
+   810→          margins collapse to 0 and the page scrolls naturally instead of
+   811→          clipping the top of the card. */}
+   812→      <main className="relative flex flex-1 p-4 pb-8 sm:p-6 lg:p-10">
+   813→        <motion.div {...enter(0)} className="m-auto flex w-full max-w-md">
+   814→        {view.kind === "forgot-password" ? (
+   815→          <ForgotPasswordCard onBackToSignIn={goBackToSignIn} />
+   816→        ) : view.kind === "reset-password" ? (
+   817→          <ResetPasswordCard
+   818→            token={view.token}
+   819→            onGoToSignIn={goBackToSignIn}
+   820→            onRequestNewLink={() => {
+   821→              setError(null);
+   822→              navigate({ kind: "forgot-password" });
+   823→            }}
+   824→          />
+   825→        ) : mfaStage === "code" ? (
+   826→          <MfaLoginCard
+   827→            error={error}
+   828→            method={mfaMethod}
+   829→            setMethod={setMfaMethod}
+   830→            code={mfaCode}
+   831→            setCode={setMfaCode}
+   832→            busy={mfaCompleteMutation.isPending}
+   833→            onSubmit={() => mfaCompleteMutation.mutate()}
+   834→            onRestart={() => {
+   835→              setMfaStage("idle");
+   836→              setMfaChallenge(null);
+   837→              setMfaCode("");
+   838→              setError(null);
+   839→            }}
+   840→          />
+   841→        ) : (
+   842→        <Card className={glassCardClass}>
+   843→          <CardTopHairline />
+   844→          <CardHeader className="space-y-1.5">
+   845→            <AuthCardBadge>
+   846→              {mode === "signin" ? <LogIn className="size-5" /> : <UserPlus className="size-5" />}
+   847→            </AuthCardBadge>
+   848→            <CardTitle className="text-2xl">
+   849→              {mode === "signin" ? t("signInTitle") : t("signUpTitle")}
+   850→            </CardTitle>
+   851→            <CardDescription>
+   852→              {mode === "signin" ? t("signInSubtitle") : t("signUpSubtitle")}
+   853→            </CardDescription>
+   854→          </CardHeader>
+   855→          <CardContent>
+   856→            <form onSubmit={onSubmit} className="space-y-4" noValidate>
+   857→              {mode === "signup" ? (
+   858→                <div className="space-y-2">
+   859→                  <Label htmlFor="name">{t("name")}</Label>
+   860→                  <div className="relative">
+   861→                    <FieldIcon icon={User} />
+   862→                    <Input
+   863→                      id="name"
+   864→                      autoComplete="name"
+   865→                      placeholder={t("namePlaceholder")}
+   866→                      value={name}
+   867→                      onChange={(e) => setName(e.target.value)}
+   868→                      required
+   869→                      maxLength={80}
+   870→                      className="h-11 ps-9"
+   871→                    />
+   872→                  </div>
+   873→                </div>
+   874→              ) : null}
+   875→
+   876→              <div className="space-y-2">
+   877→                <Label htmlFor="email">{t("email")}</Label>
+   878→                <div className="relative">
+   879→                  <FieldIcon icon={Mail} />
+   880→                  <Input
+   881→                    id="email"
+   882→                    type="email"
+   883→                    inputMode="email"
+   884→                    autoComplete="email"
+   885→                    dir="ltr"
+   886→                    placeholder={t("emailPlaceholder")}
+   887→                    value={email}
+   888→                    onChange={(e) => setEmail(e.target.value)}
+   889→                    required
+   890→                    className="h-11 ps-9"
+   891→                  />
+   892→                </div>
+   893→              </div>
+   894→
+   895→              <div className="space-y-2">
+   896→                <Label htmlFor="password">{t("password")}</Label>
+   897→                <div className="relative">
+   898→                  <FieldIcon icon={Lock} />
+   899→                  <Input
+   900→                    id="password"
+   901→                    type={showPassword ? "text" : "password"}
+   902→                    autoComplete={mode === "signin" ? "current-password" : "new-password"}
+   903→                    dir="ltr"
+   904→                    placeholder={t("passwordPlaceholder")}
+   905→                    value={password}
+   906→                    onChange={(e) => setPassword(e.target.value)}
+   907→                    required
+   908→                    minLength={mode === "signup" ? 8 : undefined}
+   909→                    className="h-11 ps-9 pe-10"
+   910→                  />
+   911→                  <PasswordVisibilityButton
+   912→                    show={showPassword}
+   913→                    onClick={() => setShowPassword((v) => !v)}
+   914→                    labels={pwLabels}
+   915→                  />
+   916→                </div>
+   917→                {mode === "signup" ? (
+   918→                  <p className="text-muted-foreground text-xs">{t("passwordHint")}</p>
+   919→                ) : null}
+   920→              </div>
+   921→
+   922→              {mode === "signin" ? (
+   923→                <div className="flex justify-end">
+   924→                  <button
+   925→                    type="button"
+   926→                    className="text-primary text-sm underline-offset-4 hover:underline"
+   927→                    onClick={() => {
+   928→                      setError(null);
+   929→                      navigate({ kind: "forgot-password" });
+   930→                    }}
+   931→                  >
+   932→                    {t("forgotPassword")}
+   933→                  </button>
+   934→                </div>
+   935→              ) : null}
+   936→
+   937→              {mode === "signup" ? (
+   938→                <div className="space-y-2">
+   939→                  <Label htmlFor="confirmPassword">{t("confirmPassword")}</Label>
+   940→                  <div className="relative">
+   941→                    <FieldIcon icon={Lock} />
+   942→                    <Input
+   943→                      id="confirmPassword"
+   944→                      type={showConfirmPassword ? "text" : "password"}
+   945→                      autoComplete="new-password"
+   946→                      dir="ltr"
+   947→                      value={confirmPassword}
+   948→                      onChange={(e) => setConfirmPassword(e.target.value)}
+   949→                      required
+   950→                      className="h-11 ps-9 pe-10"
+   951→                    />
+   952→                    <PasswordVisibilityButton
+   953→                      show={showConfirmPassword}
+   954→                      onClick={() => setShowConfirmPassword((v) => !v)}
+   955→                      labels={pwLabels}
+   956→                    />
+   957→                  </div>
+   958→                </div>
+   959→              ) : null}
+   960→
+   961→              {mode === "signup" ? (
+   962→                <div className="flex items-start gap-2.5">
+   963→                  <Checkbox
+   964→                    id="acceptLegal"
+   965→                    checked={acceptedLegal}
+   966→                    onCheckedChange={(v) => setAcceptedLegal(v === true)}
+   967→                    className="mt-0.5"
+   968→                    required
+   969→                  />
+   970→                  <Label
+   971→                    htmlFor="acceptLegal"
+   972→                    className="text-muted-foreground text-start text-xs leading-5 font-normal"
+   973→                  >
+   974→                    {tLegal("acceptPrefix")}{" "}
+   975→                    <a
+   976→                      href="/terms"
+   977→                      target="_blank"
+   978→                      rel="noopener noreferrer"
+   979→                      className="text-primary underline-offset-4 hover:underline"
+   980→                    >
+   981→                      {tLegal("acceptTerms")}
+   982→                    </a>{" "}
+   983→                    {tLegal("acceptAnd")}{" "}
+   984→                    <a
+   985→                      href="/privacy"
+   986→                      target="_blank"
+   987→                      rel="noopener noreferrer"
+   988→                      className="text-primary underline-offset-4 hover:underline"
+   989→                    >
+   990→                      {tLegal("acceptPrivacy")}
+   991→                    </a>
+   992→                  </Label>
+   993→                </div>
+   994→              ) : null}
+   995→
+   996→              {error ? (
+   997→                <p className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm" role="alert">
+   998→                  {error}
+   999→                </p>
+  1000→              ) : null}
+  1001→
+  1002→              <Button
+  1003→                type="submit"
+  1004→                className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400"
+  1005→                disabled={busy}
+  1006→              >
+  1007→                {busy ? (
+  1008→                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+  1009→                ) : mode === "signin" ? (
+  1010→                  <LogIn className="size-4" aria-hidden="true" />
+  1011→                ) : (
+  1012→                  <UserPlus className="size-4" aria-hidden="true" />
+  1013→                )}
+  1014→                {mode === "signin"
+  1015→                  ? busy
+  1016→                    ? t("signingIn")
+  1017→                    : t("signIn")
+  1018→                  : busy
+  1019→                    ? t("creatingAccount")
+  1020→                    : t("signUp")}
+  1021→              </Button>
+  1022→
+  1023→              <p className="text-center text-sm">
+  1024→                {mode === "signin" ? t("noAccount") : t("haveAccount")}{" "}
+  1025→                <button
+  1026→                  type="button"
+  1027→                  className="text-primary font-medium underline-offset-4 hover:underline"
+  1028→                  onClick={() => {
+  1029→                    setMode(mode === "signin" ? "signup" : "signin");
+  1030→                    setError(null);
+  1031→                  }}
+  1032→                >
+  1033→                  {mode === "signin" ? t("signUp") : t("signIn")}
+  1034→                </button>
+  1035→              </p>
+  1036→
+  1037→              <div className="bg-muted/50 text-muted-foreground rounded-md px-3 py-2 text-xs">
+  1038→                <ShieldCheck className="me-1.5 inline size-3.5" aria-hidden="true" />
+  1039→                {t("privacyNote")}
+  1040→              </div>
+  1041→
+  1042→              {/* Legal links (Prompt 27 §60/§149) — real public documents,
+  1043→                  localized labels, new tab so form state survives. */}
+  1044→              <p className="text-muted-foreground text-center text-xs">
+  1045→                {tLegal("legalLinksLabel")}:{" "}
+  1046→                <a
+  1047→                  href="/privacy"
+  1048→                  target="_blank"
+  1049→                  rel="noopener noreferrer"
+  1050→                  className="hover:text-foreground underline-offset-4 hover:underline"
+  1051→                >
+  1052→                  {tLegal("acceptPrivacy")}
+  1053→                </a>
+  1054→                {" · "}
+  1055→                <a
+  1056→                  href="/terms"
+  1057→                  target="_blank"
+  1058→                  rel="noopener noreferrer"
+  1059→                  className="hover:text-foreground underline-offset-4 hover:underline"
+  1060→                >
+  1061→                  {tLegal("acceptTerms")}
+  1062→                </a>
+  1063→                {" · "}
+  1064→                <a
+  1065→                  href="/ai-data-use"
+  1066→                  target="_blank"
+  1067→                  rel="noopener noreferrer"
+  1068→                  className="hover:text-foreground underline-offset-4 hover:underline"
+  1069→                >
+  1070→                  {tLegal("aiDataUseLink")}
+  1071→                </a>
+  1072→              </p>
+  1073→            </form>
+  1074→          </CardContent>
+  1075→        </Card>
+  1076→        )}
+  1077→        </motion.div>
+  1078→      </main>
+  1079→    </div>
+  1080→  );
+  1081→}
+  1082→
+  1083→/* ------------------------- MFA login card (§110-§111) ---------------------- */
+  1084→
+  1085→/**
+  1086→ * Second-factor step — rendered ONLY after the password was verified inside
+  1087→ * authorize() (the MFA_REQUIRED code never leaks account state before that,
+  1088→ * §280). Generic error copy (§111); OTP input accepts digits + paste
+  1089→ * (§101); proper labels beyond placeholders (§102); the code is never
+  1090→ * placed in any URL (§101).
+  1091→ */
+  1092→function MfaLoginCard({
+  1093→  error,
+  1094→  method,
+  1095→  setMethod,
+  1096→  code,
+  1097→  setCode,
+  1098→  busy,
+  1099→  onSubmit,
+  1100→  onRestart,
+  1101→}: {
+  1102→  error: string | null;
+  1103→  method: "TOTP" | "RECOVERY_CODE";
+  1104→  setMethod: (m: "TOTP" | "RECOVERY_CODE") => void;
+  1105→  code: string;
+  1106→  setCode: (c: string) => void;
+  1107→  busy: boolean;
+  1108→  onSubmit: () => void;
+  1109→  onRestart: () => void;
+  1110→}) {
+  1111→  const t = useTranslations("auth");
+  1112→
+  1113→  return (
+  1114→    <Card className={glassCardClass}>
+  1115→      <CardTopHairline />
+  1116→      <CardHeader className="space-y-1.5">
+  1117→        <AuthCardBadge>
+  1118→          <ShieldCheck className="size-5" />
+  1119→        </AuthCardBadge>
+  1120→        <CardTitle className="text-2xl">{t("mfaTitle")}</CardTitle>
+  1121→        <CardDescription>{t("mfaSubtitle")}</CardDescription>
+  1122→      </CardHeader>
+  1123→      <CardContent>
+  1124→        <form
+  1125→          onSubmit={(e) => {
+  1126→            e.preventDefault();
+  1127→            if (!busy) onSubmit();
+  1128→          }}
+  1129→          className="space-y-4"
+  1130→          noValidate
+  1131→        >
+  1132→          {method === "TOTP" ? (
+  1133→            <div className="space-y-2">
+  1134→              <Label htmlFor="mfa-otp">{t("mfaCodeLabel")}</Label>
+  1135→              <InputOTP
+  1136→                maxLength={6}
+  1137→                value={code}
+  1138→                onChange={setCode}
+  1139→                containerClassName="justify-start"
+  1140→              >
+  1141→                <InputOTPGroup dir="ltr">
+  1142→                  <InputOTPSlot index={0} />
+  1143→                  <InputOTPSlot index={1} />
+  1144→                  <InputOTPSlot index={2} />
+  1145→                </InputOTPGroup>
+  1146→                <InputOTPSeparator />
+  1147→                <InputOTPGroup dir="ltr">
+  1148→                  <InputOTPSlot index={3} />
+  1149→                  <InputOTPSlot index={4} />
+  1150→                  <InputOTPSlot index={5} />
+  1151→                </InputOTPGroup>
+  1152→              </InputOTP>
+  1153→            </div>
+  1154→          ) : (
+  1155→            <div className="space-y-2">
+  1156→              <Label htmlFor="mfa-recovery">{t("mfaRecoveryLabel")}</Label>
+  1157→              <Input
+  1158→                id="mfa-recovery"
+  1159→                value={code}
+  1160→                onChange={(e) => setCode(e.target.value)}
+  1161→                placeholder={t("mfaRecoveryPlaceholder")}
+  1162→                autoComplete="off"
+  1163→                className="h-11 font-mono"
+  1164→                dir="ltr"
+  1165→                maxLength={64}
+  1166→              />
+  1167→            </div>
+  1168→          )}
+  1169→          {error ? (
+  1170→            <p className={errorBoxClass} role="alert">
+  1171→              {error}
+  1172→            </p>
+  1173→          ) : null}
+  1174→          <Button
+  1175→            type="submit"
+  1176→            className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400"
+  1177→            disabled={busy || code.length === 0}
+  1178→          >
+  1179→            {busy ? (
+  1180→              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+  1181→            ) : (
+  1182→              <LogIn className="h-4 w-4" aria-hidden="true" />
+  1183→            )}
+  1184→            {t("mfaVerify")}
+  1185→          </Button>
+  1186→          <div className="flex items-center justify-between text-sm">
+  1187→            <button
+  1188→              type="button"
+  1189→              className="text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
+  1190→              onClick={() => {
+  1191→                setMethod(method === "TOTP" ? "RECOVERY_CODE" : "TOTP");
+  1192→                setCode("");
+  1193→              }}
+  1194→            >
+  1195→              {method === "TOTP" ? t("mfaUseRecovery") : t("mfaUseAuthenticator")}
+  1196→            </button>
+  1197→            <button
+  1198→              type="button"
+  1199→              className="text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
+  1200→              onClick={onRestart}
+  1201→            >
+  1202→              {t("mfaRestart")}
+  1203→            </button>
+  1204→          </div>
+  1205→        </form>
+  1206→      </CardContent>
+  1207→    </Card>
+  1208→  );
+  1209→}
+  1210→

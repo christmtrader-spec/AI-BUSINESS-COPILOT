@@ -1471,6 +1471,7 @@ const fa: Messages = {
     usageBar: "مصرف طرح",
     changePlan: "تغییر طرح",
     changePlanTitle: "تغییر طرح (داخلی)",
+    selectPlanAria: "انتخاب پلن {plan}",
     changePlanDesc: "ابزار داخلی: طرح این کسب‌وکار بلافاصله عوض می‌شود. هیچ پرداختی انجام نمی‌شود و چیزی به‌عنوان پرداخت‌شده ثبت نمی‌گردد.",
     changePlanConfirm: "تغییر به {plan}",
     planChangedToast: "طرح به {plan} تغییر کرد",

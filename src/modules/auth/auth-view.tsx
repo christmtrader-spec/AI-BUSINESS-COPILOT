@@ -722,7 +722,7 @@ export function AuthView() {
   }
 
   return (
-    <div className="relative flex min-h-svh flex-col lg:flex-row" data-view="auth">
+    <div className="relative flex min-h-svh flex-col" data-view="auth">
       {/* Layer −z-20: CSS gradient fallback — also the base the WebGL canvas
           composites on top of (and the only background when WebGL is
           unavailable). */}
@@ -742,11 +742,19 @@ export function AuthView() {
         <ThemeToggle />
       </div>
 
+      {/* Centered frame — on large devices the WHOLE composition (brand +
+          form) lives inside one contained, centered glass frame so nothing
+          hugs the viewport edges on wide screens (user report: on large
+          displays the split layout spread to the edges with a huge empty
+          middle). On mobile the frame chrome is disabled and the card
+          centers exactly as before. */}
+      <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col lg:px-8 lg:py-10">
+        <div className="relative my-auto flex w-full flex-col lg:flex-row lg:overflow-hidden lg:rounded-3xl lg:border lg:border-border/60 lg:bg-background/60 lg:shadow-2xl lg:shadow-black/5 lg:backdrop-blur-xl dark:lg:border-border/40 dark:lg:bg-card/45 dark:lg:shadow-black/25">
       {/* Brand panel — marketing is vertically CENTERED between the logo
           header and the footer on desktop (fixes the old bottom-stuck
           "empty middle" imbalance) and hidden on mobile so the form is
           immediately reachable instead of pushed below the fold. */}
-      <aside className="relative flex flex-col p-6 sm:p-8 lg:w-[46%] lg:flex-none lg:p-14">
+      <aside className="relative flex flex-col p-6 sm:p-8 lg:w-[46%] lg:flex-none lg:p-12">
         <div className="flex items-center gap-3">
           <div className="bg-background/80 shadow-sm flex size-11 items-center justify-center rounded-xl border backdrop-blur">
             <img src="/logo.svg" alt="" className="size-6" aria-hidden="true" />
@@ -761,7 +769,7 @@ export function AuthView() {
 
         <motion.div
           {...enter(0.05)}
-          className="relative my-auto hidden w-full max-w-lg py-10 lg:block"
+          className="relative my-auto hidden w-full py-10 lg:block"
         >
           <div className="space-y-7">
             <div className="space-y-4">
@@ -804,6 +812,13 @@ export function AuthView() {
           © {new Date().getFullYear()} {tCommon("appName")}
         </p>
       </aside>
+
+      {/* Vertical gradient hairline separating the two frame columns
+          (row flow only — hidden while stacked on mobile). */}
+      <div
+        aria-hidden="true"
+        className="via-border/70 dark:via-border/40 hidden w-px self-stretch bg-gradient-to-b from-transparent to-transparent lg:block"
+      />
 
       {/* Form panel — `m-auto` centering (NOT items-center): when the card
           is taller than the viewport (e.g. signup on small phones) the auto
@@ -1076,6 +1091,8 @@ export function AuthView() {
         )}
         </motion.div>
       </main>
+        </div>
+      </div>
     </div>
   );
 }

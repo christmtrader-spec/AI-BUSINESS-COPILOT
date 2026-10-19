@@ -79,6 +79,65 @@ export const authOptions: NextAuthOptions = {
     strategy: "jwt",
     maxAge: SESSION_MAX_AGE_SECONDS, // 30 days — single authority (§84)
   },
+  /**
+   * Cookie policy — session persistence across embedded contexts.
+   *
+   * USER-REPORTED BUG (2026-10-19): "the platform doesn't remember the user
+   * — every visit requires signing in again." Root cause: the app is loaded
+   * inside the sandbox PREVIEW IFRAME, i.e. a CROSS-SITE context. NextAuth's
+   * default cookies are SameSite=Lax, and browsers never send Lax cookies on
+   * requests originating from a third-party iframe — the session cookie was
+   * silently dropped on every app fetch, so every mount looked signed out.
+   *
+   * Fix: SameSite=None + Secure for EVERY next-auth cookie (session token,
+   * CSRF, callback URL, PKCE/state/nonce), which is the standard recipe for
+   * embedded third-party auth. `secure: true` works both on the HTTPS
+   * preview gateway AND on http://localhost — Chromium treats localhost as a
+   * trustworthy origin and accepts Secure cookies there (verified via
+   * agent-browser sign-in). Cookie NAMES keep the NextAuth defaults for the
+   * current environment so existing sessions stay decodable.
+   */
+  cookies: (() => {
+    const isProd = process.env.NODE_ENV === "production";
+    const prefix = isProd ? "__Secure-" : "";
+    // `Partitioned` (CHIPS) keeps the cookie functional inside the embedded
+    // preview iframe EVEN when the browser blocks third-party cookies: the
+    // jar is keyed by (top-site, app-site) instead of being dropped. The
+    // installed cookie serializer (0.7.x) emits the attribute; browsers
+    // without CHIPS support simply ignore it (never worse than None alone).
+    const shared = {
+      sameSite: "none" as const,
+      path: "/",
+      secure: true,
+      partitioned: true as const,
+    };
+    return {
+      sessionToken: {
+        name: `${prefix}next-auth.session-token`,
+        options: { ...shared, httpOnly: true },
+      },
+      callbackUrl: {
+        name: `${prefix}next-auth.callback-url`,
+        options: { ...shared },
+      },
+      csrfToken: {
+        name: isProd ? "__Host-next-auth.csrf-token" : "next-auth.csrf-token",
+        options: { ...shared, httpOnly: true },
+      },
+      pkceCodeVerifier: {
+        name: `${prefix}next-auth.pkce.code_verifier`,
+        options: { ...shared, httpOnly: true, maxAge: 900 },
+      },
+      state: {
+        name: `${prefix}next-auth.state`,
+        options: { ...shared, httpOnly: true, maxAge: 900 },
+      },
+      nonce: {
+        name: `${prefix}next-auth.nonce`,
+        options: { ...shared, httpOnly: true },
+      },
+    };
+  })(),
   pages: {
     signIn: "/", // SPA handles sign-in view at root
   },

@@ -18,6 +18,7 @@ import { useLocale, useTranslations } from "next-intl";
 import {
   BadgeCheck,
   CalendarClock,
+  Check,
   CircleAlert,
   CreditCard,
   History,
@@ -202,6 +203,11 @@ export function SubscriptionView({ business, role }: { business: BusinessSummary
   const canManage = can(r, "settings:manage");
 
   const [planDialogOpen, setPlanDialogOpen] = useState(false);
+  // USER-REPORTED BUG (2026-10-19): plan rows LOOKED clickable (hover state)
+  // but clicking a row produced zero feedback — only the small action
+  // buttons did anything, so "selecting a plan" appeared broken. Rows are
+  // now real selectable options (radio semantics + visible selection).
+  const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   // Prompt 22 — sandbox checkout session currently open in the dialog.
   const [checkout, setCheckout] = useState<{ id: string; planName: string } | null>(null);
@@ -650,17 +656,29 @@ export function SubscriptionView({ business, role }: { business: BusinessSummary
       </Card>
 
       {/* ---- Plan dialog (Prompt 22: prices + payment path + internal switch) -- */}
-      <AlertDialog open={planDialogOpen} onOpenChange={setPlanDialogOpen}>
+      <AlertDialog
+        open={planDialogOpen}
+        onOpenChange={(open) => {
+          setPlanDialogOpen(open);
+          if (open) setSelectedPlan(null);
+        }}
+      >
         <AlertDialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
           <AlertDialogHeader>
             <AlertDialogTitle>{t("changePlanTitle")}</AlertDialogTitle>
             <AlertDialogDescription>{t("changePlanDesc")}</AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="space-y-2" data-testid="billing-plan-options">
+          <div
+            className="space-y-2"
+            role="radiogroup"
+            aria-label={t("changePlanTitle")}
+            data-testid="billing-plan-options"
+          >
             {(catalogQ.data?.plans ?? [])
               .filter((p) => p.selfService)
               .map((p) => {
                 const isCurrent = p.code === sub.plan.code;
+                const isSelected = selectedPlan === p.code;
                 const priceLine = p.pricing
                   ? {
                       monthly: formatMinor(p.pricing.monthlyMinor, p.pricing.currency, uiLocale),
@@ -671,15 +689,41 @@ export function SubscriptionView({ business, role }: { business: BusinessSummary
                   <div
                     key={p.code}
                     data-testid={`plan-option-${p.code}`}
+                    role="radio"
+                    aria-checked={isSelected}
+                    aria-label={t("selectPlanAria", { plan: p.name })}
+                    tabIndex={0}
+                    onClick={() => setSelectedPlan(isSelected ? null : p.code)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSelectedPlan(isSelected ? null : p.code);
+                      }
+                    }}
                     className={cn(
-                      "w-full rounded-lg border p-3 text-start transition-colors",
-                      isCurrent
-                        ? "border-primary/40 bg-primary/5"
-                        : "hover:bg-accent/50",
+                      "w-full cursor-pointer rounded-lg border p-3 text-start outline-none transition-all focus-visible:ring-2 focus-visible:ring-primary/40",
+                      isSelected
+                        ? "border-primary/60 bg-primary/5 shadow-sm ring-2 ring-primary/25"
+                        : isCurrent
+                          ? "border-primary/40 bg-primary/5 hover:bg-accent/50"
+                          : "hover:border-border hover:bg-accent/50",
                     )}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-semibold">{p.name}</span>
+                      <span className="flex items-center gap-2 text-sm font-semibold">
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            "flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors",
+                            isSelected
+                              ? "border-transparent bg-gradient-to-r from-emerald-600 to-teal-600 text-white dark:from-emerald-500 dark:to-teal-400"
+                              : "border-muted-foreground/40",
+                          )}
+                        >
+                          {isSelected ? <Check className="size-3" aria-hidden="true" /> : null}
+                        </span>
+                        {p.name}
+                      </span>
                       {isCurrent ? (
                         <Badge variant="secondary">{t("currentPlan")}</Badge>
                       ) : priceLine ? (
@@ -701,7 +745,10 @@ export function SubscriptionView({ business, role }: { business: BusinessSummary
                     </div>
                     <p className="text-muted-foreground mt-1 text-xs">{p.description}</p>
                     {!isCurrent && canManage ? (
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <div
+                        className="mt-2 flex flex-wrap items-center gap-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {priceLine ? (
                           <>
                             <Button
