@@ -4,7 +4,23 @@ import { useState } from "react";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { KeyRound, Loader2, LogIn, MailCheck, ShieldCheck, Sparkles, UserPlus, TrendingUp } from "lucide-react";
+import {
+  Eye,
+  EyeOff,
+  KeyRound,
+  Loader2,
+  Lock,
+  LogIn,
+  Mail,
+  MailCheck,
+  ShieldCheck,
+  Sparkles,
+  User,
+  UserPlus,
+  TrendingUp,
+  type LucideIcon,
+} from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useAppStore } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
@@ -13,6 +29,8 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { InputOTP, InputOTPGroup, InputOTPSlot, InputOTPSeparator } from "@/components/ui/input-otp";
+import { LocaleSwitcher, ThemeToggle } from "@/modules/shell/header";
+import { BusinessWebGLBackground } from "@/components/fx/business-webgl-bg";
 
 type AuthErrors = {
   invalidCredentials: string;
@@ -64,6 +82,83 @@ function mapApiError(err: unknown, t: AuthErrors): string {
 const errorBoxClass =
   "text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm";
 
+/* ─────────────── Modern auth presentation helpers (r52) ───────────────
+   Glass card + hairline + icon badge + leading field icons + password
+   visibility toggles. Presentation ONLY — zero auth logic changes. */
+
+/** Glassmorphism card surface shared by every auth card. */
+const glassCardClass =
+  "relative w-full overflow-hidden border-border/60 bg-background/75 shadow-xl shadow-black/5 backdrop-blur-xl dark:bg-card/60 dark:shadow-black/30";
+
+/** Top hairline accent — a subtle brand gradient across the card top. */
+function CardTopHairline() {
+  return (
+    <div
+      aria-hidden="true"
+      className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/60 to-transparent"
+    />
+  );
+}
+
+/** Icon badge above the card title (modern auth-card signature). */
+function AuthCardBadge({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      aria-hidden="true"
+      className="bg-primary/10 text-primary border-primary/20 mb-2 flex size-11 items-center justify-center rounded-xl border"
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Leading icon inside a form field (absolute, RTL-aware via start-*). */
+function FieldIcon({ icon: Icon }: { icon: LucideIcon }) {
+  return (
+    <Icon
+      aria-hidden="true"
+      className="text-muted-foreground pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2"
+    />
+  );
+}
+
+/** Password show/hide toggle — 44px hit area, aria-pressed + label. */
+function PasswordVisibilityButton({
+  show,
+  onClick,
+  labels,
+}: {
+  show: boolean;
+  onClick: () => void;
+  labels: { show: string; hide: string };
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={show ? labels.hide : labels.show}
+      aria-pressed={show}
+      className="text-muted-foreground hover:text-foreground focus-visible:ring-ring absolute end-1.5 top-1/2 -translate-y-1/2 rounded-md p-2 outline-none focus-visible:ring-2"
+    >
+      {show ? <EyeOff className="size-4" aria-hidden="true" /> : <Eye className="size-4" aria-hidden="true" />}
+    </button>
+  );
+}
+
+/** Entrance motion helper — honors prefers-reduced-motion (no animation). */
+const EASE_OUT: [number, number, number, number] = [0.22, 1, 0.36, 1];
+function useEnterMotion() {
+  const reduceMotion = useReducedMotion();
+  return (delay = 0) =>
+    reduceMotion
+      ? {}
+      : {
+          initial: { opacity: 0, y: 14 },
+          animate: { opacity: 1, y: 0 },
+          transition: { duration: 0.5, delay, ease: EASE_OUT },
+        };
+}
+
 /**
  * "Forgot password" flow — requests a reset link. The server ALWAYS answers
  * 200 (never confirms whether the account exists), so the success state is a
@@ -100,8 +195,12 @@ function ForgotPasswordCard({ onBackToSignIn }: { onBackToSignIn: () => void }) 
   });
 
   return (
-    <Card className="w-full max-w-md shadow-sm">
+    <Card className={glassCardClass}>
+      <CardTopHairline />
       <CardHeader className="space-y-1.5">
+        <AuthCardBadge>
+          <MailCheck className="size-5" />
+        </AuthCardBadge>
         <CardTitle className="text-2xl">{t("forgotTitle")}</CardTitle>
         <CardDescription>{t("forgotSubtitle")}</CardDescription>
       </CardHeader>
@@ -137,17 +236,21 @@ function ForgotPasswordCard({ onBackToSignIn }: { onBackToSignIn: () => void }) 
           >
             <div className="space-y-2">
               <Label htmlFor="forgot-email">{t("email")}</Label>
-              <Input
-                id="forgot-email"
-                type="email"
-                inputMode="email"
-                autoComplete="email"
-                dir="ltr"
-                placeholder={t("emailPlaceholder")}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
+              <div className="relative">
+                <FieldIcon icon={Mail} />
+                <Input
+                  id="forgot-email"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  dir="ltr"
+                  placeholder={t("emailPlaceholder")}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  className="h-11 ps-9"
+                />
+              </div>
             </div>
 
             {error ? (
@@ -156,7 +259,11 @@ function ForgotPasswordCard({ onBackToSignIn }: { onBackToSignIn: () => void }) 
               </p>
             ) : null}
 
-            <Button type="submit" className="w-full" disabled={requestMutation.isPending}>
+            <Button
+              type="submit"
+              className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400"
+              disabled={requestMutation.isPending}
+            >
               {requestMutation.isPending ? (
                 <Loader2 className="size-4 animate-spin" aria-hidden="true" />
               ) : (
@@ -208,6 +315,10 @@ function ResetPasswordCard({
   const [error, setError] = useState<string | null>(null);
   const [tokenInvalid, setTokenInvalid] = useState(false);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
+  // Password visibility toggles (presentation only — never affects logic).
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const pwLabels = { show: t("showPassword"), hide: t("hidePassword") };
 
   const resetMutation = useMutation({
     mutationFn: async () =>
@@ -247,8 +358,12 @@ function ResetPasswordCard({
   });
 
   return (
-    <Card className="w-full max-w-md shadow-sm">
+    <Card className={glassCardClass}>
+      <CardTopHairline />
       <CardHeader className="space-y-1.5">
+        <AuthCardBadge>
+          <KeyRound className="size-5" />
+        </AuthCardBadge>
         <CardTitle className="text-2xl">
           {doneMessage ? t("resetSuccessTitle") : t("resetTitle")}
         </CardTitle>
@@ -288,31 +403,49 @@ function ResetPasswordCard({
           >
             <div className="space-y-2">
               <Label htmlFor="reset-password">{t("newPassword")}</Label>
-              <Input
-                id="reset-password"
-                type="password"
-                autoComplete="new-password"
-                dir="ltr"
-                placeholder={t("passwordPlaceholder")}
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                required
-                minLength={8}
-              />
+              <div className="relative">
+                <FieldIcon icon={Lock} />
+                <Input
+                  id="reset-password"
+                  type={showNew ? "text" : "password"}
+                  autoComplete="new-password"
+                  dir="ltr"
+                  placeholder={t("passwordPlaceholder")}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                  minLength={8}
+                  className="h-11 ps-9 pe-10"
+                />
+                <PasswordVisibilityButton
+                  show={showNew}
+                  onClick={() => setShowNew((v) => !v)}
+                  labels={pwLabels}
+                />
+              </div>
               <p className="text-muted-foreground text-xs">{t("passwordHint")}</p>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="reset-confirm">{t("confirmNewPassword")}</Label>
-              <Input
-                id="reset-confirm"
-                type="password"
-                autoComplete="new-password"
-                dir="ltr"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-              />
+              <div className="relative">
+                <FieldIcon icon={Lock} />
+                <Input
+                  id="reset-confirm"
+                  type={showConfirm ? "text" : "password"}
+                  autoComplete="new-password"
+                  dir="ltr"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  className="h-11 ps-9 pe-10"
+                />
+                <PasswordVisibilityButton
+                  show={showConfirm}
+                  onClick={() => setShowConfirm((v) => !v)}
+                  labels={pwLabels}
+                />
+              </div>
             </div>
 
             {tokenInvalid ? (
@@ -332,7 +465,11 @@ function ResetPasswordCard({
               </p>
             ) : null}
 
-            <Button type="submit" className="w-full" disabled={resetMutation.isPending}>
+            <Button
+              type="submit"
+              className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400"
+              disabled={resetMutation.isPending}
+            >
               {resetMutation.isPending ? (
                 <Loader2 className="size-4 animate-spin" aria-hidden="true" />
               ) : (
@@ -386,7 +523,12 @@ export function AuthView() {
   // Prompt 27 §53/§58: explicit legal acceptance — UNCHECKED by default, with
   // links to the actual documents BEFORE acceptance. Required by the signup UI.
   const [acceptedLegal, setAcceptedLegal] = useState(false);
+  // Password visibility toggles (presentation only — never affects logic).
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const pwLabels = { show: t("showPassword"), hide: t("hidePassword") };
   const tLegal = useTranslations("legal.auth");
+  const enter = useEnterMotion();
 
   const signInMutation = useMutation({
     mutationFn: async () => {
@@ -580,19 +722,33 @@ export function AuthView() {
   }
 
   return (
-    <div className="bg-muted/30 flex min-h-svh flex-col lg:flex-row" data-view="auth">
-      {/* Brand panel */}
-      <div className="from-primary/5 via-primary/10 to-primary/5 relative flex flex-1 flex-col justify-between overflow-hidden p-8 lg:p-14">
-        <div
-          className="bg-primary/5 pointer-events-none absolute -top-24 -end-24 size-72 rounded-full blur-3xl"
-          aria-hidden="true"
-        />
-        <div
-          className="bg-primary/5 pointer-events-none absolute -bottom-24 -start-24 size-72 rounded-full blur-3xl"
-          aria-hidden="true"
-        />
+    <div className="relative flex min-h-svh flex-col lg:flex-row" data-view="auth">
+      {/* Layer −z-20: CSS gradient fallback — also the base the WebGL canvas
+          composites on top of (and the only background when WebGL is
+          unavailable). */}
+      <div
+        aria-hidden="true"
+        className="bg-muted/30 from-primary/5 via-primary/10 to-primary/5 pointer-events-none fixed inset-0 -z-20 bg-gradient-to-br"
+      />
+      {/* Layer −z-10: business WebGL "growth field" (decorative, aria-hidden,
+          pauses off-tab, static under prefers-reduced-motion). */}
+      <BusinessWebGLBackground />
+
+      {/* Locale + theme switches (icon-only) — the auth page previously had
+          no way to switch language/theme at all; icon-only buttons keep it
+          capability-complete without re-adding the removed text line. */}
+      <div className="bg-background/60 absolute end-3 top-3 z-20 flex items-center gap-0.5 rounded-full border p-1 backdrop-blur-md sm:end-4 sm:top-4">
+        <LocaleSwitcher />
+        <ThemeToggle />
+      </div>
+
+      {/* Brand panel — marketing is vertically CENTERED between the logo
+          header and the footer on desktop (fixes the old bottom-stuck
+          "empty middle" imbalance) and hidden on mobile so the form is
+          immediately reachable instead of pushed below the fold. */}
+      <aside className="relative flex flex-col p-6 sm:p-8 lg:w-[46%] lg:flex-none lg:p-14">
         <div className="flex items-center gap-3">
-          <div className="bg-background shadow-sm flex size-11 items-center justify-center rounded-xl border">
+          <div className="bg-background/80 shadow-sm flex size-11 items-center justify-center rounded-xl border backdrop-blur">
             <img src="/logo.svg" alt="" className="size-6" aria-hidden="true" />
           </div>
           <div>
@@ -603,35 +759,58 @@ export function AuthView() {
           </div>
         </div>
 
-        <div className="relative mx-auto w-full max-w-md space-y-8 py-12">
-          <div className="space-y-3">
-            <h2 className="text-3xl font-semibold tracking-tight gradient-text gradient-shimmer lg:text-4xl">
-              {tCommon("tagline")}
-            </h2>
-            <p className="text-muted-foreground text-base">
-              {tCommon("marketing.sub")}
+        <motion.div
+          {...enter(0.05)}
+          className="relative my-auto hidden w-full max-w-lg py-10 lg:block"
+        >
+          <div className="space-y-7">
+            <div className="space-y-4">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+                <Sparkles className="size-3.5" aria-hidden="true" />
+                {tCommon("marketing.badge")}
+              </span>
+              <h2 className="text-3xl font-semibold tracking-tight gradient-text gradient-shimmer lg:text-4xl">
+                {tCommon("tagline")}
+              </h2>
+              <p className="text-muted-foreground text-base leading-relaxed">
+                {tCommon("marketing.sub")}
+              </p>
+            </div>
+            <ul className="space-y-3">
+              {[
+                { icon: ShieldCheck, text: tCommon("marketing.point1") },
+                { icon: TrendingUp, text: tCommon("marketing.point2") },
+                { icon: Sparkles, text: tCommon("marketing.point3") },
+              ].map(({ icon: Icon, text }) => (
+                <li
+                  key={text}
+                  className="group flex items-center gap-3.5 rounded-xl border border-border/50 bg-background/40 p-3.5 backdrop-blur-sm transition-colors duration-200 hover:border-primary/40 hover:bg-primary/5"
+                >
+                  <span className="bg-primary/10 text-primary border-primary/20 flex size-10 shrink-0 items-center justify-center rounded-lg border transition-transform duration-200 group-hover:scale-105">
+                    <Icon className="size-[18px]" aria-hidden="true" />
+                  </span>
+                  <span className="text-muted-foreground text-sm leading-relaxed">{text}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-muted-foreground/80 flex items-center gap-2 text-xs">
+              <ShieldCheck className="size-3.5 text-primary" aria-hidden="true" />
+              {tCommon("marketing.trustLine")}
             </p>
           </div>
-          <ul className="space-y-4">
-            {[
-              { icon: ShieldCheck, text: tCommon("marketing.point1") },
-              { icon: TrendingUp, text: tCommon("marketing.point2") },
-              { icon: Sparkles, text: tCommon("marketing.point3") },
-            ].map(({ icon: Icon, text }) => (
-              <li key={text} className="flex items-center gap-3">
-                <span className="bg-background text-primary flex size-9 shrink-0 items-center justify-center rounded-lg border shadow-sm">
-                  <Icon className="size-4" aria-hidden="true" />
-                </span>
-                <span className="text-muted-foreground text-sm">{text}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
+        </motion.div>
 
-      {/* Form panel — password flows (forgot/reset) swap the card; the
-          sign-in/sign-up card is unchanged apart from the reset link. */}
-      <div className="flex flex-1 items-center justify-center p-6 lg:p-10">
+        <p className="text-muted-foreground/70 relative hidden text-xs lg:block">
+          © {new Date().getFullYear()} {tCommon("appName")}
+        </p>
+      </aside>
+
+      {/* Form panel — `m-auto` centering (NOT items-center): when the card
+          is taller than the viewport (e.g. signup on small phones) the auto
+          margins collapse to 0 and the page scrolls naturally instead of
+          clipping the top of the card. */}
+      <main className="relative flex flex-1 p-4 pb-8 sm:p-6 lg:p-10">
+        <motion.div {...enter(0)} className="m-auto flex w-full max-w-md">
         {view.kind === "forgot-password" ? (
           <ForgotPasswordCard onBackToSignIn={goBackToSignIn} />
         ) : view.kind === "reset-password" ? (
@@ -660,8 +839,12 @@ export function AuthView() {
             }}
           />
         ) : (
-        <Card className="w-full max-w-md shadow-sm">
+        <Card className={glassCardClass}>
+          <CardTopHairline />
           <CardHeader className="space-y-1.5">
+            <AuthCardBadge>
+              {mode === "signin" ? <LogIn className="size-5" /> : <UserPlus className="size-5" />}
+            </AuthCardBadge>
             <CardTitle className="text-2xl">
               {mode === "signin" ? t("signInTitle") : t("signUpTitle")}
             </CardTitle>
@@ -674,46 +857,63 @@ export function AuthView() {
               {mode === "signup" ? (
                 <div className="space-y-2">
                   <Label htmlFor="name">{t("name")}</Label>
-                  <Input
-                    id="name"
-                    autoComplete="name"
-                    placeholder={t("namePlaceholder")}
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    required
-                    maxLength={80}
-                  />
+                  <div className="relative">
+                    <FieldIcon icon={User} />
+                    <Input
+                      id="name"
+                      autoComplete="name"
+                      placeholder={t("namePlaceholder")}
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      required
+                      maxLength={80}
+                      className="h-11 ps-9"
+                    />
+                  </div>
                 </div>
               ) : null}
 
               <div className="space-y-2">
                 <Label htmlFor="email">{t("email")}</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  inputMode="email"
-                  autoComplete="email"
-                  dir="ltr"
-                  placeholder={t("emailPlaceholder")}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
+                <div className="relative">
+                  <FieldIcon icon={Mail} />
+                  <Input
+                    id="email"
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    dir="ltr"
+                    placeholder={t("emailPlaceholder")}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    className="h-11 ps-9"
+                  />
+                </div>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="password">{t("password")}</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
-                  dir="ltr"
-                  placeholder={t("passwordPlaceholder")}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={mode === "signup" ? 8 : undefined}
-                />
+                <div className="relative">
+                  <FieldIcon icon={Lock} />
+                  <Input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                    dir="ltr"
+                    placeholder={t("passwordPlaceholder")}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    minLength={mode === "signup" ? 8 : undefined}
+                    className="h-11 ps-9 pe-10"
+                  />
+                  <PasswordVisibilityButton
+                    show={showPassword}
+                    onClick={() => setShowPassword((v) => !v)}
+                    labels={pwLabels}
+                  />
+                </div>
                 {mode === "signup" ? (
                   <p className="text-muted-foreground text-xs">{t("passwordHint")}</p>
                 ) : null}
@@ -737,15 +937,24 @@ export function AuthView() {
               {mode === "signup" ? (
                 <div className="space-y-2">
                   <Label htmlFor="confirmPassword">{t("confirmPassword")}</Label>
-                  <Input
-                    id="confirmPassword"
-                    type="password"
-                    autoComplete="new-password"
-                    dir="ltr"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    required
-                  />
+                  <div className="relative">
+                    <FieldIcon icon={Lock} />
+                    <Input
+                      id="confirmPassword"
+                      type={showConfirmPassword ? "text" : "password"}
+                      autoComplete="new-password"
+                      dir="ltr"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      required
+                      className="h-11 ps-9 pe-10"
+                    />
+                    <PasswordVisibilityButton
+                      show={showConfirmPassword}
+                      onClick={() => setShowConfirmPassword((v) => !v)}
+                      labels={pwLabels}
+                    />
+                  </div>
                 </div>
               ) : null}
 
@@ -790,7 +999,11 @@ export function AuthView() {
                 </p>
               ) : null}
 
-              <Button type="submit" className="w-full" disabled={busy}>
+              <Button
+                type="submit"
+                className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400"
+                disabled={busy}
+              >
                 {busy ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                 ) : mode === "signin" ? (
@@ -861,7 +1074,8 @@ export function AuthView() {
           </CardContent>
         </Card>
         )}
-      </div>
+        </motion.div>
+      </main>
     </div>
   );
 }
@@ -897,12 +1111,13 @@ function MfaLoginCard({
   const t = useTranslations("auth");
 
   return (
-    <Card className="w-full max-w-md shadow-sm">
+    <Card className={glassCardClass}>
+      <CardTopHairline />
       <CardHeader className="space-y-1.5">
-        <CardTitle className="flex items-center gap-2 text-2xl">
-          <ShieldCheck className="h-5 w-5 text-primary" aria-hidden />
-          {t("mfaTitle")}
-        </CardTitle>
+        <AuthCardBadge>
+          <ShieldCheck className="size-5" />
+        </AuthCardBadge>
+        <CardTitle className="text-2xl">{t("mfaTitle")}</CardTitle>
         <CardDescription>{t("mfaSubtitle")}</CardDescription>
       </CardHeader>
       <CardContent>
@@ -945,7 +1160,7 @@ function MfaLoginCard({
                 onChange={(e) => setCode(e.target.value)}
                 placeholder={t("mfaRecoveryPlaceholder")}
                 autoComplete="off"
-                className="font-mono"
+                className="h-11 font-mono"
                 dir="ltr"
                 maxLength={64}
               />
@@ -956,7 +1171,11 @@ function MfaLoginCard({
               {error}
             </p>
           ) : null}
-          <Button type="submit" className="w-full" disabled={busy || code.length === 0}>
+          <Button
+            type="submit"
+            className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400"
+            disabled={busy || code.length === 0}
+          >
             {busy ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (

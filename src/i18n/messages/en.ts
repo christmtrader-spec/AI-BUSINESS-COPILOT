@@ -4,6 +4,8 @@ const en = {
     tagline: "Your business, understood.",
     marketing: {
       sub: "Customers, sales, expenses and cash flow — with an AI copilot that answers from your real numbers.",
+      badge: "AI copilot on your real business numbers",
+      trustLine: "Free to start · No credit card required · Cancel anytime",
       point1: "Per-business data isolation with server-enforced roles",
       point2: "Deterministic financial math — integer minor units, never floats",
       point3: "AI copilot that calculates from your recorded business data",
@@ -112,6 +114,8 @@ const en = {
     passwordPlaceholder: "At least 8 characters",
     passwordHint: "At least 8 characters, with a letter and a number.",
     confirmPassword: "Confirm password",
+    showPassword: "Show password",
+    hidePassword: "Hide password",
     signIn: "Sign in",
     signUp: "Create account",
     signingIn: "Signing in…",

@@ -73,7 +73,26 @@ function pastMonthKey(): string {
 
 try {
   await purge();
-  const user = await db.user.findFirst({ where: { email: "p50qa-owner@test.local" }, select: { id: true } });
+  // Fixture owner — self-healing (the sandbox env-repair wipes test users;
+  // the cap check must not crash with a TypeError when it is missing).
+  const EMAIL = "p50qa-owner@test.local";
+  let user = await db.user.findFirst({ where: { email: EMAIL }, select: { id: true } });
+  if (!user) {
+    const bcrypt = (await import("bcryptjs")).default;
+    // Password MUST match the shared fixture contract (browser fixture +
+    // prompt50-reports-check both log in with testpass123) so login-first
+    // keeps working for every harness that reuses this account.
+    const created = await db.user.create({
+      data: {
+        email: EMAIL,
+        name: "P50QA Owner",
+        passwordHash: bcrypt.hashSync("testpass123", 4),
+        locale: "en",
+      },
+      select: { id: true },
+    });
+    user = created;
+  }
   const biz = await db.business.create({
     data: {
       name: `${TAG}-${Date.now()}`,
