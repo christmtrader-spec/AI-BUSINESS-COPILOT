@@ -20,6 +20,7 @@ import { findCurrency } from "@/lib/currencies";
 import { rateLimit } from "@/lib/rate-limit";
 import { assertFreshSession } from "@/lib/auth-security";
 import { assertWithinBusinessesLimitTx, ensureSubscription, recordCommercialEvent } from "@/lib/billing";
+import { ensureBillingCatalog } from "@/lib/billing/self-heal";
 
 export const dynamic = "force-dynamic";
 
@@ -99,6 +100,21 @@ export const POST = route(async (req: NextRequest) => {
   const currency = findCurrency(input.currencyCode);
   if (!currency) {
     throw new ApiError(422, "INVALID_CURRENCY", "Unsupported currency code.");
+  }
+
+  // Permanent fix: a missing/wiped billing catalog (environmental damage —
+  // the DB snapshot reverts repeatedly dropped Plan/…/PlanPrice) must NEVER
+  // surface as BILLING_UNAVAILABLE on business creation. Restore the
+  // canonical catalog first: a cheap read-only no-op when healthy, an
+  // idempotent create-missing-only re-seed when wiped. VALUE-level catalog
+  // corruption is deliberately NOT auto-repaired — the gate inside the
+  // transaction below still fails closed with the honest controlled error
+  // (P51-R1-FINAL §2 contract preserved).
+  try {
+    await ensureBillingCatalog("business-create");
+  } catch {
+    // Catalog health is re-evaluated authoritatively by the gate inside the
+    // transaction; a failed heal surfaces through it honestly (fail-closed).
   }
 
   const business = await db.$transaction(

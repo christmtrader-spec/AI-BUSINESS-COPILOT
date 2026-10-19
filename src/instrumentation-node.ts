@@ -19,6 +19,14 @@
  * (docs/deployment/production-operations.md).
  */
 export async function register(): Promise<void> {
+  console.log(
+    JSON.stringify({
+      event: "startup.instrumentation_register",
+      level: "info",
+      service: "ai-business-copilot",
+      runtime: process.env.NEXT_RUNTIME ?? "unknown",
+    }),
+  );
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
   // ---- startup validation (§6) -------------------------------------------
@@ -47,6 +55,46 @@ export async function register(): Promise<void> {
       }),
     );
     process.exit(1);
+  }
+
+  // ---- billing catalog self-heal (permanent fix) ---------------------------
+  // The environment has repeatedly wiped the billing catalog out of the DB
+  // (User rows survive; Plan/EntitlementDefinition/PlanEntitlement/PriceBook
+  // are gone), which made every business creation fail with the controlled
+  // BILLING_UNAVAILABLE error. Healing at boot makes the platform
+  // self-repairing: by the time the first request is served, the canonical
+  // catalog is guaranteed. Best-effort and non-fatal — a failure here is
+  // logged and the honest fail-closed guards remain the last resort (§68).
+  try {
+    const { ensureBillingCatalog } = await import("@/lib/billing/self-heal");
+    const health = await ensureBillingCatalog("startup");
+    if (health.healthy) {
+      console.log(
+        JSON.stringify({
+          event: "startup.billing_catalog_ready",
+          level: "info",
+          service: "ai-business-copilot",
+          plans: health.plansMissing.length === 0 ? "complete" : "healed",
+        }),
+      );
+    } else {
+      console.error(
+        JSON.stringify({
+          event: "startup.billing_catalog_unhealthy",
+          level: "error",
+          service: "ai-business-copilot",
+        }),
+      );
+    }
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        event: "startup.billing_catalog_heal_failed",
+        level: "warn",
+        service: "ai-business-copilot",
+        message: error instanceof Error ? error.message.slice(0, 200) : "unknown",
+      }),
+    );
   }
 
   // ---- graceful shutdown (§70) --------------------------------------------

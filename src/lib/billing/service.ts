@@ -41,6 +41,7 @@ import {
   BillingError,
   limitReachedError,
 } from "./errors";
+import { tryHealBillingCatalog } from "./self-heal";
 import {
   VALID_TRANSITIONS,
   asSubscriptionStatus,
@@ -52,6 +53,22 @@ import {
   type SubscriptionEventType,
   type SubscriptionStatus,
 } from "./state-machine";
+
+// ---------------------------------------------------------------------------
+// Boot-time catalog self-heal trigger (module-import scope) — permanent fix
+// ---------------------------------------------------------------------------
+// The instrumentation hook does not run under this environment's `next dev`
+// (Next 16.1.3 + Turbopack — verified empirically; it DOES run for a
+// production `next start`). To make the heal deterministic in every server
+// process, the first server-side import of the billing service schedules the
+// idempotent heal: a cheap no-op health inspect when the catalog is healthy,
+// a canonical create-missing-only re-seed when the environment wiped it.
+if (process.env.NEXT_RUNTIME !== "edge") {
+  void (async () => {
+    const { ensureBillingCatalog } = await import("./self-heal");
+    await ensureBillingCatalog("module-init:billing-service");
+  })().catch(() => undefined);
+}
 
 type Tx = Prisma.TransactionClient;
 
@@ -396,7 +413,7 @@ function entitlementsFromRows(
 
 /** Fresh (uncached) entitlement context — the gate-enforcement loader. */
 export async function getEntitlementContextFresh(businessId: string): Promise<EntitlementContext> {
-  try {
+  const load = async (): Promise<EntitlementContext> => {
     let sub = await loadSubscription(db, businessId);
     if (!sub) {
       sub = await ensureSubscription(businessId, { source: "lazy-backfill" });
@@ -413,8 +430,24 @@ export async function getEntitlementContextFresh(businessId: string): Promise<En
       subscription: subscriptionDto(sub, plan.code, entitled),
       entitlements: entitlementsFromRows(rows),
     };
+  };
+  try {
+    return await load();
   } catch (error) {
     if (error instanceof ApiError) throw error;
+    // Permanent fix: a wiped/missing catalog (environmental damage) must
+    // never surface as BILLING_UNAVAILABLE on ordinary reads. Heal once —
+    // but ONLY when the catalog is actually missing/incomplete — and retry;
+    // any other error, or a still-broken catalog, fails closed exactly as
+    // before (§68). Value-level corruption is deliberately NOT auto-repaired.
+    const healed = await tryHealBillingCatalog("entitlement-read");
+    if (healed) {
+      try {
+        return await load();
+      } catch (retryError) {
+        error = retryError;
+      }
+    }
     console.error("[billing] context lookup failed:", error);
     throw new BillingError("BILLING_UNAVAILABLE", "Billing state is temporarily unavailable. Please try again.");
   }

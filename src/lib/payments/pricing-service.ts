@@ -34,6 +34,21 @@ import {
 } from "./currency";
 
 // ---------------------------------------------------------------------------
+// Boot-time catalog self-heal trigger (module-import scope) — permanent fix
+// ---------------------------------------------------------------------------
+// The instrumentation hook does not run under this environment's `next dev`
+// (verified empirically), so the first server-side import of the pricing
+// service also schedules the idempotent billing-catalog heal (no-op health
+// inspect when healthy; canonical re-seed when the environment wiped the
+// catalog). Keeps /pricing and checkout resolution alive after a wipe.
+if (process.env.NEXT_RUNTIME !== "edge") {
+  void (async () => {
+    const { ensureBillingCatalog } = await import("@/lib/billing/self-heal");
+    await ensureBillingCatalog("module-init:pricing-service");
+  })().catch(() => undefined);
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 

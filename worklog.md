@@ -5364,3 +5364,37 @@ Stage Summary:
 - All four user-reported issues are fixed and browser-verified: large screens now show a framed, centered composition on every viewport/theme/direction; sessions persist across embedded contexts (None+Secure+Partitioned+30d); plan rows visibly register selection; the hidden environmental killer (wiped billing catalog → BILLING_UNAVAILABLE on business creation) was root-caused and repaired.
 - Appearance/cookie-config-only changes: no business logic, no schema, no route behavior touched; the only logic additions are presentation-state (selectedPlan) and cookie options.
 - Full battery green (1,600+ assertions this session across 20 suites); i18n parity clean; DB integrity ok.
+
+---
+Task ID: P53-BILLING-SELF-HEAL
+Agent: Z.ai Code (main session)
+Task: User request (2026-10-19, with screenshot of the "Create your business" form showing the red toast): «این ارور را برای همیشه درست کن» — permanently fix the 503 BILLING_UNAVAILABLE («سرویس صورتحساب موقتاً در دسترس نیست») that appeared when creating a business.
+
+Work Log:
+- ROOT CAUSE (3rd documented occurrence): the sandbox snapshot revert wiped db/custom.db's billing catalog AGAIN — Plan=0, EntitlementDefinition=0, PlanEntitlement=0, PriceBook/PlanPrice=0, _prisma_migrations ledger gone, while the real user row (minassianchrist@gmail.com) survived. POST /api/v1/businesses → 503 BILLING_UNAVAILABLE at 14:49:22Z (matches the 18:19:32 Tehran screenshot exactly, seen in dev.log). The previous session's reactive env-repair fixed it once; the revert brought it back. A reactive fix can never satisfy «برای همیشه» — the fix had to be SELF-HEALING.
+- NEW FILE src/lib/billing/self-heal.ts — ensureBillingCatalog(source) / inspectBillingCatalog() / tryHealBillingCatalog(source):
+  - INSPECT: cheap aggregate health probe (all 5 canonical plans present with exactly 9 entitlements each + EUR baseline book complete) — 2-3 SELECTs.
+  - HEAL: transactional (Serializable, 30s) canonical re-seed from the SINGLE SOURCE OF TRUTH src/lib/billing/catalog.ts + baseline price book from src/lib/payments/pricing-seed-data.ts — exact idempotent create-missing-only upsert semantics as scripts/seed-billing.ts + seed-pricing.ts; NEVER overwrites existing values, NEVER deletes; auditable (billing.catalog_self_heal audit row, businessId null) + structured console events.
+  - Reconciliation with P51-R1-FINAL fail-closed law (§68/§93) preserved: MISSING/INCOMPLETE catalog (wipe damage) → self-heal; PRESENT-but-MALFORMED values (FREE BUSINESSES_MAX=0/negative, BOOLEAN-typed rows) → still the honest controlled 503 — no fabricated limits, no silent value rewrites.
+  - Concurrency: per-process in-flight singleton promise; idempotent seed converges even cross-process.
+- WIRING (3 layers of defense):
+  1. src/instrumentation-node.ts register(): heal at server boot (works for production `next start`; NON-FATAL on failure).
+  2. ENVIRONMENTAL DISCOVERY: Next.js 16.1.3 + Turbopack `next dev` NEVER RUNS instrumentation register() in this environment (verified empirically 3× with a marker-file proof + fresh .next rebuild; the .next/dev/server/instrumentation.js artifact exists but ensureInstrumentationRegistered never fires in dev). Added module-import-scope triggers instead: src/lib/billing/service.ts + src/lib/payments/pricing-service.ts schedule ensureBillingCatalog("module-init:…") on first server-side import — deterministic in dev AND production.
+  3. Request path: POST /api/v1/businesses calls ensureBillingCatalog("business-create") BEFORE the creation transaction (cheap no-op inspect when healthy); getEntitlementContextFresh wraps its loader with tryHealBillingCatalog + one retry (heals only when the catalog is actually missing/incomplete; any other error fails closed exactly as before).
+- EVIDENCE (all EXECUTED this session, live wiped DB):
+  - Direct heal probe: wiped catalog (5 plans/9 ents/45 rows/1 book/6 prices) → ensureBillingCatalog → healthy:true, plans=5, ents=9, planEnts=45, EUR book complete; real-tx assertWithinBusinessesLimitTx(fresh user) → PASS.
+  - TEST 1 (boot heal): wiped catalog → server restart → first billing-route import auto-healed (log: module-init:billing-service → billing.catalog_self_healed; no manual action).
+  - TEST 2 (request heal — the user's exact scenario): wiped catalog MID-FLIGHT (no restart) → real login → POST /api/v1/businesses → **201** with toast "Business created. Welcome aboard! Beatbox Test Shop"; business + ACTIVE FREE subscription + CREATED SubscriptionEvent + audit rows all verified.
+  - Browser E2E (agent-browser, real UI): fresh signup (p53-browser-probe@test.local) → the EXACT screenshot form → business created → trial skip → workspace-ready → dashboard rendered; zero page errors, zero console errors. Screenshots: qa-screenshots/p53-heal-business-created.png, p53-heal-dashboard-live.png. Probe user/business deleted afterwards (users back to documented set).
+- ENVIRONMENT REPAIR: scripts/env-repair.mjs re-run (migrations ledger was also wiped this time) → 29/29 re-baselined, .env baseline restored, billing+pricing seeds (no-op — heal had already restored), dev-baseline + e2e fixtures recreated; real user PRESERVED untouched. Health: {"status":"ok","migrations":{"applied":29,"pending":0}}, integrity ok, fk=0.
+- FULL REGRESSION BATTERY (all THIS-session outputs, after the heal landed): businesses-limit-validation-check **25/25** (P51-R1-FINAL §2 fail-closed contracts intact incl. C'/C''-recovery) · verify-billing-catalog OK (Plan=5 Ent=9 PlanEnt=45 Book=1 Prices=6, FREE can create) · prompt20-billing-check **56/56** · e2e-smoke **90/90** · i18n audit 170 files / 2827 usages / 0 missing / 0 parity · bunx tsc --noEmit 0 errors · bun run lint clean.
+- FINAL DB: users=8 (real user + documented dev/e2e/smoke fixtures), businesses=3, subscriptions=3, businesses==subscriptions, zero businesses without subscription, quick_check ok (via env-repair step 6), fk=0.
+- BUILD: NOT EXECUTED (standing sandbox law — dev server owns .next on :3000).
+- CLEANUP: all tmp-probe scripts removed; no test code committed; worklog + this section only.
+
+Stage Summary:
+- The BILLING_UNAVAILABLE error on business creation is now PERMANENTLY fixed: the platform self-heals the billing catalog at server boot, at billing-module import, at business creation, and on entitlement-read retry — the environment's recurring DB wipe can no longer surface the error to users.
+- The P51-R1-FINAL fail-closed contract is fully preserved (25/25): only MISSING data is restored from the canonical source; corrupted VALUES still produce the honest controlled error.
+- Instrumentation register() is broken under Next 16.1.3 `next dev` + Turbopack (documented with proof) — production boots still use it; dev uses the module-init triggers (equivalent coverage).
+- All suites green (171 assertions this battery + prior gates), i18n parity clean, tsc/lint clean, DB integrity ok, real user intact.
+- Prompt 52 still NOT started.
