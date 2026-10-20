@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { DataTable, DataTableToolbar, Ltr } from "@/components/shared/data-table";
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
+import { ListExportButton } from "@/components/shared/list-export-button";
 import {
   FinanceStatusBadge,
   StatCard,
@@ -82,7 +83,39 @@ export function BalancesView({
 
   return (
     <div className="space-y-6" data-view={`module:${kind}`}>
-      <PageHeader title={t("title")} subtitle={t("subtitle")} />
+      <PageHeader
+        title={t("title")}
+        subtitle={t("subtitle")}
+        actions={
+          <ListExportButton<BalanceItem>
+            filename={kind}
+            columns={[
+              { header: t("colRef"), value: (i) => i.label1 },
+              { header: t("colParty"), value: (i) => i.label2 },
+              { header: t("colDate"), value: (i) => i.date },
+              ...(kind === "payables"
+                ? [{ header: t("colDue"), value: (i: BalanceItem) => i.dueDate ?? null }]
+                : []),
+              {
+                header: t("colAmount"),
+                value: (i) => i.amountMinor / 10 ** business.decimalPrecision,
+              },
+              {
+                header: t("colBalance"),
+                value: (i) => i.balanceMinor / 10 ** business.decimalPrecision,
+              },
+              { header: t("colStatus"), value: (i) => i.status },
+            ]}
+            fetchRows={async () => {
+              // The receivables/payables endpoints are unpaginated (capped
+              // open-items list) and the view itself renders that same list —
+              // one fetch of the shared fetcher IS the complete set.
+              const rows = (await fetchBalancesData(kind)).items;
+              return { rows, total: rows.length, truncated: false };
+            }}
+          />
+        }
+      />
 
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard

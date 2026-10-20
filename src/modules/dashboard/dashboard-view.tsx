@@ -2,16 +2,20 @@
 
 import {
   AlertTriangle,
+  Banknote,
   Bot,
   CheckCircle2,
   ClipboardList,
   Coins,
   Map,
+  Plus,
+  ReceiptText,
   Settings2,
   ShieldCheck,
   Sparkles,
   TrendingUp,
   Users,
+  Wallet,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
@@ -28,6 +32,7 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 import { PageHeader } from "@/components/shared/primitives";
+import { OnboardingTour } from "@/modules/shell/onboarding-tour";
 import { useSession } from "next-auth/react";
 import { fmtCount, fmtMoney } from "../finance-shared/finance-kit";
 import type { BusinessListItem, BusinessSummary } from "../shell/types";
@@ -84,6 +89,7 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
   const tCommon = useTranslations("common");
   const uiLocale = useLocale();
   const navigate = useAppStore((s) => s.navigate);
+  const fireQuickIntent = useAppStore((s) => s.fireQuickIntent);
   const { data: session } = useSession();
 
   const business: BusinessSummary = membership.business;
@@ -137,6 +143,10 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
 
   return (
     <div className="space-y-6" data-view="dashboard">
+      {/* Prompt 52 §F7 — first-visit tour (once per browser, desktop only,
+          skippable everywhere; render-gated to data-writers so the anchors
+          it points at actually exist for this user). */}
+      {can(role, "data:write") ? <OnboardingTour enabled={true} /> : null}
       <PageHeader
         title={`${t("welcomeBack")}${session?.user?.name ? `, ${session.user.name.split(" ")[0]}` : ""}`}
         titleClassName="gradient-shimmer"
@@ -178,6 +188,60 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
             onClick={() => navigate({ kind: "module", module: "products" })}
           >
             {t("lowStockAlertAction")}
+          </Button>
+        </div>
+      ) : null}
+
+      {/* Prompt 52 §F2 — quick actions: one-click paths to the money flows.
+          Each fires a cross-view intent so the target module opens its
+          create dialog immediately (role-gated to keep the row honest). */}
+      {can(role, "data:write") ? (
+        <div
+          className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+          role="toolbar"
+          aria-label={t("quickActions")}
+          data-tour="quick-actions"
+        >
+          <Button
+            className="h-11 justify-start gap-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-sm hover:from-emerald-700 hover:to-teal-700 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-600 dark:hover:to-teal-600"
+            onClick={() => {
+              fireQuickIntent("new-sale");
+              navigate({ kind: "module", module: "sales" });
+            }}
+          >
+            <span aria-hidden="true" className="bg-white/15 grid size-6 place-items-center rounded-md">
+              <ReceiptText className="size-4" />
+            </span>
+            {t("quickNewInvoice")}
+            <Plus className="ms-auto size-4 opacity-80" aria-hidden="true" />
+          </Button>
+          <Button
+            variant="outline"
+            className="h-11 justify-start gap-2.5 border-emerald-600/30 hover:bg-emerald-600/5"
+            onClick={() => {
+              fireQuickIntent("new-payment");
+              navigate({ kind: "module", module: "payments" });
+            }}
+          >
+            <span aria-hidden="true" className="bg-emerald-600/10 text-emerald-600 grid size-6 place-items-center rounded-md">
+              <Banknote className="size-4" />
+            </span>
+            {t("quickRecordPayment")}
+            <Plus className="ms-auto size-4 opacity-60" aria-hidden="true" />
+          </Button>
+          <Button
+            variant="outline"
+            className="h-11 justify-start gap-2.5 border-rose-600/30 hover:bg-rose-600/5"
+            onClick={() => {
+              fireQuickIntent("new-expense");
+              navigate({ kind: "module", module: "expenses" });
+            }}
+          >
+            <span aria-hidden="true" className="bg-rose-600/10 text-rose-600 grid size-6 place-items-center rounded-md">
+              <Wallet className="size-4" />
+            </span>
+            {t("quickNewExpense")}
+            <Plus className="ms-auto size-4 opacity-60" aria-hidden="true" />
           </Button>
         </div>
       ) : null}

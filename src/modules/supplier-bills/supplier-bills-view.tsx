@@ -30,6 +30,8 @@ import {
 import { DataTable } from "@/components/shared/data-table";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
+import { ListExportButton } from "@/components/shared/list-export-button";
+import { fetchAllPages } from "@/lib/csv";
 import { FinanceStatusBadge } from "@/modules/finance-shared/finance-kit";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
@@ -125,12 +127,44 @@ export function SupplierBillsView({ role }: { role: Role }) {
         title={t("title")}
         subtitle={t("listSubtitle")}
         actions={
-          writable ? (
-            <Button type="button" onClick={() => setCreateOpen(true)}>
-              <Plus className="size-4" aria-hidden />
-              {t("createAction")}
-            </Button>
-          ) : null
+          <>
+            <ListExportButton<SupplierBillListItemDto>
+              filename="supplier-bills"
+              columns={[
+                { header: t("reference"), value: (r) => r.reference },
+                { header: t("status"), value: (r) => t(`status_${r.status}`) },
+                { header: t("purchaseOrder"), value: (r) => r.purchaseOrderReferenceAtBill },
+                { header: t("supplier"), value: (r) => r.supplierNameAtBill },
+                { header: t("billDate"), value: (r) => r.billDate },
+                { header: t("total"), value: (r) => r.totalMinor / 10 ** r.decimalPrecisionAtBill },
+                {
+                  header: t("payableStatus"),
+                  value: (r) =>
+                    r.payable ? r.payable.outstandingMinor / 10 ** r.decimalPrecisionAtBill : null,
+                },
+              ]}
+              fetchRows={() =>
+                fetchAllPages<SupplierBillListItemDto>((pg, ps) =>
+                  fetchSupplierBills(businessId, {
+                    q: q || undefined,
+                    status: status === "ALL" ? undefined : status,
+                    billDateFrom: billFrom || undefined,
+                    billDateTo: billTo || undefined,
+                    dueDateFrom: dueFrom || undefined,
+                    dueDateTo: dueTo || undefined,
+                    page: pg,
+                    pageSize: ps,
+                  }),
+                )
+              }
+            />
+            {writable ? (
+              <Button type="button" onClick={() => setCreateOpen(true)}>
+                <Plus className="size-4" aria-hidden />
+                {t("createAction")}
+              </Button>
+            ) : null}
+          </>
         }
       />
 

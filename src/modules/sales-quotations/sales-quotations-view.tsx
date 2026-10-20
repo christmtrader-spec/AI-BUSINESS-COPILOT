@@ -31,6 +31,8 @@ import {
 import { DataTable } from "@/components/shared/data-table";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
+import { ListExportButton } from "@/components/shared/list-export-button";
+import { fetchAllPages } from "@/lib/csv";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 import { fmtMoney } from "../finance-shared/finance-kit";
@@ -121,12 +123,42 @@ export function SalesQuotationsView({ role, business }: { role: Role; business?:
         title={t("title")}
         subtitle={t("listSubtitle")}
         actions={
-          writable ? (
-            <Button type="button" onClick={() => setCreateOpen(true)}>
-              <Plus className="size-4" aria-hidden />
-              {t("createAction")}
-            </Button>
-          ) : null
+          <>
+            <ListExportButton<SalesQuotationListItem>
+              filename="sales-quotations"
+              columns={[
+                { header: t("reference"), value: (r) => r.reference },
+                { header: t("status"), value: (r) => t(`status_${r.effectiveStatus}`) },
+                { header: t("customer"), value: (r) => r.customerNameAtQuotation },
+                { header: t("validUntil"), value: (r) => r.validUntilDate },
+                { header: t("lines"), value: (r) => r.lineCount },
+                {
+                  header: t("total"),
+                  value: (r) => (business ? r.totalMinor / 10 ** business.decimalPrecision : r.totalMinor),
+                },
+                { header: t("convertedOrder"), value: (r) => r.convertedOrderReference },
+                { header: t("createdAtLabel"), value: (r) => r.createdAt },
+              ]}
+              fetchRows={() =>
+                fetchAllPages<SalesQuotationListItem>((pg, ps) =>
+                  fetchSalesQuotations(businessId, {
+                    q: q || undefined,
+                    status: status === "ALL" ? undefined : status,
+                    from: from || undefined,
+                    to: to || undefined,
+                    page: pg,
+                    pageSize: ps,
+                  }),
+                )
+              }
+            />
+            {writable ? (
+              <Button type="button" onClick={() => setCreateOpen(true)}>
+                <Plus className="size-4" aria-hidden />
+                {t("createAction")}
+              </Button>
+            ) : null}
+          </>
         }
       />
 

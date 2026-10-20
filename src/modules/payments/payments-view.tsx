@@ -8,6 +8,7 @@ import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
 import { can, asRole, type Role } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
+import { useQuickIntent } from "@/hooks/use-quick-intent";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -31,7 +32,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { DataTable, DataTableToolbar, Ltr } from "@/components/shared/data-table";
+import { ListExportButton } from "@/components/shared/list-export-button";
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
+import { fetchAllPages } from "@/lib/csv";
 import { fmtDate, fmtMoney, txKeys, useInvalidateFinance } from "../finance-shared/finance-kit";
 import { PaymentFormDialog } from "./payment-form-dialog";
 import { navigateToEntity } from "@/modules/entities/entity-route";
@@ -79,6 +82,8 @@ export function PaymentsView({
   const [direction, setDirection] = useState<(typeof DIRECTIONS)[number]>("ALL");
   const [search, setSearch] = useState("");
   const [formOpen, setFormOpen] = useState(false);
+  // Prompt 52 §F2 — dashboard quick action: open the record-payment dialog on arrival.
+  useQuickIntent("new-payment", () => setFormOpen(true));
 
   const dirQs = direction === "ALL" ? "" : `&direction=${direction}`;
   const qQs = search ? `&q=${encodeURIComponent(search)}` : "";
@@ -121,12 +126,37 @@ export function PaymentsView({
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
-          canPay ? (
-            <Button onClick={() => setFormOpen(true)} size="sm">
-              <Plus className="size-4" aria-hidden="true" />
-              {t("recordPayment")}
-            </Button>
-          ) : null
+          <>
+            <ListExportButton<PaymentRow>
+              filename="payments"
+              columns={[
+                { header: t("colDate"), value: (p) => p.paidAt },
+                { header: t("colDirection"), value: (p) => p.direction },
+                {
+                  header: t("colTarget"),
+                  value: (p) =>
+                    p.direction === "IN"
+                      ? `INV-${String(p.saleNumber ?? 0).padStart(4, "0")}${p.customerName ? ` · ${p.customerName}` : ""}`
+                      : `${p.expenseCategory ?? ""}${p.supplierName ? ` · ${p.supplierName}` : ""}`,
+                },
+                { header: t("colAmount"), value: (p) => p.amountMinor / 10 ** business.decimalPrecision },
+                { header: t("colMethod"), value: (p) => tPay(`methods.${p.method}`) },
+                { header: t("colNote"), value: (p) => p.note ?? "" },
+                { header: t("colBy"), value: (p) => p.actorName ?? "" },
+              ]}
+              fetchRows={() =>
+                fetchAllPages<PaymentRow>((pg, ps) =>
+                  api(`/api/v1/payments?page=${pg}&pageSize=${ps}${dirQs}${qQs}`),
+                )
+              }
+            />
+            {canPay ? (
+              <Button onClick={() => setFormOpen(true)} size="sm">
+                <Plus className="size-4" aria-hidden="true" />
+                {t("recordPayment")}
+              </Button>
+            ) : null}
+          </>
         }
       />
 

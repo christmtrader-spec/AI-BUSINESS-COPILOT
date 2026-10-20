@@ -16,6 +16,8 @@ export type SaleRecordRow = {
   issueDate: Date;
   subtotalMinor: number;
   discountMinor: number;
+  taxRateBp: number;
+  taxMinor: number;
   totalMinor: number;
   paidMinor: number;
   status: string;
@@ -81,6 +83,8 @@ export function mapSaleDetail(
       issueDate: record.issueDate.toISOString(),
       subtotalMinor: record.subtotalMinor,
       discountMinor: record.discountMinor,
+      taxRateBp: record.taxRateBp,
+      taxMinor: record.taxMinor,
       totalMinor: record.totalMinor,
       paidMinor: record.paidMinor,
       balanceMinor: balanceOf(record.totalMinor, record.paidMinor),

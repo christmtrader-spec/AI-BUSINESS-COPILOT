@@ -12,8 +12,11 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { Pencil, Plus, Repeat2, Search, Trash2 } from "lucide-react";
+import { api } from "@/lib/api-client";
 import { DataTable, DataTableToolbar } from "@/components/shared/data-table";
 import { Pagination } from "@/components/shared/table-kit";
+import { ListExportButton } from "@/components/shared/list-export-button";
+import { fetchAllPages } from "@/lib/csv";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -126,6 +129,7 @@ export function LeadsTable({
   customers: { id: string; name: string }[];
 }) {
   const t = useTranslations("crm.lead");
+  const tSource = useTranslations("crm.lead.source");
   const tCommon = useTranslations("common");
   const writable = can(role, "data:write");
 
@@ -196,6 +200,28 @@ export function LeadsTable({
   return (
     <div className="flex flex-col gap-4">
       <DataTableToolbar>
+        <ListExportButton<LeadDTO>
+          filename="crm-leads"
+          columns={[
+            { header: t("colName"), value: (row) => row.name },
+            { header: t("colCompany"), value: (row) => row.companyName },
+            { header: t("colStatus"), value: (row) => t(`status.${row.status}`) },
+            { header: t("colSource"), value: (row) => tSource(row.source) },
+            {
+              header: t("colAssigned"),
+              value: (row) => row.assignedTo?.name ?? row.assignedTo?.email ?? "",
+            },
+            { header: t("colCreated"), value: (row) => row.createdAt },
+          ]}
+          fetchRows={() =>
+            fetchAllPages<LeadDTO>((pg, ps) => {
+              const search = new URLSearchParams({ page: String(pg), pageSize: String(ps) });
+              if (q) search.set("q", q);
+              if (status) search.set("status", status);
+              return api<LeadListResponse>(`/api/v1/crm/leads?${search.toString()}`);
+            })
+          }
+        />
         <div className="relative w-full sm:max-w-xs">
           <Search
             className="text-muted-foreground pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2"

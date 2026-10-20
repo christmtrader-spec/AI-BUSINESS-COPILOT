@@ -124,3 +124,44 @@ export function statusOf(totalMinor: number, paidMinor: number): PaymentStatus {
   if (paidMinor >= totalMinor) return "PAID";
   return "PARTIAL";
 }
+
+/**
+ * Prompt 52 §F3 — VAT engine.
+ *
+ * The tax rate is an integer in BASIS POINTS (1000 bp = 10%) so the rate
+ * itself never carries float error. The VAT amount for an invoice is
+ * computed from the taxable base (subtotal − discount) with BigInt
+ * intermediate math and HALF-UP rounding at the minor-unit digit — the
+ * same rounding rule as toMinor. Results are always safe integers.
+ *
+ * Law: totalMinor = subtotalMinor − discountMinor + vatMinor(base, rateBp).
+ */
+export function vatMinor(baseMinor: number, rateBp: number): number {
+  if (!Number.isInteger(baseMinor) || !Number.isInteger(rateBp)) {
+    throw new Error("Minor units / basis points must be integers");
+  }
+  if (rateBp < 0 || rateBp > 10000) {
+    throw new Error("Invalid VAT rate (basis points must be 0..10000)");
+  }
+  if (baseMinor < 0) throw new Error("Taxable base must be >= 0");
+  if (rateBp === 0 || baseMinor === 0) return 0;
+  // BigInt multiply keeps precision for any safe-integer base.
+  const scaled = BigInt(baseMinor) * BigInt(rateBp);
+  const q = scaled / 10_000n; // BigInt division truncates toward zero
+  const r = scaled % 10_000n;
+  // Round half-up on the remainder (scaled is non-negative here).
+  const tax = r * 2n >= 10_000n ? q + 1n : q;
+  const n = Number(tax);
+  if (!Number.isSafeInteger(n)) throw new Error("VAT amount out of safe range");
+  return n;
+}
+
+/** Format basis points as a display percent string: 1000 -> "10%", 950 -> "9.5%". */
+export function formatBpAsPercent(rateBp: number, locale?: string): string {
+  if (!Number.isInteger(rateBp) || rateBp < 0) return "0%";
+  const value = rateBp / 100;
+  const formatted = new Intl.NumberFormat(locale === "fa" ? "fa-IR" : "en-US", {
+    maximumFractionDigits: 2,
+  }).format(value);
+  return `${formatted}%`;
+}

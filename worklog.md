@@ -5475,3 +5475,153 @@ Stage Summary:
 - Zero functional regressions: 1,050+ suite assertions green this session; browser-verified create flows (quotation, order, payment) all work end-to-end.
 - Improvement suggestions (roadmap) delivered to the user in Persian in the same reply: tax engine, CSV/XLSX export buttons on every list, bulk import templates deep-linking, Persian Jalali date range presets in reports, notification digest scheduling, dashboard quick-actions row, progressive web app (PWA), Stripe international gateway alongside Zarinpal, multi-currency accounts, audit-log viewer filters, rate-limited public API keys, and a first-run guided tour.
 - Backlog carried: P51-R1-FINAL final 14-section report assembly; Prompt 52 NOT started.
+
+---
+Task ID: 2-a
+Agent: general-purpose (F1 export wiring)
+Task: Wire ListExportButton into 13 list views
+
+Work Log:
+- purchase-orders-view.tsx: export as FIRST child of PageHeader actions (existing create button wrapped in a fragment, payments-view pattern). Columns mirror the DataTable: t("reference"), t("status")→t(`status_${r.status}`), t("supplier"), t("lines"), t("total")=totalMinor/10**decimalPrecisionAtOrder, t("orderedAt")+t("expectedDate") as ISO. fetchRows=fetchAllPages<PurchaseOrderListItemDto> over the view's own fetchPurchaseOrders() with the active q/status/from/to filters. filename "purchase-orders".
+- sales-orders-view.tsx: same placement. Columns: reference, status label, customer, dispatchedLabel "disp/total", total (business.decimalPrecision, business-optional guarded), linkedInvoice "INV-####" | null, createdAt ISO. fetchAllPages over fetchSalesOrders() with q/status/from/to. filename "sales-orders".
+- sales-quotations-view.tsx: same placement. Columns: reference, EFFECTIVE status label (mirrors badge), customer, validUntil, lines, total (business precision), convertedOrder | null, createdAt. fetchAllPages over fetchSalesQuotations() with q/status/from/to. filename "sales-quotations".
+- supplier-bills-view.tsx: same placement. Columns: reference, status label, purchaseOrder, supplier, billDate, total (per-row decimalPrecisionAtBill), payableStatus = outstandingMinor/10**decimalPrecisionAtBill for POSTED bills else null (mirrors payableBadge semantics). fetchAllPages over fetchSupplierBills() with q/status/billDate*/dueDate* filters. filename "supplier-bills".
+- stocktakes-view.tsx: same placement. Columns: reference, status label, products(lineCount), pending(lineCount-countedLineCount), netVarianceUnits, createdAt, createdBy name/email. fetchAllPages over fetchStocktakes() with q/status/from/to. filename "stocktakes".
+- goods-receipts-view.tsx: same placement. Columns: reference, status label, purchaseOrder, supplier, lines, totalReceived, createdAt. fetchAllPages over fetchGoodsReceipts(). filename "goods-receipts".
+- goods-returns/goods-returns-view.tsx (note: path is goods-returns/, not inventory root): same placement. Columns: reference, status label, sourceReceipt, supplier, lines, totalReturned, createdAt. fetchAllPages over fetchGoodsReturns(). filename "goods-returns".
+- goods-dispatches/goods-dispatches-view.tsx: same placement. Columns: reference, status label, customer, lines, totalDispatched, createdAt. fetchAllPages over fetchGoodsDispatches(). filename "goods-dispatches".
+- CRM (crm-view.tsx renders tabs via separate files, so the export buttons live in the tab components that own the toolbars/columns): leads-table.tsx — ListExportButton as first child of DataTableToolbar; columns colName/colCompany/colStatus(crm.lead.status.* via t(`status.${s}`))/colSource(crm.lead.source.*)/colAssigned/colCreated(ISO); fetchAllPages<LeadDTO> over /api/v1/crm/leads with active q+status; filename "crm-leads". opportunities-table.tsx — same toolbar placement; columns colTitle/colCustomer/colStage(crm.opportunity.stage.*)/colProbability/colExpectedValue(minor/10**business.decimalPrecision)/colExpectedClose/colAssigned; fetchAllPages<OpportunityDTO> over /api/v1/crm/opportunities with active q+stage(+customerIdFilter); filename "crm-opportunities".
+- members-view.tsx: PageHeader had NO actions → added with the export (rendered only for can(role,"members:read")). Columns mirror the members DataTable: t("membersTitle") = "Name <email>" composite, t("role") = translated role + " · owner" when isOwner. fetchRows is a single fetch of /api/v1/businesses/<id>/members (unpaginated endpoint → one fetch IS the complete set; fetchAllPages would be pretense) returning {rows,total,truncated:false}. filename "members".
+- balances-view.tsx: PageHeader had NO actions → added. Columns: colRef, colParty, colDate, colDue (payables kind only, mirroring the table's conditional column), colAmount, colBalance (minor/10**business.decimalPrecision), colStatus (raw enum — same as the existing sales-view export house style). fetchRows reuses fetchBalancesData(kind) (the shared queryFn/prefetcher fetcher; unpaginated capped list) → {rows,total,truncated:false}. filename = kind ("receivables"/"payables") — honest per-list naming.
+- SKIPPED with reasons: (1) crm/tasks-view.tsx — renders the server-classified WORK QUEUE as cards (no DataTable, no column headers) and its queryFn hits /api/v1/crm/tasks/work-queue (bounded payload, not the paged /api/v1/crm/tasks list); crm.tasks has no col*-style header keys, so wiring would require creating i18n keys (forbidden). Mirrors the orchestrator's own "skip [CRM lists] if it is not a table" rule; suggest adding col* keys to crm.tasks in an i18n-owned pass, then wiring is trivial. (2) notifications-view.tsx — a grouped feed of interactive rows (no DataTable) whose notifications namespace likewise has no column-header keys; same forbidden-key constraint. Both skips leave view logic untouched.
+
+Stage Summary:
+- Files touched (12): src/modules/purchase-orders/purchase-orders-view.tsx, src/modules/sales-orders/sales-orders-view.tsx, src/modules/sales-quotations/sales-quotations-view.tsx, src/modules/supplier-bills/supplier-bills-view.tsx, src/modules/inventory/stocktakes/stocktakes-view.tsx, src/modules/inventory/goods-receipts/goods-receipts-view.tsx, src/modules/inventory/goods-returns/goods-returns-view.tsx, src/modules/inventory/goods-dispatches/goods-dispatches-view.tsx, src/modules/crm/leads-table.tsx, src/modules/crm/opportunities-table.tsx, src/modules/settings/members-view.tsx, src/modules/balances/balances-view.tsx. Only additions: ListExportButton/fetchAllPages imports (+ `api` in the two CRM tables), the export button blocks, and two one-line useTranslations for label namespaces already used by the same files' badges. No behavior/logic changed; no i18n files touched; no new translation keys.
+- 12 export buttons wired across 11 view files (CRM counts as 2 tabular lists per instruction).
+- Verification: `bunx tsc --noEmit` → 0 errors in all touched files; the only 3 errors are pre-existing outside this task's scope (scripts/prompt34-unit.ts ×2 SaleRecordRow taxRateBp/taxMinor; src/app/api/v1/businesses/[id]/route.ts vatRateBp — consistent with the in-flight VAT work in the tree). `bun run lint` → 1 pre-existing problem, src/hooks/use-quick-intent.ts react-hooks/refs, not touched by this task; 0 new problems in my files.
+---
+Task ID: 2-b
+Agent: general-purpose (F6 Stripe + F9 digest)
+Task: F6 Stripe payment gateway adapter (no new deps) + F9 weekly email digest (operator cron pattern) with preview API, settings card and EN/FA i18n.
+
+Work Log:
+- Read worklog header, payments lib (types/registry/zarinpal/mock/signature/config/http/errors), tenant/rbac/api-helpers/rate-limit/audit/money, email builders, CRM reminder processor + script, settings view/ApiKeysCard, i18n en/fa audit namespace.
+- F6: extended ProviderSlug/PROVIDER_SLUGS with "stripe" (types.ts); created src/lib/payments/stripe.ts — fetch+node:crypto only (NO SDK/npm dep), slug "stripe", displayName "Stripe", mode LIVE when STRIPE_SECRET_KEY set else SANDBOX, configured via runtime accessor (zarinpal pattern); capabilities currencies USD/EUR, webhooks/serverVerification/redirectCallback true. createCheckout posts form-encoded URLSearchParams to api.stripe.com/v1/checkout/sessions (mode=payment, success_url joins session_id={CHECKOUT_SESSION_ID} with ? since the service callback URL is query-less, unit_amount=amountMinor 1:1 minor-units identity, metadata[checkout_session_id]=internal session id as the providerRef↔session pairing anchor, client_reference_id=businessId); error mapping mirrors zarinpal (PROVIDER_TIMEOUT/PROVIDER_UNAVAILABLE/PROVIDER_INVALID_RESPONSE/PROVIDER_CURRENCY_UNSUPPORTED). verifyWebhook: manual Stripe t=,v1= HMAC-SHA256(`${t}.${rawBody}`) verification, timing-safe, 5-min tolerance, STRIPE_WEBHOOK_SECRET only (never the mock fallback secret; missing → fail closed); maps checkout.session.completed→succeeded / checkout.session.expired→expired / payment_intent.payment_failed→failed (metadata anchor); unknown types → benign no-op event with unresolvable session id (types.ts law "unknown types are ignored"; service records eventId then returns ignored:unknown-session → 200). getSessionStatus GET session: status=expired→EXPIRED, payment_status paid→SUCCEEDED, no_payment_required→SUCCEEDED (documented: session completed with nothing due), else PENDING (conservative §35). verifyPayment GET session → claim (amount_total/currency actuals; service compares → reconciliation); parseCallback requires cs_(test|live)_… session_id, else CallbackParseError.
+- F6: registered stripeProvider in registry ADAPTERS (+comment), added STRIPE_SECRET_KEY blocker branch to config.ts validatePaymentConfig (mirrors ZARINPAL_MERCHANT_ID incl. HTTPS-in-production rule), barrel export in payments/index.ts. Billing UI uses registry displayName code literals (no i18n keys needed — grep found no zarinpal display names in src/modules/billing).
+- F9: created src/lib/email/digest.ts (server-only) buildWeeklyDigest(businessId,{now}) — UTC [now-7d,now) window; sale/payment(OUT-IN filter IN)/expense aggregates + open receivables via SUM(total)-SUM(paid) over status!=PAID + low-stock scan (reports.ts convention, app-side stockQty≤lowStockAt, first 5 names) + top SaleItem by lineTotalMinor groupBy; all integer minor units, formatted via formatMoney/fromMinor(business.decimalPrecision); HTML mirrors buildPasswordResetEmail (520px card, dir=rtl for fa, escapeHtml everywhere) with honest disclosure footer (window dates UTC, computed-at, "not a financial statement", real zeros).
+- F9: created scripts/send-weekly-digest.mjs (bun + server-only shim + dynamic TS import, CRM-script CLI contract): default DRY RUN, --send delivers via getEmailProvider(), --dry-run explicit, conflict/unknown-flag → exit 1; bounded candidate scan (businesses with ≥1 live sale OR expense, take 500, id order); per-business JSON output with masked recipient (maskAddress), stats counts only; one bad business → failed++ continue; cron example documented (0 8 * * 1, Monday 08:00 UTC).
+- F9: created GET /api/v1/reports/digest-preview (settings:manage, rateLimit 5/hour per user, returns window+stats+formatted money+html/text; NEVER sends). Created src/modules/settings/digest-card.tsx (Card, preview button → small stats table with window dates + lastUpdated + noData + previewFailed toast) and mounted it in business-settings-view.tsx right below ApiKeysCard ({activeId ? <DigestCard activeId={activeId} /> : null}).
+- i18n: added new top-level "digest" namespace (15 keys) to en.ts after audit/before comingSoon and symmetric position in fa.ts (exact FA strings from spec).
+- Verified: bunx tsc --noEmit clean; bun run lint 0 errors (1 pre-existing warning in jalali-range-presets.tsx — untouched forbidden file); bun scripts/i18n-audit.ts CLEAN (0 missing, 0 parity, 2900 usages); bun scripts/send-weekly-digest.mjs --dry-run against db/custom.db executes (exit 0; DB currently has 0 businesses/sales/expenses → candidates:0, still a full run proof). Additionally sanity-tested on a THROWAWAY /tmp SQLite DB (deleted after): Stripe form/signature round-trip + tamper rejection + callback parse + unknown-type benign no-op + payment_intent mapping, and buildWeeklyDigest end-to-end (revenue/collected/expenses/receivables/low-stock/top-product all correct, fa RTL html) + per-business dry-run output + --dry-run --send conflict exit 1. db/custom.db and prisma/schema.prisma untouched.
+
+Stage Summary:
+- F6 shipped: stripe adapter registered as third provider behind the existing fail-closed registry/config; Stripe signature scheme implemented manually (timing-safe, 5-min tolerance, STRIPE_WEBHOOK_SECRET-only, never the dev fallback); money stays integer minor units (Stripe-native 1:1); webhook→internal-session bridging via metadata[checkout_session_id] because fulfillWebhook resolves by internal CheckoutSession id — adapter falls back to the providerRef so unmappable events are benignly ignored, never misapplied.
+- F9 shipped: OPERATOR-SCHEDULED digest (script + TS builder + preview API + settings card), no in-app scheduler, no request-path sends; EN/FA complete and audit-clean.
+- Deviations: (1) task's success_url "&session_id" join implemented as a query-aware joiner ("?" for the actual query-less callback URL) — literal "&" would have produced a broken callback URL; (2) "metadata[providerRef pairing]" implemented as metadata[checkout_session_id]=internal session id (the only pairing that makes webhook events resolvable by the fixed fulfillWebhook lookup); (3) task's "input.description" does not exist on CreateCheckoutInput — product name built from planCode/billingPeriod via buildProductName (same wording as zarinpal); (4) unknown Stripe event types → benign no-op event instead of WebhookVerificationError (mock throws, but types.ts law says "unknown types are ignored"; 401 on unrelated deliveries would get the endpoint disabled by Stripe).
+- Ops note: set STRIPE_SECRET_KEY (+STRIPE_WEBHOOK_SECRET for webhooks; subscribe the endpoint to checkout.session.completed, checkout.session.expired, payment_intent.payment_failed) and schedule `bun scripts/send-weekly-digest.mjs --send` weekly (cron 0 8 * * 1). Without STRIPE_WEBHOOK_SECRET webhook verification fails closed (401) by design.
+---
+Task ID: 2 (Prompt 52 — "ادامه ساخت 💡 پیشنهادهای من برای بهبود بعدی")
+Agent: Z.ai Code (main orchestrator)
+Task: Implement ALL 10 user-approved improvements (F1–F10) with full i18n
+(en/fa), then scan + QA the whole project and fix every bug surfaced.
+
+Work Log:
+- Schema (one db:push, 52ms): Business.vatEnabled/vatRateBp (bp = basis
+  points, 1000 = 10%); Sale.taxRateBp/taxMinor snapshot (new money law:
+  totalMinor = subtotal − discount + taxMinor; legacy rows keep 0);
+  new ApiKey model (sha256 keyHash UNIQUE, display prefix, scopes,
+  lastUsedAt/requestCount, soft revoke); Business.apiKeys + User relation.
+- F3 VAT engine: vatMinor(baseMinor, rateBp) in money.ts (BigInt math,
+  half-up, 0..10000bp guard); sales POST route applies VAT server-side
+  from business config (never client input) and snapshots rate+amount;
+  sales-orders order→invoice issuance applies the identical law; SaleDetail
+  DTO + route + form-dialog live preview + detail dialog + PRINT document
+  all show the VAT row; sales CSV export gains a "tax" column; settings UI
+  card (enable switch + rate input + 0/9/10% quick buttons + live
+  base→VAT→total preview); PATCH /businesses/[id] accepts vatEnabled/
+  vatRateBp (settings:manage), first-enable defaults 1000bp.
+- F4 Jalali: new src/lib/jalali.ts (pure Khayyam–Borkowski conversion,
+  verified against anchors: 2026-03-21 = 1405/01/01, Esfand 1403 = 30d);
+  7 presets (this/last month, this/last quarter, last 3 months, this/last
+  year) → inclusive Gregorian keys; /reports/summary + /reports/export
+  accept optional from/to (resolveCustomRange validation → 422
+  INVALID_REPORT_RANGE; advanced insights accepts the custom window with
+  previous-window law intact); JalaliRangePresets component (shows BOTH
+  calendars) wired into reports summary (+CSV), performance panel
+  (fill+apply), statements.
+- F2 Quick actions: store.quickIntent (new-sale/new-expense/new-payment,
+  seq-guarded, not persisted); dashboard gradient action row (role-gated);
+  useQuickIntent hook auto-opens the create dialog in sales/expenses/
+  payments on arrival.
+- F1 Export kit: ListExportButton (RFC4180+BOM, formula-injection guard,
+  honest truncation toast) wired into payments + 12 more views via
+  subagent 2-a (purchase-orders, sales-orders, sales-quotations,
+  supplier-bills, stocktakes, goods-receipts, goods-returns,
+  goods-dispatches, CRM leads/opportunities tabs, members, balances
+  ×2). Skipped (honest): crm tasks (card queue, no table/i18n headers),
+  notifications (feed, not a table).
+- F8 API keys: lib/api-keys.ts (ck_ + 48hex, sha256, timing-safe, scopes
+  "read"); POST/GET /api/v1/api-keys (settings:manage, 10/hr rate limit,
+  max 10 active, audited), DELETE /api/v1/api-keys/[id] (revoke);
+  /api/v1/open/[resource] GET (customers|products|sales; Bearer auth,
+  120/min per key, bounded 500 rows, no secrets, no cross-tenant);
+  settings ApiKeysCard (one-time plaintext dialog + copy + revoke confirm).
+- F6 Stripe: adapter (fetch + node:crypto HMAC t=,v1= verification, no
+  SDK), registered in registry/config/types; STRIPE_SECRET_KEY gate.
+- F9 Digest: buildWeeklyDigest (7d window, integer minor units, bilingual
+  HTML, honest footer); scripts/send-weekly-digest.mjs (operator cron,
+  --dry-run default, --send, --business-id); GET /reports/digest-preview
+  (settings:manage, 5/hr, never sends); settings DigestCard preview.
+- F5 PWA: manifest.webmanifest + sharp-rasterized icons (192/512/
+  apple-touch from brand SVG), sw.js (network-first shell + /api/v1 GET
+  last-known-good offline fallback; writes NEVER cached/faked; bounded
+  caches; dev-guarded registration via PwaRegister).
+- F7 Tour: OnboardingTour (spotlight via box-shadow cutout, data-tour
+  anchors on sidebar buttons + quick actions, 7 steps, RTL+keyboard,
+  Escape/skip, once per browser via localStorage, desktop-only because
+  sidebar anchors must exist).
+- F10 Audit filters: route gains action-contains/entityType/actorId/
+  from/to (UTC day bounds) + facets=1 (bounded groupBys for the filter
+  pickers); CSV honors the same filters and audits the filter set;
+  audit-view rebuilt with filter bar (faceted selects + date inputs),
+  empty-filtered states, row-click detail dialog with full before/after
+  JSON (previously invisible).
+- Health fix: "no such table _prisma_migrations" no longer misreports a
+  db-push database as "degraded" — probes a business table, reports
+  status ok + migrations.known=false (verified live).
+- Bug fixes from QA: (1) next-intl UNCLOSED_TAG crash —
+  settings.apiKeysUsageHint contained `<key>` which ICU parses as a tag
+  (reworded EN+FA, console clean); (2) Radix a11y error — SaleDetailDialog
+  rendered no DialogTitle in the loading/error branches (added sr-only
+  titles); (3) tenant AuthContext + businesses list mapping gained the
+  vat fields (tsc); (4) prompt34-unit fixtures updated for taxRateBp/
+  taxMinor (139/139 PASS).
+- i18n: all new strings added to BOTH en.ts and fa.ts — audit filters,
+  dashboard quick actions, settings VAT + API keys, reports.jalali,
+  finance vatLabel (form + detail), new `digest` + `tour` namespaces;
+  i18n-audit CLEAN (174 files, 2,885 usages, 0 missing, 0 parity).
+
+Stage Summary:
+- Browser-verified (agent-browser, real flows): signup→onboarding→
+  dashboard; tour renders + skips; quick action opens sales create dialog;
+  VAT enabled @10% → invoice INV-0001 3×$100 → $30 tax → $330 total
+  (DB: 30000+3000=33000, bp=1000); print doc contains "VAT (10%) $30.00";
+  Jalali "this month" = 1 Mehr 1405–30 Mehr 1405 = 2026-09-23..10-22 with
+  correct KPIs ($330 revenue, 1 invoice); audit filter "sale" narrows to
+  sale.create and detail dialog shows taxMinor/taxRateBp payload; API key
+  created + open API returns 200 with tenant rows / 401 without key /
+  401 bad key / 404 unknown resource; digest preview shows real numbers
+  (1 invoice, $330, receivables $330 (1)); export buttons present on
+  payments/purchase-orders/receivables/members + sales exercised; PWA
+  manifest/sw/icons all 200 + linked in HTML; FA/RTL verified visually
+  (sidebar RTL, خروجی CSV, بازه‌های تقویم جلالی, ۱ مهر ۱۴۰۵).
+- Viewports: 1920×1080 + 390×844 (no horizontal overflow; presets/cards
+  stack correctly). Console: 0 errors after fixes (fresh-load verified).
+- Static: tsc 0, lint 0, i18n CLEAN, prompt34-unit 139/139,
+  prompt20-billing-check 56/56, data-portability-audit 53/53,
+  crm-activity-task-static-scan 21/21.
+- Known honest limitation: dev server in this sandbox is periodically
+  reaped (3 silent deaths, no fatal trace in dev.log) — ensure-dev.sh
+  restarts are routine, not code regressions. P51-R1-FINAL
+  (BUSINESSES_MAX semantics) remains a separate pending task and was NOT
+  started this round.

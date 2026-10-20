@@ -23,6 +23,8 @@ import { rateLimit } from "@/lib/rate-limit";
 import { assertFeatureAccess } from "@/lib/billing";
 import { fromMinor } from "@/lib/money";
 import { buildReportSummary, normalizeReportDays } from "@/lib/reports";
+import { ReportRangeError, resolveCustomRange } from "@/lib/report-periods";
+import { ApiError as ApiErr } from "@/lib/api-helpers";
 import { csvCell } from "@/lib/csv";
 
 export const dynamic = "force-dynamic";
@@ -51,7 +53,28 @@ export const GET = route(async (req: NextRequest) => {
 
   const url = new URL(req.url);
   const days = normalizeReportDays(url.searchParams.get("days"));
-  const summary = await buildReportSummary(ctx.businessId, days);
+
+  // Prompt 52 §F4 — optional explicit local-day window (Jalali presets);
+  // identical validation to the summary route.
+  const fromRaw = url.searchParams.get("from");
+  const toRaw = url.searchParams.get("to");
+  let custom: { from: string; to: string } | undefined;
+  if (fromRaw !== null || toRaw !== null) {
+    if (fromRaw === null || toRaw === null) {
+      throw new ApiErr(422, "VALIDATION_ERROR", "from and to must be provided together.");
+    }
+    custom = { from: fromRaw, to: toRaw };
+    try {
+      resolveCustomRange(ctx.business.timezone || "UTC", custom.from, custom.to, new Date());
+    } catch (error) {
+      if (error instanceof ReportRangeError) {
+        throw new ApiErr(422, "INVALID_REPORT_RANGE", error.message, { field: error.field });
+      }
+      throw error;
+    }
+  }
+
+  const summary = await buildReportSummary(ctx.businessId, days, custom);
   const business = ctx.business;
   const precision = business.decimalPrecision ?? 2;
 

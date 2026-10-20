@@ -466,6 +466,9 @@ export type SaleDetail = {
     issueDate: string;
     subtotalMinor: number;
     discountMinor: number;
+    // Prompt 52 §F3 — VAT snapshot on the issued invoice (0 for legacy rows).
+    taxRateBp: number;
+    taxMinor: number;
     totalMinor: number;
     paidMinor: number;
     balanceMinor: number;

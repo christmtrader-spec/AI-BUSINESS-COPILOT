@@ -22,9 +22,19 @@ const updateSchema = z.object({
   decimalPrecision: z.number().int().min(0).max(4).optional(),
   locale: z.enum(["en", "fa"]).optional(),
   timezone: z.string().trim().min(1).max(64).optional(),
+  // Prompt 52 §F3 — VAT engine configuration (settings:manage gated).
+  vatEnabled: z.boolean().optional(),
+  // Basis points 0..10000 (1000 = 10%). When enabling without a rate, the
+  // server keeps the stored rate (or 1000 default on first enable).
+  vatRateBp: z.number().int().min(0).max(10000).optional(),
 });
 
 type RouteParams = { params: Promise<{ id: string }> };
+
+/** First-enable helper: a business that never configured a rate gets 10%. */
+function bizDefaultsNeeded(business: { vatRateBp: number }): boolean {
+  return business.vatRateBp === 0;
+}
 
 export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   const { id } = await params;
@@ -65,6 +75,14 @@ export const PATCH = route(async (req: NextRequest, { params }: RouteParams) => 
         ...(input.decimalPrecision !== undefined ? { decimalPrecision: input.decimalPrecision } : {}),
         ...(input.locale !== undefined ? { locale: input.locale } : {}),
         ...(input.timezone !== undefined ? { timezone: input.timezone } : {}),
+        // §F3 — VAT: enabling with no explicit rate defaults to 1000 bp
+        // (10%, the official Iranian VAT rate) unless the business already
+        // has a stored non-zero rate.
+        ...(input.vatEnabled !== undefined ? { vatEnabled: input.vatEnabled } : {}),
+        ...(input.vatRateBp !== undefined ? { vatRateBp: input.vatRateBp } : {}),
+        ...(input.vatEnabled === true && input.vatRateBp === undefined && bizDefaultsNeeded(ctx.business)
+          ? { vatRateBp: 1000 }
+          : {}),
       },
     });
 

@@ -104,6 +104,7 @@ export function validatePaymentConfig(input: NodeJS.ProcessEnv = process.env): P
   const cfg = readEnv(input);
   const blockers: string[] = [];
   const zarinpalCreds = Boolean(input.ZARINPAL_MERCHANT_ID?.trim());
+  const stripeCreds = Boolean(input.STRIPE_SECRET_KEY?.trim());
 
   if (input.PAYMENTS_ENABLED?.trim().toLowerCase() === "false") {
     blockers.push("PAYMENTS_ENABLED=false — payment initiation is disabled (existing subscriptions are unaffected).");
@@ -133,6 +134,17 @@ export function validatePaymentConfig(input: NodeJS.ProcessEnv = process.env): P
   if (cfg.providerSlug === "zarinpal" && cfg.env !== "mock") {
     if (!zarinpalCreds) {
       blockers.push("ZARINPAL_MERCHANT_ID is missing — the Zarinpal adapter cannot start without credentials.");
+    }
+    if (!cfg.baseUrl) {
+      blockers.push("PAYMENT_BASE_URL (or APP_BASE_URL) is missing — provider callback URLs are built from it (never from Host headers).");
+    }
+    if (cfg.env === "production" && !cfg.baseUrl.startsWith("https://")) {
+      blockers.push("PAYMENT_BASE_URL must be HTTPS in production (provider callback requirement).");
+    }
+  }
+  if (cfg.providerSlug === "stripe" && cfg.env !== "mock") {
+    if (!stripeCreds) {
+      blockers.push("STRIPE_SECRET_KEY is missing — the Stripe adapter cannot start without credentials.");
     }
     if (!cfg.baseUrl) {
       blockers.push("PAYMENT_BASE_URL (or APP_BASE_URL) is missing — provider callback URLs are built from it (never from Host headers).");

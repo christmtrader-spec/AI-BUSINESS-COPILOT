@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, Vazirmatn } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ChunkRecovery } from "@/components/chunk-recovery";
+import { PwaRegister } from "@/components/pwa-register";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,6 +31,14 @@ export const metadata: Metadata = {
   authors: [{ name: "AI Business Copilot" }],
   icons: {
     icon: "/logo.svg",
+    apple: "/icons/apple-touch-icon.png",
+  },
+  // Prompt 52 §F5 — installable PWA (manifest + light offline shell).
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "Copilot",
+    statusBarStyle: "default",
   },
   openGraph: {
     title: "AI Business Copilot",
@@ -59,6 +68,7 @@ export default function RootLayout({
       >
         {children}
         <ChunkRecovery />
+        <PwaRegister />
         <Toaster />
       </body>
     </html>

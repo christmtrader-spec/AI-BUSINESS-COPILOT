@@ -46,6 +46,8 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         issueDate: sale.issueDate,
         subtotalMinor: sale.subtotalMinor,
         discountMinor: sale.discountMinor,
+        taxRateBp: sale.taxRateBp,
+        taxMinor: sale.taxMinor,
         totalMinor: sale.totalMinor,
         paidMinor: sale.paidMinor,
         status: sale.status,

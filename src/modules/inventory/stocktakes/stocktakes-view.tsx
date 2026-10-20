@@ -28,6 +28,8 @@ import {
 import { DataTable } from "@/components/shared/data-table";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
+import { ListExportButton } from "@/components/shared/list-export-button";
+import { fetchAllPages } from "@/lib/csv";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 import type { StocktakeListItemDto } from "@/lib/inventory/stocktake/dto";
@@ -102,12 +104,41 @@ export function StocktakesView({ role }: { role: Role }) {
         title={t("stocktakes")}
         subtitle={t("listSubtitle")}
         actions={
-          writable ? (
-            <Button type="button" onClick={() => setCreateOpen(true)}>
-              <Plus className="size-4" aria-hidden />
-              {t("createStocktake")}
-            </Button>
-          ) : null
+          <>
+            <ListExportButton<StocktakeListItemDto>
+              filename="stocktakes"
+              columns={[
+                { header: t("reference"), value: (r) => r.reference },
+                { header: t("status"), value: (r) => t(`status_${r.status}`) },
+                { header: t("products"), value: (r) => r.lineCount },
+                { header: t("pending"), value: (r) => r.lineCount - r.countedLineCount },
+                { header: t("netVariance"), value: (r) => r.netVarianceUnits },
+                { header: t("createdAt"), value: (r) => r.createdAt },
+                {
+                  header: t("createdBy"),
+                  value: (r) => r.createdBy?.name ?? r.createdBy?.email ?? "",
+                },
+              ]}
+              fetchRows={() =>
+                fetchAllPages<StocktakeListItemDto>((pg, ps) =>
+                  fetchStocktakes(businessId, {
+                    q: q || undefined,
+                    status: status === "ALL" ? undefined : status,
+                    from: from || undefined,
+                    to: to || undefined,
+                    page: pg,
+                    pageSize: ps,
+                  }),
+                )
+              }
+            />
+            {writable ? (
+              <Button type="button" onClick={() => setCreateOpen(true)}>
+                <Plus className="size-4" aria-hidden />
+                {t("createStocktake")}
+              </Button>
+            ) : null}
+          </>
         }
       />
 

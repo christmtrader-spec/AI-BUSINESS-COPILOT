@@ -2,7 +2,7 @@
  * Payment provider registry — Prompt 22 + Prompt 23.
  *
  * The ONLY place that knows which providers exist. Resolution rules:
- * - Code-registered adapters (mock + zarinpal) are candidates.
+ * - Code-registered adapters (mock + zarinpal + stripe) are candidates.
  * - `PAYMENT_PROVIDERS` env (comma-separated slugs) RESTRICTS the set when
  *   present (e.g. `PAYMENT_PROVIDERS=mock` in CI). Unknown slugs in the
  *   env are ignored (they simply have no adapter).
@@ -22,10 +22,11 @@
 import { ApiError } from "@/lib/api-helpers";
 import { validatePaymentConfig } from "./config";
 import { mockProvider } from "./mock-provider";
+import { stripeProvider } from "./stripe";
 import type { PaymentProvider, ProviderSlug } from "./types";
 import { zarinpalProvider } from "./zarinpal";
 
-const ADAPTERS: readonly PaymentProvider[] = [mockProvider, zarinpalProvider];
+const ADAPTERS: readonly PaymentProvider[] = [mockProvider, zarinpalProvider, stripeProvider];
 
 function envAllowlist(): Set<string> | null {
   const raw = process.env.PAYMENT_PROVIDERS?.trim();

@@ -9,6 +9,7 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { downloadCsv, exportStamp, fetchAllPages, toCsv } from "@/lib/csv";
 import { can, asRole, type Role } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
+import { useQuickIntent } from "@/hooks/use-quick-intent";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -103,6 +104,8 @@ export function SalesView({
   const [status, setStatus] = useState<(typeof STATUS_FILTERS)[number]>("ALL");
   const [formOpen, setFormOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
+  // Prompt 52 §F2 — dashboard quick action: open the create dialog on arrival.
+  useQuickIntent("new-sale", () => setFormOpen(true));
 
   // Month drill-down deep link (#/sales?month=YYYY-MM, "Open in Sales" from
   // the reports month dialog). The param lives in the URL — shareable and

@@ -29,6 +29,8 @@ export type AuthContext = {
     decimalPrecision: number;
     locale: string;
     timezone: string;
+    vatEnabled: boolean;
+    vatRateBp: number;
     ownerId: string;
     updatedAt: string;
   };
@@ -90,6 +92,9 @@ export async function getAuthContext(req: Request): Promise<AuthContext> {
       decimalPrecision: member.business.decimalPrecision,
       locale: member.business.locale,
       timezone: member.business.timezone,
+      // Prompt 52 §F3 — VAT engine config rides on every auth context.
+      vatEnabled: member.business.vatEnabled,
+      vatRateBp: member.business.vatRateBp,
       ownerId: member.business.ownerId,
       updatedAt: member.business.updatedAt.toISOString(),
     },

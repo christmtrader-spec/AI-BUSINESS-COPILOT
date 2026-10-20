@@ -31,6 +31,8 @@ import {
 import { DataTable } from "@/components/shared/data-table";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
+import { ListExportButton } from "@/components/shared/list-export-button";
+import { fetchAllPages } from "@/lib/csv";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 import { fmtMoney } from "../finance-shared/finance-kit";
@@ -105,12 +107,45 @@ export function SalesOrdersView({ role, business }: { role: Role; business?: Bus
         title={t("title")}
         subtitle={t("listSubtitle")}
         actions={
-          writable ? (
-            <Button type="button" onClick={() => setCreateOpen(true)}>
-              <Plus className="size-4" aria-hidden />
-              {t("createAction")}
-            </Button>
-          ) : null
+          <>
+            <ListExportButton<SalesOrderListItem>
+              filename="sales-orders"
+              columns={[
+                { header: t("reference"), value: (r) => r.reference },
+                { header: t("status"), value: (r) => t(`status_${r.status}`) },
+                { header: t("customer"), value: (r) => r.customerNameAtOrder },
+                { header: t("dispatchedLabel"), value: (r) => `${r.dispatchedQty}/${r.totalQty}` },
+                {
+                  header: t("total"),
+                  value: (r) => (business ? r.totalMinor / 10 ** business.decimalPrecision : r.totalMinor),
+                },
+                {
+                  header: t("linkedInvoice"),
+                  value: (r) =>
+                    r.invoiceNumber != null ? `INV-${String(r.invoiceNumber).padStart(4, "0")}` : null,
+                },
+                { header: t("createdAtLabel"), value: (r) => r.createdAt },
+              ]}
+              fetchRows={() =>
+                fetchAllPages<SalesOrderListItem>((pg, ps) =>
+                  fetchSalesOrders(businessId, {
+                    q: q || undefined,
+                    status: status === "ALL" ? undefined : status,
+                    from: from || undefined,
+                    to: to || undefined,
+                    page: pg,
+                    pageSize: ps,
+                  }),
+                )
+              }
+            />
+            {writable ? (
+              <Button type="button" onClick={() => setCreateOpen(true)}>
+                <Plus className="size-4" aria-hidden />
+                {t("createAction")}
+              </Button>
+            ) : null}
+          </>
         }
       />
 

@@ -10,8 +10,11 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { api } from "@/lib/api-client";
 import { DataTable, DataTableToolbar } from "@/components/shared/data-table";
 import { Pagination } from "@/components/shared/table-kit";
+import { ListExportButton } from "@/components/shared/list-export-button";
+import { fetchAllPages } from "@/lib/csv";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -64,6 +67,7 @@ export function OpportunitiesTable({
   customerIdFilter?: string | null;
 }) {
   const t = useTranslations("crm.opportunity");
+  const tStage = useTranslations("crm.opportunity.stage");
   const tCommon = useTranslations("common");
   const writable = can(role, "data:write");
 
@@ -178,6 +182,36 @@ export function OpportunitiesTable({
   return (
     <div className="flex flex-col gap-4">
       <DataTableToolbar>
+        <ListExportButton<OpportunityDTO>
+          filename="crm-opportunities"
+          columns={[
+            { header: t("colTitle"), value: (row) => row.title },
+            {
+              header: t("colCustomer"),
+              value: (row) => row.customer?.name ?? row.lead?.name ?? "",
+            },
+            { header: t("colStage"), value: (row) => tStage(row.stage) },
+            { header: t("colProbability"), value: (row) => row.probabilityPct },
+            {
+              header: t("colExpectedValue"),
+              value: (row) => row.expectedValueMinor / 10 ** business.decimalPrecision,
+            },
+            { header: t("colExpectedClose"), value: (row) => row.expectedCloseDate },
+            {
+              header: t("colAssigned"),
+              value: (row) => row.assignedTo?.name ?? row.assignedTo?.email ?? "",
+            },
+          ]}
+          fetchRows={() =>
+            fetchAllPages<OpportunityDTO>((pg, ps) => {
+              const search = new URLSearchParams({ page: String(pg), pageSize: String(ps) });
+              if (q) search.set("q", q);
+              if (stage) search.set("stage", stage);
+              if (customerIdFilter) search.set("customerId", customerIdFilter);
+              return api<OpportunityListResponse>(`/api/v1/crm/opportunities?${search.toString()}`);
+            })
+          }
+        />
         <div className="relative w-full sm:max-w-xs">
           <Search
             className="text-muted-foreground pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2"

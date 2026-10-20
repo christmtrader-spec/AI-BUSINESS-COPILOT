@@ -800,12 +800,21 @@ type AppState = {
   activeBusinessId: string | null;
   view: AppView;
   commandOpen: boolean;
+  /**
+   * Prompt 52 §F2 — cross-view quick-action intents ("New invoice" on the
+   * dashboard opens the create dialog inside the target module). The `seq`
+   * makes every fire unique so the same action can fire twice in a row.
+   * Never persisted; consumed by the target view on mount/observation.
+   */
+  quickIntent: { action: "new-sale" | "new-expense" | "new-payment"; seq: number } | null;
   setLocale: (locale: Locale) => void;
   setActiveBusiness: (id: string | null) => void;
   navigate: (view: AppView, opts?: { replace?: boolean }) => void;
   /** Back/forward + deep links: set view WITHOUT pushing a new history entry. */
   replaceView: (view: AppView) => void;
   setCommandOpen: (open: boolean) => void;
+  fireQuickIntent: (action: "new-sale" | "new-expense" | "new-payment") => void;
+  consumeQuickIntent: () => void;
 };
 
 export const useAppStore = create<AppState>()(
@@ -815,6 +824,7 @@ export const useAppStore = create<AppState>()(
       activeBusinessId: null,
       view: { kind: "dashboard" },
       commandOpen: false,
+      quickIntent: null,
       setLocale: (locale) => set({ locale }),
       setActiveBusiness: (activeBusinessId) => set({ activeBusinessId }),
       navigate: (view, opts) => {
@@ -823,6 +833,9 @@ export const useAppStore = create<AppState>()(
       },
       replaceView: (view) => set({ view }),
       setCommandOpen: (commandOpen) => set({ commandOpen }),
+      fireQuickIntent: (action) =>
+        set({ quickIntent: { action, seq: Date.now() + Math.random() } }),
+      consumeQuickIntent: () => set({ quickIntent: null }),
     }),
     {
       name: "abc-preferences",

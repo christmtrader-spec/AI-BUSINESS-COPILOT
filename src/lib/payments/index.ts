@@ -13,6 +13,7 @@ export * from "./mock-provider";
 export * from "./config";
 export * from "./currency";
 export * from "./zarinpal";
+export * from "./stripe";
 export {
   createCheckout,
   getCheckoutSession,

@@ -98,6 +98,9 @@ model User {
   // Prompt 48 — Supplier Bills: creator link is Restrict — the same
   // creator-linked policy as P40–P47 (documented in the deletion matrix).
   supplierBillCreations       SupplierBill[]           @relation("SupplierBillCreator")
+  // Prompt 52 — public API keys: creator link is Restrict (integration
+  // evidence survives the creator's departure; keys die with the business).
+  apiKeyCreations             ApiKey[]                 @relation("ApiKeyCreator")
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +276,12 @@ model Business {
   // A05/A07 — locale & timezone are business configuration
   locale           String @default("en")
   timezone         String @default("UTC")
+  // Prompt 52 — VAT engine (official Iranian invoices). Basis points keep
+  // the rate integer (1000 bp = 10%); vatEnabled=false keeps legacy behavior
+  // (taxMinor always 0). The rate is a CONFIG value; the per-sale snapshot is
+  // authoritative for each issued invoice (stable reprints).
+  vatEnabled       Boolean @default(false)
+  vatRateBp        Int     @default(0)
 
   ownerId String
   owner   User   @relation("BusinessOwner", fields: [ownerId], references: [id])
@@ -319,6 +328,8 @@ model Business {
   // Prompt 47 (§5) — commercial price offers (tenant-scoped, cascade):
   // deleting the business deletes its quotations.
   salesQuotations      SalesQuotation[]
+  // Prompt 52 — public API keys for external accounting integrations.
+  apiKeys              ApiKey[]
 
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
@@ -625,9 +636,13 @@ model Sale {
   number        Int
   customerId    String?
   customer      Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  // Totals computed server-side with integer math at creation (A08)
+  // Totals computed server-side with integer math at creation (A08).
+  // Law: totalMinor = subtotalMinor - discountMinor + taxMinor (integer math).
+  // Legacy rows have taxMinor=0 so the old identity still holds.
   subtotalMinor Int
   discountMinor Int       @default(0)
+  taxRateBp     Int       @default(0) // VAT snapshot in basis points (1000 = 10%) at issuance
+  taxMinor      Int       @default(0) // VAT amount snapshot in minor units
   totalMinor    Int
   // Payment summary — updated in the same tx as every Payment create/delete
   paidMinor     Int       @default(0)
@@ -2865,4 +2880,35 @@ model SupplierBillLine {
   @@index([supplierBillId])
   @@index([purchaseOrderLineId])
   @@index([productId])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 52 — Public API keys for external accounting integrations (§F8).
+// ONLY the SHA-256 hash of the key is stored; the plaintext key exists
+// exclusively at creation time (shown once, never retrievable). Scope is a
+// closed set validated in the service layer ("read" only in this release).
+// A key belongs to exactly one business — every open-API query is filtered
+// by businessId (A01/A02 tenant law). Soft-revocation via revokedAt.
+// ---------------------------------------------------------------------------
+model ApiKey {
+  id          String    @id @default(cuid())
+  businessId  String
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdById String?
+  createdBy   User?     @relation("ApiKeyCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  name        String // display label, 1..80 chars, trimmed
+  // Display prefix (first 10 chars of the plaintext) so users can tell keys
+  // apart without the secret: "ck_live_ab12…"
+  prefix      String
+  // SHA-256 hex of the full plaintext key. UNIQUE — a leaked key rotates,
+  // never duplicates.
+  keyHash     String    @unique
+  // Closed set, validated in the service layer. "read" = open GET surface.
+  scopes      String    @default("read")
+  lastUsedAt  DateTime?
+  requestCount Int      @default(0)
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([businessId, createdAt])
 }

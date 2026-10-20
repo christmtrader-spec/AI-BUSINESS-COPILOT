@@ -37,6 +37,7 @@ import { withWriteTransaction } from "@/lib/db/write-transaction";
 import { audit } from "@/lib/audit";
 import { ApiError } from "@/lib/api-helpers";
 import { formatInvoiceNumber } from "@/lib/finance";
+import { vatMinor } from "@/lib/money";
 import {
   parseGoodsDispatchStatus,
   computeDispatchedQty,
@@ -1461,7 +1462,20 @@ export async function issueOrderInvoice(input: {
         ),
       );
     }
-    const totalMinor = computeOrderTotalMinor(totals.subtotalMinor, header.discountMinor);
+    // Prompt 52 §F3 — VAT engine on the order→invoice path: same server-side
+    // law as the direct-sale route. The invoice snapshot (rate + amount) is
+    // authoritative for the printed document; the ORDER total stays tax-free
+    // (the commercial agreement), the INVOICE total is the legal document.
+    const vatConfig = await tx.business.findUnique({
+      where: { id: input.businessId },
+      select: { vatEnabled: true, vatRateBp: true },
+    });
+    const taxRateBp = vatConfig?.vatEnabled
+      ? Math.max(0, Math.min(10_000, vatConfig.vatRateBp))
+      : 0;
+    const invoiceTaxableBaseMinor = totals.subtotalMinor - header.discountMinor;
+    const invoiceTaxMinor = vatMinor(invoiceTaxableBaseMinor, taxRateBp);
+    const invoiceTotalMinor = invoiceTaxableBaseMinor + invoiceTaxMinor;
 
     // §61 — the EXISTING invoice numbering convention (same as the legacy
     // sale route); the shared write transaction + the per-business unique
@@ -1483,7 +1497,9 @@ export async function issueOrderInvoice(input: {
           customerId: header.customerId,
           subtotalMinor: totals.subtotalMinor,
           discountMinor: header.discountMinor,
-          totalMinor,
+          taxRateBp,
+          taxMinor: invoiceTaxMinor,
+          totalMinor: invoiceTotalMinor,
           status: "UNPAID", // §57 — payment is a separate authority
           paidMinor: 0,
           issueDate: new Date(),
@@ -1501,7 +1517,7 @@ export async function issueOrderInvoice(input: {
             })),
           },
         },
-        select: { id: true, number: true, totalMinor: true },
+        select: { id: true, number: true, totalMinor: true, taxMinor: true, taxRateBp: true },
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -1542,6 +1558,8 @@ export async function issueOrderInvoice(input: {
         after: {
           number: sale.number,
           totalMinor: sale.totalMinor,
+          taxMinor: sale.taxMinor,
+          taxRateBp: sale.taxRateBp,
           items: lines.length,
           customerId: header.customerId,
           salesOrderId: header.id,

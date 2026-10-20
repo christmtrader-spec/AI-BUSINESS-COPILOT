@@ -28,6 +28,8 @@ import {
 import { DataTable } from "@/components/shared/data-table";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { Pagination, SearchInput } from "@/components/shared/table-kit";
+import { ListExportButton } from "@/components/shared/list-export-button";
+import { fetchAllPages } from "@/lib/csv";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 import type { PurchaseOrderListItemDto } from "@/lib/purchase-orders/dto";
@@ -115,12 +117,38 @@ export function PurchaseOrdersView({ role }: { role: Role }) {
         title={t("title")}
         subtitle={t("listSubtitle")}
         actions={
-          writable ? (
-            <Button type="button" onClick={() => setCreateOpen(true)} data-testid="po-create">
-              <Plus className="size-4" aria-hidden />
-              {t("createAction")}
-            </Button>
-          ) : null
+          <>
+            <ListExportButton<PurchaseOrderListItemDto>
+              filename="purchase-orders"
+              columns={[
+                { header: t("reference"), value: (r) => r.reference },
+                { header: t("status"), value: (r) => t(`status_${r.status}`) },
+                { header: t("supplier"), value: (r) => r.supplierNameAtOrder },
+                { header: t("lines"), value: (r) => r.lineCount },
+                { header: t("total"), value: (r) => r.totalMinor / 10 ** r.decimalPrecisionAtOrder },
+                { header: t("orderedAt"), value: (r) => r.orderedAt },
+                { header: t("expectedDate"), value: (r) => r.expectedDate },
+              ]}
+              fetchRows={() =>
+                fetchAllPages<PurchaseOrderListItemDto>((pg, ps) =>
+                  fetchPurchaseOrders(businessId, {
+                    q: q || undefined,
+                    status: status === "ALL" ? undefined : status,
+                    from: from || undefined,
+                    to: to || undefined,
+                    page: pg,
+                    pageSize: ps,
+                  }),
+                )
+              }
+            />
+            {writable ? (
+              <Button type="button" onClick={() => setCreateOpen(true)} data-testid="po-create">
+                <Plus className="size-4" aria-hidden />
+                {t("createAction")}
+              </Button>
+            ) : null}
+          </>
         }
       />
 

@@ -40,6 +40,8 @@ type SaleDetail = {
     issueDate: string;
     subtotalMinor: number;
     discountMinor: number;
+    taxRateBp?: number;
+    taxMinor?: number;
     totalMinor: number;
     paidMinor: number;
     status: string;
@@ -66,6 +68,13 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/** Basis points -> compact "10%" label for the printed document. */
+function vatPercentLabel(rateBp: number): string {
+  const value = rateBp / 100;
+  const formatted = Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, "");
+  return `${formatted}%`;
+}
+
 /**
  * Build a self-contained, print-friendly invoice document and open the
  * browser print dialog. Purely client-side narration of server data —
@@ -85,6 +94,7 @@ function printInvoice(
     lineTotal: string;
     subtotal: string;
     discount: string;
+    vat: string;
     total: string;
     paid: string;
     balance: string;
@@ -173,6 +183,7 @@ function printInvoice(
   <div class="totals">
     <div><span class="muted">${esc(labels.subtotal)}</span><span>${fmt(data.sale.subtotalMinor)}</span></div>
     ${data.sale.discountMinor > 0 ? `<div><span class="muted">${esc(labels.discount)}</span><span>−${fmt(data.sale.discountMinor)}</span></div>` : ""}
+    ${(data.sale.taxMinor ?? 0) > 0 ? `<div><span class="muted">${esc(labels.vat)} (${vatPercentLabel(data.sale.taxRateBp ?? 0)})</span><span>${fmt(data.sale.taxMinor ?? 0)}</span></div>` : ""}
     <div class="grand"><span>${esc(labels.total)}</span><span>${fmt(data.sale.totalMinor)}</span></div>
     <div><span class="muted">${esc(labels.paid)}</span><span>${fmt(data.sale.paidMinor)}</span></div>
     <div class="balance-due"><span>${esc(labels.balance)}</span><span>${fmt(data.sale.balanceMinor)}</span></div>
@@ -263,12 +274,15 @@ export function SaleDetailDialog({
         <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
           {isLoading ? (
             <div className="space-y-2 py-8" aria-busy="true">
+              {/* a11y — Radix requires a DialogTitle even while loading */}
+              <DialogTitle className="sr-only">{t("printInvoiceLabel")}</DialogTitle>
               {[0, 1, 2, 3].map((i) => (
                 <div key={i} className="bg-muted/50 h-10 animate-pulse rounded-md" />
               ))}
             </div>
           ) : error || !data ? (
             <div className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm">
+              <DialogTitle className="sr-only">{t("printInvoiceLabel")}</DialogTitle>
               {tErrors("loadFailed")}{" "}
               <button className="underline" onClick={() => void refetch()}>
                 {tCommon("retry")}
@@ -298,6 +312,7 @@ export function SaleDetailDialog({
                         lineTotal: t("colLineTotal"),
                         subtotal: t("subtotal"),
                         discount: t("discount"),
+                        vat: t("vatLabel"),
                         total: t("total"),
                         paid: t("paid"),
                         balance: t("balance"),
@@ -370,6 +385,16 @@ export function SaleDetailDialog({
                     <span className="text-muted-foreground shrink-0">{t("discount")}</span>
                     <span className="tabular-nums" dir="ltr">
                       −{fmtMoney(business, data.sale.discountMinor)}
+                    </span>
+                  </div>
+                ) : null}
+                {(data.sale.taxMinor ?? 0) > 0 ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground shrink-0">
+                      {t("vatLabel")} ({vatPercentLabel(data.sale.taxRateBp ?? 0)})
+                    </span>
+                    <span className="tabular-nums" dir="ltr">
+                      {fmtMoney(business, data.sale.taxMinor ?? 0)}
                     </span>
                   </div>
                 ) : null}

@@ -43,17 +43,34 @@ export async function GET(req: Request) {
   let databaseReachable = false;
   let migrationsApplied: number | null = null;
   let migrationsPending: number | null = null;
+  let migrationsKnown: boolean | null = null;
 
   try {
     const rows = (await db.$queryRawUnsafe<Array<{ finished_at: number | null }>>(
       `SELECT finished_at FROM "_prisma_migrations"`,
     )) as Array<{ finished_at: number | null }>;
     databaseReachable = true;
+    migrationsKnown = true;
     migrationsApplied = rows.filter((r) => r.finished_at !== null).length;
     migrationsPending = rows.filter((r) => r.finished_at === null).length;
-  } catch {
-    // Truthful degradation: app is up, database/migration metadata unreadable.
-    databaseReachable = false;
+  } catch (error) {
+    // Prompt 52 — distinguish "database is DOWN" from "database is UP but
+    // provisioned via `prisma db push`" (the db-push flow creates NO
+    // _prisma_migrations table — the raw probe above then throws "no such
+    // table", which is NOT a degradation). Probe the business tables: if a
+    // cheap SELECT answers, the database is reachable and healthy — report
+    // ok with migrations "unknown" instead of a misleading "degraded".
+    const message = error instanceof Error ? error.message : String(error);
+    if (/no such table/i.test(message) && /_prisma_migrations/i.test(message)) {
+      try {
+        await db.$queryRawUnsafe(`SELECT 1 FROM "User" LIMIT 1`);
+        databaseReachable = true;
+      } catch {
+        databaseReachable = false;
+      }
+    } else {
+      databaseReachable = false;
+    }
   }
 
   const payload = NextResponse.json(
@@ -64,6 +81,8 @@ export async function GET(req: Request) {
       migrations: {
         applied: migrationsApplied,
         pending: migrationsPending,
+        // "unknown" = db-push provisioned database (no migrations ledger).
+        known: migrationsKnown,
       },
       timestamp: new Date().toISOString(),
     },

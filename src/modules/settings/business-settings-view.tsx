@@ -11,6 +11,7 @@ import {
   FolderSync,
   Globe2,
   Loader2,
+  Percent,
   Save,
   ScanSearch,
   Settings2,
@@ -22,7 +23,7 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
 import { CURRENCIES, findCurrency } from "@/lib/currencies";
-import { formatMoney, toMinor } from "@/lib/money";
+import { formatMoney, toMinor, formatBpAsPercent } from "@/lib/money";
 import { asRole, can, type Role } from "@/lib/rbac";
 import { cn } from "@/lib/utils";
 import {
@@ -38,6 +39,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,6 +52,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/shared/primitives";
+import { ApiKeysCard } from "./api-keys-card";
+import { DigestCard } from "./digest-card";
 import type { BusinessSummary } from "../shell/types";
 
 const FALLBACK_TIMEZONES = ["UTC", "Asia/Tehran", "Asia/Dubai", "Europe/London", "Europe/Berlin", "America/New_York", "America/Los_Angeles", "Asia/Tokyo"];
@@ -86,6 +90,9 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
     current.locale === "fa" ? "fa" : "en",
   );
   const [timezone, setTimezone] = useState(current.timezone);
+  // Prompt 52 §F3 — VAT engine config (percent input, stored as basis points).
+  const [vatEnabled, setVatEnabled] = useState(Boolean(current.vatEnabled));
+  const [vatRateBp, setVatRateBp] = useState(current.vatRateBp ?? 0);
   const [syncedKey, setSyncedKey] = useState(current.id + current.updatedAt);
   // React "adjust state during render" pattern — avoids setState-in-effect.
   const currentKey = current.id + current.updatedAt;
@@ -97,6 +104,8 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
     setPrecision(current.decimalPrecision);
     setLocale(current.locale === "fa" ? "fa" : "en");
     setTimezone(current.timezone);
+    setVatEnabled(Boolean(current.vatEnabled));
+    setVatRateBp(current.vatRateBp ?? 0);
   }
 
   // We read the role from the cached memberships list (AppRoot query).
@@ -122,6 +131,8 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
           decimalPrecision: precision,
           locale,
           timezone,
+          vatEnabled,
+          vatRateBp,
         }),
       }),
     onSuccess: () => {
@@ -150,6 +161,24 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
       return "—";
     }
   }, [precision, currencyCode, symbol, locale]);
+
+  // §F3 — live VAT preview on an example invoice: base 1,000 → VAT → total.
+  const vatPreview = useMemo(() => {
+    try {
+      const baseMinor = toMinor("1000", precision);
+      const scaled = (BigInt(baseMinor) * BigInt(Math.max(0, vatRateBp))) / 10_000n;
+      const rem = (BigInt(baseMinor) * BigInt(Math.max(0, vatRateBp))) % 10_000n;
+      const taxMinor = Number(rem * 2n >= 10_000n ? scaled + 1n : scaled);
+      const cfg = { currencyCode, currencySymbol: symbol, decimalPrecision: precision, locale };
+      return {
+        tax: formatMoney(taxMinor, cfg),
+        total: formatMoney(baseMinor + taxMinor, cfg),
+        rate: formatBpAsPercent(vatRateBp, locale),
+      };
+    } catch {
+      return null;
+    }
+  }, [precision, currencyCode, symbol, locale, vatRateBp]);
 
   const [exporting, setExporting] = useState(false);
 
@@ -487,6 +516,89 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
+              <Percent className="text-primary size-4" aria-hidden="true" />
+              {t("vatTitle")}
+            </CardTitle>
+            <CardDescription>{t("vatHint")}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between gap-4 rounded-lg border px-4 py-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="set-vat-enabled" className="cursor-pointer">
+                  {t("vatEnable")}
+                </Label>
+                <p className="text-muted-foreground text-xs">{t("vatEnableDesc")}</p>
+              </div>
+              <Switch
+                id="set-vat-enabled"
+                checked={vatEnabled}
+                onCheckedChange={(v) => setVatEnabled(v)}
+                disabled={!editable}
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="set-vat-rate">{t("vatRate")}</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="set-vat-rate"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step="0.5"
+                    dir="ltr"
+                    value={vatRateBp / 100}
+                    onChange={(e) => {
+                      const pct = Number(e.target.value);
+                      setVatRateBp(Number.isFinite(pct) ? Math.round(pct * 100) : 0);
+                    }}
+                    disabled={!editable || !vatEnabled}
+                    className="w-32"
+                  />
+                  <span className="text-muted-foreground text-sm">%</span>
+                  <div className="flex gap-1.5">
+                    {[0, 9, 10].map((p) => (
+                      <Button
+                        key={p}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={!editable || !vatEnabled}
+                        onClick={() => setVatRateBp(p * 100)}
+                      >
+                        {p}%
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {vatEnabled && vatPreview && (
+                <div className="bg-muted/40 grid grid-cols-2 gap-2 rounded-lg border p-3 text-sm sm:col-span-1">
+                  <span className="text-muted-foreground">{t("vatPreviewBase")}</span>
+                  <span className="text-end font-medium tabular-nums">
+                    {formatMoney(toMinor("1000", precision), {
+                      currencyCode,
+                      currencySymbol: symbol,
+                      decimalPrecision: precision,
+                      locale,
+                    })}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {t("vatPreviewTax")} ({vatPreview.rate})
+                  </span>
+                  <span className="text-end font-medium tabular-nums">{vatPreview.tax}</span>
+                  <span className="text-muted-foreground">{t("vatPreviewTotal")}</span>
+                  <span className="text-end font-semibold tabular-nums">{vatPreview.total}</span>
+                </div>
+              )}
+            </div>
+            <p className="text-muted-foreground text-xs">{t("vatNote")}</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
               <Globe2 className="text-primary size-4" aria-hidden="true" />
               {t("sectionLocale")}
             </CardTitle>
@@ -535,6 +647,12 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
           </Button>
         </div>
       </form>
+
+      {/* Prompt 52 §F8 — public API keys for external accounting tools. */}
+      {activeId ? <ApiKeysCard activeId={activeId} editable={editable} /> : null}
+
+      {/* Task 2-b F9 — weekly digest preview (never sends from the request path). */}
+      {activeId ? <DigestCard activeId={activeId} /> : null}
 
       {editable ? (
         <Card>

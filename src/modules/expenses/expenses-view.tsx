@@ -9,6 +9,7 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { downloadCsv, exportStamp, fetchAllPages, toCsv } from "@/lib/csv";
 import { can, asRole, type Role } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
+import { useQuickIntent } from "@/hooks/use-quick-intent";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -102,6 +103,8 @@ export function ExpensesView({
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<(typeof STATUS_FILTERS)[number]>("ALL");
   const [dialogOpen, setDialogOpen] = useState(false);
+  // Prompt 52 §F2 — dashboard quick action: open the create dialog on arrival.
+  useQuickIntent("new-expense", () => setDialogOpen(true));
   const [editing, setEditing] = useState<ExpenseRow | null>(null);
   const [payTarget, setPayTarget] = useState<PaymentTarget | null>(null);
 

@@ -27,6 +27,7 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { ApiClientError } from "@/lib/api-client";
 import { useAppStore } from "@/store/app-store";
+import { JalaliRangePresets } from "@/components/shared/jalali-range-presets";
 import type { BusinessSummary } from "../shell/types";
 import { navigateToEntity } from "../entities/entity-route";
 import { EntityHeader, EntityTypeBadge } from "../entities/entity-header";
@@ -245,6 +246,14 @@ export function StatementsView({
               </Button>
             ))}
           </div>
+          {/* Prompt 52 §F4 — Jalali calendar presets (resolve to Gregorian
+              keys; the server statement API is unchanged). */}
+          <JalaliRangePresets
+            value={{ from: range.from, to: range.to }}
+            onChange={(r) => {
+              if (r) applyRange(r.from, r.to);
+            }}
+          />
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="st-from">{t("from")}</Label>
             <Input

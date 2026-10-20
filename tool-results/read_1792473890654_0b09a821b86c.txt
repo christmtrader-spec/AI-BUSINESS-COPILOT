@@ -1,0 +1,1826 @@
+     1→import "server-only";
+     2→
+     3→/**
+     4→ * Export dataset catalog — Prompt 31 §5/§6/§41-§54.
+     5→ *
+     6→ * LAWS:
+     7→ *  - EXPLICIT allowlist: a dataset key that is not in this catalog can
+     8→ *    never be exported (§39/§239 — unknown dataset rejected).
+     9→ *  - Every dataset is classified (§6): PUBLIC_BUSINESS / CONFIDENTIAL /
+    10→ *    HIGHLY_SENSITIVE. No dataset below contains authentication or
+    11→ *    security secrets (§9/§12-§19 — enforced again by the static scanner).
+    12→ *  - Tenant-owned only: fetchers filter by businessId unconditionally
+    13→ *    (§32); the caller's ctx.businessId is the ONLY business key used.
+    14→ *  - Per-row businessId is deliberately EXCLUDED (§10 — the manifest
+    15→ *    carries the business identity; per-row copies are unnecessary).
+    16→ *  - Financial export is READ-ONLY representation of the same records the
+    17→ *    UI already shows (§222/§223) — amounts as exact integer minor units
+    18→ *    in JSON, exact decimal strings in CSV (§226/§227).
+    19→ *  - NOT exported (explicit Prompt 31 decisions, documented):
+    20→ *      · AI chat transcripts (user-personal, out of portability scope §53)
+    21→ *      · tenant audit trail (actor identities + history, not in catalog §5)
+    22→ *      · receivables/payables (DERIVED views of sales/expenses — the same
+    23→ *        facts are already inside those datasets)
+    24→ *      · anything platform: subscriptions internals, provider costs, AI
+    25→ *        rates, platform audit, operators (§9/§51/§52/§189).
+    26→ */
+    27→
+    28→import { db } from "@/lib/db";
+    29→import type { Prisma } from "@prisma/client";
+    30→import { formatMinorToDecimal } from "./money-csv";
+    31→
+    32→export type ExportSensitivity = "PUBLIC_BUSINESS" | "CONFIDENTIAL" | "HIGHLY_SENSITIVE";
+    33→
+    34→export type ExportDatasetKey =
+    35→  | "business"
+    36→  | "members"
+    37→  | "customers"
+    38→  | "suppliers"
+    39→  | "products"
+    40→  | "inventory"
+    41→  | "sales"
+    42→  | "sale_items"
+    43→  | "expenses"
+    44→  | "payments"
+    45→  | "crm_leads"
+    46→  | "crm_opportunities"
+    47→  | "crm_activities"
+    48→  | "crm_tasks"
+    49→  | "inventory_stocktakes"
+    50→  | "inventory_stocktake_lines"
+    51→  | "purchase_orders"
+    52→  | "purchase_order_lines"
+    53→  | "inventory_goods_receipts"
+    54→  | "inventory_goods_receipt_lines"
+    55→  | "inventory_goods_returns"
+    56→  | "inventory_goods_return_lines"
+    57→  | "inventory_goods_dispatches"
+    58→  | "inventory_goods_dispatch_lines"
+    59→  | "sales_orders"
+    60→  | "sales_order_lines"
+    61→  // Prompt 47 (§20) — quotation datasets: export-only (import blocked).
+    62→  | "sales_quotations"
+    63→  | "sales_quotation_lines"
+    64→  // Prompt 48 (§6) — supplier-bill datasets: export-only (import blocked).
+    65→  | "supplier_bills"
+    66→  | "supplier_bill_lines"
+    67→  | "subscription_summary"
+    68→  | "usage_summary";
+    69→
+    70→export const EXPORT_DATASET_KEYS = [
+    71→  "business",
+    72→  "members",
+    73→  "customers",
+    74→  "suppliers",
+    75→  "products",
+    76→  "inventory",
+    77→  "sales",
+    78→  "sale_items",
+    79→  "expenses",
+    80→  "payments",
+    81→  "crm_leads",
+    82→  "crm_opportunities",
+    83→  "crm_activities",
+    84→  "crm_tasks",
+    85→  "inventory_stocktakes",
+    86→  "inventory_stocktake_lines",
+    87→  "purchase_orders",
+    88→  "purchase_order_lines",
+    89→  "inventory_goods_receipts",
+    90→  "inventory_goods_receipt_lines",
+    91→  "inventory_goods_returns",
+    92→  "inventory_goods_return_lines",
+    93→  "inventory_goods_dispatches",
+    94→  "inventory_goods_dispatch_lines",
+    95→  "sales_orders",
+    96→  "sales_order_lines",
+    97→  "sales_quotations",
+    98→  "sales_quotation_lines",
+    99→  "supplier_bills",
+   100→  "supplier_bill_lines",
+   101→  "subscription_summary",
+   102→  "usage_summary",
+   103→] as const satisfies readonly ExportDatasetKey[];
+   104→
+   105→/** `sales` always carries its line items (§46 — never flatten relationships). */
+   106→export const DATASET_IMPLICATIONS: Partial<Record<ExportDatasetKey, ExportDatasetKey[]>> = {
+   107→  sales: ["sale_items"],
+   108→  // Prompt 40 (§107) — stocktakes always carry their count lines.
+   109→  inventory_stocktakes: ["inventory_stocktake_lines"],
+   110→  // Prompt 41 (§95) — purchase orders always carry their lines.
+   111→  purchase_orders: ["purchase_order_lines"],
+   112→  // Prompt 42 (§137) — goods receipts always carry their receipt lines.
+   113→  inventory_goods_receipts: ["inventory_goods_receipt_lines"],
+   114→  // Prompt 43 (§113) — goods returns always carry their return lines.
+   115→  inventory_goods_returns: ["inventory_goods_return_lines"],
+   116→  // Prompt 44 — goods dispatches always carry their dispatch lines.
+   117→  inventory_goods_dispatches: ["inventory_goods_dispatch_lines"],
+   118→  // Prompt 45 (§116) — sales orders always carry their order lines.
+   119→  sales_orders: ["sales_order_lines"],
+   120→  // Prompt 47 (§20) — quotations always carry their offer lines.
+   121→  sales_quotations: ["sales_quotation_lines"],
+   122→  // Prompt 48 (§6) — supplier bills always carry their invoice lines.
+   123→  supplier_bills: ["supplier_bill_lines"],
+   124→};
+   125→
+   126→export type DatasetMeta = {
+   127→  key: ExportDatasetKey;
+   128→  sensitivity: ExportSensitivity;
+   129→  /** CSV table file name (machine header names stay stable, §193). */
+   130→  csvFile: string;
+   131→  /** i18n key under portability.datasets. */
+   132→  labelKey: string;
+   133→};
+   134→
+   135→export const EXPORT_CATALOG: Record<ExportDatasetKey, DatasetMeta> = {
+   136→  business: { key: "business", sensitivity: "PUBLIC_BUSINESS", csvFile: "business.csv", labelKey: "business" },
+   137→  members: { key: "members", sensitivity: "CONFIDENTIAL", csvFile: "members.csv", labelKey: "members" },
+   138→  customers: { key: "customers", sensitivity: "CONFIDENTIAL", csvFile: "customers.csv", labelKey: "customers" },
+   139→  suppliers: { key: "suppliers", sensitivity: "CONFIDENTIAL", csvFile: "suppliers.csv", labelKey: "suppliers" },
+   140→  products: { key: "products", sensitivity: "CONFIDENTIAL", csvFile: "products.csv", labelKey: "products" },
+   141→  inventory: { key: "inventory", sensitivity: "CONFIDENTIAL", csvFile: "inventory.csv", labelKey: "inventory" },
+   142→  sales: { key: "sales", sensitivity: "CONFIDENTIAL", csvFile: "sales.csv", labelKey: "sales" },
+   143→  sale_items: { key: "sale_items", sensitivity: "CONFIDENTIAL", csvFile: "sale_items.csv", labelKey: "saleItems" },
+   144→  expenses: { key: "expenses", sensitivity: "CONFIDENTIAL", csvFile: "expenses.csv", labelKey: "expenses" },
+   145→  payments: { key: "payments", sensitivity: "CONFIDENTIAL", csvFile: "payments.csv", labelKey: "payments" },
+   146→  // Prompt 35 (§86) — CRM datasets: CONFIDENTIAL (personal contact data);
+   147→  // relationships carried as stable ids; forecast values exported as minor
+   148→  // integers; never any platform/AI-cost/security data.
+   149→  crm_leads: { key: "crm_leads", sensitivity: "CONFIDENTIAL", csvFile: "crm_leads.csv", labelKey: "crmLeads" },
+   150→  crm_opportunities: { key: "crm_opportunities", sensitivity: "CONFIDENTIAL", csvFile: "crm_opportunities.csv", labelKey: "crmOpportunities" },
+   151→  // Prompt 36 (§62/§111) — CRM activities/tasks: CONFIDENTIAL BUSINESS DATA
+   152→  // (notes/descriptions may contain personal contact details). Relationships
+   153→  // as stable ids; no platform/AI-cost/notification internals.
+   154→  crm_activities: { key: "crm_activities", sensitivity: "CONFIDENTIAL", csvFile: "crm_activities.csv", labelKey: "crmActivities" },
+   155→  crm_tasks: { key: "crm_tasks", sensitivity: "CONFIDENTIAL", csvFile: "crm_tasks.csv", labelKey: "crmTasks" },
+   156→  // Prompt 40 (§107/§109) — physical count sessions: CONFIDENTIAL BUSINESS
+   157→  // DATA. Count lines always accompany their stocktake (implication above);
+   158→  // snapshots (productName/SKU/unit) are exported as recorded — never any
+   159→  // platform/AI-cost/security data.
+   160→  inventory_stocktakes: { key: "inventory_stocktakes", sensitivity: "CONFIDENTIAL", csvFile: "inventory_stocktakes.csv", labelKey: "stocktakes" },
+   161→  inventory_stocktake_lines: { key: "inventory_stocktake_lines", sensitivity: "CONFIDENTIAL", csvFile: "inventory_stocktake_lines.csv", labelKey: "stocktakeLines" },
+   162→  // Prompt 41 (§95) — procurement documents are business operational data
+   163→  // (CONFIDENTIAL): snapshots + document totals, never provider/secret data.
+   164→  purchase_orders: { key: "purchase_orders", sensitivity: "CONFIDENTIAL", csvFile: "purchase_orders.csv", labelKey: "purchaseOrders" },
+   165→  purchase_order_lines: { key: "purchase_order_lines", sensitivity: "CONFIDENTIAL", csvFile: "purchase_order_lines.csv", labelKey: "purchaseOrderLines" },
+   166→  // Prompt 42 (§136) — receiving documents: CONFIDENTIAL (tenant inventory
+   167→  // evidence). Export-ONLY (§138/§252) — import is intentionally blocked.
+   168→  inventory_goods_receipts: { key: "inventory_goods_receipts", sensitivity: "CONFIDENTIAL", csvFile: "inventory_goods_receipts.csv", labelKey: "inventoryGoodsReceipts" },
+   169→  inventory_goods_receipt_lines: { key: "inventory_goods_receipt_lines", sensitivity: "CONFIDENTIAL", csvFile: "inventory_goods_receipt_lines.csv", labelKey: "inventoryGoodsReceiptLines" },
+   170→  // Prompt 43 (§112) — return documents: CONFIDENTIAL (tenant inventory
+   171→  // evidence). Export-ONLY (§114) — import is intentionally blocked (§115):
+   172→  // a generic import could replay stock decrements and duplicate negative
+   173→  // inventory movements.
+   174→  inventory_goods_returns: { key: "inventory_goods_returns", sensitivity: "CONFIDENTIAL", csvFile: "inventory_goods_returns.csv", labelKey: "inventoryGoodsReturns" },
+   175→  inventory_goods_return_lines: { key: "inventory_goods_return_lines", sensitivity: "CONFIDENTIAL", csvFile: "inventory_goods_return_lines.csv", labelKey: "inventoryGoodsReturnLines" },
+   176→  // Prompt 44 — dispatch documents: CONFIDENTIAL (tenant inventory
+   177→  // evidence). Export-ONLY — import is intentionally blocked: a generic
+   178→  // import could replay stock decrements and duplicate negative inventory
+   179→  // movements (the same law as P42/P43).
+   180→  inventory_goods_dispatches: { key: "inventory_goods_dispatches", sensitivity: "CONFIDENTIAL", csvFile: "inventory_goods_dispatches.csv", labelKey: "inventoryGoodsDispatches" },
+   181→  inventory_goods_dispatch_lines: { key: "inventory_goods_dispatch_lines", sensitivity: "CONFIDENTIAL", csvFile: "inventory_goods_dispatch_lines.csv", labelKey: "inventoryGoodsDispatchLines" },
+   182→  // Prompt 45 (§116) — sales orders + lines: CONFIDENTIAL BUSINESS DATA
+   183→  // (commercial agreements with customer identity + agreed prices).
+   184→  // Export-ONLY — import is intentionally blocked (§117): importing
+   185→  // confirmed/completed operational orders could create dispatch
+   186→  // eligibility or invoice/fulfillment inconsistencies.
+   187→  sales_orders: { key: "sales_orders", sensitivity: "CONFIDENTIAL", csvFile: "sales_orders.csv", labelKey: "salesOrders" },
+   188→  sales_order_lines: { key: "sales_order_lines", sensitivity: "CONFIDENTIAL", csvFile: "sales_order_lines.csv", labelKey: "salesOrderLines" },
+   189→  // Prompt 47 (§20) — quotations + lines: CONFIDENTIAL BUSINESS DATA
+   190→  // (commercial offers with customer identity + offered prices).
+   191→  // Export-ONLY — import is intentionally blocked (§20): replaying offers
+   192→  // through a generic importer would fabricate commercial history.
+   193→  sales_quotations: { key: "sales_quotations", sensitivity: "CONFIDENTIAL", csvFile: "sales_quotations.csv", labelKey: "salesQuotations" },
+   194→  sales_quotation_lines: { key: "sales_quotation_lines", sensitivity: "CONFIDENTIAL", csvFile: "sales_quotation_lines.csv", labelKey: "salesQuotationLines" },
+   195→  // Prompt 48 (§6) — supplier bills + lines: CONFIDENTIAL BUSINESS DATA
+   196→  // (supplier invoice documents with supplier identity + invoiced prices).
+   197→  // Export-ONLY — import is intentionally blocked (§6.1): replaying bills
+   198→  // through a generic importer would fabricate payable history or claim
+   199→  // SupplierBill↔Expense relations outside the posting transaction.
+   200→  supplier_bills: { key: "supplier_bills", sensitivity: "CONFIDENTIAL", csvFile: "supplier_bills.csv", labelKey: "supplierBills" },
+   201→  supplier_bill_lines: { key: "supplier_bill_lines", sensitivity: "CONFIDENTIAL", csvFile: "supplier_bill_lines.csv", labelKey: "supplierBillLines" },
+   202→  subscription_summary: { key: "subscription_summary", sensitivity: "CONFIDENTIAL", csvFile: "subscription.csv", labelKey: "subscriptionSummary" },
+   203→  usage_summary: { key: "usage_summary", sensitivity: "CONFIDENTIAL", csvFile: "usage.csv", labelKey: "usageSummary" },
+   204→};
+   205→
+   206→/* ------------------------------ row building ------------------------------- */
+   207→
+   208→export type ExportRow = {
+   209→  /** JSON row — IDs + relationships preserved, money as minor integers (§54/§226). */
+   210→  json: Record<string, unknown>;
+   211→  /** CSV row — exact decimal strings for money, ISO-8601 UTC dates (§227/§231). */
+   212→  csv: Array<string | number | null>;
+   213→};
+   214→
+   215→export type DatasetFetchResult = {
+   216→  rows: ExportRow[];
+   217→  /** True when the dataset hit the export record cap (job must FAIL, §26). */
+   218→  truncated: boolean;
+   219→};
+   220→
+   221→export type DatasetFetchCtx = {
+   222→  businessId: string;
+   223→  /** Business decimal precision for money → CSV decimal strings. */
+   224→  decimalPrecision: number;
+   225→  /** Hard cap applied per fetch — caller passes EXPORT_MAX_RECORDS headroom. */
+   226→  maxRecords: number;
+   227→};
+   228→
+   229→function iso(value: Date | null | undefined): string | null {
+   230→  return value ? value.toISOString() : null;
+   231→}
+   232→
+   233→/* ------------------------------- fetchers ---------------------------------- */
+   234→/* Every fetcher takes rows in ascending createdAt order for deterministic
+   235→   output, and never reads beyond the tenant scope. */
+   236→
+   237→type Customer = Prisma.CustomerGetPayload<object>;
+   238→
+   239→function customerRow(c: Customer, precision: number): ExportRow {
+   240→  void precision; // customers carry no money fields
+   241→  return {
+   242→    json: {
+   243→      id: c.id,
+   244→      name: c.name,
+   245→      phone: c.phone,
+   246→      email: c.email,
+   247→      address: c.address,
+   248→      note: c.note,
+   249→      deletedAt: iso(c.deletedAt),
+   250→      createdAt: c.createdAt.toISOString(),
+   251→      updatedAt: c.updatedAt.toISOString(),
+   252→    },
+   253→    csv: [c.id, c.name, c.phone, c.email, c.address, c.note, iso(c.deletedAt), c.createdAt.toISOString(), c.updatedAt.toISOString()],
+   254→  };
+   255→}
+   256→
+   257→function supplierRow(s: Prisma.SupplierGetPayload<object>, precision: number): ExportRow {
+   258→  void precision;
+   259→  return {
+   260→    json: {
+   261→      id: s.id,
+   262→      name: s.name,
+   263→      phone: s.phone,
+   264→      email: s.email,
+   265→      address: s.address,
+   266→      note: s.note,
+   267→      deletedAt: iso(s.deletedAt),
+   268→      createdAt: s.createdAt.toISOString(),
+   269→      updatedAt: s.updatedAt.toISOString(),
+   270→    },
+   271→    csv: [s.id, s.name, s.phone, s.email, s.address, s.note, iso(s.deletedAt), s.createdAt.toISOString(), s.updatedAt.toISOString()],
+   272→  };
+   273→}
+   274→
+   275→function productRow(p: Prisma.ProductGetPayload<object>, precision: number): ExportRow {
+   276→  return {
+   277→    json: {
+   278→      id: p.id,
+   279→      name: p.name,
+   280→      sku: p.sku,
+   281→      unit: p.unit,
+   282→      salePriceMinor: p.salePriceMinor,
+   283→      costPriceMinor: p.costPriceMinor,
+   284→      stockQty: p.stockQty,
+   285→      lowStockAt: p.lowStockAt,
+   286→      isActive: p.isActive,
+   287→      deletedAt: iso(p.deletedAt),
+   288→      createdAt: p.createdAt.toISOString(),
+   289→      updatedAt: p.updatedAt.toISOString(),
+   290→    },
+   291→    csv: [
+   292→      p.id,
+   293→      p.name,
+   294→      p.sku,
+   295→      p.unit,
+   296→      formatMinorToDecimal(p.salePriceMinor, precision),
+   297→      formatMinorToDecimal(p.costPriceMinor, precision),
+   298→      p.stockQty,
+   299→      p.lowStockAt,
+   300→      p.isActive ? "true" : "false",
+   301→      iso(p.deletedAt),
+   302→      p.createdAt.toISOString(),
+   303→      p.updatedAt.toISOString(),
+   304→    ],
+   305→  };
+   306→}
+   307→
+   308→async function fetchWithCap<T>(
+   309→  cap: number,
+   310→  query: (take: number) => Promise<T[]>,
+   311→): Promise<{ items: T[]; truncated: boolean }> {
+   312→  // Fetch one row beyond the cap so truncation is DETECTABLE, never silent.
+   313→  const items = await query(cap + 1);
+   314→  return { items: items.slice(0, cap), truncated: items.length > cap };
+   315→}
+   316→
+   317→export type DatasetFetcher = (ctx: DatasetFetchCtx) => Promise<DatasetFetchResult>;
+   318→
+   319→export const DATASET_FETCHERS: Record<ExportDatasetKey, DatasetFetcher> = {
+   320→  business: async (ctx) => {
+   321→    const b = await db.business.findUnique({
+   322→      where: { id: ctx.businessId },
+   323→      select: {
+   324→        name: true,
+   325→        slug: true,
+   326→        currencyCode: true,
+   327→        currencySymbol: true,
+   328→        decimalPrecision: true,
+   329→        locale: true,
+   330→        timezone: true,
+   331→        createdAt: true,
+   332→      },
+   333→    });
+   334→    if (!b) return { rows: [], truncated: false };
+   335→    return {
+   336→      rows: [
+   337→        {
+   338→          json: { ...b, createdAt: b.createdAt.toISOString() },
+   339→          csv: [b.name, b.slug, b.currencyCode, b.currencySymbol, b.decimalPrecision, b.locale, b.timezone, b.createdAt.toISOString()],
+   340→        },
+   341→      ],
+   342→      truncated: false,
+   343→    };
+   344→  },
+   345→
+   346→  members: async (ctx) => {
+   347→    // §41 — business-portability identity (email), role, status, joinedAt.
+   348→    // NEVER: password/MFA/session/security data (none is even selected).
+   349→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   350→      db.businessMember.findMany({
+   351→        where: { businessId: ctx.businessId },
+   352→        orderBy: { createdAt: "asc" },
+   353→        take,
+   354→        select: {
+   355→          role: true,
+   356→          createdAt: true,
+   357→          user: { select: { email: true, name: true } },
+   358→        },
+   359→      }),
+   360→    );
+   361→    return {
+   362→      rows: items.map((m) => ({
+   363→        json: {
+   364→          email: m.user.email,
+   365→          name: m.user.name,
+   366→          role: m.role,
+   367→          status: "ACTIVE",
+   368→          joinedAt: m.createdAt.toISOString(),
+   369→        },
+   370→        csv: [m.user.email, m.user.name, m.role, "ACTIVE", m.createdAt.toISOString()],
+   371→      })),
+   372→      truncated,
+   373→    };
+   374→  },
+   375→
+   376→  customers: async (ctx) => {
+   377→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   378→      db.customer.findMany({
+   379→        where: { businessId: ctx.businessId },
+   380→        orderBy: { createdAt: "asc" },
+   381→        take,
+   382→      }),
+   383→    );
+   384→    return { rows: items.map((c) => customerRow(c, ctx.decimalPrecision)), truncated };
+   385→  },
+   386→
+   387→  suppliers: async (ctx) => {
+   388→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   389→      db.supplier.findMany({
+   390→        where: { businessId: ctx.businessId },
+   391→        orderBy: { createdAt: "asc" },
+   392→        take,
+   393→      }),
+   394→    );
+   395→    return { rows: items.map((s) => supplierRow(s, ctx.decimalPrecision)), truncated };
+   396→  },
+   397→
+   398→  products: async (ctx) => {
+   399→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   400→      db.product.findMany({
+   401→        where: { businessId: ctx.businessId },
+   402→        orderBy: { createdAt: "asc" },
+   403→        take,
+   404→      }),
+   405→    );
+   406→    return { rows: items.map((p) => productRow(p, ctx.decimalPrecision)), truncated };
+   407→  },
+   408→
+   409→  inventory: async (ctx) => {
+   410→    // §45 — preserve ACTUAL recorded adjustments; no inferred stock history.
+   411→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   412→      db.inventoryAdjustment.findMany({
+   413→        where: { businessId: ctx.businessId },
+   414→        orderBy: { createdAt: "asc" },
+   415→        take,
+   416→        select: { id: true, productId: true, delta: true, reason: true, createdAt: true },
+   417→      }),
+   418→    );
+   419→    return {
+   420→      rows: items.map((a) => ({
+   421→        json: {
+   422→          id: a.id,
+   423→          productId: a.productId,
+   424→          delta: a.delta,
+   425→          reason: a.reason,
+   426→          createdAt: a.createdAt.toISOString(),
+   427→        },
+   428→        csv: [a.id, a.productId, a.delta, a.reason, a.createdAt.toISOString()],
+   429→      })),
+   430→      truncated,
+   431→    };
+   432→  },
+   433→
+   434→  sales: async (ctx) => {
+   435→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   436→      db.sale.findMany({
+   437→        where: { businessId: ctx.businessId },
+   438→        orderBy: { createdAt: "asc" },
+   439→        take,
+   440→        select: {
+   441→          id: true,
+   442→          number: true,
+   443→          customerId: true,
+   444→          subtotalMinor: true,
+   445→          discountMinor: true,
+   446→          totalMinor: true,
+   447→          paidMinor: true,
+   448→          status: true,
+   449→          issueDate: true,
+   450→          note: true,
+   451→          deletedAt: true,
+   452→          createdAt: true,
+   453→          updatedAt: true,
+   454→        },
+   455→      }),
+   456→    );
+   457→    return {
+   458→      rows: items.map((s) => ({
+   459→        json: {
+   460→          id: s.id,
+   461→          number: s.number,
+   462→          customerId: s.customerId,
+   463→          subtotalMinor: s.subtotalMinor,
+   464→          discountMinor: s.discountMinor,
+   465→          totalMinor: s.totalMinor,
+   466→          paidMinor: s.paidMinor,
+   467→          status: s.status,
+   468→          issueDate: s.issueDate.toISOString(),
+   469→          note: s.note,
+   470→          deletedAt: iso(s.deletedAt),
+   471→          createdAt: s.createdAt.toISOString(),
+   472→          updatedAt: s.updatedAt.toISOString(),
+   473→        },
+   474→        csv: [
+   475→          s.id,
+   476→          s.number,
+   477→          s.customerId,
+   478→          formatMinorToDecimal(s.subtotalMinor, ctx.decimalPrecision),
+   479→          formatMinorToDecimal(s.discountMinor, ctx.decimalPrecision),
+   480→          formatMinorToDecimal(s.totalMinor, ctx.decimalPrecision),
+   481→          formatMinorToDecimal(s.paidMinor, ctx.decimalPrecision),
+   482→          s.status,
+   483→          s.issueDate.toISOString(),
+   484→          s.note,
+   485→          iso(s.deletedAt),
+   486→          s.createdAt.toISOString(),
+   487→          s.updatedAt.toISOString(),
+   488→        ],
+   489→      })),
+   490→      truncated,
+   491→    };
+   492→  },
+   493→
+   494→  sale_items: async (ctx) => {
+   495→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   496→      db.saleItem.findMany({
+   497→        where: { sale: { businessId: ctx.businessId } },
+   498→        orderBy: { id: "asc" },
+   499→        take,
+   500→        select: {
+   501→          id: true,
+   502→          saleId: true,
+   503→          productId: true,
+   504→          name: true,
+   505→          unit: true,
+   506→          qty: true,
+   507→          unitPriceMinor: true,
+   508→          lineTotalMinor: true,
+   509→        },
+   510→      }),
+   511→    );
+   512→    return {
+   513→      rows: items.map((i) => ({
+   514→        json: {
+   515→          id: i.id,
+   516→          saleId: i.saleId,
+   517→          productId: i.productId,
+   518→          name: i.name,
+   519→          unit: i.unit,
+   520→          qty: i.qty,
+   521→          unitPriceMinor: i.unitPriceMinor,
+   522→          lineTotalMinor: i.lineTotalMinor,
+   523→        },
+   524→        csv: [
+   525→          i.id,
+   526→          i.saleId,
+   527→          i.productId,
+   528→          i.name,
+   529→          i.unit,
+   530→          i.qty,
+   531→          formatMinorToDecimal(i.unitPriceMinor, ctx.decimalPrecision),
+   532→          formatMinorToDecimal(i.lineTotalMinor, ctx.decimalPrecision),
+   533→        ],
+   534→      })),
+   535→      truncated,
+   536→    };
+   537→  },
+   538→
+   539→  expenses: async (ctx) => {
+   540→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   541→      db.expense.findMany({
+   542→        where: { businessId: ctx.businessId },
+   543→        orderBy: { createdAt: "asc" },
+   544→        take,
+   545→        select: {
+   546→          id: true,
+   547→          supplierId: true,
+   548→          category: true,
+   549→          amountMinor: true,
+   550→          paidMinor: true,
+   551→          status: true,
+   552→          spentAt: true,
+   553→          note: true,
+   554→          deletedAt: true,
+   555→          createdAt: true,
+   556→          updatedAt: true,
+   557→        },
+   558→      }),
+   559→    );
+   560→    return {
+   561→      rows: items.map((e) => ({
+   562→        json: {
+   563→          id: e.id,
+   564→          supplierId: e.supplierId,
+   565→          category: e.category,
+   566→          amountMinor: e.amountMinor,
+   567→          paidMinor: e.paidMinor,
+   568→          status: e.status,
+   569→          spentAt: e.spentAt.toISOString(),
+   570→          note: e.note,
+   571→          deletedAt: iso(e.deletedAt),
+   572→          createdAt: e.createdAt.toISOString(),
+   573→          updatedAt: e.updatedAt.toISOString(),
+   574→        },
+   575→        csv: [
+   576→          e.id,
+   577→          e.supplierId,
+   578→          e.category,
+   579→          formatMinorToDecimal(e.amountMinor, ctx.decimalPrecision),
+   580→          formatMinorToDecimal(e.paidMinor, ctx.decimalPrecision),
+   581→          e.status,
+   582→          e.spentAt.toISOString(),
+   583→          e.note,
+   584→          iso(e.deletedAt),
+   585→          e.createdAt.toISOString(),
+   586→          e.updatedAt.toISOString(),
+   587→        ],
+   588→      })),
+   589→      truncated,
+   590→    };
+   591→  },
+   592→
+   593→  // Prompt 35 (§86) — CRM leads export (soft-deleted included: portability
+   594→  // mirrors the tenant lifecycle; §105/§106 policy analog).
+   595→  crm_leads: async (ctx) => {
+   596→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   597→      db.crmLead.findMany({
+   598→        where: { businessId: ctx.businessId },
+   599→        orderBy: { createdAt: "asc" },
+   600→        take,
+   601→        select: {
+   602→          id: true,
+   603→          name: true,
+   604→          companyName: true,
+   605→          phone: true,
+   606→          email: true,
+   607→          source: true,
+   608→          sourceDetail: true,
+   609→          status: true,
+   610→          note: true,
+   611→          assignedToUserId: true,
+   612→          customerId: true,
+   613→          convertedAt: true,
+   614→          deletedAt: true,
+   615→          createdAt: true,
+   616→          updatedAt: true,
+   617→        },
+   618→      }),
+   619→    );
+   620→    return {
+   621→      rows: items.map((l) => ({
+   622→        json: {
+   623→          id: l.id,
+   624→          name: l.name,
+   625→          companyName: l.companyName,
+   626→          phone: l.phone,
+   627→          email: l.email,
+   628→          source: l.source,
+   629→          sourceDetail: l.sourceDetail,
+   630→          status: l.status,
+   631→          note: l.note,
+   632→          assignedToUserId: l.assignedToUserId,
+   633→          customerId: l.customerId,
+   634→          convertedAt: iso(l.convertedAt),
+   635→          deletedAt: iso(l.deletedAt),
+   636→          createdAt: l.createdAt.toISOString(),
+   637→          updatedAt: l.updatedAt.toISOString(),
+   638→        },
+   639→        csv: [l.id, l.name, l.companyName, l.phone, l.email, l.source, l.sourceDetail, l.status, l.note, l.assignedToUserId, l.customerId, iso(l.convertedAt), iso(l.deletedAt), l.createdAt.toISOString(), l.updatedAt.toISOString()],
+   640→      })),
+   641→      truncated,
+   642→    };
+   643→  },
+   644→
+   645→  crm_opportunities: async (ctx) => {
+   646→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   647→      db.crmOpportunity.findMany({
+   648→        where: { businessId: ctx.businessId },
+   649→        orderBy: { createdAt: "asc" },
+   650→        take,
+   651→        select: {
+   652→          id: true,
+   653→          title: true,
+   654→          description: true,
+   655→          leadId: true,
+   656→          customerId: true,
+   657→          stage: true,
+   658→          probabilityPct: true,
+   659→          expectedValueMinor: true,
+   660→          currencyCode: true,
+   661→          expectedCloseDate: true,
+   662→          assignedToUserId: true,
+   663→          lostReason: true,
+   664→          wonAt: true,
+   665→          lostAt: true,
+   666→          deletedAt: true,
+   667→          createdAt: true,
+   668→          updatedAt: true,
+   669→        },
+   670→      }),
+   671→    );
+   672→    return {
+   673→      rows: items.map((o) => ({
+   674→        json: {
+   675→          id: o.id,
+   676→          title: o.title,
+   677→          description: o.description,
+   678→          leadId: o.leadId,
+   679→          customerId: o.customerId,
+   680→          stage: o.stage,
+   681→          probabilityPct: o.probabilityPct,
+   682→          expectedValueMinor: o.expectedValueMinor,
+   683→          currencyCode: o.currencyCode,
+   684→          expectedCloseDate: iso(o.expectedCloseDate),
+   685→          assignedToUserId: o.assignedToUserId,
+   686→          lostReason: o.lostReason,
+   687→          wonAt: iso(o.wonAt),
+   688→          lostAt: iso(o.lostAt),
+   689→          deletedAt: iso(o.deletedAt),
+   690→          createdAt: o.createdAt.toISOString(),
+   691→          updatedAt: o.updatedAt.toISOString(),
+   692→        },
+   693→        csv: [o.id, o.title, o.description, o.leadId, o.customerId, o.stage, o.probabilityPct, formatMinorToDecimal(o.expectedValueMinor, ctx.decimalPrecision), o.currencyCode, iso(o.expectedCloseDate), o.assignedToUserId, o.lostReason, iso(o.wonAt), iso(o.lostAt), iso(o.deletedAt), o.createdAt.toISOString(), o.updatedAt.toISOString()],
+   694→      })),
+   695→      truncated,
+   696→    };
+   697→  },
+   698→
+   699→  // Prompt 36 (§62/§111) — CRM activities export (soft-deleted included:
+   700→  // portability mirrors the tenant lifecycle). No security/platform/AI data.
+   701→  crm_activities: async (ctx) => {
+   702→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   703→      db.crmActivity.findMany({
+   704→        where: { businessId: ctx.businessId },
+   705→        orderBy: { createdAt: "asc" },
+   706→        take,
+   707→        select: {
+   708→          id: true,
+   709→          type: true,
+   710→          title: true,
+   711→          description: true,
+   712→          occurredAt: true,
+   713→          durationMinutes: true,
+   714→          customerId: true,
+   715→          leadId: true,
+   716→          opportunityId: true,
+   717→          createdByUserId: true,
+   718→          deletedAt: true,
+   719→          createdAt: true,
+   720→          updatedAt: true,
+   721→        },
+   722→      }),
+   723→    );
+   724→    return {
+   725→      rows: items.map((a) => ({
+   726→        json: {
+   727→          id: a.id,
+   728→          type: a.type,
+   729→          title: a.title,
+   730→          description: a.description,
+   731→          occurredAt: iso(a.occurredAt),
+   732→          durationMinutes: a.durationMinutes,
+   733→          customerId: a.customerId,
+   734→          leadId: a.leadId,
+   735→          opportunityId: a.opportunityId,
+   736→          createdByUserId: a.createdByUserId,
+   737→          deletedAt: iso(a.deletedAt),
+   738→          createdAt: a.createdAt.toISOString(),
+   739→          updatedAt: a.updatedAt.toISOString(),
+   740→        },
+   741→        csv: [a.id, a.type, a.title, a.description, iso(a.occurredAt), a.durationMinutes, a.customerId, a.leadId, a.opportunityId, a.createdByUserId, iso(a.deletedAt), a.createdAt.toISOString(), a.updatedAt.toISOString()],
+   742→      })),
+   743→      truncated,
+   744→    };
+   745→  },
+   746→
+   747→  // Prompt 36 (§62/§111) — CRM tasks export.
+   748→  crm_tasks: async (ctx) => {
+   749→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   750→      db.crmTask.findMany({
+   751→        where: { businessId: ctx.businessId },
+   752→        orderBy: { createdAt: "asc" },
+   753→        take,
+   754→        select: {
+   755→          id: true,
+   756→          title: true,
+   757→          description: true,
+   758→          status: true,
+   759→          priority: true,
+   760→          dueAt: true,
+   761→          completedAt: true,
+   762→          // Prompt 37 (§151) — reminder configuration is business data.
+   763→          reminderEnabled: true,
+   764→          reminderMinutesBefore: true,
+   765→          overdueAlertEnabled: true,
+   766→          customerId: true,
+   767→          leadId: true,
+   768→          opportunityId: true,
+   769→          assignedToUserId: true,
+   770→          createdByUserId: true,
+   771→          deletedAt: true,
+   772→          createdAt: true,
+   773→          updatedAt: true,
+   774→        },
+   775→      }),
+   776→    );
+   777→    return {
+   778→      rows: items.map((t) => ({
+   779→        json: {
+   780→          id: t.id,
+   781→          title: t.title,
+   782→          description: t.description,
+   783→          status: t.status,
+   784→          priority: t.priority,
+   785→          dueAt: iso(t.dueAt),
+   786→          completedAt: iso(t.completedAt),
+   787→          reminderEnabled: t.reminderEnabled,
+   788→          reminderMinutesBefore: t.reminderMinutesBefore,
+   789→          overdueAlertEnabled: t.overdueAlertEnabled,
+   790→          customerId: t.customerId,
+   791→          leadId: t.leadId,
+   792→          opportunityId: t.opportunityId,
+   793→          assignedToUserId: t.assignedToUserId,
+   794→          createdByUserId: t.createdByUserId,
+   795→          deletedAt: iso(t.deletedAt),
+   796→          createdAt: t.createdAt.toISOString(),
+   797→          updatedAt: t.updatedAt.toISOString(),
+   798→        },
+   799→        csv: [t.id, t.title, t.description, t.status, t.priority, iso(t.dueAt), iso(t.completedAt), String(t.reminderEnabled), t.reminderMinutesBefore, String(t.overdueAlertEnabled), t.customerId, t.leadId, t.opportunityId, t.assignedToUserId, t.createdByUserId, iso(t.deletedAt), t.createdAt.toISOString(), t.updatedAt.toISOString()],
+   800→      })),
+   801→      truncated,
+   802→    };
+   803→  },
+   804→
+   805→  payments: async (ctx) => {
+   806→    // §48 — tenant FINANCE payments (sale/expense settlements). This is NOT
+   807→    // platform subscription billing; no provider/payment-transaction fields.
+   808→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   809→      db.payment.findMany({
+   810→        where: { businessId: ctx.businessId },
+   811→        orderBy: { paidAt: "asc" },
+   812→        take,
+   813→        select: {
+   814→          id: true,
+   815→          saleId: true,
+   816→          expenseId: true,
+   817→          direction: true,
+   818→          amountMinor: true,
+   819→          method: true,
+   820→          note: true,
+   821→          paidAt: true,
+   822→          createdAt: true,
+   823→        },
+   824→      }),
+   825→    );
+   826→    return {
+   827→      rows: items.map((p) => ({
+   828→        json: {
+   829→          id: p.id,
+   830→          saleId: p.saleId,
+   831→          expenseId: p.expenseId,
+   832→          direction: p.direction,
+   833→          amountMinor: p.amountMinor,
+   834→          method: p.method,
+   835→          note: p.note,
+   836→          paidAt: p.paidAt.toISOString(),
+   837→          createdAt: p.createdAt.toISOString(),
+   838→        },
+   839→        csv: [
+   840→          p.id,
+   841→          p.saleId,
+   842→          p.expenseId,
+   843→          p.direction,
+   844→          formatMinorToDecimal(p.amountMinor, ctx.decimalPrecision),
+   845→          p.method,
+   846→          p.note,
+   847→          p.paidAt.toISOString(),
+   848→          p.createdAt.toISOString(),
+   849→        ],
+   850→      })),
+   851→      truncated,
+   852→    };
+   853→  },
+   854→
+   855→    // Prompt 40 (§107/§108) — physical count sessions + lines. Explicit
+   856→  // selects (§67); ascending deterministic order; tenant-scoped fetch only.
+   857→  inventory_stocktakes: async (ctx) => {
+   858→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   859→      db.inventoryStocktake.findMany({
+   860→        where: { businessId: ctx.businessId },
+   861→        orderBy: { createdAt: "asc" },
+   862→        take,
+   863→        select: {
+   864→          id: true,
+   865→          reference: true,
+   866→          status: true,
+   867→          countType: true,
+   868→          notes: true,
+   869→          createdByUserId: true,
+   870→          startedAt: true,
+   871→          reviewedAt: true,
+   872→          finalizedAt: true,
+   873→          canceledAt: true,
+   874→          createdAt: true,
+   875→          updatedAt: true,
+   876→        },
+   877→      }),
+   878→    );
+   879→    return {
+   880→      rows: items.map((st) => ({
+   881→        json: {
+   882→          id: st.id,
+   883→          reference: st.reference,
+   884→          status: st.status,
+   885→          countType: st.countType,
+   886→          notes: st.notes,
+   887→          createdByUserId: st.createdByUserId,
+   888→          startedAt: iso(st.startedAt),
+   889→          reviewedAt: iso(st.reviewedAt),
+   890→          finalizedAt: iso(st.finalizedAt),
+   891→          canceledAt: iso(st.canceledAt),
+   892→          createdAt: st.createdAt.toISOString(),
+   893→          updatedAt: st.updatedAt.toISOString(),
+   894→        },
+   895→        csv: [
+   896→          st.id, st.reference, st.status, st.countType, st.notes, st.createdByUserId,
+   897→          iso(st.startedAt), iso(st.reviewedAt), iso(st.finalizedAt), iso(st.canceledAt),
+   898→          st.createdAt.toISOString(), st.updatedAt.toISOString(),
+   899→        ],
+   900→      })),
+   901→      truncated,
+   902→    };
+   903→  },
+   904→
+   905→  inventory_stocktake_lines: async (ctx) => {
+   906→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   907→      db.inventoryStocktakeLine.findMany({
+   908→        where: { stocktake: { businessId: ctx.businessId } },
+   909→        orderBy: [{ countedAt: "asc" }, { id: "asc" }],
+   910→        take,
+   911→        select: {
+   912→          id: true,
+   913→          stocktakeId: true,
+   914→          productId: true,
+   915→          productNameAtCount: true,
+   916→          skuAtCount: true,
+   917→          unitAtCount: true,
+   918→          systemQtyAtCount: true,
+   919→          countedQty: true,
+   920→          varianceQty: true,
+   921→          countedAt: true,
+   922→          countedByUserId: true,
+   923→          createdAt: true,
+   924→          updatedAt: true,
+   925→        },
+   926→      }),
+   927→    );
+   928→    return {
+   929→      rows: items.map((l) => ({
+   930→        json: {
+   931→          id: l.id,
+   932→          stocktakeId: l.stocktakeId,
+   933→          productId: l.productId,
+   934→          productNameAtCount: l.productNameAtCount,
+   935→          skuAtCount: l.skuAtCount,
+   936→          unitAtCount: l.unitAtCount,
+   937→          systemQtyAtCount: l.systemQtyAtCount,
+   938→          countedQty: l.countedQty,
+   939→          varianceQty: l.varianceQty,
+   940→          countedAt: l.countedAt.toISOString(),
+   941→          countedByUserId: l.countedByUserId,
+   942→          createdAt: l.createdAt.toISOString(),
+   943→          updatedAt: l.updatedAt.toISOString(),
+   944→        },
+   945→        csv: [
+   946→          l.id, l.stocktakeId, l.productId, l.productNameAtCount, l.skuAtCount, l.unitAtCount,
+   947→          l.systemQtyAtCount, l.countedQty, l.varianceQty, l.countedAt.toISOString(),
+   948→          l.countedByUserId, l.createdAt.toISOString(), l.updatedAt.toISOString(),
+   949→        ],
+   950→      })),
+   951→      truncated,
+   952→    };
+   953→  },
+   954→
+   955→  // Prompt 41 (§95/§96) — procurement documents + lines. Explicit selects
+   956→  // (§207); ascending deterministic order; tenant-scoped; snapshots verbatim
+   957→  // (§236 — never replaced with live supplier/product data). Money stays
+   958→  // integer minor units.
+   959→  purchase_orders: async (ctx) => {
+   960→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+   961→      db.purchaseOrder.findMany({
+   962→        where: { businessId: ctx.businessId },
+   963→        orderBy: [{ orderedAt: "asc" }, { id: "asc" }],
+   964→        take,
+   965→        select: {
+   966→          id: true,
+   967→          reference: true,
+   968→          status: true,
+   969→          supplierId: true,
+   970→          supplierNameAtOrder: true,
+   971→          currencyCodeAtOrder: true,
+   972→          currencySymbolAtOrder: true,
+   973→          decimalPrecisionAtOrder: true,
+   974→          orderedAt: true,
+   975→          expectedDate: true,
+   976→          notes: true,
+   977→          createdByUserId: true,
+   978→          sentAt: true,
+   979→          confirmedAt: true,
+   980→          closedAt: true,
+   981→          cancelledAt: true,
+   982→          createdAt: true,
+   983→          updatedAt: true,
+   984→        },
+   985→      }),
+   986→    );
+   987→    return {
+   988→      rows: items.map((po) => ({
+   989→        json: {
+   990→          id: po.id,
+   991→          reference: po.reference,
+   992→          status: po.status,
+   993→          supplierId: po.supplierId,
+   994→          supplierNameAtOrder: po.supplierNameAtOrder,
+   995→          currencyCodeAtOrder: po.currencyCodeAtOrder,
+   996→          currencySymbolAtOrder: po.currencySymbolAtOrder,
+   997→          decimalPrecisionAtOrder: po.decimalPrecisionAtOrder,
+   998→          orderedAt: po.orderedAt.toISOString(),
+   999→          expectedDate: iso(po.expectedDate),
+  1000→          notes: po.notes,
+  1001→          createdByUserId: po.createdByUserId,
+  1002→          sentAt: iso(po.sentAt),
+  1003→          confirmedAt: iso(po.confirmedAt),
+  1004→          closedAt: iso(po.closedAt),
+  1005→          cancelledAt: iso(po.cancelledAt),
+  1006→          createdAt: po.createdAt.toISOString(),
+  1007→          updatedAt: po.updatedAt.toISOString(),
+  1008→        },
+  1009→        csv: [
+  1010→          po.id, po.reference, po.status, po.supplierId, po.supplierNameAtOrder,
+  1011→          po.currencyCodeAtOrder, po.currencySymbolAtOrder, po.decimalPrecisionAtOrder,
+  1012→          po.orderedAt.toISOString(), iso(po.expectedDate), po.notes, po.createdByUserId,
+  1013→          iso(po.sentAt), iso(po.confirmedAt), iso(po.closedAt), iso(po.cancelledAt),
+  1014→          po.createdAt.toISOString(), po.updatedAt.toISOString(),
+  1015→        ],
+  1016→      })),
+  1017→      truncated,
+  1018→    };
+  1019→  },
+  1020→
+  1021→  purchase_order_lines: async (ctx) => {
+  1022→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+  1023→      db.purchaseOrderLine.findMany({
+  1024→        where: { purchaseOrder: { businessId: ctx.businessId } },
+  1025→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  1026→        take,
+  1027→        select: {
+  1028→          id: true,
+  1029→          purchaseOrderId: true,
+  1030→          productId: true,
+  1031→          productNameAtOrder: true,
+  1032→          skuAtOrder: true,
+  1033→          unitAtOrder: true,
+  1034→          orderedQty: true,
+  1035→          unitPriceMinor: true,
+  1036→          createdAt: true,
+  1037→          updatedAt: true,
+  1038→        },
+  1039→      }),
+  1040→    );
+  1041→    return {
+  1042→      rows: items.map((l) => ({
+  1043→        json: {
+  1044→          id: l.id,
+  1045→          purchaseOrderId: l.purchaseOrderId,
+  1046→          productId: l.productId,
+  1047→          productNameAtOrder: l.productNameAtOrder,
+  1048→          skuAtOrder: l.skuAtOrder,
+  1049→          unitAtOrder: l.unitAtOrder,
+  1050→          orderedQty: l.orderedQty,
+  1051→          unitPriceMinor: l.unitPriceMinor,
+  1052→          createdAt: l.createdAt.toISOString(),
+  1053→          updatedAt: l.updatedAt.toISOString(),
+  1054→        },
+  1055→        csv: [
+  1056→          l.id, l.purchaseOrderId, l.productId, l.productNameAtOrder, l.skuAtOrder, l.unitAtOrder,
+  1057→          l.orderedQty, l.unitPriceMinor, l.createdAt.toISOString(), l.updatedAt.toISOString(),
+  1058→        ],
+  1059→      })),
+  1060→      truncated,
+  1061→    };
+  1062→  },
+  1063→
+  1064→  // Prompt 42 (§136/§252) — goods-receipt datasets: export-ONLY. Rows carry
+  1065→  // historical snapshots verbatim (§127); there is NO money in this domain
+  1066→  // (§37) so no minor-unit conversion applies anywhere below.
+  1067→  inventory_goods_receipts: async (ctx) => {
+  1068→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+  1069→      db.goodsReceipt.findMany({
+  1070→        where: { businessId: ctx.businessId },
+  1071→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  1072→        take,
+  1073→        select: {
+  1074→          id: true,
+  1075→          reference: true,
+  1076→          status: true,
+  1077→          purchaseOrderId: true,
+  1078→          purchaseOrderReferenceAtReceipt: true,
+  1079→          supplierNameAtReceipt: true,
+  1080→          notes: true,
+  1081→          createdByUserId: true,
+  1082→          postedAt: true,
+  1083→          cancelledAt: true,
+  1084→          createdAt: true,
+  1085→          updatedAt: true,
+  1086→        },
+  1087→      }),
+  1088→    );
+  1089→    return {
+  1090→      rows: items.map((gr) => ({
+  1091→        json: {
+  1092→          id: gr.id,
+  1093→          reference: gr.reference,
+  1094→          status: gr.status,
+  1095→          purchaseOrderId: gr.purchaseOrderId,
+  1096→          purchaseOrderReferenceAtReceipt: gr.purchaseOrderReferenceAtReceipt,
+  1097→          supplierNameAtReceipt: gr.supplierNameAtReceipt,
+  1098→          notes: gr.notes,
+  1099→          createdByUserId: gr.createdByUserId,
+  1100→          postedAt: iso(gr.postedAt),
+  1101→          cancelledAt: iso(gr.cancelledAt),
+  1102→          createdAt: gr.createdAt.toISOString(),
+  1103→          updatedAt: gr.updatedAt.toISOString(),
+  1104→        },
+  1105→        csv: [
+  1106→          gr.id, gr.reference, gr.status, gr.purchaseOrderId, gr.purchaseOrderReferenceAtReceipt,
+  1107→          gr.supplierNameAtReceipt, gr.notes, gr.createdByUserId,
+  1108→          iso(gr.postedAt), iso(gr.cancelledAt), gr.createdAt.toISOString(), gr.updatedAt.toISOString(),
+  1109→        ],
+  1110→      })),
+  1111→      truncated,
+  1112→    };
+  1113→  },
+  1114→
+  1115→  inventory_goods_receipt_lines: async (ctx) => {
+  1116→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+  1117→      db.goodsReceiptLine.findMany({
+  1118→        where: { goodsReceipt: { businessId: ctx.businessId } },
+  1119→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  1120→        take,
+  1121→        select: {
+  1122→          id: true,
+  1123→          goodsReceiptId: true,
+  1124→          purchaseOrderLineId: true,
+  1125→          productId: true,
+  1126→          productNameAtReceipt: true,
+  1127→          skuAtReceipt: true,
+  1128→          unitAtReceipt: true,
+  1129→          receivedQty: true,
+  1130→          createdAt: true,
+  1131→          updatedAt: true,
+  1132→        },
+  1133→      }),
+  1134→    );
+  1135→    return {
+  1136→      rows: items.map((l) => ({
+  1137→        json: {
+  1138→          id: l.id,
+  1139→          goodsReceiptId: l.goodsReceiptId,
+  1140→          purchaseOrderLineId: l.purchaseOrderLineId,
+  1141→          productId: l.productId,
+  1142→          productNameAtReceipt: l.productNameAtReceipt,
+  1143→          skuAtReceipt: l.skuAtReceipt,
+  1144→          unitAtReceipt: l.unitAtReceipt,
+  1145→          receivedQty: l.receivedQty,
+  1146→          createdAt: l.createdAt.toISOString(),
+  1147→          updatedAt: l.updatedAt.toISOString(),
+  1148→        },
+  1149→        csv: [
+  1150→          l.id, l.goodsReceiptId, l.purchaseOrderLineId, l.productId, l.productNameAtReceipt,
+  1151→          l.skuAtReceipt, l.unitAtReceipt, l.receivedQty, l.createdAt.toISOString(), l.updatedAt.toISOString(),
+  1152→        ],
+  1153→      })),
+  1154→      truncated,
+  1155→    };
+  1156→  },
+  1157→
+  1158→  // Prompt 43 (§112/§179) — goods-return datasets: export-ONLY (§114/§180 —
+  1159→  // a generic import could replay negative inventory movements and
+  1160→  // duplicate stock decrements). Rows carry historical snapshots verbatim
+  1161→  // (§30/§64); there is NO money in this domain (§7) so no minor-unit
+  1162→  // conversion applies anywhere below.
+  1163→  inventory_goods_returns: async (ctx) => {
+  1164→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+  1165→      db.goodsReturn.findMany({
+  1166→        where: { businessId: ctx.businessId },
+  1167→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  1168→        take,
+  1169→        select: {
+  1170→          id: true,
+  1171→          reference: true,
+  1172→          status: true,
+  1173→          goodsReceiptId: true,
+  1174→          goodsReceiptReferenceAtReturn: true,
+  1175→          purchaseOrderReferenceAtReturn: true,
+  1176→          supplierNameAtReturn: true,
+  1177→          notes: true,
+  1178→          createdByUserId: true,
+  1179→          postedAt: true,
+  1180→          cancelledAt: true,
+  1181→          createdAt: true,
+  1182→          updatedAt: true,
+  1183→        },
+  1184→      }),
+  1185→    );
+  1186→    return {
+  1187→      rows: items.map((gr) => ({
+  1188→        json: {
+  1189→          id: gr.id,
+  1190→          reference: gr.reference,
+  1191→          status: gr.status,
+  1192→          goodsReceiptId: gr.goodsReceiptId,
+  1193→          goodsReceiptReferenceAtReturn: gr.goodsReceiptReferenceAtReturn,
+  1194→          purchaseOrderReferenceAtReturn: gr.purchaseOrderReferenceAtReturn,
+  1195→          supplierNameAtReturn: gr.supplierNameAtReturn,
+  1196→          notes: gr.notes,
+  1197→          createdByUserId: gr.createdByUserId,
+  1198→          postedAt: iso(gr.postedAt),
+  1199→          cancelledAt: iso(gr.cancelledAt),
+  1200→          createdAt: gr.createdAt.toISOString(),
+  1201→          updatedAt: gr.updatedAt.toISOString(),
+  1202→        },
+  1203→        csv: [
+  1204→          gr.id, gr.reference, gr.status, gr.goodsReceiptId, gr.goodsReceiptReferenceAtReturn,
+  1205→          gr.purchaseOrderReferenceAtReturn, gr.supplierNameAtReturn, gr.notes, gr.createdByUserId,
+  1206→          iso(gr.postedAt), iso(gr.cancelledAt), gr.createdAt.toISOString(), gr.updatedAt.toISOString(),
+  1207→        ],
+  1208→      })),
+  1209→      truncated,
+  1210→    };
+  1211→  },
+  1212→
+  1213→  inventory_goods_return_lines: async (ctx) => {
+  1214→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+  1215→      db.goodsReturnLine.findMany({
+  1216→        where: { goodsReturn: { businessId: ctx.businessId } },
+  1217→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  1218→        take,
+  1219→        select: {
+  1220→          id: true,
+  1221→          goodsReturnId: true,
+  1222→          goodsReceiptLineId: true,
+  1223→          productId: true,
+  1224→          productNameAtReturn: true,
+  1225→          skuAtReturn: true,
+  1226→          unitAtReturn: true,
+  1227→          returnedQty: true,
+  1228→          reasonCode: true,
+  1229→          createdAt: true,
+  1230→          updatedAt: true,
+  1231→        },
+  1232→      }),
+  1233→    );
+  1234→    return {
+  1235→      rows: items.map((l) => ({
+  1236→        json: {
+  1237→          id: l.id,
+  1238→          goodsReturnId: l.goodsReturnId,
+  1239→          goodsReceiptLineId: l.goodsReceiptLineId,
+  1240→          productId: l.productId,
+  1241→          productNameAtReturn: l.productNameAtReturn,
+  1242→          skuAtReturn: l.skuAtReturn,
+  1243→          unitAtReturn: l.unitAtReturn,
+  1244→          returnedQty: l.returnedQty,
+  1245→          reasonCode: l.reasonCode,
+  1246→          createdAt: l.createdAt.toISOString(),
+  1247→          updatedAt: l.updatedAt.toISOString(),
+  1248→        },
+  1249→        csv: [
+  1250→          l.id, l.goodsReturnId, l.goodsReceiptLineId, l.productId, l.productNameAtReturn,
+  1251→          l.skuAtReturn, l.unitAtReturn, l.returnedQty, l.reasonCode,
+  1252→          l.createdAt.toISOString(), l.updatedAt.toISOString(),
+  1253→        ],
+  1254→      })),
+  1255→      truncated,
+  1256→    };
+  1257→  },
+  1258→
+  1259→  // Prompt 44 — goods-dispatch datasets: export-ONLY (a generic import
+  1260→  // could replay negative inventory movements and duplicate stock
+  1261→  // decrements). Rows carry historical snapshots verbatim; there is NO
+  1262→  // money in this domain so no minor-unit conversion applies anywhere
+  1263→  // below.
+  1264→  inventory_goods_dispatches: async (ctx) => {
+  1265→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+  1266→      db.goodsDispatch.findMany({
+  1267→        where: { businessId: ctx.businessId },
+  1268→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  1269→        take,
+  1270→        select: {
+  1271→          id: true,
+  1272→          reference: true,
+  1273→          status: true,
+  1274→          customerId: true,
+  1275→          customerNameAtDispatch: true,
+  1276→          notes: true,
+  1277→          createdByUserId: true,
+  1278→          postedAt: true,
+  1279→          cancelledAt: true,
+  1280→          createdAt: true,
+  1281→          updatedAt: true,
+  1282→        },
+  1283→      }),
+  1284→    );
+  1285→    return {
+  1286→      rows: items.map((gd) => ({
+  1287→        json: {
+  1288→          id: gd.id,
+  1289→          reference: gd.reference,
+  1290→          status: gd.status,
+  1291→          customerId: gd.customerId,
+  1292→          customerNameAtDispatch: gd.customerNameAtDispatch,
+  1293→          notes: gd.notes,
+  1294→          createdByUserId: gd.createdByUserId,
+  1295→          postedAt: iso(gd.postedAt),
+  1296→          cancelledAt: iso(gd.cancelledAt),
+  1297→          createdAt: gd.createdAt.toISOString(),
+  1298→          updatedAt: gd.updatedAt.toISOString(),
+  1299→        },
+  1300→        csv: [
+  1301→          gd.id, gd.reference, gd.status, gd.customerId, gd.customerNameAtDispatch, gd.notes,
+  1302→          gd.createdByUserId, iso(gd.postedAt), iso(gd.cancelledAt),
+  1303→          gd.createdAt.toISOString(), gd.updatedAt.toISOString(),
+  1304→        ],
+  1305→      })),
+  1306→      truncated,
+  1307→    };
+  1308→  },
+  1309→
+  1310→  inventory_goods_dispatch_lines: async (ctx) => {
+  1311→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+  1312→      db.goodsDispatchLine.findMany({
+  1313→        where: { goodsDispatch: { businessId: ctx.businessId } },
+  1314→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  1315→        take,
+  1316→        select: {
+  1317→          id: true,
+  1318→          goodsDispatchId: true,
+  1319→          productId: true,
+  1320→          productNameAtDispatch: true,
+  1321→          skuAtDispatch: true,
+  1322→          unitAtDispatch: true,
+  1323→          qty: true,
+  1324→          reasonCode: true,
+  1325→          createdAt: true,
+  1326→          updatedAt: true,
+  1327→        },
+  1328→      }),
+  1329→    );
+  1330→    return {
+  1331→      rows: items.map((l) => ({
+  1332→        json: {
+  1333→          id: l.id,
+  1334→          goodsDispatchId: l.goodsDispatchId,
+  1335→          productId: l.productId,
+  1336→          productNameAtDispatch: l.productNameAtDispatch,
+  1337→          skuAtDispatch: l.skuAtDispatch,
+  1338→          unitAtDispatch: l.unitAtDispatch,
+  1339→          qty: l.qty,
+  1340→          reasonCode: l.reasonCode,
+  1341→          createdAt: l.createdAt.toISOString(),
+  1342→          updatedAt: l.updatedAt.toISOString(),
+  1343→        },
+  1344→        csv: [
+  1345→          l.id, l.goodsDispatchId, l.productId, l.productNameAtDispatch,
+  1346→          l.skuAtDispatch, l.unitAtDispatch, l.qty, l.reasonCode,
+  1347→          l.createdAt.toISOString(), l.updatedAt.toISOString(),
+  1348→        ],
+  1349→      })),
+  1350→      truncated,
+  1351→    };
+  1352→  },
+  1353→
+  1354→  sales_orders: async (ctx) => {
+  1355→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+  1356→      db.salesOrder.findMany({
+  1357→        where: { businessId: ctx.businessId },
+  1358→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  1359→        take,
+  1360→        select: {
+  1361→          id: true,
+  1362→          reference: true,
+  1363→          status: true,
+  1364→          customerId: true,
+  1365→          customerNameAtOrder: true,
+  1366→          currencyCodeAtOrder: true,
+  1367→          currencySymbolAtOrder: true,
+  1368→          decimalPrecisionAtOrder: true,
+  1369→          orderDate: true,
+  1370→          expectedDate: true,
+  1371→          discountMinor: true,
+  1372→          notes: true,
+  1373→          createdByUserId: true,
+  1374→          confirmedAt: true,
+  1375→          completedAt: true,
+  1376→          cancelledAt: true,
+  1377→          createdAt: true,
+  1378→          updatedAt: true,
+  1379→        },
+  1380→      }),
+  1381→    );
+  1382→    return {
+  1383→      rows: items.map((so) => ({
+  1384→        json: {
+  1385→          id: so.id,
+  1386→          reference: so.reference,
+  1387→          status: so.status,
+  1388→          customerId: so.customerId,
+  1389→          customerNameAtOrder: so.customerNameAtOrder,
+  1390→          currencyCodeAtOrder: so.currencyCodeAtOrder,
+  1391→          currencySymbolAtOrder: so.currencySymbolAtOrder,
+  1392→          decimalPrecisionAtOrder: so.decimalPrecisionAtOrder,
+  1393→          orderDate: iso(so.orderDate),
+  1394→          expectedDate: iso(so.expectedDate),
+  1395→          discountMinor: so.discountMinor,
+  1396→          notes: so.notes,
+  1397→          createdByUserId: so.createdByUserId,
+  1398→          confirmedAt: iso(so.confirmedAt),
+  1399→          completedAt: iso(so.completedAt),
+  1400→          cancelledAt: iso(so.cancelledAt),
+  1401→          createdAt: so.createdAt.toISOString(),
+  1402→          updatedAt: so.updatedAt.toISOString(),
+  1403→        },
+  1404→        csv: [
+  1405→          so.id, so.reference, so.status, so.customerId, so.customerNameAtOrder,
+  1406→          so.currencyCodeAtOrder, so.currencySymbolAtOrder, so.decimalPrecisionAtOrder,
+  1407→          iso(so.orderDate), iso(so.expectedDate), so.discountMinor, so.notes,
+  1408→          so.createdByUserId, iso(so.confirmedAt), iso(so.completedAt), iso(so.cancelledAt),
+  1409→          so.createdAt.toISOString(), so.updatedAt.toISOString(),
+  1410→        ],
+  1411→      })),
+  1412→      truncated,
+  1413→    };
+  1414→  },
+  1415→
+  1416→  sales_order_lines: async (ctx) => {
+  1417→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+  1418→      db.salesOrderLine.findMany({
+  1419→        where: { salesOrder: { businessId: ctx.businessId } },
+  1420→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  1421→        take,
+  1422→        select: {
+  1423→          id: true,
+  1424→          salesOrderId: true,
+  1425→          productId: true,
+  1426→          productNameAtOrder: true,
+  1427→          skuAtOrder: true,
+  1428→          unitAtOrder: true,
+  1429→          orderedQty: true,
+  1430→          unitPriceMinor: true,
+  1431→          createdAt: true,
+  1432→          updatedAt: true,
+  1433→        },
+  1434→      }),
+  1435→    );
+  1436→    return {
+  1437→      rows: items.map((l) => ({
+  1438→        json: {
+  1439→          id: l.id,
+  1440→          salesOrderId: l.salesOrderId,
+  1441→          productId: l.productId,
+  1442→          productNameAtOrder: l.productNameAtOrder,
+  1443→          skuAtOrder: l.skuAtOrder,
+  1444→          unitAtOrder: l.unitAtOrder,
+  1445→          orderedQty: l.orderedQty,
+  1446→          unitPriceMinor: l.unitPriceMinor,
+  1447→          createdAt: l.createdAt.toISOString(),
+  1448→          updatedAt: l.updatedAt.toISOString(),
+  1449→        },
+  1450→        csv: [
+  1451→          l.id, l.salesOrderId, l.productId, l.productNameAtOrder,
+  1452→          l.skuAtOrder, l.unitAtOrder, l.orderedQty, l.unitPriceMinor,
+  1453→          l.createdAt.toISOString(), l.updatedAt.toISOString(),
+  1454→        ],
+  1455→      })),
+  1456→      truncated,
+  1457→    };
+  1458→  },
+  1459→
+  1460→  sales_quotations: async (ctx) => {
+  1461→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+  1462→      db.salesQuotation.findMany({
+  1463→        where: { businessId: ctx.businessId },
+  1464→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  1465→        take,
+  1466→        select: {
+  1467→          id: true,
+  1468→          reference: true,
+  1469→          status: true,
+  1470→          customerId: true,
+  1471→          customerNameAtQuotation: true,
+  1472→          currencyCodeAtQuotation: true,
+  1473→          currencySymbolAtQuotation: true,
+  1474→          decimalPrecisionAtQuotation: true,
+  1475→          quotationDate: true,
+  1476→          validUntilDate: true,
+  1477→          expectedDeliveryDate: true,
+  1478→          discountMinor: true,
+  1479→          customerNotes: true,
+  1480→          createdByUserId: true,
+  1481→          sentAt: true,
+  1482→          acceptedAt: true,
+  1483→          rejectedAt: true,
+  1484→          cancelledAt: true,
+  1485→          convertedAt: true,
+  1486→          createdAt: true,
+  1487→          updatedAt: true,
+  1488→        },
+  1489→      }),
+  1490→    );
+  1491→    return {
+  1492→      rows: items.map((qt) => ({
+  1493→        json: {
+  1494→          id: qt.id,
+  1495→          reference: qt.reference,
+  1496→          status: qt.status,
+  1497→          customerId: qt.customerId,
+  1498→          customerNameAtQuotation: qt.customerNameAtQuotation,
+  1499→          currencyCodeAtQuotation: qt.currencyCodeAtQuotation,
+  1500→          currencySymbolAtQuotation: qt.currencySymbolAtQuotation,
+  1501→          decimalPrecisionAtQuotation: qt.decimalPrecisionAtQuotation,
+  1502→          quotationDate: iso(qt.quotationDate),
+  1503→          validUntilDate: iso(qt.validUntilDate),
+  1504→          expectedDeliveryDate: iso(qt.expectedDeliveryDate),
+  1505→          discountMinor: qt.discountMinor,
+  1506→          customerNotes: qt.customerNotes,
+  1507→          // internalNotes are deliberately NOT exported (staff-only §10/§20).
+  1508→          createdByUserId: qt.createdByUserId,
+  1509→          sentAt: iso(qt.sentAt),
+  1510→          acceptedAt: iso(qt.acceptedAt),
+  1511→          rejectedAt: iso(qt.rejectedAt),
+  1512→          cancelledAt: iso(qt.cancelledAt),
+  1513→          convertedAt: iso(qt.convertedAt),
+  1514→          createdAt: qt.createdAt.toISOString(),
+  1515→          updatedAt: qt.updatedAt.toISOString(),
+  1516→        },
+  1517→        csv: [
+  1518→          qt.id, qt.reference, qt.status, qt.customerId, qt.customerNameAtQuotation,
+  1519→          qt.currencyCodeAtQuotation, qt.currencySymbolAtQuotation, qt.decimalPrecisionAtQuotation,
+  1520→          iso(qt.quotationDate), iso(qt.validUntilDate), iso(qt.expectedDeliveryDate),
+  1521→          qt.discountMinor, qt.customerNotes, qt.createdByUserId,
+  1522→          iso(qt.sentAt), iso(qt.acceptedAt), iso(qt.rejectedAt), iso(qt.cancelledAt), iso(qt.convertedAt),
+  1523→          qt.createdAt.toISOString(), qt.updatedAt.toISOString(),
+  1524→        ],
+  1525→      })),
+  1526→      truncated,
+  1527→    };
+  1528→  },
+  1529→
+  1530→  sales_quotation_lines: async (ctx) => {
+  1531→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+  1532→      db.salesQuotationLine.findMany({
+  1533→        where: { salesQuotation: { businessId: ctx.businessId } },
+  1534→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  1535→        take,
+  1536→        select: {
+  1537→          id: true,
+  1538→          salesQuotationId: true,
+  1539→          productId: true,
+  1540→          productNameAtQuotation: true,
+  1541→          skuAtQuotation: true,
+  1542→          unitAtQuotation: true,
+  1543→          qty: true,
+  1544→          unitPriceMinor: true,
+  1545→          createdAt: true,
+  1546→          updatedAt: true,
+  1547→        },
+  1548→      }),
+  1549→    );
+  1550→    return {
+  1551→      rows: items.map((l) => ({
+  1552→        json: {
+  1553→          id: l.id,
+  1554→          salesQuotationId: l.salesQuotationId,
+  1555→          productId: l.productId,
+  1556→          productNameAtQuotation: l.productNameAtQuotation,
+  1557→          skuAtQuotation: l.skuAtQuotation,
+  1558→          unitAtQuotation: l.unitAtQuotation,
+  1559→          qty: l.qty,
+  1560→          unitPriceMinor: l.unitPriceMinor,
+  1561→          createdAt: l.createdAt.toISOString(),
+  1562→          updatedAt: l.updatedAt.toISOString(),
+  1563→        },
+  1564→        csv: [
+  1565→          l.id, l.salesQuotationId, l.productId, l.productNameAtQuotation,
+  1566→          l.skuAtQuotation, l.unitAtQuotation, l.qty, l.unitPriceMinor,
+  1567→          l.createdAt.toISOString(), l.updatedAt.toISOString(),
+  1568→        ],
+  1569→      })),
+  1570→      truncated,
+  1571→    };
+  1572→  },
+  1573→
+  1574→
+  1575→  // Prompt 48 (§6) — supplier-bill datasets. Authoritative document data +
+  1576→  // frozen snapshots + exact integer minor units; expenseId exported as the
+  1577→  // allowed document relationship identifier (no duplicated balance fields
+  1578→  // — paid/outstanding live ONLY in the authoritative expenses dataset).
+  1579→  // internalNotes deliberately NOT exported (staff-only, §16/§6).
+  1580→  supplier_bills: async (ctx) => {
+  1581→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+  1582→      db.supplierBill.findMany({
+  1583→        where: { businessId: ctx.businessId },
+  1584→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  1585→        take,
+  1586→        select: {
+  1587→          id: true,
+  1588→          reference: true,
+  1589→          supplierInvoiceReference: true,
+  1590→          supplierId: true,
+  1591→          supplierNameAtBill: true,
+  1592→          purchaseOrderId: true,
+  1593→          purchaseOrderReferenceAtBill: true,
+  1594→          status: true,
+  1595→          billDate: true,
+  1596→          dueDate: true,
+  1597→          currencyCodeAtBill: true,
+  1598→          currencySymbolAtBill: true,
+  1599→          decimalPrecisionAtBill: true,
+  1600→          subtotalMinor: true,
+  1601→          discountMinor: true,
+  1602→          totalMinor: true,
+  1603→          createdByUserId: true,
+  1604→          postedAt: true,
+  1605→          cancelledAt: true,
+  1606→          expenseId: true,
+  1607→          createdAt: true,
+  1608→          updatedAt: true,
+  1609→        },
+  1610→      }),
+  1611→    );
+  1612→    return {
+  1613→      rows: items.map((b) => ({
+  1614→        json: {
+  1615→          id: b.id,
+  1616→          reference: b.reference,
+  1617→          supplierInvoiceReference: b.supplierInvoiceReference,
+  1618→          supplierId: b.supplierId,
+  1619→          supplierNameAtBill: b.supplierNameAtBill,
+  1620→          purchaseOrderId: b.purchaseOrderId,
+  1621→          purchaseOrderReferenceAtBill: b.purchaseOrderReferenceAtBill,
+  1622→          status: b.status,
+  1623→          billDate: iso(b.billDate),
+  1624→          dueDate: iso(b.dueDate),
+  1625→          currencyCodeAtBill: b.currencyCodeAtBill,
+  1626→          currencySymbolAtBill: b.currencySymbolAtBill,
+  1627→          decimalPrecisionAtBill: b.decimalPrecisionAtBill,
+  1628→          subtotalMinor: b.subtotalMinor,
+  1629→          discountMinor: b.discountMinor,
+  1630→          totalMinor: b.totalMinor,
+  1631→          createdByUserId: b.createdByUserId,
+  1632→          postedAt: iso(b.postedAt),
+  1633→          cancelledAt: iso(b.cancelledAt),
+  1634→          expenseId: b.expenseId,
+  1635→          createdAt: b.createdAt.toISOString(),
+  1636→          updatedAt: b.updatedAt.toISOString(),
+  1637→        },
+  1638→        csv: [
+  1639→          b.id, b.reference, b.supplierInvoiceReference, b.supplierId,
+  1640→          b.supplierNameAtBill, b.purchaseOrderId, b.purchaseOrderReferenceAtBill,
+  1641→          b.status, iso(b.billDate), iso(b.dueDate),
+  1642→          b.currencyCodeAtBill, b.currencySymbolAtBill, b.decimalPrecisionAtBill,
+  1643→          b.subtotalMinor, b.discountMinor, b.totalMinor,
+  1644→          b.createdByUserId, iso(b.postedAt), iso(b.cancelledAt), b.expenseId,
+  1645→          b.createdAt.toISOString(), b.updatedAt.toISOString(),
+  1646→        ],
+  1647→      })),
+  1648→      truncated,
+  1649→    };
+  1650→  },
+  1651→
+  1652→  supplier_bill_lines: async (ctx) => {
+  1653→    const { items, truncated } = await fetchWithCap(ctx.maxRecords, (take) =>
+  1654→      db.supplierBillLine.findMany({
+  1655→        where: { supplierBill: { businessId: ctx.businessId } },
+  1656→        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  1657→        take,
+  1658→        select: {
+  1659→          id: true,
+  1660→          supplierBillId: true,
+  1661→          purchaseOrderLineId: true,
+  1662→          productId: true,
+  1663→          productNameAtBill: true,
+  1664→          skuAtBill: true,
+  1665→          unitAtBill: true,
+  1666→          billedQty: true,
+  1667→          unitPriceMinor: true,
+  1668→          purchaseOrderUnitPriceMinor: true,
+  1669→          lineTotalMinor: true,
+  1670→          createdAt: true,
+  1671→          updatedAt: true,
+  1672→        },
+  1673→      }),
+  1674→    );
+  1675→    return {
+  1676→      rows: items.map((l) => ({
+  1677→        json: {
+  1678→          id: l.id,
+  1679→          supplierBillId: l.supplierBillId,
+  1680→          purchaseOrderLineId: l.purchaseOrderLineId,
+  1681→          productId: l.productId,
+  1682→          productNameAtBill: l.productNameAtBill,
+  1683→          skuAtBill: l.skuAtBill,
+  1684→          unitAtBill: l.unitAtBill,
+  1685→          billedQty: l.billedQty,
+  1686→          unitPriceMinor: l.unitPriceMinor,
+  1687→          purchaseOrderUnitPriceMinor: l.purchaseOrderUnitPriceMinor,
+  1688→          lineTotalMinor: l.lineTotalMinor,
+  1689→          createdAt: l.createdAt.toISOString(),
+  1690→          updatedAt: l.updatedAt.toISOString(),
+  1691→        },
+  1692→        csv: [
+  1693→          l.id, l.supplierBillId, l.purchaseOrderLineId, l.productId,
+  1694→          l.productNameAtBill, l.skuAtBill, l.unitAtBill,
+  1695→          l.billedQty, l.unitPriceMinor, l.purchaseOrderUnitPriceMinor,
+  1696→          l.lineTotalMinor,
+  1697→          l.createdAt.toISOString(), l.updatedAt.toISOString(),
+  1698→        ],
+  1699→      })),
+  1700→      truncated,
+  1701→    };
+  1702→  },
+  1703→
+  1704→subscription_summary: async (ctx) => {
+  1705→    // §51 — customer-visible subscription state ONLY. Provider verification
+  1706→    // internals, webhook signatures and merchant credentials do not exist here.
+  1707→    const sub = await db.subscription.findUnique({
+  1708→      where: { businessId: ctx.businessId },
+  1709→      select: {
+  1710→        plan: { select: { code: true, name: true } },
+  1711→        status: true,
+  1712→        billingPeriod: true,
+  1713→        currentPeriodStart: true,
+  1714→        currentPeriodEnd: true,
+  1715→        trialStart: true,
+  1716→        trialEnd: true,
+  1717→        cancelAtPeriodEnd: true,
+  1718→        canceledAt: true,
+  1719→        endedAt: true,
+  1720→        createdAt: true,
+  1721→      },
+  1722→    });
+  1723→    if (!sub) return { rows: [], truncated: false };
+  1724→    return {
+  1725→      rows: [
+  1726→        {
+  1727→          json: {
+  1728→            planCode: sub.plan.code,
+  1729→            planName: sub.plan.name,
+  1730→            status: sub.status,
+  1731→            billingPeriod: sub.billingPeriod,
+  1732→            currentPeriodStart: iso(sub.currentPeriodStart),
+  1733→            currentPeriodEnd: iso(sub.currentPeriodEnd),
+  1734→            trialStart: iso(sub.trialStart),
+  1735→            trialEnd: iso(sub.trialEnd),
+  1736→            cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+  1737→            canceledAt: iso(sub.canceledAt),
+  1738→            endedAt: iso(sub.endedAt),
+  1739→            createdAt: sub.createdAt.toISOString(),
+  1740→          },
+  1741→          csv: [
+  1742→            sub.plan.code,
+  1743→            sub.plan.name,
+  1744→            sub.status,
+  1745→            sub.billingPeriod,
+  1746→            iso(sub.currentPeriodStart),
+  1747→            iso(sub.currentPeriodEnd),
+  1748→            iso(sub.trialStart),
+  1749→            iso(sub.trialEnd),
+  1750→            sub.cancelAtPeriodEnd ? "true" : "false",
+  1751→            iso(sub.canceledAt),
+  1752→            iso(sub.endedAt),
+  1753→            sub.createdAt.toISOString(),
+  1754→          ],
+  1755→        },
+  1756→      ],
+  1757→      truncated: false,
+  1758→    };
+  1759→  },
+  1760→
+  1761→  usage_summary: async (ctx) => {
+  1762→    // §52 — customer-facing usage facts (the same numbers the Usage page
+  1763→    // shows). NO provider cost, NO AI rates, NO internal economics.
+  1764→    const { getUsageSummary } = await import("@/lib/billing/usage");
+  1765→    const summary = await getUsageSummary(ctx.businessId);
+  1766→    const rows: ExportRow[] = Object.values(summary.metrics).map((m) => ({
+  1767→      json: {
+  1768→        metric: m.metric,
+  1769→        used: m.used,
+  1770→        limit: m.limit,
+  1771→        remaining: m.remaining,
+  1772→        percentageUsed: m.percentageUsed,
+  1773→        periodStart: summary.period.start,
+  1774→        periodEnd: summary.period.end,
+  1775→      },
+  1776→      csv: [m.metric, m.used, m.limit, m.remaining, m.percentageUsed, summary.period.start, summary.period.end],
+  1777→    }));
+  1778→    return { rows, truncated: false };
+  1779→  },
+  1780→};
+  1781→
+  1782→/** Stable CSV column headers per dataset (machine names, §193). */
+  1783→export const DATASET_CSV_COLUMNS: Record<ExportDatasetKey, string[]> = {
+  1784→  business: ["name", "slug", "currency_code", "currency_symbol", "decimal_precision", "locale", "timezone", "created_at"],
+  1785→  members: ["email", "name", "role", "status", "joined_at"],
+  1786→  customers: ["id", "name", "phone", "email", "address", "note", "deleted_at", "created_at", "updated_at"],
+  1787→  suppliers: ["id", "name", "phone", "email", "address", "note", "deleted_at", "created_at", "updated_at"],
+  1788→  products: ["id", "name", "sku", "unit", "sale_price", "cost_price", "stock_qty", "low_stock_at", "is_active", "deleted_at", "created_at", "updated_at"],
+  1789→  inventory: ["id", "product_id", "delta", "reason", "created_at"],
+  1790→  sales: ["id", "number", "customer_id", "subtotal", "discount", "total", "paid", "status", "issue_date", "note", "deleted_at", "created_at", "updated_at"],
+  1791→  sale_items: ["id", "sale_id", "product_id", "name", "unit", "qty", "unit_price", "line_total"],
+  1792→  expenses: ["id", "supplier_id", "category", "amount", "paid", "status", "spent_at", "note", "deleted_at", "created_at", "updated_at"],
+  1793→  payments: ["id", "sale_id", "expense_id", "direction", "amount", "method", "note", "paid_at", "created_at"],
+  1794→  crm_leads: ["id", "name", "company_name", "phone", "email", "source", "source_detail", "status", "note", "assigned_to_user_id", "customer_id", "converted_at", "deleted_at", "created_at", "updated_at"],
+  1795→  crm_opportunities: ["id", "title", "description", "lead_id", "customer_id", "stage", "probability_pct", "expected_value", "currency_code", "expected_close_date", "assigned_to_user_id", "lost_reason", "won_at", "lost_at", "deleted_at", "created_at", "updated_at"],
+  1796→  crm_activities: ["id", "type", "title", "description", "occurred_at", "duration_minutes", "customer_id", "lead_id", "opportunity_id", "created_by_user_id", "deleted_at", "created_at", "updated_at"],
+  1797→  crm_tasks: ["id", "title", "description", "status", "priority", "due_at", "completed_at", "reminder_enabled", "reminder_minutes_before", "overdue_alert_enabled", "customer_id", "lead_id", "opportunity_id", "assigned_to_user_id", "created_by_user_id", "deleted_at", "created_at", "updated_at"],
+  1798→  inventory_stocktakes: ["id", "reference", "status", "count_type", "notes", "created_by_user_id", "started_at", "reviewed_at", "finalized_at", "canceled_at", "created_at", "updated_at"],
+  1799→  inventory_stocktake_lines: ["id", "stocktake_id", "product_id", "product_name_at_count", "sku_at_count", "unit_at_count", "system_qty_at_count", "counted_qty", "variance_qty", "counted_at", "counted_by_user_id", "created_at", "updated_at"],
+  1800→  // Prompt 41 (§96) — procurement document fields (snapshots verbatim §236).
+  1801→  purchase_orders: ["id", "reference", "status", "supplier_id", "supplier_name_at_order", "currency_code_at_order", "currency_symbol_at_order", "decimal_precision_at_order", "ordered_at", "expected_date", "notes", "created_by_user_id", "sent_at", "confirmed_at", "closed_at", "cancelled_at", "created_at", "updated_at"],
+  1802→  purchase_order_lines: ["id", "purchase_order_id", "product_id", "product_name_at_order", "sku_at_order", "unit_at_order", "ordered_qty", "unit_price_minor", "created_at", "updated_at"],
+  1803→  inventory_goods_receipts: ["id", "reference", "status", "purchase_order_id", "purchase_order_reference_at_receipt", "supplier_name_at_receipt", "notes", "created_by_user_id", "posted_at", "cancelled_at", "created_at", "updated_at"],
+  1804→  inventory_goods_receipt_lines: ["id", "goods_receipt_id", "purchase_order_line_id", "product_id", "product_name_at_receipt", "sku_at_receipt", "unit_at_receipt", "received_qty", "created_at", "updated_at"],
+  1805→  // Prompt 43 (§112) — return datasets: snapshot fields verbatim, NO money
+  1806→  // columns (a return records quantity only, §104).
+  1807→  inventory_goods_returns: ["id", "reference", "status", "goods_receipt_id", "goods_receipt_reference_at_return", "purchase_order_reference_at_return", "supplier_name_at_return", "notes", "created_by_user_id", "posted_at", "cancelled_at", "created_at", "updated_at"],
+  1808→  inventory_goods_return_lines: ["id", "goods_return_id", "goods_receipt_line_id", "product_id", "product_name_at_return", "sku_at_return", "unit_at_return", "returned_qty", "reason_code", "created_at", "updated_at"],
+  1809→  // Prompt 44 — dispatch datasets: snapshot fields verbatim, NO money
+  1810→  // columns (a dispatch records quantity only).
+  1811→  inventory_goods_dispatches: ["id", "reference", "status", "customer_id", "customer_name_at_dispatch", "notes", "created_by_user_id", "posted_at", "cancelled_at", "created_at", "updated_at"],
+  1812→  inventory_goods_dispatch_lines: ["id", "goods_dispatch_id", "product_id", "product_name_at_dispatch", "sku_at_dispatch", "unit_at_dispatch", "qty", "reason_code", "created_at", "updated_at"],
+  1813→  // Prompt 45 (§116) — sales-order datasets: historical snapshots verbatim;
+  1814→  // money columns stay integer minor units (the agreed commercial contract).
+  1815→  sales_orders: ["id", "reference", "status", "customer_id", "customer_name_at_order", "currency_code_at_order", "currency_symbol_at_order", "decimal_precision_at_order", "order_date", "expected_date", "discount_minor", "notes", "created_by_user_id", "confirmed_at", "completed_at", "cancelled_at", "created_at", "updated_at"],
+  1816→  sales_order_lines: ["id", "sales_order_id", "product_id", "product_name_at_order", "sku_at_order", "unit_at_order", "ordered_qty", "unit_price_minor", "created_at", "updated_at"],
+  1817→  // Prompt 47 (§20) — quotation datasets: snapshot fields verbatim; money
+  1818→  // columns stay integer minor units; NO internalNotes column ever.
+  1819→  sales_quotations: ["id", "reference", "status", "customer_id", "customer_name_at_quotation", "currency_code_at_quotation", "currency_symbol_at_quotation", "decimal_precision_at_quotation", "quotation_date", "valid_until_date", "expected_delivery_date", "discount_minor", "customer_notes", "created_by_user_id", "sent_at", "accepted_at", "rejected_at", "cancelled_at", "converted_at", "created_at", "updated_at"],
+  1820→  sales_quotation_lines: ["id", "sales_quotation_id", "product_id", "product_name_at_quotation", "sku_at_quotation", "unit_at_quotation", "qty", "unit_price_minor", "created_at", "updated_at"],
+  1821→  supplier_bills: ["id", "reference", "supplier_invoice_reference", "supplier_id", "supplier_name_at_bill", "purchase_order_id", "purchase_order_reference_at_bill", "status", "bill_date", "due_date", "currency_code_at_bill", "currency_symbol_at_bill", "decimal_precision_at_bill", "subtotal_minor", "discount_minor", "total_minor", "created_by_user_id", "posted_at", "cancelled_at", "expense_id", "created_at", "updated_at"],
+  1822→  supplier_bill_lines: ["id", "supplier_bill_id", "purchase_order_line_id", "product_id", "product_name_at_bill", "sku_at_bill", "unit_at_bill", "billed_qty", "unit_price_minor", "purchase_order_unit_price_minor", "line_total_minor", "created_at", "updated_at"],
+  1823→  subscription_summary: ["plan_code", "plan_name", "status", "billing_period", "current_period_start", "current_period_end", "trial_start", "trial_end", "cancel_at_period_end", "canceled_at", "ended_at", "created_at"],
+  1824→  usage_summary: ["metric", "used", "limit", "remaining", "percentage_used", "period_start", "period_end"],
+  1825→};
+  1826→

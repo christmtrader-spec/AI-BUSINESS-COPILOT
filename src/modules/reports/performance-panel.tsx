@@ -33,6 +33,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { api } from "@/lib/api-client";
+import { JalaliRangePresets } from "@/components/shared/jalali-range-presets";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 import { toast } from "@/hooks/use-toast";
@@ -214,6 +215,15 @@ export function PerformancePanel({ business }: { business: BusinessSummary }) {
     setCursorStack([null]);
   };
 
+  // §F4 — apply an explicit window (used by the Jalali presets).
+  const applyRangeWith = (from: string, to: string) => {
+    setFromInput(from);
+    setToInput(to);
+    setInvalidRange(false);
+    setApplied({ from, to });
+    setCursorStack([null]);
+  };
+
   const setQuickRange = (days: number) => {
     const to = localTodayKey(business.timezone || "UTC");
     const from = addDaysKey(to, -(days - 1));
@@ -356,6 +366,19 @@ export function PerformancePanel({ business }: { business: BusinessSummary }) {
               </Select>
             ) : null}
           </div>
+          {/* Prompt 52 §F4 — Jalali presets fill the Gregorian inputs
+              (server stays the single date authority). */}
+          <JalaliRangePresets
+            className="w-full"
+            value={{ from: fromInput, to: toInput }}
+            onChange={(r) => {
+              if (r) {
+                setFromInput(r.from);
+                setToInput(r.to);
+                applyRangeWith(r.from, r.to);
+              }
+            }}
+          />
           <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
             <label className="text-muted-foreground flex items-center gap-1.5 text-xs">
               <span>{t("perfFrom")}</span>

@@ -5,7 +5,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { Plus, ReceiptText, Trash2 } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
-import { toMinor } from "@/lib/money";
+import { toMinor, vatMinor, formatBpAsPercent } from "@/lib/money";
 import { moneyToMinorOrNull } from "@/components/shared/table-kit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -147,9 +147,23 @@ export function SaleFormDialog({
     );
     const discountMinor = moneyToMinorOrNull(discount === "" ? "0" : discount, precision) ?? -1;
     const discountValid = discountMinor >= 0 && discountMinor <= subtotalMinor;
-    const totalMinor = discountValid ? subtotalMinor - discountMinor : null;
-    return { rows, allValid, subtotalMinor, discountMinor, discountValid, totalMinor };
-  }, [lines, discount, precision]);
+    // §F3 — mirror of the server law: VAT is applied by the BUSINESS CONFIG,
+    // computed from the taxable base with the exact same integer math.
+    const vatRateBp = business.vatEnabled ? Math.max(0, business.vatRateBp ?? 0) : 0;
+    let taxMinor: number | null = null;
+    try {
+      taxMinor = discountValid
+        ? vatMinor(Math.max(0, subtotalMinor - discountMinor), vatRateBp)
+        : null;
+    } catch {
+      taxMinor = null;
+    }
+    const totalMinor =
+      discountValid && taxMinor !== null
+        ? subtotalMinor - discountMinor + taxMinor
+        : null;
+    return { rows, allValid, subtotalMinor, discountMinor, discountValid, vatRateBp, taxMinor, totalMinor };
+  }, [lines, discount, precision, business.vatEnabled, business.vatRateBp]);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -433,6 +447,16 @@ export function SaleFormDialog({
             </div>
             {!parsed.discountValid ? (
               <p className="text-destructive text-end text-xs">{t("invalidDiscount")}</p>
+            ) : null}
+            {parsed.vatRateBp > 0 && parsed.taxMinor != null ? (
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-muted-foreground shrink-0">
+                  {t("vatLabel")} ({formatBpAsPercent(parsed.vatRateBp)})
+                </span>
+                <span className="font-medium tabular-nums" dir="ltr">
+                  {fmtMoney(business, parsed.taxMinor)}
+                </span>
+              </div>
             ) : null}
             <Separator />
             <div className="flex items-center justify-between gap-3">

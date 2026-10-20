@@ -7,6 +7,9 @@ export type BusinessSummary = {
   decimalPrecision: number;
   locale: string;
   timezone: string;
+  // Prompt 52 §F3 — VAT engine configuration.
+  vatEnabled?: boolean;
+  vatRateBp?: number;
   ownerId: string;
   createdAt: string;
   updatedAt: string;

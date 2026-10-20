@@ -16,9 +16,9 @@
  *   ProcessedWebhookEvent) and a type from a closed union.
  */
 
-export type ProviderSlug = "mock" | "zarinpal";
+export type ProviderSlug = "mock" | "zarinpal" | "stripe";
 
-export const PROVIDER_SLUGS = ["mock", "zarinpal"] as const satisfies readonly ProviderSlug[];
+export const PROVIDER_SLUGS = ["mock", "zarinpal", "stripe"] as const satisfies readonly ProviderSlug[];
 
 export function isProviderSlug(value: unknown): value is ProviderSlug {
   return typeof value === "string" && (PROVIDER_SLUGS as readonly string[]).includes(value);

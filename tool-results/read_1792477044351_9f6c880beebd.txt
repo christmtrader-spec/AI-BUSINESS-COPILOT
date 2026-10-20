@@ -1,0 +1,896 @@
+     1→/**
+     2→ * Payments service — Prompt 22. The ONLY sanctioned path to checkout
+     3→ * sessions, payment transactions and webhook fulfillment (mirrors the
+     4→ * Prompt 20 billing service discipline).
+     5→ *
+     6→ * Invariants:
+     7→ * - The browser never supplies amounts, plan prices, or "paid" state.
+     8→ *   It supplies at most { planCode, billingPeriod }; everything else is
+     9→ *   resolved server-side (§23/§24).
+    10→ * - Fulfillment is IDEMPOTENT end to end:
+    11→ *     webhook eventId → ProcessedWebhookEvent unique row (replay guard)
+    12→ *     session terminal state → single fulfillment per session
+    13→ *     plan change → Prompt 20 changePlan (idempotent by itself)
+    14→ * - Crash-safety: session SUCCEEDED is committed together with the
+    15→ *   transaction record; the plan change runs right after. A crash in
+    16→ *   between leaves `fulfilledAt = null`, and every read of the session
+    17→ *   AUTO-HEALS by re-running the idempotent plan change (documented
+    18→ *   reconciliation, deterministic outcome).
+    19→ * - A `checkout.succeeded` arriving for a locally EXPIRED session is
+    20→ *   still honored (money moved — never lose it, §fail-open only for
+    21→ *   paid truth); CANCELED sessions ignore late webhooks.
+    22→ * - Audits: every state transition writes an audit log row.
+    23→ */
+    24→
+    25→import { db } from "@/lib/db";
+    26→import { ApiError } from "@/lib/api-helpers";
+    27→import { audit } from "@/lib/audit";
+    28→import { changePlan, invalidateBillingCache, recordCommercialEvent } from "@/lib/billing";
+    29→import { isBillingPeriod, type BillingPeriod } from "@/lib/billing/state-machine";
+    30→import { validatePaymentConfig } from "./config";
+    31→import { buildMockEventBody, buildMockEventHeaders } from "./mock-provider";
+    32→import { providerSupportsCurrency, resolvePrice } from "./pricing-service";
+    33→import { defaultProvider, isProviderUsable, resolveProvider } from "./registry";
+    34→import { CallbackParseError, WebhookVerificationError, type ProviderWebhookEvent } from "./types";
+    35→
+    36→// ---------------------------------------------------------------------------
+    37→// DTOs
+    38→// ---------------------------------------------------------------------------
+    39→
+    40→export type CheckoutSessionDto = {
+    41→  id: string;
+    42→  status: "PENDING" | "SUCCEEDED" | "FAILED" | "EXPIRED" | "CANCELED" | "RECONCILIATION_REQUIRED";
+    43→  planCode: string;
+    44→  billingPeriod: BillingPeriod;
+    45→  provider: string;
+    46→  amountMinor: number;
+    47→  currency: string;
+    48→  expiresAt: string;
+    49→  completedAt: string | null;
+    50→  fulfilledAt: string | null;
+    51→  createdAt: string;
+    52→  redirectUrl: string | null;
+    53→  /** Prompt 23 §45 — set only on RECONCILIATION_REQUIRED sessions. */
+    54→  reconciliationReason: string | null;
+    55→  /** Prompt 23 §13 — catalog edition that priced this intent. */
+    56→  pricingVersion: string | null;
+    57→  /** Prompt 24 §30 — readable code of the price book that priced this intent. */
+    58→  priceBookCode: string | null;
+    59→  /** Prompt 23 §110 — confirmation screen shows the charged business. */
+    60→  businessName: string;
+    61→};
+    62→
+    63→export type PaymentRowDto = {
+    64→  id: string;
+    65→  checkoutSessionId: string;
+    66→  provider: string;
+    67→  status: string;
+    68→  planCode: string;
+    69→  billingPeriod: BillingPeriod;
+    70→  amountMinor: number;
+    71→  currency: string;
+    72→  processedAt: string;
+    73→};
+    74→
+    75→type SessionRow = {
+    76→  id: string;
+    77→  businessId: string;
+    78→  planCode: string;
+    79→  billingPeriod: string;
+    80→  provider: string;
+    81→  providerRef: string;
+    82→  amountMinor: number;
+    83→  currency: string;
+    84→  status: string;
+    85→  reconciliationReason: string | null;
+    86→  pricingVersion: string | null;
+    87→  priceBookCode: string | null;
+    88→  expiresAt: Date;
+    89→  completedAt: Date | null;
+    90→  fulfilledAt: Date | null;
+    91→  createdAt: Date;
+    92→  metaJson: string | null;
+    93→};
+    94→
+    95→type SessionWithBusiness = SessionRow & { business?: { name: string } | null };
+    96→
+    97→function parseSessionMeta(metaJson: string | null): { redirectUrl?: string } {
+    98→  try {
+    99→    const meta = metaJson ? (JSON.parse(metaJson) as Record<string, unknown>) : {};
+   100→    return { redirectUrl: typeof meta.redirectUrl === "string" ? meta.redirectUrl : undefined };
+   101→  } catch {
+   102→    return {};
+   103→  }
+   104→}
+   105→
+   106→function sessionDto(
+   107→  s: SessionRow,
+   108→  businessName: string,
+   109→  redirectUrl: string | null,
+   110→): CheckoutSessionDto {
+   111→  return {
+   112→    id: s.id,
+   113→    status: s.status as CheckoutSessionDto["status"],
+   114→    planCode: s.planCode,
+   115→    billingPeriod: (isBillingPeriod(s.billingPeriod) ? s.billingPeriod : "MONTHLY") as BillingPeriod,
+   116→    provider: s.provider,
+   117→    amountMinor: s.amountMinor,
+   118→    currency: s.currency,
+   119→    expiresAt: s.expiresAt.toISOString(),
+   120→    completedAt: s.completedAt?.toISOString() ?? null,
+   121→    fulfilledAt: s.fulfilledAt?.toISOString() ?? null,
+   122→    createdAt: s.createdAt.toISOString(),
+   123→    redirectUrl: s.status === "PENDING" ? redirectUrl : null,
+   124→    reconciliationReason: s.reconciliationReason,
+   125→    pricingVersion: s.pricingVersion,
+   126→    priceBookCode: s.priceBookCode,
+   127→    businessName,
+   128→  };
+   129→}
+   130→
+   131→// ---------------------------------------------------------------------------
+   132→// Lazy expiry — PENDING sessions past expiresAt become EXPIRED on sight.
+   133→// ---------------------------------------------------------------------------
+   134→
+   135→export async function expireStaleSessions(businessId?: string): Promise<number> {
+   136→  const stale = await db.checkoutSession.findMany({
+   137→    where: {
+   138→      status: "PENDING",
+   139→      expiresAt: { lt: new Date() },
+   140→      ...(businessId ? { businessId } : {}),
+   141→    },
+   142→    select: { id: true },
+   143→    take: 100,
+   144→  });
+   145→  if (stale.length === 0) return 0;
+   146→  const res = await db.checkoutSession.updateMany({
+   147→    where: { id: { in: stale.map((s) => s.id) }, status: "PENDING" },
+   148→    data: { status: "EXPIRED", completedAt: new Date() },
+   149→  });
+   150→  return res.count;
+   151→}
+   152→
+   153→// ---------------------------------------------------------------------------
+   154→// Create a checkout session
+   155→// ---------------------------------------------------------------------------
+   156→
+   157→export async function createCheckout(
+   158→  businessId: string,
+   159→  input: { planCode: string; billingPeriod: string; currency?: string },
+   160→  opts: { actorId?: string | null } = {},
+   161→): Promise<CheckoutSessionDto> {
+   162→  // Prompt 23 §88 — a disabled or mis-configured payment system refuses to
+   163→  // start ANY intent (fail closed, §89). Existing sessions stay untouched.
+   164→  const cfg = validatePaymentConfig();
+   165→  if (!cfg.enabled || cfg.blockers.length > 0) {
+   166→    throw new ApiError(422, "PAYMENTS_UNAVAILABLE", "Payment initiation is not available.");
+   167→  }
+   168→
+   169→  // Prompt 24 §54 — resolve plan → price → provider IN ORDER. resolvePrice
+   170→  // validates the plan (purchasable + active), the currency (allowlist) and
+   171→  // the book window, and throws the structured §55 codes — the browser
+   172→  // never influences anything beyond { planCode, billingPeriod, currency }.
+   173→  const price = await resolvePrice({
+   174→    planCode: input.planCode,
+   175→    billingPeriod: input.billingPeriod,
+   176→    currency: input.currency,
+   177→  });
+   178→  const billingPeriod = price.billingPeriod;
+   179→
+   180→  const provider = defaultProvider();
+   181→
+   182→  // §110 — the confirmation screen shows the charged business; resolve the
+   183→  // name once here (the business context was already authorized upstream).
+   184→  const business = await db.business.findUnique({
+   185→    where: { id: businessId },
+   186→    select: { name: true },
+   187→  });
+   188→  if (!business) {
+   189→    throw new ApiError(404, "BUSINESS_NOT_FOUND", "Business not found.");
+   190→  }
+   191→
+   192→  // Prompt 23 §52 / Prompt 24 §16-§17 — the provider must actually support
+   193→  // the settlement currency, decided ONLY by its declared capabilities (§47:
+   194→  // no `if provider === …` anywhere). No silent conversion, no silent
+   195→  // provider switch: an unsupported currency is a 422 before ANY provider
+   196→  // interaction (§17/§18).
+   197→  if (!providerSupportsCurrency(provider, price.currency)) {
+   198→    throw new ApiError(
+   199→      422,
+   200→      "PROVIDER_CURRENCY_UNSUPPORTED",
+   201→      "The configured payment provider does not support this plan's settlement currency.",
+   202→      { currency: price.currency },
+   203→    );
+   204→  }
+   205→
+   206→  // Prompt 23 §18 — callback URLs come from the CONFIGURED base URL only,
+   207→  // never from request headers (open-redirect / host-injection safe, §104).
+   208→  const callbackUrl = `${cfg.baseUrl}/api/v1/payments/callback/${provider.slug}`;
+   209→
+   210→  // Clean up: creating a new checkout cancels the business's still-PENDING
+   211→  // sessions (one live checkout per business — deterministic state).
+   212→  await db.checkoutSession.updateMany({
+   213→    where: { businessId, status: "PENDING" },
+   214→    data: { status: "CANCELED", completedAt: new Date() },
+   215→  });
+   216→
+   217→  const session = await db.checkoutSession.create({
+   218→    data: {
+   219→      businessId,
+   220→      planCode: input.planCode,
+   221→      billingPeriod,
+   222→      provider: provider.slug,
+   223→      providerRef: "", // filled by the provider below (needs our id first)
+   224→      amountMinor: price.amountMinor,
+   225→      currency: price.currency,
+   226→      status: "PENDING",
+   227→      pricingVersion: price.priceVersion, // §13/§30 price snapshot reference
+   228→      priceBookId: price.priceBookId, // §29/§30 immutable book reference
+   229→      priceBookCode: price.priceBookCode,
+   230→      initiatedByUserId: opts.actorId ?? null, // §149 payment initiator
+   231→      expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+   232→      metaJson: JSON.stringify({ mode: provider.mode, displayName: provider.displayName }),
+   233→    },
+   234→  });
+   235→
+   236→  try {
+   237→    const created = await provider.createCheckout({
+   238→      checkoutSessionId: session.id,
+   239→      businessId,
+   240→      planCode: input.planCode,
+   241→      billingPeriod,
+   242→      amountMinor: price.amountMinor,
+   243→      currency: price.currency,
+   244→      callbackUrl,
+   245→    });
+   246→
+   247→    const updated = await db.checkoutSession.update({
+   248→      where: { id: session.id },
+   249→      data: {
+   250→        providerRef: created.providerRef,
+   251→        expiresAt: created.expiresAt,
+   252→        metaJson: JSON.stringify({
+   253→          mode: provider.mode,
+   254→          displayName: provider.displayName,
+   255→          redirectUrl: created.redirectUrl, // safe provider URL (no secrets, §56)
+   256→        }),
+   257→      },
+   258→    });
+   259→
+   260→    await audit({
+   261→      businessId,
+   262→      actorId: opts.actorId ?? null,
+   263→      action: "billing.checkout_created",
+   264→      entityType: "CheckoutSession",
+   265→      entityId: session.id,
+   266→      after: {
+   267→        planCode: input.planCode,
+   268→        billingPeriod,
+   269→        amountMinor: price.amountMinor,
+   270→        currency: price.currency,
+   271→        provider: provider.slug,
+   272→        pricingVersion: price.priceVersion,
+   273→        priceBookCode: price.priceBookCode,
+   274→      },
+   275→    });
+   276→
+   277→    return sessionDto(updated, business.name, created.redirectUrl);
+   278→  } catch (error) {
+   279→    // §35/§36 — the attempt could not be created on the provider. No
+   280→    // authority was issued (or none received), so no money can move: the
+   281→    // session is recorded as a FAILED historical attempt with the typed
+   282→    // reason and the error surfaces to the caller.
+   283→    const reason =
+   284→      error instanceof ApiError
+   285→        ? error.code
+   286→        : "PROVIDER_UNAVAILABLE";
+   287→    await db.checkoutSession.update({
+   288→      where: { id: session.id },
+   289→      data: {
+   290→        status: "FAILED",
+   291→        completedAt: new Date(),
+   292→        metaJson: JSON.stringify({
+   293→          mode: provider.mode,
+   294→          displayName: provider.displayName,
+   295→          failureReason: reason,
+   296→        }),
+   297→      },
+   298→    });
+   299→    await audit({
+   300→      businessId,
+   301→      actorId: opts.actorId ?? null,
+   302→      action: "billing.payment_failed",
+   303→      entityType: "CheckoutSession",
+   304→      entityId: session.id,
+   305→      after: { reason, stage: "create", planCode: input.planCode },
+   306→    });
+   307→    throw error;
+   308→  }
+   309→}
+   310→
+   311→// ---------------------------------------------------------------------------
+   312→// Session read (membership-scoped) — lazy expiry + fulfillment auto-heal.
+   313→// ---------------------------------------------------------------------------
+   314→
+   315→export async function getCheckoutSession(
+   316→  businessId: string,
+   317→  sessionId: string,
+   318→): Promise<CheckoutSessionDto> {
+   319→  const raw = await db.checkoutSession.findFirst({
+   320→    where: { id: sessionId, businessId },
+   321→    include: { business: { select: { name: true } } },
+   322→  });
+   323→  if (!raw) {
+   324→    // Not found OR another tenant's session — indistinguishable on purpose.
+   325→    throw new ApiError(404, "CHECKOUT_NOT_FOUND", "Checkout session not found.");
+   326→  }
+   327→  const businessName = raw.business?.name ?? "";
+   328→  // A historical session whose provider has since been disabled still reads
+   329→  // fine (redirectUrl degrades to null) — fail closed only on NEW checkouts.
+   330→  const provider = isProviderUsable(raw.provider) ? resolveProvider(raw.provider) : null;
+   331→
+   332→  let s: SessionRow = raw;
+   333→  if (s.status === "PENDING" && s.expiresAt.getTime() <= Date.now()) {
+   334→    s = await db.checkoutSession.update({
+   335→      where: { id: s.id },
+   336→      data: { status: "EXPIRED", completedAt: new Date() },
+   337→    });
+   338→  }
+   339→  if (s.status === "SUCCEEDED" && !s.fulfilledAt) {
+   340→    // Crash window after the webhook committed but before the plan change
+   341→    // finished — re-run the IDEMPOTENT fulfillment now.
+   342→    await fulfillSession(s, "auto-heal");
+   343→    s = (await db.checkoutSession.findUnique({ where: { id: s.id } })) ?? s;
+   344→  }
+   345→  // Prompt 22: mock sessions re-enter the in-app sandbox dialog.
+   346→  // Prompt 23: redirect-based providers resume from the stored provider URL.
+   347→  let redirect: string | null = null;
+   348→  if (provider?.slug === "mock") {
+   349→    redirect = `/?checkout=${encodeURIComponent(s.id)}`;
+   350→  } else if (provider?.capabilities.redirectCallback && s.status === "PENDING") {
+   351→    redirect = parseSessionMeta(s.metaJson).redirectUrl ?? null;
+   352→  }
+   353→  return sessionDto(s, businessName, redirect);
+   354→}
+   355→
+   356→// ---------------------------------------------------------------------------
+   357→// Fulfillment — from a VERIFIED provider event to a plan change.
+   358→// ---------------------------------------------------------------------------
+   359→
+   360→async function fulfillSession(s: SessionRow, source: string): Promise<SessionRow> {
+   361→  // changePlan is idempotent (same plan → no-op) and re-engages ACTIVE.
+   362→  await changePlan(s.businessId, s.planCode, {
+   363→    actorId: null, // provider-actor — the webhook event is the evidence
+   364→    source: `payment-webhook:${source}`,
+   365→  });
+   366→  const done = await db.checkoutSession.update({
+   367→    where: { id: s.id },
+   368→    data: { fulfilledAt: new Date() },
+   369→  });
+   370→  invalidateBillingCache(s.businessId);
+   371→  // Funnel: CHECKOUT_COMPLETED (Prompt 25) — fire-safe analytics, idempotent
+   372→  // per session; payment truth itself stays in the checkout session row.
+   373→  void recordCommercialEvent({
+   374→    eventType: "CHECKOUT_COMPLETED",
+   375→    businessId: s.businessId,
+   376→    planCode: s.planCode,
+   377→    currency: s.currency,
+   378→    dedupeKey: `checkout-done:${s.id}`,
+   379→  });
+   380→  return done;
+   381→}
+   382→
+   383→export type FulfillResult = {
+   384→  received: true;
+   385→  duplicate: boolean;
+   386→  ignored?: "unknown-session" | "canceled";
+   387→  sessionStatus?: CheckoutSessionDto["status"];
+   388→};
+   389→
+   390→/**
+   391→ * Handle a VERIFIED provider event. Idempotency layers:
+   392→ *   1) (provider, eventId) unique → ProcessedWebhookEvent (replay guard)
+   393→ *   2) session status guards (terminal states never re-fulfill)
+   394→ *   3) changePlan itself (same-plan no-op)
+   395→ */
+   396→export async function fulfillWebhook(
+   397→  providerSlug: string,
+   398→  event: ProviderWebhookEvent,
+   399→): Promise<FulfillResult> {
+   400→  const provider = resolveProvider(providerSlug);
+   401→
+   402→  // Layer 1 — event dedupe. Insert-first: if this exact delivery was
+   403→  // already processed, short-circuit BEFORE any state mutation.
+   404→  try {
+   405→    await db.processedWebhookEvent.create({
+   406→      data: { provider: provider.slug, eventId: event.eventId, eventType: event.kind },
+   407→    });
+   408→  } catch {
+   409→    return { received: true, duplicate: true };
+   410→  }
+   411→
+   412→  // Resolve the session via the provider reference (gateway echoes our id).
+   413→  const sessionId = event.checkoutSessionId;
+   414→  const s = await db.checkoutSession.findFirst({
+   415→    where: { id: sessionId, provider: provider.slug },
+   416→  });
+   417→  if (!s) return { received: true, duplicate: false, ignored: "unknown-session" };
+   418→
+   419→  if (event.kind === "checkout.failed") {
+   420→    if (s.status === "PENDING") {
+   421→      await db.$transaction([
+   422→        db.checkoutSession.update({
+   423→          where: { id: s.id },
+   424→          data: { status: "FAILED", completedAt: new Date() },
+   425→        }),
+   426→        db.paymentTransaction.create({
+   427→          data: {
+   428→            checkoutSessionId: s.id,
+   429→            provider: provider.slug,
+   430→            providerEventId: event.eventId,
+   431→            status: "FAILED",
+   432→            amountMinor: s.amountMinor,
+   433→            currency: s.currency,
+   434→            metaJson: JSON.stringify({ reason: event.reason }),
+   435→          },
+   436→        }),
+   437→      ]);
+   438→      await audit({
+   439→        businessId: s.businessId,
+   440→        actorId: null,
+   441→        action: "billing.payment_failed",
+   442→        entityType: "CheckoutSession",
+   443→        entityId: s.id,
+   444→        after: { reason: event.reason, planCode: s.planCode },
+   445→      });
+   446→      // Prompt 32 §88 — provider-reported genuine failure → tenant owner
+   447→      // notification (fire-safe, post-commit; the reason is NEVER fabricated
+   448→      // or included — §88/§25).
+   449→      const { notifyPaymentFailed } = await import("@/lib/notifications");
+   450→      notifyPaymentFailed({
+   451→        businessId: s.businessId,
+   452→        checkoutSessionId: s.id,
+   453→        amountMinor: s.amountMinor,
+   454→        currency: s.currency,
+   455→      });
+   456→      return { received: true, duplicate: false, sessionStatus: "FAILED" };
+   457→    }
+   458→    return { received: true, duplicate: false, sessionStatus: s.status as CheckoutSessionDto["status"] };
+   459→  }
+   460→
+   461→  if (event.kind === "checkout.expired") {
+   462→    if (s.status === "PENDING") {
+   463→      await db.checkoutSession.update({
+   464→        where: { id: s.id },
+   465→        data: { status: "EXPIRED", completedAt: new Date() },
+   466→      });
+   467→      return { received: true, duplicate: false, sessionStatus: "EXPIRED" };
+   468→    }
+   469→    return { received: true, duplicate: false, sessionStatus: s.status as CheckoutSessionDto["status"] };
+   470→  }
+   471→
+   472→  // checkout.succeeded — the only money-moving event.
+   473→  // Amount/currency guard: the provider's reported values must match OUR
+   474→  // snapshot (server authority). A mismatch NEVER activates a plan and is
+   475→  // NEVER silently "failed" (Prompt 23 §21/§22/§45): the session goes to
+   476→  // RECONCILIATION_REQUIRED with the discrepancy recorded for review.
+   477→  if (event.amountMinor !== s.amountMinor || event.currency !== s.currency) {
+   478→    const reason = event.currency !== s.currency ? "CURRENCY_MISMATCH" : "AMOUNT_MISMATCH";
+   479→    await db.$transaction([
+   480→      db.checkoutSession.update({
+   481→        where: { id: s.id },
+   482→        data: {
+   483→          status: "RECONCILIATION_REQUIRED",
+   484→          completedAt: new Date(),
+   485→          reconciliationReason: reason,
+   486→          metaJson: JSON.stringify({
+   487→            discrepancy: {
+   488→              expected: { amountMinor: s.amountMinor, currency: s.currency },
+   489→              reported: { amountMinor: event.amountMinor, currency: event.currency },
+   490→            },
+   491→          }),
+   492→        },
+   493→      }),
+   494→      db.paymentTransaction.create({
+   495→        data: {
+   496→          checkoutSessionId: s.id,
+   497→          provider: provider.slug,
+   498→          providerEventId: event.eventId,
+   499→          status: "FAILED",
+   500→          amountMinor: event.amountMinor,
+   501→          currency: event.currency,
+   502→          metaJson: JSON.stringify({ reason: "amount-mismatch" }),
+   503→        },
+   504→      }),
+   505→    ]);
+   506→    await audit({
+   507→      businessId: s.businessId,
+   508→      actorId: null,
+   509→      action: "billing.payment_reconciliation_required",
+   510→      entityType: "CheckoutSession",
+   511→      entityId: s.id,
+   512→      after: {
+   513→        reason,
+   514→        planCode: s.planCode,
+   515→        expected: { amountMinor: s.amountMinor, currency: s.currency },
+   516→        reported: { amountMinor: event.amountMinor, currency: event.currency },
+   517→      },
+   518→    });
+   519→    return { received: true, duplicate: false, sessionStatus: "RECONCILIATION_REQUIRED" };
+   520→  }
+   521→
+   522→  if (s.status === "CANCELED") {
+   523→    return { received: true, duplicate: false, ignored: "canceled" };
+   524→  }
+   525→
+   526→  const alreadySucceeded = s.status === "SUCCEEDED";
+   527→  if (!alreadySucceeded) {
+   528→    await db.$transaction([
+   529→      db.checkoutSession.update({
+   530→        where: { id: s.id },
+   531→        data: { status: "SUCCEEDED", completedAt: new Date() },
+   532→      }),
+   533→      db.paymentTransaction.create({
+   534→        data: {
+   535→          checkoutSessionId: s.id,
+   536→          provider: provider.slug,
+   537→          providerEventId: event.eventId,
+   538→          status: "SUCCEEDED",
+   539→          amountMinor: s.amountMinor,
+   540→          currency: s.currency,
+   541→        },
+   542→      }),
+   543→    ]);
+   544→  }
+   545→
+   546→  const current = await db.checkoutSession.findUnique({ where: { id: s.id } });
+   547→  if (!current) return { received: true, duplicate: alreadySucceeded };
+   548→
+   549→  if (!current.fulfilledAt) {
+   550→    await fulfillSession(current, "webhook");
+   551→    await audit({
+   552→      businessId: current.businessId,
+   553→      actorId: null,
+   554→      action: "billing.payment_succeeded",
+   555→      entityType: "CheckoutSession",
+   556→      entityId: current.id,
+   557→      after: { planCode: current.planCode, amountMinor: current.amountMinor, currency: current.currency },
+   558→    });
+   559→    // Prompt 32 §87 — notification ONLY after provider-authoritative
+   560→    // success + fulfillment (never on PENDING/RECONCILIATION_REQUIRED).
+   561→    const { notifyPaymentSucceeded } = await import("@/lib/notifications");
+   562→    notifyPaymentSucceeded({
+   563→      businessId: current.businessId,
+   564→      checkoutSessionId: current.id,
+   565→      amountMinor: current.amountMinor,
+   566→      currency: current.currency,
+   567→    });
+   568→  }
+   569→  return { received: true, duplicate: alreadySucceeded, sessionStatus: "SUCCEEDED" };
+   570→}
+   571→
+   572→// ---------------------------------------------------------------------------
+   573→// Server-side verification — Prompt 23 §20 (MANDATORY for redirect-based
+   574→// providers). The browser NEVER decides the outcome: the ADAPTER talks to
+   575→// the provider, the SERVICE compares the provider's claim against the
+   576→// session snapshot (amount §21, currency §22, reference §23) and only a
+   577→// fully verified success reaches the plan change (§48 strict order).
+   578→// ---------------------------------------------------------------------------
+   579→
+   580→/** UNKNOWN reasons that indicate money may have moved WRONG → reconciliation. */
+   581→const RECONCILIATION_REASONS = new Set(["AMOUNT_MISMATCH", "CURRENCY_MISMATCH", "REFERENCE_MISMATCH", "GATEWAY_IP_MISMATCH"]);
+   582→
+   583→export type VerifyOutcome = {
+   584→  session: CheckoutSessionDto;
+   585→  verification: "SUCCEEDED" | "NOT_PAID" | "FAILED" | "UNKNOWN" | "ALREADY_VERIFIED" | "UNSUPPORTED";
+   586→};
+   587→
+   588→export async function verifyCheckoutSession(
+   589→  businessId: string,
+   590→  sessionId: string,
+   591→): Promise<VerifyOutcome> {
+   592→  const raw = await db.checkoutSession.findFirst({
+   593→    where: { id: sessionId, businessId },
+   594→    include: { business: { select: { name: true } } },
+   595→  });
+   596→  if (!raw) {
+   597→    // Tenant-isolated: another business's session is indistinguishable.
+   598→    throw new ApiError(404, "CHECKOUT_NOT_FOUND", "Checkout session not found.");
+   599→  }
+   600→  const businessName = raw.business?.name ?? "";
+   601→  let s: SessionRow = raw;
+   602→
+   603→  // Lazy expiry first — an expired session is never verified (§79).
+   604→  if (s.status === "PENDING" && s.expiresAt.getTime() <= Date.now()) {
+   605→    s = await db.checkoutSession.update({
+   606→      where: { id: s.id },
+   607→      data: { status: "EXPIRED", completedAt: new Date() },
+   608→    });
+   609→  }
+   610→
+   611→  if (s.status === "SUCCEEDED" && !s.fulfilledAt) {
+   612→    await fulfillSession(s, "verify-auto-heal");
+   613→    s = (await db.checkoutSession.findUnique({ where: { id: s.id } })) ?? s;
+   614→    return { session: sessionDto(s, businessName, null), verification: "ALREADY_VERIFIED" };
+   615→  }
+   616→  if (s.status !== "PENDING") {
+   617→    // Terminal states are read-only here: RECONCILIATION_REQUIRED/FAILED/
+   618→    // EXPIRED/CANCELED are never re-litigated through the verify endpoint.
+   619→    return { session: sessionDto(s, businessName, null), verification: "ALREADY_VERIFIED" };
+   620→  }
+   621→
+   622→  const provider = isProviderUsable(s.provider) ? resolveProvider(s.provider) : null;
+   623→  if (!provider || !provider.capabilities.serverVerification || !provider.verifyPayment) {
+   624→    throw new ApiError(
+   625→      422,
+   626→      "VERIFICATION_NOT_SUPPORTED",
+   627→      "This payment provider does not support server-side verification.",
+   628→    );
+   629→  }
+   630→  if (!s.providerRef) {
+   631→    throw new ApiError(422, "VERIFICATION_NOT_SUPPORTED", "This session has no provider reference to verify.");
+   632→  }
+   633→
+   634→  const result = await provider.verifyPayment({
+   635→    providerRef: s.providerRef,
+   636→    expectedAmountMinor: s.amountMinor,
+   637→    expectedCurrency: s.currency,
+   638→  });
+   639→
+   640→  if (result.outcome === "SUCCEEDED") {
+   641→    // Route the provider-confirmed claim through the SAME fulfillment
+   642→    // pipeline a webhook would use (§26/§74 — one transition, ever).
+   643→    const event: ProviderWebhookEvent = {
+   644→      kind: "checkout.succeeded",
+   645→      eventId: result.providerEventId,
+   646→      checkoutSessionId: s.id,
+   647→      amountMinor: result.amountMinor,
+   648→      currency: result.currency,
+   649→    };
+   650→    const fulfilled = await fulfillWebhook(provider.slug, event);
+   651→    const fresh = (await db.checkoutSession.findUnique({ where: { id: s.id } })) as SessionRow;
+   652→    await audit({
+   653→      businessId: s.businessId,
+   654→      actorId: null,
+   655→      action: "billing.payment_verified",
+   656→      entityType: "CheckoutSession",
+   657→      entityId: s.id,
+   658→      after: { result: "SUCCEEDED", duplicate: fulfilled.duplicate, providerTxnRef: result.providerTxnRef ?? null },
+   659→    });
+   660→    return { session: sessionDto(fresh, businessName, null), verification: fulfilled.duplicate ? "ALREADY_VERIFIED" : "SUCCEEDED" };
+   661→  }
+   662→
+   663→  if (result.outcome === "FAILED") {
+   664→    const event: ProviderWebhookEvent = {
+   665→      kind: "checkout.failed",
+   666→      eventId: `verify-failed:${s.providerRef}`,
+   667→      checkoutSessionId: s.id,
+   668→      reason: result.reason,
+   669→    };
+   670→    await fulfillWebhook(provider.slug, event);
+   671→    const fresh = (await db.checkoutSession.findUnique({ where: { id: s.id } })) as SessionRow;
+   672→    await audit({
+   673→      businessId: s.businessId,
+   674→      actorId: null,
+   675→      action: "billing.payment_verified",
+   676→      entityType: "CheckoutSession",
+   677→      entityId: s.id,
+   678→      after: { result: "FAILED", reason: result.reason },
+   679→    });
+   680→    return { session: sessionDto(fresh, businessName, null), verification: "FAILED" };
+   681→  }
+   682→
+   683→  if (result.outcome === "NOT_PAID") {
+   684→    // §44 — unknown outcome for the USER, but the provider definitively has
+   685→    // no completed payment: the session stays PENDING (retry before expiry).
+   686→    await audit({
+   687→      businessId: s.businessId,
+   688→      actorId: null,
+   689→      action: "billing.payment_verified",
+   690→      entityType: "CheckoutSession",
+   691→      entityId: s.id,
+   692→      after: { result: "NOT_PAID", reason: result.reason },
+   693→    });
+   694→    return { session: sessionDto(s, businessName, null), verification: "NOT_PAID" };
+   695→  }
+   696→
+   697→  // UNKNOWN (§35/§36) — never success, never failure.
+   698→  if (RECONCILIATION_REASONS.has(result.reason)) {
+   699→    // Money may have moved under a different amount/currency/reference:
+   700→    // terminal reconciliation (§45) — recorded, never auto-resolved.
+   701→    await db.checkoutSession.update({
+   702→      where: { id: s.id, status: "PENDING" },
+   703→      data: {
+   704→        status: "RECONCILIATION_REQUIRED",
+   705→        completedAt: new Date(),
+   706→        reconciliationReason: result.reason,
+   707→        metaJson: JSON.stringify({ discrepancyReason: result.reason, providerRef: s.providerRef }),
+   708→      },
+   709→    });
+   710→    await audit({
+   711→      businessId: s.businessId,
+   712→      actorId: null,
+   713→      action: "billing.payment_reconciliation_required",
+   714→      entityType: "CheckoutSession",
+   715→      entityId: s.id,
+   716→      after: { reason: result.reason, providerRef: s.providerRef, planCode: s.planCode },
+   717→    });
+   718→    const fresh = (await db.checkoutSession.findUnique({ where: { id: s.id } })) as SessionRow;
+   719→    return { session: sessionDto(fresh, businessName, null), verification: "UNKNOWN" };
+   720→  }
+   721→  // Transport-level UNKNOWN (timeout/unavailable) → stay PENDING (§36);
+   722→  // the user may re-verify through the rate-limited endpoint (§68).
+   723→  await audit({
+   724→    businessId: s.businessId,
+   725→    actorId: null,
+   726→    action: "billing.payment_verified",
+   727→    entityType: "CheckoutSession",
+   728→    entityId: s.id,
+   729→    after: { result: "UNKNOWN", reason: result.reason },
+   730→  });
+   731→  return { session: sessionDto(s, businessName, null), verification: "UNKNOWN" };
+   732→}
+   733→
+   734→// ---------------------------------------------------------------------------
+   735→// Provider redirect callback — Prompt 23 §19. Callback values are UNTRUSTED:
+   736→// the query string only LOCATES the attempt; the success decision comes
+   737→// exclusively from server-side verification against the provider.
+   738→// ---------------------------------------------------------------------------
+   739→
+   740→export type CallbackOutcome = {
+   741→  found: boolean;
+   742→  sessionId?: string;
+   743→};
+   744→
+   745→export async function handleProviderCallback(
+   746→  providerSlug: string,
+   747→  params: URLSearchParams,
+   748→): Promise<CallbackOutcome> {
+   749→  let provider;
+   750→  try {
+   751→    provider = resolveProvider(providerSlug);
+   752→  } catch {
+   753→    return { found: false };
+   754→  }
+   755→  if (!provider.capabilities.redirectCallback || !provider.parseCallback) {
+   756→    return { found: false };
+   757→  }
+   758→
+   759→  let providerRef: string;
+   760→  try {
+   761→    ({ providerRef } = provider.parseCallback(params));
+   762→  } catch (error) {
+   763→    if (error instanceof CallbackParseError) return { found: false };
+   764→    throw error;
+   765→  }
+   766→
+   767→  const s = await db.checkoutSession.findFirst({
+   768→    where: { provider: provider.slug, providerRef },
+   769→  });
+   770→  if (!s) return { found: false };
+   771→
+   772→  await audit({
+   773→    businessId: s.businessId,
+   774→    actorId: null,
+   775→    action: "billing.payment_started",
+   776→    entityType: "CheckoutSession",
+   777→    entityId: s.id,
+   778→    after: { provider: provider.slug, stage: "callback" },
+   779→  });
+   780→
+   781→  // One bounded server-side verification attempt (§68) — failures leave the
+   782→  // session PENDING; the return page polls and may re-verify via the
+   783→  // rate-limited endpoint. Query params NEVER mutate state (§19).
+   784→  if (s.status === "PENDING" && s.expiresAt.getTime() > Date.now()) {
+   785→    try {
+   786→      await verifyCheckoutSession(s.businessId, s.id);
+   787→    } catch {
+   788→      // provider unreachable — stay PENDING, return page keeps polling
+   789→    }
+   790→  }
+   791→  return { found: true, sessionId: s.id };
+   792→}
+   793→
+   794→// ---------------------------------------------------------------------------
+   795→// Sandbox simulation — MOCK PROVIDER ONLY. Drives the REAL webhook path
+   796→// (signed body → verifyWebhook → fulfillWebhook) so the sandbox dialog
+   797→// exercises the exact production contract, deterministically.
+   798→// ---------------------------------------------------------------------------
+   799→
+   800→export type SimulateOutcome = "succeeded" | "failed" | "expired";
+   801→
+   802→export async function simulateWebhook(
+   803→  businessId: string,
+   804→  sessionId: string,
+   805→  outcome: SimulateOutcome,
+   806→  opts: { actorId?: string | null } = {},
+   807→): Promise<CheckoutSessionDto> {
+   808→  const raw = await db.checkoutSession.findFirst({
+   809→    where: { id: sessionId, businessId },
+   810→  });
+   811→  if (!raw) throw new ApiError(404, "CHECKOUT_NOT_FOUND", "Checkout session not found.");
+   812→  if (raw.provider !== "mock") {
+   813→    throw new ApiError(422, "SIMULATE_NOT_SUPPORTED", "Simulation is only available for the sandbox provider.");
+   814→  }
+   815→  if (raw.status !== "PENDING") {
+   816→    throw new ApiError(409, "CHECKOUT_STATE_CONFLICT", `This checkout is already ${raw.status.toLowerCase()}.`);
+   817→  }
+   818→  if (raw.expiresAt.getTime() <= Date.now()) {
+   819→    throw new ApiError(409, "CHECKOUT_STATE_CONFLICT", "This checkout has expired.");
+   820→  }
+   821→
+   822→  const provider = resolveProvider("mock");
+   823→
+   824→  // Build the byte-identical gateway request and push it through the real
+   825→  // verification + fulfillment pipeline.
+   826→  const body =
+   827→    outcome === "succeeded"
+   828→      ? buildMockEventBody("checkout.succeeded", raw.id, {
+   829→          amountMinor: raw.amountMinor,
+   830→          currency: raw.currency,
+   831→        })
+   832→      : outcome === "failed"
+   833→        ? buildMockEventBody("checkout.failed", raw.id, { reason: "sandbox:declined" })
+   834→        : buildMockEventBody("checkout.expired", raw.id);
+   835→  const event = provider.verifyWebhook(body, buildMockEventHeaders(body));
+   836→  await fulfillWebhook("mock", event);
+   837→
+   838→  await audit({
+   839→    businessId,
+   840→    actorId: opts.actorId ?? null,
+   841→    action: "billing.checkout_simulated",
+   842→    entityType: "CheckoutSession",
+   843→    entityId: sessionId,
+   844→    after: { outcome, provider: "mock" },
+   845→  });
+   846→
+   847→  const fresh = await db.checkoutSession.findUnique({
+   848→    where: { id: sessionId },
+   849→    include: { business: { select: { name: true } } },
+   850→  });
+   851→  return sessionDto(
+   852→    fresh as SessionRow,
+   853→    (fresh as SessionWithBusiness | null)?.business?.name ?? "",
+   854→    fresh && fresh.status === "PENDING" ? `/?checkout=${encodeURIComponent(sessionId)}` : null,
+   855→  );
+   856→}
+   857→
+   858→// ---------------------------------------------------------------------------
+   859→// History
+   860→// ---------------------------------------------------------------------------
+   861→
+   862→export async function listPayments(
+   863→  businessId: string,
+   864→  opts: { take?: number } = {},
+   865→): Promise<{ items: PaymentRowDto[]; total: number }> {
+   866→  await expireStaleSessions(businessId);
+   867→  const take = Math.min(Math.max(opts.take ?? 50, 1), 200);
+   868→  const [rows, total] = await Promise.all([
+   869→    db.paymentTransaction.findMany({
+   870→      where: { checkoutSession: { businessId } },
+   871→      orderBy: { processedAt: "desc" },
+   872→      take,
+   873→      include: { checkoutSession: { select: { planCode: true, billingPeriod: true } } },
+   874→    }),
+   875→    db.paymentTransaction.count({ where: { checkoutSession: { businessId } } }),
+   876→  ]);
+   877→  return {
+   878→    items: rows.map((t) => ({
+   879→      id: t.id,
+   880→      checkoutSessionId: t.checkoutSessionId,
+   881→      provider: t.provider,
+   882→      status: t.status,
+   883→      planCode: t.checkoutSession.planCode,
+   884→      billingPeriod: (isBillingPeriod(t.checkoutSession.billingPeriod)
+   885→        ? t.checkoutSession.billingPeriod
+   886→        : "MONTHLY") as BillingPeriod,
+   887→      amountMinor: t.amountMinor,
+   888→      currency: t.currency,
+   889→      processedAt: t.processedAt.toISOString(),
+   890→    })),
+   891→    total,
+   892→  };
+   893→}
+   894→
+   895→export { WebhookVerificationError };
+   896→

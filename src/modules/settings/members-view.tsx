@@ -38,6 +38,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/shared/primitives";
+import { ListExportButton } from "@/components/shared/list-export-button";
 import type { BusinessListItem, MemberItem } from "../shell/types";
 
 // ---- Invite links -------------------------------------------------------------
@@ -234,7 +235,34 @@ export function MembersView({ membership }: { membership: BusinessListItem }) {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6" data-view="settings:members">
-      <PageHeader title={t("membersTitle")} subtitle={t("membersSubtitle")} />
+      <PageHeader
+        title={t("membersTitle")}
+        subtitle={t("membersSubtitle")}
+        actions={
+          can(role, "members:read") ? (
+            <ListExportButton<MemberItem>
+              filename="members"
+              columns={[
+                {
+                  header: t("membersTitle"),
+                  value: (m) => (m.user.name ? `${m.user.name} <${m.user.email}>` : m.user.email),
+                },
+                {
+                  header: t("role"),
+                  value: (m) =>
+                    `${t(`roles.${asRole(m.role)}` as "OWNER")}${m.isOwner ? ` · ${t("owner")}` : ""}`,
+                },
+              ]}
+              fetchRows={async () => {
+                // The members endpoint is unpaginated (complete array) — one
+                // fetch IS the complete set, so there is nothing to walk.
+                const rows = await api<MemberItem[]>(`/api/v1/businesses/${activeId}/members`);
+                return { rows, total: rows.length, truncated: false };
+              }}
+            />
+          ) : null
+        }
+      />
 
       <Card>
         <CardHeader>

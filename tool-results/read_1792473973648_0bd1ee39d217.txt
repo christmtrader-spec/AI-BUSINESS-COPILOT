@@ -1,0 +1,653 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * Onboarding — Prompt 25 evolution (incremental; the authoritative business
+     5→ * creation POST /api/v1/businesses is UNCHANGED).
+     6→ *
+     7→ * Steps: Business (mandatory, never skippable) → Trial (OPTIONAL, only when
+     8→ * the server reports eligibility) → Done (server-derived checklist + honest
+     9→ * completion marker). Rules:
+    10→ * - A trial is NEVER created before the business exists (funnel order).
+    11→ * - Eligibility/start are always server-checked (OWNER/ADMIN authority).
+    12→ * - The checklist reads REAL server data — no client-asserted progress.
+    13→ * - ONBOARDING_COMPLETED is once-per-business (server idempotent).
+    14→ * - The signup intent (plan code only, allowlisted) may preselect the trial
+    15→ *   offer — amounts/book ids are never carried across the funnel.
+    16→ */
+    17→
+    18→import { useCallback, useEffect, useMemo, useState } from "react";
+    19→import { signOutWithRevoke } from "@/lib/sign-out-with-revoke";
+    20→import { useMutation, useQueryClient } from "@tanstack/react-query";
+    21→import { useTranslations } from "next-intl";
+    22→import {
+    23→  ArrowRight,
+    24→  ArrowUpRight,
+    25→  Building2,
+    26→  CheckCircle2,
+    27→  Circle,
+    28→  Coins,
+    29→  Globe2,
+    30→  Loader2,
+    31→  PartyPopper,
+    32→  ShieldAlert,
+    33→  Sparkles,
+    34→} from "lucide-react";
+    35→import { toast } from "@/hooks/use-toast";
+    36→import { useBillingErrorText } from "@/hooks/use-billing-error-text";
+    37→import { api, ApiClientError } from "@/lib/api-client";
+    38→import { CURRENCIES, findCurrency } from "@/lib/currencies";
+    39→import { formatMoney, toMinor } from "@/lib/money";
+    40→import { Button } from "@/components/ui/button";
+    41→import { Input } from "@/components/ui/input";
+    42→import { Label } from "@/components/ui/label";
+    43→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    44→import { Card, CardContent } from "@/components/ui/card";
+    45→import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+    46→import { Separator } from "@/components/ui/separator";
+    47→import { Badge } from "@/components/ui/badge";
+    48→
+    49→const FALLBACK_TIMEZONES = ["UTC", "Asia/Tehran", "Asia/Dubai", "Europe/London", "Europe/Berlin", "America/New_York", "America/Los_Angeles", "Asia/Tokyo"];
+    50→
+    51→function timezoneOptions(): string[] {
+    52→  try {
+    53→    const list = Intl.supportedValuesOf("timeZone");
+    54→    if (Array.isArray(list) && list.length > 0) return list;
+    55→  } catch {
+    56→    // older engines
+    57→  }
+    58→  return FALLBACK_TIMEZONES;
+    59→}
+    60→
+    61→type PricingIntent = {
+    62→  plan: string | null;
+    63→  billingPeriod: "MONTHLY" | "YEARLY" | null;
+    64→  currency: string | null;
+    65→};
+    66→
+    67→/** Allowlisted signup intent (plan code ONLY — never amounts or book ids). */
+    68→function readPricingIntent(): PricingIntent {
+    69→  try {
+    70→    const raw = window.sessionStorage.getItem("abc:pricingIntent");
+    71→    if (!raw) return { plan: null, billingPeriod: null, currency: null };
+    72→    const parsed = JSON.parse(raw) as Partial<PricingIntent>;
+    73→    const planCodes = ["FREE", "STARTER", "BUSINESS", "PRO", "ENTERPRISE"];
+    74→    return {
+    75→      plan: typeof parsed.plan === "string" && planCodes.includes(parsed.plan) ? parsed.plan : null,
+    76→      billingPeriod:
+    77→        parsed.billingPeriod === "MONTHLY" || parsed.billingPeriod === "YEARLY"
+    78→          ? parsed.billingPeriod
+    79→          : null,
+    80→      currency:
+    81→        typeof parsed.currency === "string" && /^[A-Z]{3}$/.test(parsed.currency)
+    82→          ? parsed.currency
+    83→          : null,
+    84→    };
+    85→  } catch {
+    86→    return { plan: null, billingPeriod: null, currency: null };
+    87→  }
+    88→}
+    89→
+    90→export type CreatedBusiness = {
+    91→  business: {
+    92→    id: string;
+    93→    name: string;
+    94→    currencyCode: string;
+    95→    currencySymbol: string;
+    96→    decimalPrecision: number;
+    97→    locale: string;
+    98→    timezone: string;
+    99→  };
+   100→  role: string;
+   101→};
+   102→
+   103→type TrialEligibilityDto = {
+   104→  eligible: boolean;
+   105→  reason: string;
+   106→  trialDays: number | null;
+   107→  trialPlanCode: string | null;
+   108→  currentPlan: string | null;
+   109→  subscriptionStatus: string | null;
+   110→  previousTrialUsed: boolean;
+   111→  businessExists: boolean;
+   112→};
+   113→
+   114→type OnboardingStatusDto = {
+   115→  hasBusiness: boolean;
+   116→  checklist: {
+   117→    customersCreated: boolean;
+   118→    productsCreated: boolean;
+   119→    salesCreated: boolean;
+   120→    teamInvited: boolean;
+   121→    copilotUsed: boolean;
+   122→  } | null;
+   123→  trial: {
+   124→    active: boolean;
+   125→    planCode: string;
+   126→    status: string;
+   127→    trialStart: string | null;
+   128→    trialEnd: string | null;
+   129→  } | null;
+   130→  onboardingCompleted: boolean;
+   131→};
+   132→
+   133→type Step = "business" | "trial" | "done";
+   134→
+   135→export function OnboardingView({
+   136→  onCreated,
+   137→  title,
+   138→}: {
+   139→  onCreated: (b: CreatedBusiness) => void;
+   140→  title?: boolean;
+   141→}) {
+   142→  const t = useTranslations("onboarding");
+   143→  const tErrors = useTranslations("errors");
+   144→  const billingErrorText = useBillingErrorText();
+   145→  const queryClient = useQueryClient();
+   146→
+   147→  const zones = useMemo(() => timezoneOptions(), []);
+   148→  const [step, setStep] = useState<Step>("business");
+   149→  const [created, setCreated] = useState<CreatedBusiness | null>(null);
+   150→  const [eligibility, setEligibility] = useState<TrialEligibilityDto | null>(null);
+   151→  const [status, setStatus] = useState<OnboardingStatusDto | null>(null);
+   152→  const intent = useMemo(() => readPricingIntent(), []);
+   153→
+   154→  const [name, setName] = useState("");
+   155→  const [currencyCode, setCurrencyCode] = useState("USD");
+   156→  const [symbol, setSymbol] = useState("$");
+   157→  const [precision, setPrecision] = useState(2);
+   158→  const [locale, setLocale] = useState<"en" | "fa">("en");
+   159→  const [timezone, setTimezone] = useState("UTC");
+   160→  const [previewValue, setPreviewValue] = useState("1234.5");
+   161→  // Plan-limit errors render INLINE (persistent + actionable) instead of a
+   162→  // toast that auto-dismisses into a dead end — the user must be able to
+   163→  // reach the pricing page from the exact moment they are blocked.
+   164→  const [limitError, setLimitError] = useState<string | null>(null);
+   165→
+   166→  const selectedCurrency = findCurrency(currencyCode);
+   167→
+   168→  function onCurrencyChange(code: string) {
+   169→    setCurrencyCode(code);
+   170→    const c = findCurrency(code);
+   171→    if (c) {
+   172→      setSymbol(c.symbol);
+   173→      setPrecision(c.precision);
+   174→    }
+   175→  }
+   176→
+   177→  const createMutation = useMutation({
+   178→    mutationFn: async () =>
+   179→      api<CreatedBusiness>("/api/v1/businesses", {
+   180→        method: "POST",
+   181→        businessId: null,
+   182→        body: JSON.stringify({
+   183→          name,
+   184→          currencyCode,
+   185→          currencySymbol: symbol,
+   186→          decimalPrecision: precision,
+   187→          locale,
+   188→          timezone,
+   189→        }),
+   190→      }),
+   191→    onSuccess: (data) => {
+   192→      setLimitError(null);
+   193→      toast({ title: t("successToast"), description: data.business.name });
+   194→      // NOTE: the businesses query is NOT invalidated here — refreshing it
+   195→      // would make the app shell take over and skip the (optional) trial and
+   196→      // done steps. finish() invalidates right before handing over.
+   197→      setCreated(data);
+   198→      // Proceed to the OPTIONAL trial step (server decides eligibility).
+   199→      void api<TrialEligibilityDto>("/api/v1/billing/trial/eligibility", {
+   200→        businessId: data.business.id,
+   201→      })
+   202→        .then((elig) => {
+   203→          setEligibility(elig);
+   204→          setStep(elig.eligible ? "trial" : "done");
+   205→        })
+   206→        .catch(() => setStep("done"));
+   207→    },
+   208→    onError: (err) => {
+   209→      const text =
+   210→        billingErrorText(err) || (err instanceof ApiClientError ? err.message : tErrors("generic"));
+   211→      // Entitlement/limit errors → persistent inline alert with an upgrade
+   212→      // CTA (the toast variant auto-dismissed and left the user stranded).
+   213→      if (
+   214→        err instanceof ApiClientError &&
+   215→        (err.code === "ENTITLEMENT_LIMIT_REACHED" || err.code === "ENTITLEMENT_NOT_AVAILABLE")
+   216→      ) {
+   217→        setLimitError(text);
+   218→        return;
+   219→      }
+   220→      toast({
+   221→        title: text,
+   222→        variant: "destructive",
+   223→      });
+   224→    },
+   225→  });
+   226→
+   227→  const startTrialMutation = useMutation({
+   228→    mutationFn: async () =>
+   229→      api<{ started: boolean; already: boolean }>("/api/v1/billing/trial/start", {
+   230→        method: "POST",
+   231→        businessId: created?.business.id ?? null,
+   232→        body: JSON.stringify({}),
+   233→      }),
+   234→    onSuccess: () => {
+   235→      toast({ title: t("trialStartedToast") });
+   236→      void queryClient.invalidateQueries({ queryKey: ["subscription"] });
+   237→      setStep("done");
+   238→    },
+   239→    onError: (err) => {
+   240→      toast({
+   241→        title: billingErrorText(err) || (err instanceof ApiClientError ? err.message : tErrors("generic")),
+   242→        variant: "destructive",
+   243→      });
+   244→      // A failed trial start NEVER blocks onboarding completion.
+   245→      setStep("done");
+   246→    },
+   247→  });
+   248→
+   249→  const skipTrial = useCallback(() => {
+   250→    if (!created) return;
+   251→    // Funnel: an explicit skip (server allowlist; once per business).
+   252→    void api("/api/v1/events", {
+   253→      method: "POST",
+   254→      businessId: created.business.id,
+   255→      body: JSON.stringify({
+   256→        eventType: "TRIAL_SKIPPED",
+   257→        planCode: eligibility?.trialPlanCode ?? intent.plan,
+   258→      }),
+   259→    }).catch(() => undefined);
+   260→    setStep("done");
+   261→  }, [created, eligibility?.trialPlanCode, intent.plan]);
+   262→
+   263→  // Done step — fetch the honest server checklist once per entry.
+   264→  useEffect(() => {
+   265→    if (step !== "done" || !created) return;
+   266→    void api<OnboardingStatusDto>(
+   267→      `/api/v1/onboarding/status?businessId=${encodeURIComponent(created.business.id)}`,
+   268→      { businessId: created.business.id },
+   269→    )
+   270→      .then(setStatus)
+   271→      .catch(() => setStatus(null));
+   272→    // Idempotent completion marker (once per business server-side).
+   273→    void api("/api/v1/onboarding/complete", {
+   274→      method: "POST",
+   275→      businessId: created.business.id,
+   276→      body: JSON.stringify({}),
+   277→    }).catch(() => undefined);
+   278→  }, [step, created]);
+   279→
+   280→  function finish() {
+   281→    if (!created) return;
+   282→    // Hand over: refresh memberships NOW so the app shell sees the business.
+   283→    void queryClient.invalidateQueries({ queryKey: ["businesses"] });
+   284→    onCreated(created);
+   285→  }
+   286→
+   287→  const previewMinor = useMemo(() => {
+   288→    try {
+   289→      return formatMoney(toMinor(previewValue || "0", precision), {
+   290→        currencyCode,
+   291→        currencySymbol: symbol,
+   292→        decimalPrecision: precision,
+   293→        locale,
+   294→      });
+   295→    } catch {
+   296→      return "—";
+   297→    }
+   298→  }, [previewValue, precision, currencyCode, symbol, locale]);
+   299→
+   300→  function onSubmit(e: React.FormEvent) {
+   301→    e.preventDefault();
+   302→    if (!name.trim()) return;
+   303→    createMutation.mutate();
+   304→  }
+   305→
+   306→  const stepOrder: Array<{ key: Step; label: string; icon: React.ReactNode; done: boolean }> = [
+   307→    { key: "business", label: t("steps.business"), icon: <Building2 className="size-3.5" />, done: step !== "business" },
+   308→    { key: "trial", label: t("steps.trial"), icon: <Sparkles className="size-3.5" />, done: step === "done" },
+   309→    { key: "done", label: t("steps.workspace"), icon: <CheckCircle2 className="size-3.5" />, done: false },
+   310→  ];
+   311→
+   312→  return (
+   313→    <div className="bg-muted/30 flex min-h-svh items-center justify-center p-4 sm:p-8" data-view="onboarding">
+   314→      <div className="w-full max-w-2xl space-y-6">
+   315→        <div className="flex items-center gap-3">
+   316→          <div className="bg-primary/10 flex size-10 items-center justify-center rounded-xl">
+   317→            <Building2 className="text-primary size-5" aria-hidden="true" />
+   318→          </div>
+   319→          <div>
+   320→            <h1 className="text-xl font-semibold tracking-tight gradient-text">{t("title")}</h1>
+   321→            <p className="text-muted-foreground text-sm">{t("subtitle")}</p>
+   322→          </div>
+   323→        </div>
+   324→
+   325→        {/* Stepper — labels from i18n (no hard-coded English strings). */}
+   326→        <ol className="flex flex-wrap items-center gap-2 text-xs">
+   327→          {stepOrder.map((s, i) => (
+   328→            <li key={s.key} className="flex items-center gap-2">
+   329→              {i > 0 ? <span className="bg-border h-px w-8" aria-hidden="true" /> : null}
+   330→              <span
+   331→                className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 ${
+   332→                  step === s.key
+   333→                    ? "bg-primary/10 text-primary font-medium"
+   334→                    : s.done
+   335→                      ? "text-muted-foreground"
+   336→                      : "text-muted-foreground"
+   337→                }`}
+   338→                aria-current={step === s.key ? "step" : undefined}
+   339→              >
+   340→                {s.done ? <CheckCircle2 className="size-4 text-emerald-600" /> : s.icon}
+   341→                {s.label}
+   342→              </span>
+   343→            </li>
+   344→          ))}
+   345→        </ol>
+   346→
+   347→        {step === "business" ? (
+   348→          <Card className="shadow-sm">
+   349→            <CardContent className="pt-6">
+   350→              <form onSubmit={onSubmit} className="space-y-6" noValidate>
+   351→                <div className="grid gap-4 sm:grid-cols-2">
+   352→                  <div className="space-y-2 sm:col-span-2">
+   353→                    <Label htmlFor="biz-name">{t("businessName")}</Label>
+   354→                    <Input
+   355→                      id="biz-name"
+   356→                      value={name}
+   357→                      onChange={(e) => setName(e.target.value)}
+   358→                      placeholder={t("businessNamePlaceholder")}
+   359→                      required
+   360→                      maxLength={120}
+   361→                    />
+   362→                  </div>
+   363→
+   364→                  <div className="space-y-2">
+   365→                    <Label htmlFor="biz-currency">{t("currency")}</Label>
+   366→                    <Select value={currencyCode} onValueChange={onCurrencyChange}>
+   367→                      <SelectTrigger id="biz-currency" dir="ltr">
+   368→                        <SelectValue placeholder={t("currencyPlaceholder")} />
+   369→                      </SelectTrigger>
+   370→                      <SelectContent className="max-h-72">
+   371→                        {CURRENCIES.map((c) => (
+   372→                          <SelectItem key={c.code} value={c.code}>
+   373→                            {c.code} · {c.symbol} — {c.name}
+   374→                          </SelectItem>
+   375→                        ))}
+   376→                      </SelectContent>
+   377→                    </Select>
+   378→                    <p className="text-muted-foreground text-xs">{t("currencyHint")}</p>
+   379→                  </div>
+   380→
+   381→                  <div className="space-y-2">
+   382→                    <Label htmlFor="biz-symbol">{t("symbol")}</Label>
+   383→                    <Input
+   384→                      id="biz-symbol"
+   385→                      value={symbol}
+   386→                      onChange={(e) => setSymbol(e.target.value)}
+   387→                      maxLength={8}
+   388→                      dir="ltr"
+   389→                      required
+   390→                    />
+   391→                  </div>
+   392→
+   393→                  <div className="space-y-2">
+   394→                    <Label htmlFor="biz-precision">{t("precision")}</Label>
+   395→                    <Select
+   396→                      value={String(precision)}
+   397→                      onValueChange={(v) => setPrecision(Number(v))}
+   398→                    >
+   399→                      <SelectTrigger id="biz-precision" className="w-full">
+   400→                        <SelectValue />
+   401→                      </SelectTrigger>
+   402→                      <SelectContent>
+   403→                        {[0, 1, 2, 3, 4].map((p) => (
+   404→                          <SelectItem key={p} value={String(p)}>
+   405→                            {p}
+   406→                          </SelectItem>
+   407→                        ))}
+   408→                      </SelectContent>
+   409→                    </Select>
+   410→                  </div>
+   411→
+   412→                  <div className="space-y-2">
+   413→                    <Label htmlFor="biz-locale">{t("locale")}</Label>
+   414→                    <Select value={locale} onValueChange={(v) => setLocale(v as "en" | "fa")}>
+   415→                      <SelectTrigger id="biz-locale" className="w-full">
+   416→                        <SelectValue />
+   417→                      </SelectTrigger>
+   418→                      <SelectContent>
+   419→                        <SelectItem value="en">{t("localeEn")}</SelectItem>
+   420→                        <SelectItem value="fa">{t("localeFa")}</SelectItem>
+   421→                      </SelectContent>
+   422→                    </Select>
+   423→                  </div>
+   424→
+   425→                  <div className="space-y-2 sm:col-span-2">
+   426→                    <Label htmlFor="biz-timezone">{t("timezone")}</Label>
+   427→                    <Select value={timezone} onValueChange={setTimezone}>
+   428→                      <SelectTrigger id="biz-timezone" dir="ltr" className="w-full">
+   429→                        <SelectValue />
+   430→                      </SelectTrigger>
+   431→                      <SelectContent className="max-h-72">
+   432→                        {zones.map((z) => (
+   433→                          <SelectItem key={z} value={z}>
+   434→                            {z}
+   435→                          </SelectItem>
+   436→                        ))}
+   437→                      </SelectContent>
+   438→                    </Select>
+   439→                    <p className="text-muted-foreground text-xs">{t("timezoneHint")}</p>
+   440→                  </div>
+   441→                </div>
+   442→
+   443→                <Separator />
+   444→
+   445→                {limitError ? (
+   446→                  <Alert variant="destructive" role="alert" data-testid="plan-limit-alert">
+   447→                    <ShieldAlert className="size-4" aria-hidden="true" />
+   448→                    <AlertTitle>{tErrors("planLimitTitle")}</AlertTitle>
+   449→                    <AlertDescription>
+   450→                      <div className="flex flex-col gap-3">
+   451→                        <span>{limitError}</span>
+   452→                        <div className="flex flex-wrap gap-2">
+   453→                          <Button asChild size="sm" variant="outline">
+   454→                            <a href="/pricing" target="_blank" rel="noopener noreferrer">
+   455→                              <ArrowUpRight className="size-4" aria-hidden="true" />
+   456→                              {tErrors("upgradeAction")}
+   457→                            </a>
+   458→                          </Button>
+   459→                          <Button
+   460→                            type="button"
+   461→                            size="sm"
+   462→                            variant="ghost"
+   463→                            onClick={() => setLimitError(null)}
+   464→                          >
+   465→                            {tErrors("dismiss")}
+   466→                          </Button>
+   467→                        </div>
+   468→                      </div>
+   469→                    </AlertDescription>
+   470→                  </Alert>
+   471→                ) : null}
+   472→
+   473→                <div className="bg-muted/40 flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4">
+   474→                  <div className="flex items-center gap-2">
+   475→                    <Coins className="text-muted-foreground size-4" aria-hidden="true" />
+   476→                    <span className="text-sm font-medium">{t("preview")}</span>
+   477→                  </div>
+   478→                  <div className="flex items-center gap-2">
+   479→                    <Input
+   480→                      aria-label={t("preview")}
+   481→                      value={previewValue}
+   482→                      onChange={(e) => setPreviewValue(e.target.value)}
+   483→                      dir="ltr"
+   484→                      className="w-32 text-end"
+   485→                      inputMode="decimal"
+   486→                    />
+   487→                    <ArrowRight className="text-muted-foreground size-4 rtl:rotate-180" aria-hidden="true" />
+   488→                    <span className="bg-background rounded-md border px-3 py-2 text-sm font-semibold tabular-nums">
+   489→                      {previewMinor}
+   490→                    </span>
+   491→                  </div>
+   492→                </div>
+   493→
+   494→                <div className="flex flex-col-reverse items-center justify-between gap-3 sm:flex-row">
+   495→                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+   496→                    <a
+   497→                      href="/pricing"
+   498→                      target="_blank"
+   499→                      rel="noopener noreferrer"
+   500→                      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-sm underline-offset-4 transition-colors hover:underline"
+   501→                    >
+   502→                      <ArrowUpRight className="size-3.5" aria-hidden="true" />
+   503→                      {t("plansLink")}
+   504→                    </a>
+   505→                    <Button
+   506→                      type="button"
+   507→                      variant="ghost"
+   508→                      size="sm"
+   509→                      onClick={() => void signOutWithRevoke("/")}
+   510→                    >
+   511→                      {t("signOutInstead")}
+   512→                    </Button>
+   513→                  </div>
+   514→                  <Button type="submit" disabled={createMutation.isPending || !name.trim()} className="w-full sm:w-auto">
+   515→                    {createMutation.isPending ? (
+   516→                      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   517→                    ) : (
+   518→                      <Globe2 className="size-4" aria-hidden="true" />
+   519→                    )}
+   520→                    {createMutation.isPending ? t("creating") : t("create")}
+   521→                  </Button>
+   522→                </div>
+   523→              </form>
+   524→            </CardContent>
+   525→          </Card>
+   526→        ) : null}
+   527→
+   528→        {step === "trial" && created && eligibility ? (
+   529→          <Card className="shadow-sm">
+   530→            <CardContent className="space-y-5 pt-6">
+   531→              <div className="flex items-start gap-3">
+   532→                <div className="bg-primary/10 flex size-10 shrink-0 items-center justify-center rounded-xl">
+   533→                  <Sparkles className="text-primary size-5" aria-hidden="true" />
+   534→                </div>
+   535→                <div>
+   536→                  <h2 className="text-lg font-semibold">{t("trialTitle")}</h2>
+   537→                  <p className="text-muted-foreground mt-1 text-sm">
+   538→                    {t("trialOffer", {
+   539→                      days: eligibility.trialDays ?? 0,
+   540→                      plan: eligibility.trialPlanCode ?? "",
+   541→                    })}
+   542→                  </p>
+   543→                  {intent.plan && intent.plan !== "FREE" ? (
+   544→                    <Badge variant="secondary" className="mt-2">
+   545→                      {t("trialFromPricing", { plan: intent.plan })}
+   546→                    </Badge>
+   547→                  ) : null}
+   548→                </div>
+   549→              </div>
+   550→              <ul className="text-muted-foreground space-y-1.5 text-sm">
+   551→                <li className="flex items-center gap-2">
+   552→                  <CheckCircle2 className="size-4 text-emerald-600" aria-hidden="true" />
+   553→                  {t("trialPoint1", { plan: eligibility.trialPlanCode ?? "" })}
+   554→                </li>
+   555→                <li className="flex items-center gap-2">
+   556→                  <CheckCircle2 className="size-4 text-emerald-600" aria-hidden="true" />
+   557→                  {t("trialPoint2")}
+   558→                </li>
+   559→                <li className="flex items-center gap-2">
+   560→                  <CheckCircle2 className="size-4 text-emerald-600" aria-hidden="true" />
+   561→                  {t("trialPoint3")}
+   562→                </li>
+   563→              </ul>
+   564→              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+   565→                <Button variant="ghost" onClick={skipTrial} disabled={startTrialMutation.isPending}>
+   566→                  {t("trialSkip")}
+   567→                </Button>
+   568→                <Button onClick={() => startTrialMutation.mutate()} disabled={startTrialMutation.isPending}>
+   569→                  {startTrialMutation.isPending ? (
+   570→                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+   571→                  ) : (
+   572→                    <Sparkles className="size-4" aria-hidden="true" />
+   573→                  )}
+   574→                  {t("trialStart", { days: eligibility.trialDays ?? 0 })}
+   575→                </Button>
+   576→              </div>
+   577→            </CardContent>
+   578→          </Card>
+   579→        ) : null}
+   580→
+   581→        {step === "done" && created ? (
+   582→          <Card className="shadow-sm">
+   583→            <CardContent className="space-y-5 pt-6">
+   584→              <div className="flex items-start gap-3">
+   585→                <div className="bg-primary/10 flex size-10 shrink-0 items-center justify-center rounded-xl">
+   586→                  <PartyPopper className="text-primary size-5" aria-hidden="true" />
+   587→                </div>
+   588→                <div>
+   589→                  <h2 className="text-lg font-semibold">{t("doneTitle")}</h2>
+   590→                  <p className="text-muted-foreground mt-1 text-sm">
+   591→                    {t("doneSubtitle", { name: created.business.name })}
+   592→                  </p>
+   593→                </div>
+   594→              </div>
+   595→
+   596→              {/* Server-derived checklist (counts only — honest state). */}
+   597→              <ul className="grid gap-2 sm:grid-cols-2">
+   598→                {status?.checklist ? (
+   599→                  <>
+   600→                    <ChecklistItem done={status.checklist.customersCreated} label={t("checklist.customers")} />
+   601→                    <ChecklistItem done={status.checklist.productsCreated} label={t("checklist.products")} />
+   602→                    <ChecklistItem done={status.checklist.salesCreated} label={t("checklist.sales")} />
+   603→                    <ChecklistItem done={status.checklist.teamInvited} label={t("checklist.team")} />
+   604→                    <ChecklistItem done={status.checklist.copilotUsed} label={t("checklist.copilot")} />
+   605→                    <ChecklistItem
+   606→                      done={!!status.trial?.active}
+   607→                      label={t("checklist.trial")}
+   608→                      optional
+   609→                    />
+   610→                  </>
+   611→                ) : null}
+   612→              </ul>
+   613→              <p className="text-muted-foreground text-xs">{t("checklistNote")}</p>
+   614→
+   615→              <div className="flex justify-end">
+   616→                <Button onClick={finish} className="w-full sm:w-auto">
+   617→                  <ArrowRight className="size-4 rtl:rotate-180" aria-hidden="true" />
+   618→                  {t("doneGo")}
+   619→                </Button>
+   620→              </div>
+   621→            </CardContent>
+   622→          </Card>
+   623→        ) : null}
+   624→      </div>
+   625→    </div>
+   626→  );
+   627→}
+   628→
+   629→function ChecklistItem({
+   630→  done,
+   631→  label,
+   632→  optional,
+   633→}: {
+   634→  done: boolean;
+   635→  label: string;
+   636→  optional?: boolean;
+   637→}) {
+   638→  const t = useTranslations("onboarding");
+   639→  return (
+   640→    <li className="bg-background flex items-center gap-2 rounded-lg border p-3 text-sm">
+   641→      {done ? (
+   642→        <CheckCircle2 className="size-4 shrink-0 text-emerald-600" aria-hidden="true" />
+   643→      ) : (
+   644→        <Circle className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
+   645→      )}
+   646→      <span className={done ? "" : "text-muted-foreground"}>{label}</span>
+   647→      {optional ? (
+   648→        <span className="text-muted-foreground ms-auto text-xs">({t("optionalStep")})</span>
+   649→      ) : null}
+   650→    </li>
+   651→  );
+   652→}
+   653→

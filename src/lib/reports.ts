@@ -30,6 +30,7 @@ import {
   ALLOWED_REPORT_DAYS,
   localMonthKeyOf,
   normalizeReportDaysInput,
+  resolveCustomRange,
   resolveMonthWindow,
   resolveRollingWindow,
   safeAdd,
@@ -60,7 +61,14 @@ export function localDateKey(d: Date, timeZone: string): string {
 
 export type ReportSummary = Awaited<ReturnType<typeof buildReportSummary>>;
 
-export async function buildReportSummary(businessId: string, days: ReportDays) {
+export async function buildReportSummary(
+  businessId: string,
+  days: ReportDays,
+  // Prompt 52 §F4 — optional explicit local-day window (Jalali presets send
+  // Gregorian YYYY-MM-DD from/to). Same laws as the rolling window: local-day
+  // boundaries, future-only ranges rejected, `to` clamped to today (366d cap).
+  custom?: { from: string; to: string },
+) {
   // Business timezone for day boundaries (A04) — server authority only.
   const business = await db.business.findUnique({
     where: { id: businessId },
@@ -71,7 +79,9 @@ export async function buildReportSummary(businessId: string, days: ReportDays) {
   // Prompt 50 (§5): exact local-day window ending TODAY. fetchUntil is the
   // exclusive start of tomorrow's local day — future-dated rows never load.
   const now = new Date();
-  const window = resolveRollingWindow(tz, days, now);
+  const window = custom
+    ? resolveCustomRange(tz, custom.from, custom.to, now)
+    : resolveRollingWindow(tz, days, now);
   const { fromKey, toKey, dayKeys, fetchFrom, fetchUntil } = window;
 
   const dateGte = fetchFrom;
@@ -319,7 +329,16 @@ export async function buildReportSummary(businessId: string, days: ReportDays) {
   lowStockItems.sort((a, b) => a.stockQty - b.stockQty);
 
   return {
-    range: { days, from: fromKey, to: toKey, timezone: tz },
+    // `days` stays the ROLLING preset (7/30/90) for backward compatibility;
+    // custom windows expose their honest inclusive length via rangeDays and
+    // echo the requested bounds via custom.
+    range: {
+      days: custom ? dayKeys.length : days,
+      from: fromKey,
+      to: toKey,
+      timezone: tz,
+      ...(custom ? { custom: { from: fromKey, to: toKey } } : {}),
+    },
     kpis: {
       revenueMinor,
       salesCount,

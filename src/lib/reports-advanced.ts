@@ -26,7 +26,7 @@
  * around, §26).
  */
 import { db } from "@/lib/db";
-import { pctChange, resolvePreviousWindow, resolveRollingWindow, safeAdd, type ReportDays } from "@/lib/report-periods";
+import { pctChange, resolveCustomRange, resolvePreviousWindow, resolveRollingWindow, safeAdd, type ReportDays } from "@/lib/report-periods";
 import { normalizeReportDays } from "@/lib/reports";
 
 export type AdvancedInsights = {
@@ -70,6 +70,7 @@ export type AdvancedInsights = {
 export async function buildAdvancedInsights(
   businessId: string,
   daysInput: unknown,
+  custom?: { from: string; to: string },
 ): Promise<AdvancedInsights> {
   const days = normalizeReportDays(daysInput);
   const business = await db.business.findUnique({
@@ -78,11 +79,14 @@ export async function buildAdvancedInsights(
   });
   const tz = business?.timezone || "UTC";
 
-  // Current window: the last N business-local dates ending today.
-  const current = resolveRollingWindow(tz, days, new Date());
-  // Previous window: the N business-local dates immediately before —
-  // exactly N local dates, no overlap, no gap (Gate D).
-  const previous = resolvePreviousWindow(tz, days, current.fromKey);
+  // Prompt 52 §F4 — the advanced block accepts the same custom local-day
+  // window as the summary (Jalali presets arrive as Gregorian from/to).
+  // Previous window: the same NUMBER of local dates immediately before —
+  // no overlap, no gap (Gate D law unchanged).
+  const current = custom
+    ? resolveCustomRange(tz, custom.from, custom.to, new Date())
+    : resolveRollingWindow(tz, days, new Date());
+  const previous = resolvePreviousWindow(tz, current.dayKeys.length, current.fromKey);
 
   const [sales, expenses, salesPrev, expensesPrev] = await Promise.all([
     db.sale.findMany({

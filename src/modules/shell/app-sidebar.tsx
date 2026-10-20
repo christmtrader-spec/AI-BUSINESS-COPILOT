@@ -199,6 +199,8 @@ export function AppSidebar({
                     onMouseEnter={() => prefetchOnHover(item.view)}
                     onFocus={() => prefetchOnHover(item.view)}
                     aria-current={active ? "page" : undefined}
+                    // Prompt 52 §F7 — stable anchor for the onboarding tour.
+                    data-tour={viewKey(item.view)}
                   >
                     <item.icon />
                     <span>{t(item.labelKey)}</span>

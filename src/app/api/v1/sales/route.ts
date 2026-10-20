@@ -13,6 +13,7 @@ import { db } from "@/lib/db";
 import { listParams, saleCreateSchema, statusParam } from "@/lib/schemas";
 import { formatInvoiceNumber } from "@/lib/finance";
 import { localMonthKey, monthWindow } from "@/lib/reports";
+import { vatMinor } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 
@@ -92,6 +93,8 @@ type SaleRowInput = {
   issueDate: Date;
   subtotalMinor: number;
   discountMinor: number;
+  taxRateBp: number;
+  taxMinor: number;
   totalMinor: number;
   paidMinor: number;
   status: string;
@@ -109,6 +112,8 @@ function toRow(s: SaleRowInput) {
     issueDate: s.issueDate.toISOString(),
     subtotalMinor: s.subtotalMinor,
     discountMinor: s.discountMinor,
+    taxRateBp: s.taxRateBp,
+    taxMinor: s.taxMinor,
     totalMinor: s.totalMinor,
     paidMinor: s.paidMinor,
     status: s.status,
@@ -158,7 +163,21 @@ export const POST = route(async (req: NextRequest) => {
     if (input.discountMinor > subtotalMinor) {
       throw new ApiError(422, "INVALID_DISCOUNT", "Discount cannot exceed the invoice subtotal.");
     }
-    const totalMinor = subtotalMinor - input.discountMinor;
+
+    // Prompt 52 §F3 — VAT engine. The rate lives in the BUSINESS CONFIG and
+    // the decision to tax is made ONLY here, server-side (never client
+    // input). Taxable base = subtotal − discount; the computed rate + amount
+    // are snapshotted onto the invoice so reprints stay stable forever.
+    const vatConfig = await tx.business.findUnique({
+      where: { id: ctx.businessId },
+      select: { vatEnabled: true, vatRateBp: true },
+    });
+    const taxRateBp = vatConfig?.vatEnabled
+      ? Math.max(0, Math.min(10_000, vatConfig.vatRateBp))
+      : 0;
+    const taxableBaseMinor = subtotalMinor - input.discountMinor;
+    const taxMinor = vatMinor(taxableBaseMinor, taxRateBp);
+    const totalMinor = taxableBaseMinor + taxMinor;
 
     // Next per-business sequential number.
     const last = await tx.sale.findFirst({
@@ -176,6 +195,8 @@ export const POST = route(async (req: NextRequest) => {
         customerId: input.customerId,
         subtotalMinor,
         discountMinor: input.discountMinor,
+        taxRateBp,
+        taxMinor,
         totalMinor,
         status: "UNPAID",
         paidMinor: 0,
@@ -228,7 +249,7 @@ export const POST = route(async (req: NextRequest) => {
         action: "sale.create",
         entityType: "Sale",
         entityId: created.id,
-        after: { number, totalMinor, items: created.items.length, customerId: input.customerId },
+        after: { number, totalMinor, taxMinor, taxRateBp, items: created.items.length, customerId: input.customerId },
         ip: req.headers.get("x-forwarded-for"),
         userAgent: req.headers.get("user-agent"),
       },

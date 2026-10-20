@@ -59,6 +59,7 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
+import { JalaliRangePresets, type JalaliRange } from "@/components/shared/jalali-range-presets";
 import {
   Dialog,
   DialogContent,
@@ -286,6 +287,10 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
   const view = useAppStore((s) => s.view);
   const activeId = useAppStore((s) => s.activeBusinessId);
   const [days, setDays] = useState<string>("30");
+  // Prompt 52 §F4 — Jalali calendar presets resolve to an explicit Gregorian
+  // window; when set it OVERRIDES the rolling days preset (server accepts
+  // from/to on /reports/summary).
+  const [jalaliRange, setJalaliRange] = useState<JalaliRange | null>(null);
 
   // Month drill-down state lives in the URL (store view param) — deep-linkable
   // via #/reports?month=YYYY-MM and sync'd with browser back/forward. The
@@ -309,8 +314,11 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
   const fmt = (minor: number) => fmtMoney(business, minor);
 
   const { data, isLoading, error, refetch } = useQuery<Summary>({
-    queryKey: ["reports", "summary", days],
-    queryFn: () => api(`/api/v1/reports/summary?days=${days}`),
+    queryKey: ["reports", "summary", days, jalaliRange],
+    queryFn: () =>
+      jalaliRange
+        ? api(`/api/v1/reports/summary?from=${jalaliRange.from}&to=${jalaliRange.to}`)
+        : api(`/api/v1/reports/summary?days=${days}`),
     staleTime: 30_000,
   });
 
@@ -334,10 +342,15 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
   // of truth); the client only streams the blob to a file.
   const csvExport = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/v1/reports/export?days=${days}`, {
-        credentials: "same-origin",
-        headers: activeId ? { "x-business-id": activeId } : undefined,
-      });
+      const res = await fetch(
+        jalaliRange
+          ? `/api/v1/reports/export?from=${jalaliRange.from}&to=${jalaliRange.to}`
+          : `/api/v1/reports/export?days=${days}`,
+        {
+          credentials: "same-origin",
+          headers: activeId ? { "x-business-id": activeId } : undefined,
+        },
+      );
       if (!res.ok) {
         let message = t("csvFailed");
         try {
@@ -373,9 +386,10 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
   const monthCsvExport = useMutation({
     mutationFn: async (month: string) => {
       const res = await fetch(`/api/v1/reports/monthly/${month}/export`, {
-        credentials: "same-origin",
-        headers: activeId ? { "x-business-id": activeId } : undefined,
-      });
+          credentials: "same-origin",
+          headers: activeId ? { "x-business-id": activeId } : undefined,
+        },
+      );
       if (!res.ok) {
         let message = t("csvFailed");
         try {
@@ -544,7 +558,7 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
         subtitle={t("subtitle")}
         actions={
           <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
-            <Select value={days} onValueChange={setDays}>
+            <Select value={days} onValueChange={(v) => { setDays(v); setJalaliRange(null); }}>
               <SelectTrigger className="h-9 min-w-0 flex-1 sm:w-44 sm:flex-none" aria-label={t("rangeLabel")}>
                 <SelectValue />
               </SelectTrigger>
@@ -577,6 +591,11 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
           </div>
         }
       />
+
+      {/* Prompt 52 §F4 — Jalali calendar presets for the summary window.
+          Selecting a preset overrides the rolling days selector until
+          cleared. */}
+      <JalaliRangePresets value={jalaliRange} onChange={setJalaliRange} />
 
       {isInvDetail ? (
         /* Prompt 51 — detailed inventory valuation sub-view (deep-linkable

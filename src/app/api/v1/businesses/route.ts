@@ -66,6 +66,8 @@ export const GET = route(async () => {
         decimalPrecision: m.business.decimalPrecision,
         locale: m.business.locale,
         timezone: m.business.timezone,
+        vatEnabled: m.business.vatEnabled,
+        vatRateBp: m.business.vatRateBp,
         ownerId: m.business.ownerId,
         memberCount: m.business._count.members,
         createdAt: m.business.createdAt,
