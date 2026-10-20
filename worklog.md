@@ -5762,3 +5762,144 @@ Stage Summary:
 - P51-R1-FINAL §2 limit contracts remain green (25/25) — untouched.
 - BUILD: NOT EXECUTED (standing sandbox law — dev server owns .next on
   :3000).
+
+---
+Task ID: P55
+Agent: Z.ai Code (main session)
+Task: Prompt 55 (trace 1a1583a1c07d4031 / 1a15889a04a9b975) — continue
+super-professional build; propose + implement next features with fine
+details and deep testing; scan the project for bugs.
+
+Work Log:
+- PROPOSED next-round catalog (delivered in the user-facing FA report):
+  X1 Excel export kit (DONE this round), X2 reorder suggestions (DONE),
+  X3 saved list views, X4 PDF invoice export, X5 customer statement
+  email delivery, X6 inventory count reminders, X7 audit CSV export,
+  X8 admin announcement composer polish, X9 PWA offline cache depth,
+  X10 Stripe webhook live-verify harness.
+- §X1 SHARED REAL EXCEL (.XLSX) EXPORT KIT:
+  - New src/lib/xlsx-export.ts: exceljs loaded LAZILY (dynamic import —
+    ~1MB never touches initial bundle); buildXlsxBuffer accepts a single
+    sheet spec or an array; frozen styled header row (bold + neutral fill
+    + bottom rule); auto column widths bounded [8,42]; sheet-name
+    sanitizer (Excel law: [ ] / \ ? * : → '-', ≤31 chars); numeric cells
+    typed as Excel NUMBERS with numFmt (#,##0 int / #,##0.00 decimal) —
+    applied via row.getCell().numFmt AFTER addRow (the {value,numFmt}
+    object shape in addRow is NOT a supported cell value — found via
+    readback testing, fixed); string cells are STRING-typed by
+    construction (no formula-execution risk; CSV's apostrophe guard is a
+    CSV-only concern — documented); RTL sheet view when UI locale is fa;
+    Persian text round-trips; workbook creator stamped.
+  - list-export-button.tsx upgraded to a format MENU (CSV / Excel .xlsx)
+    via shadcn DropdownMenu — ZERO changes needed at the 13 existing call
+    sites; props backward-compatible (+ optional sheetName); same
+    fetchAllPages walker, same truncation honesty toast; label defaults
+    to new common.export.
+  - i18n: common.export + common.exportExcel added in BOTH locales
+    symmetrically.
+  - FIX during unit testing: bun module-init order bug — buildXlsxBuffer
+    originally required an Array but downloadXlsx passed a single spec
+    ("{} is not iterable"); signature normalized to accept both.
+- §X2 REORDER SUGGESTIONS (پیشنهاد خرید):
+  - src/lib/reorder.ts: buildReorderSuggestions — ACTIVE non-deleted
+    products at/below lowStockAt; suggestedQty = max(threshold − stock, 1)
+    (equal-threshold case floors at 1); estCost = suggestedQty ×
+    costPriceMinor accepted ONLY if Number.isSafeInteger (unsafe row →
+    null estimate AND grand total withheld — partial totals never served
+    as complete, ADR 0051 law); SCAN_CAP 2000 read cap + REORDER_ROW_LIMIT
+    200 output cap; severity OUT_OF_STOCK vs AT_OR_BELOW_THRESHOLD; rows
+    sorted stockQty asc (severest first). Pure decision aid — NO side
+    effects (never orders, never adjusts stock; Rule 05).
+  - GET /api/v1/reports/reorder-suggestions (mirrors inventory-valuation
+    route law): getAuthContext (server-derived businessId),
+    requirePermission("data:read") — no new entitlement (basic-summary
+    drill-down stance), rate-limit 60/min/user+business, private no-store,
+    over-cap → 413 REPORT_TOO_LARGE.
+  - src/modules/reports/reorder-panel.tsx: deep-linkable sub-view
+    (#/reports?reorder=1) mirroring the inventory-valuation panel
+    (back button, basis disclosure always visible, KPI strip:
+    suggestions/out-of-stock/estimated total with honest "Not
+    computable" fallback, DataTable with severity badges, empty state,
+    error retry, skeleton loading, getRowId by stable id). Export via
+    the shared §X1 kit (filename reorder-suggestions).
+  - reports-view wiring: isReorderDetail branch (mutually exclusive with
+    inventory sub-view + month dialog); inventory card gains a
+    "Purchase suggestions" jump button (data-testid=reorder-open) shown
+    only when lowStockCount > 0.
+  - app-store deep links: viewToHash + hashToView both accept the closed
+    "reorder" param token (#/reports?reorder=1).
+  - i18n: reports.reorder* namespace (23 keys) added in en+fa
+    symmetrically (reorderOpen/Title/Desc/Basis/Col*/State*/Kpi*/Empty*/
+    LoadFailed/SheetName/EstUnavailable).
+- TESTS:
+  - NEW scripts/xlsx-export-check.ts (unit, real exceljs readback):
+    15/15 GREEN — structure, cell typing + numFmt, formula-safety (a
+    "=cmd()" value stays a string cell), null→empty, frozen pane, RTL
+    flag fa + LTR en, Persian round-trip, sheet-name sanitization,
+    multi-sheet, empty-rows header, zero-sheet rejection, width bounds.
+    Two initial failures were HARNESS bugs (wrong row index A2 vs A3;
+    assertion label) — fixed, not product.
+  - NEW scripts/reorder-check.ts (live E2E, real HTTP): 18/18 GREEN —
+    register → login → business → 5-product severity matrix → 401
+    unauthed → 200 + private no-store → exact row set (out-of-stock /
+    low / equal-threshold included; healthy + inactive excluded) →
+    suggested/est math per row → totals (count 3, outOfStock 1, total
+    15200) → stock-asc ordering → integer minors → NO side effects on
+    stock (sum 19 unchanged) → throwaway business deleted (typed
+    confirm). One initial failure was MY assertion bug (3500 vs 700 —
+    equal-threshold floors at 1, the code was RIGHT).
+- BROWSER VERIFICATION (agent-browser, real session):
+  - Reorder panel EN: renders with 2 seeded QA products; export menu
+    shows "Export CSV" + "Export Excel (.xlsx)"; EXCEL EXPORT EXECUTED
+    IN-BROWSER — captured blob is a real 7,024-byte xlsx (PK signature),
+    decoded + verified: sheet "Purchase suggestions", 3 rows, correct
+    headers, numeric cells type=2 numFmt=#,##0, RTL false (en).
+  - FA locale (switched via the UI switcher, dir=rtl): panel fully
+    Persian (پیشنهاد خرید + basis disclosure), export menu items
+    خروجی CSV / خروجی اکسل (.xlsx); FA Excel export captured + decoded:
+    sheet «پیشنهاد خرید», RTL:true, header «محصول» — the RTL sheet law
+    works end-to-end.
+  - Shared menu verified on a 13-call-site list view (payments):
+    trigger + both items render with zero per-view changes.
+  - Mobile 390×844 FA: zero horizontal overflow (sw=cw=390). Desktop
+    1920: clean layout, empty state correct after cleanup (export
+    hidden when no rows — by design).
+  - Console: 0 errors on fresh loads (transient RSC fetch errors during
+    the server-down window only — sandbox restart, not product).
+  - State restored: QA products deleted (200×2), UI locale back to EN.
+- INCIDENTS DURING THE ROUND (recurring sandbox class, all healed):
+  - Dev server killed twice by the sandbox mid-round (ensure-dev.sh
+    restarts; compiles of new code were green both times).
+  - .env wiped to DATABASE_URL-only AGAIN (3rd documented occurrence) →
+    credentials logins 401'd (AUTH_EMAIL_VERIFICATION_MODE lost →
+    required-by-default). node scripts/env-repair.mjs → ALL GREEN
+    (env baseline appended, migrations 29/0, billing+pricing seeds,
+    sara/eve/ali fixture, integrity ok, fk 0). prompt18 re-run → 28/28.
+  - e2e-smoke initially failed on 401 (sara membership lost to the same
+    revert) → e2e-smoke-fixture.mjs re-seeded → 90/90 ALL GREEN.
+  - Stale tsconfig.tsbuildinfo produced 9 phantom "duplicate identifier"
+    errors in e2e-smoke.ts (file untouched by this round — git-verified);
+    rm tsconfig.tsbuildinfo → tsc 0 errors. NOT a product bug.
+- FINAL BATTERY: tsc 0 · lint clean · i18n audit CLEAN (178 files /
+  2957 usages / 0 gaps) · xlsx-export-check 15/15 · reorder-check 18/18 ·
+  e2e-smoke 90/90 · prompt34-unit 139/139 · exports-round-unit 20/20 ·
+  prompt18 28/28 · env-repair ALL GREEN.
+- DEPENDENCY: exceljs@4.4.0 added (browser field → pre-bundled dist;
+  lazy-loaded only).
+
+Stage Summary:
+- The platform's export story is now complete: EVERY list exports both
+  the lossless CSV archive AND a real Excel workbook (typed numbers,
+  styled frozen header, RTL sheets for Persian) through ONE shared kit
+  with one honesty contract.
+- Inventory management closes the loop: summary low-stock signal →
+  valuation drill-down (P51) → actionable purchase suggestions (P55)
+  with server-authoritative math and zero side effects.
+- Honest limitations (documented in-code): XLSX number cells are
+  IEEE-754 doubles (Excel-native; CSV remains the bit-exact archival
+  format); suggestedQty is threshold top-up (no forecast model —
+  deliberate); reorder scan bounded at 2000/200 rows with 413 over-cap.
+- P51-R1-FINAL §2 limit contracts untouched and still green (e2e-smoke
+  covers business-limit flows).
+- BUILD: NOT EXECUTED (standing sandbox law — dev server owns .next on
+  :3000).

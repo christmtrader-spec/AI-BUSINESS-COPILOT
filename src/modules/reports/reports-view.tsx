@@ -33,6 +33,7 @@ import {
   Lock,
   Minus,
   Package,
+  PackagePlus,
   ReceiptText,
   TrendingUp,
 } from "lucide-react";
@@ -69,6 +70,7 @@ import {
 } from "@/components/ui/dialog";
 import { fmtCount, fmtMoney } from "../finance-shared/finance-kit";
 import { InventoryValuationPanel } from "./inventory-valuation-panel";
+import { ReorderSuggestionsPanel } from "./reorder-panel";
 import { PerformancePanel } from "./performance-panel";
 import type { BusinessSummary } from "../shell/types";
 
@@ -298,10 +300,14 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
   // close navigates back to the bare module; hashchange (Back/Forward,
   // external deep links) flows through app-root's replaceView into here.
   // Prompt 51: the param can also be "inventory" (the detailed valuation
-  // sub-view, #/reports?inventory=1) — the two sub-views are mutually
+  // sub-view, #/reports?inventory=1) — the sub-views are mutually
   // exclusive and only month-SHAPED params open the month dialog.
+  // Prompt 55 (§X2): "reorder" opens the low-stock reorder suggestions
+  // panel (#/reports?reorder=1).
   const isInvDetail =
     view.kind === "module" && view.module === "reports" && view.param === "inventory";
+  const isReorderDetail =
+    view.kind === "module" && view.module === "reports" && view.param === "reorder";
   const detailMonth =
     view.kind === "module" && view.module === "reports" && view.param && /^\d{4}-\d{2}$/.test(view.param)
       ? view.param
@@ -597,7 +603,13 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
           cleared. */}
       <JalaliRangePresets value={jalaliRange} onChange={setJalaliRange} />
 
-      {isInvDetail ? (
+      {isReorderDetail ? (
+        /* Prompt 55 §X2 — low-stock reorder suggestions sub-view
+           (deep-linkable via #/reports?reorder=1). Replaces the summary
+           content; the panel owns its own loading/error/empty/export
+           states. */
+        <ReorderSuggestionsPanel business={business} />
+      ) : isInvDetail ? (
         /* Prompt 51 — detailed inventory valuation sub-view (deep-linkable
            via #/reports?inventory=1). Replaces the summary content; the
            panel owns its own loading/error/empty/export states. */
@@ -1254,6 +1266,23 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                     {t("invValViewDetails")}
                     <ChevronRight className="ms-auto size-3.5 rtl:rotate-180" aria-hidden="true" />
                   </Button>
+                  {/* Prompt 55 §X2 — when something IS low, the summary card
+                      offers the one-click jump to reorder suggestions. */}
+                  {data.inventory.lowStockCount > 0 ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 w-full gap-1.5"
+                      data-testid="reorder-open"
+                      onClick={() =>
+                        navigate({ kind: "module", module: "reports", param: "reorder" }, { replace: true })
+                      }
+                    >
+                      <PackagePlus className="size-3.5" aria-hidden="true" />
+                      {t("reorderOpen")}
+                      <ChevronRight className="ms-auto size-3.5 rtl:rotate-180" aria-hidden="true" />
+                    </Button>
+                  ) : null}
                 </CardContent>
               </Card>
 

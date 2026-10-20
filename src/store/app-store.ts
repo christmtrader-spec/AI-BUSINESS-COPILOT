@@ -487,10 +487,14 @@ export function viewToHash(view: AppView): string | null {
     case "module": {
       if (!isKnownModule(view.module)) return null;
       // Module sub-state deep links stay in the address bar. Reports has
-      // two: the month drill-down (?month=YYYY-MM) and — Prompt 51 — the
-      // detailed inventory valuation (?inventory=1). Mutually exclusive.
+      // three: the month drill-down (?month=YYYY-MM), — Prompt 51 — the
+      // detailed inventory valuation (?inventory=1) and — Prompt 55 —
+      // the reorder suggestions (?reorder=1). Mutually exclusive.
       if (view.module === "reports" && view.param === "inventory") {
         return "#/reports?inventory=1";
+      }
+      if (view.module === "reports" && view.param === "reorder") {
+        return "#/reports?reorder=1";
       }
       if (view.param && /^\d{4}-\d{2}$/.test(view.param)) {
         return `#/${view.module}?month=${view.param}`;
@@ -754,6 +758,11 @@ export function hashToView(hash: string): AppView {
     }
     if (path === "reports" && query.get("inventory") === "1") {
       return { kind: "module", module: path, param: "inventory" };
+    }
+    // Prompt 55 (§X2) — ?reorder=1 opens the low-stock reorder suggestions
+    // sub-view. Closed token, never arbitrary state.
+    if (path === "reports" && query.get("reorder") === "1") {
+      return { kind: "module", module: path, param: "reorder" };
     }
     return { kind: "module", module: path };
   }
