@@ -3,7 +3,8 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { Download, Filter, Loader2, ScrollText, X } from "lucide-react";
+import { BookmarkPlus, Download, Filter, Loader2, ScrollText, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { api, ApiClientError } from "@/lib/api-client";
 import { asRole, can, type Role } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
@@ -52,6 +53,65 @@ type AuditPage = { items: AuditEntry[]; facets: AuditFacets };
 
 const NONE = "__none__";
 
+// ---- R61 — saved audit views (one-click filter presets) -------------------
+/** One saved filter preset; persisted per business in localStorage. */
+type SavedAuditView = {
+  id: string;
+  name: string;
+  action: string;
+  entityType: string;
+  actorId: string;
+  from: string;
+  to: string;
+};
+
+const SAVED_VIEWS_MAX = 10;
+const SAVED_NAME_MAX = 40;
+
+function genSavedViewId(): string {
+  // cuid-like opaque id; crypto.randomUUID when available (secure contexts).
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `v${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Defensive re-validation of the stored JSON — never trust storage shape. */
+function parseSavedViews(raw: unknown): SavedAuditView[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SavedAuditView[] = [];
+  for (const item of raw.slice(0, SAVED_VIEWS_MAX)) {
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    const s = (v: unknown) => (typeof v === "string" ? v : "");
+    const name = s(r.name).trim().slice(0, SAVED_NAME_MAX);
+    if (!name) continue;
+    out.push({
+      id: s(r.id) || genSavedViewId(),
+      name,
+      action: s(r.action),
+      entityType: s(r.entityType),
+      actorId: s(r.actorId),
+      from: s(r.from),
+      to: s(r.to),
+    });
+  }
+  return out;
+}
+
+/** Read + validate a business's saved views from localStorage. Safe on the
+ *  server (returns []) and against corrupt/unavailable storage (honest []). */
+function loadSavedViews(storageKey: string | null): SavedAuditView[] {
+  if (!storageKey || typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return [];
+    return parseSavedViews(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+}
+
 /** Audit log — admin-only, server-filtered activity trail (§F10). */
 export function AuditView({ membership }: { membership: BusinessListItem }) {
   const t = useTranslations("audit");
@@ -85,6 +145,19 @@ export function AuditView({ membership }: { membership: BusinessListItem }) {
   }, [action, entityType, actorId, from, to]);
 
   const hasFilters = Boolean(action || entityType || actorId || from || to);
+
+  // ---- R61 — saved audit views (localStorage, per business) ---------------
+  // localStorage is the SINGLE source of truth: the chip list is a memoized
+  // projection of the per-business storage key, and save/delete are plain
+  // event handlers that write storage then bump `savedVersion` to re-read.
+  // No state-mirroring effect (no setState-in-effect), and switching
+  // business reloads for free because the storage key changes.
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [viewName, setViewName] = useState("");
+  const [nameError, setNameError] = useState(false);
+  const [savedVersion, setSavedVersion] = useState(0);
+  const storageKey = activeId ? `audit-saved-views:${activeId}` : null;
+  const savedViews = useMemo(() => loadSavedViews(storageKey), [storageKey, savedVersion]);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery<AuditPage>({
     queryKey: ["audit", activeId, params],
@@ -168,6 +241,70 @@ export function AuditView({ membership }: { membership: BusinessListItem }) {
     setTo("");
   }
 
+  // ---- R61 — saved views: apply / save / delete ---------------------------
+  /** The chip whose preset EXACTLY equals the current committed filters. */
+  const isSavedViewActive = (v: SavedAuditView) =>
+    v.action === action && v.entityType === entityType && v.actorId === actorId && v.from === from && v.to === to;
+
+  function applyView(v: SavedAuditView) {
+    // Set BOTH the raw input state and the committed state (the action input
+    // normally commits on submit) so the server query refetches at once —
+    // the exact same end state the manual submit path produces.
+    setActionInput(v.action);
+    setAction(v.action);
+    setEntityType(v.entityType);
+    setActorId(v.actorId);
+    setFrom(v.from);
+    setTo(v.to);
+    toast({ title: t("savedApplied"), description: v.name });
+  }
+
+  function submitSave() {
+    const name = viewName.trim().slice(0, SAVED_NAME_MAX);
+    if (!name) {
+      setNameError(true);
+      return;
+    }
+    if (!storageKey) return; // never the case behind the business gate
+    const current = loadSavedViews(storageKey);
+    if (current.length >= SAVED_VIEWS_MAX) {
+      toast({ title: t("savedLimit"), variant: "destructive" });
+      return;
+    }
+    const entry: SavedAuditView = { id: genSavedViewId(), name, action, entityType, actorId, from, to };
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify([...current, entry]));
+    } catch {
+      // Storage refused the write (quota/private mode) — the chip is NOT
+      // shown because it is NOT persisted; say so honestly.
+      toast({ title: t("savedSaveFailed"), variant: "destructive" });
+      return;
+    }
+    setSavedVersion((v) => v + 1);
+    setSaveOpen(false);
+    setViewName("");
+    setNameError(false);
+  }
+
+  function deleteView(id: string) {
+    if (!storageKey) return;
+    const next = loadSavedViews(storageKey).filter((v) => v.id !== id);
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {
+      toast({ title: tErrors("generic"), variant: "destructive" });
+      return;
+    }
+    setSavedVersion((v) => v + 1);
+    toast({ title: t("savedDeleted") });
+  }
+
+  function openSaveDialog() {
+    setViewName("");
+    setNameError(false);
+    setSaveOpen(true);
+  }
+
   return (
     <div className="mx-auto max-w-5xl space-y-6" data-view="audit">
       <PageHeader
@@ -194,6 +331,61 @@ export function AuditView({ membership }: { membership: BusinessListItem }) {
           </Button>
         }
       />
+
+      {/* R61 — saved audit views: one-click filter presets (per business,
+          localStorage). Rendered ONLY when there is something to show —
+          with no saved views and no filters there is zero extra clutter.
+          Names render as plain React text nodes (XSS-safe by construction). */}
+      {hasFilters || savedViews.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2" data-testid="audit-saved-views">
+          {savedViews.length > 0 ? (
+            <span className="text-muted-foreground text-xs font-medium">{t("savedViews")}</span>
+          ) : null}
+          {savedViews.map((v) => {
+            const active = isSavedViewActive(v);
+            return (
+              <span
+                key={v.id}
+                className={cn(
+                  "inline-flex items-center overflow-hidden rounded-full border text-xs",
+                  active
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "bg-secondary/60 text-secondary-foreground",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => applyView(v)}
+                  title={v.name}
+                  className="max-w-44 truncate px-2.5 py-1"
+                >
+                  {v.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteView(v.id)}
+                  aria-label={`${tCommon("delete")}: ${v.name}`}
+                  className="hover:bg-destructive/10 hover:text-destructive flex items-center px-1.5 py-1"
+                >
+                  <X className="size-3" aria-hidden="true" />
+                </button>
+              </span>
+            );
+          })}
+          {hasFilters ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1 rounded-full text-xs"
+              onClick={openSaveDialog}
+              data-testid="audit-save-view"
+            >
+              <BookmarkPlus className="size-3.5" aria-hidden="true" />
+              {t("savedSave")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* §F10 — advanced filters: user, action, entity type, date range.
           Everything is applied SERVER-SIDE (the CSV export honors it too). */}
@@ -454,6 +646,56 @@ export function AuditView({ membership }: { membership: BusinessListItem }) {
               </div>
             </>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      {/* R61 — name-and-save dialog for the current filter combination. */}
+      <Dialog
+        open={saveOpen}
+        onOpenChange={(v) => {
+          setSaveOpen(v);
+          if (!v) setNameError(false);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle dir="auto">{t("savedTitle")}</DialogTitle>
+            <DialogDescription dir="auto">{t("savedDialogDesc")}</DialogDescription>
+          </DialogHeader>
+          <form
+            noValidate
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitSave();
+            }}
+            className="space-y-4"
+          >
+            <div className="space-y-1.5">
+              <Label htmlFor="audit-saved-name">{t("savedName")}</Label>
+              <Input
+                id="audit-saved-name"
+                value={viewName}
+                maxLength={SAVED_NAME_MAX}
+                dir="auto"
+                placeholder={t("savedNamePlaceholder")}
+                autoFocus
+                onChange={(e) => {
+                  setViewName(e.target.value);
+                  setNameError(false);
+                }}
+                aria-invalid={nameError || undefined}
+              />
+              {nameError ? <p className="text-destructive text-xs">{t("savedEmpty")}</p> : null}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setSaveOpen(false)}>
+                {tCommon("cancel")}
+              </Button>
+              <Button type="submit" size="sm">
+                {tCommon("save")}
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

@@ -8,7 +8,7 @@ import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { KeyRound } from "lucide-react";
+import { Ban, KeyRound, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,14 +31,21 @@ import {
   formatDateTime,
   usePlatformErrorText,
 } from "./kit";
+import { usePlatformSelf } from "./use-platform-self";
+import { useSession } from "next-auth/react";
 
 const PAGE_SIZE = 20;
 
 export function UsersView() {
   const t = useTranslations("platform");
+  const { status: sessionStatus } = useSession();
+  const self = usePlatformSelf(sessionStatus === "authenticated");
+  const canSuspend = !!self.data?.permissions.includes("platform:users:suspend");
   const [email, setEmail] = React.useState("");
   const [page, setPage] = React.useState(1);
   const [invalidateTarget, setInvalidateTarget] = React.useState<PlatformUser | null>(null);
+  const [suspendTarget, setSuspendTarget] = React.useState<PlatformUser | null>(null);
+  const [reactivateTarget, setReactivateTarget] = React.useState<PlatformUser | null>(null);
 
   const params = new URLSearchParams();
   if (email) params.set("email", email);
@@ -116,12 +123,41 @@ export function UsersView() {
                       ) : (
                         <span className="text-muted-foreground text-xs">{t("users.no")}</span>
                       )}
+                      {u.suspendedAt ? (
+                        <Badge variant="outline" className="ms-1 border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-400">
+                          {t("users.suspended")}
+                        </Badge>
+                      ) : null}
                     </TableCell>
                     <TableCell className="text-end">
-                      <Button variant="outline" size="sm" onClick={() => setInvalidateTarget(u)}>
-                        <KeyRound className="size-3.5" aria-hidden="true" />
-                        {t("users.invalidate")}
-                      </Button>
+                      <div className="flex justify-end gap-1">
+                        <Button variant="outline" size="sm" onClick={() => setInvalidateTarget(u)}>
+                          <KeyRound className="size-3.5" aria-hidden="true" />
+                          {t("users.invalidate")}
+                        </Button>
+                        {canSuspend && !u.isPlatformOperator ? (
+                          u.suspendedAt ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setReactivateTarget(u)}
+                            >
+                              <ShieldCheck className="size-3.5" aria-hidden="true" />
+                              {t("users.reactivate")}
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="border-red-500/40 text-red-700 hover:bg-red-500/10 dark:text-red-400"
+                              onClick={() => setSuspendTarget(u)}
+                            >
+                              <Ban className="size-3.5" aria-hidden="true" />
+                              {t("users.suspend")}
+                            </Button>
+                          )
+                        ) : null}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -146,10 +182,30 @@ export function UsersView() {
                     {u.membershipCount} · sv {u.sessionVersion}
                   </p>
                   <p className="text-muted-foreground text-xs">{formatDateTime(u.createdAt)}</p>
-                  <Button variant="outline" size="sm" onClick={() => setInvalidateTarget(u)}>
-                    <KeyRound className="size-3.5" aria-hidden="true" />
-                    {t("users.invalidate")}
-                  </Button>
+                  <div className="flex flex-wrap gap-1">
+                    <Button variant="outline" size="sm" onClick={() => setInvalidateTarget(u)}>
+                      <KeyRound className="size-3.5" aria-hidden="true" />
+                      {t("users.invalidate")}
+                    </Button>
+                    {canSuspend && !u.isPlatformOperator ? (
+                      u.suspendedAt ? (
+                        <Button variant="outline" size="sm" onClick={() => setReactivateTarget(u)}>
+                          <ShieldCheck className="size-3.5" aria-hidden="true" />
+                          {t("users.reactivate")}
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="border-red-500/40 text-red-700 hover:bg-red-500/10 dark:text-red-400"
+                          onClick={() => setSuspendTarget(u)}
+                        >
+                          <Ban className="size-3.5" aria-hidden="true" />
+                          {t("users.suspend")}
+                        </Button>
+                      )
+                    ) : null}
+                  </div>
                 </CardContent>
               </Card>
             ))}
@@ -165,6 +221,8 @@ export function UsersView() {
       )}
 
       <InvalidateDialog target={invalidateTarget} onClose={() => setInvalidateTarget(null)} />
+      <SuspendDialog target={suspendTarget} onClose={() => setSuspendTarget(null)} />
+      <ReactivateDialog target={reactivateTarget} onClose={() => setReactivateTarget(null)} />
     </div>
   );
 }
@@ -198,6 +256,80 @@ function InvalidateDialog({ target, onClose }: { target: PlatformUser | null; on
       onOpenChange={(open) => !open && onClose()}
       titleKey="dialogs.invalidateTitle"
       descriptionKey="dialogs.invalidateBody"
+      values={target ? { email: target.email } : undefined}
+      submitting={submitting}
+      error={error}
+      onSubmit={(p) => void submit({ reason: p.reason, password: p.password })}
+    />
+  );
+}
+
+function SuspendDialog({ target, onClose }: { target: PlatformUser | null; onClose: () => void }) {
+  const t = useTranslations("platform");
+  const tError = usePlatformErrorText();
+  const queryClient = useQueryClient();
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const submit = async ({ reason, password }: { reason: string; password: string }) => {
+    if (!target) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await platformMutations.suspendUser(target.id, { reason, password });
+      toast.success(t("users.suspendSuccess", { email: target.email }));
+      void queryClient.invalidateQueries({ queryKey: ["platform", "users"] });
+      onClose();
+    } catch (e) {
+      setError(tError(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <ReauthDialog
+      open={!!target}
+      onOpenChange={(open) => !open && onClose()}
+      titleKey="dialogs.suspendTitle"
+      descriptionKey="dialogs.suspendBody"
+      values={target ? { email: target.email } : undefined}
+      submitting={submitting}
+      error={error}
+      onSubmit={(p) => void submit({ reason: p.reason, password: p.password })}
+    />
+  );
+}
+
+function ReactivateDialog({ target, onClose }: { target: PlatformUser | null; onClose: () => void }) {
+  const t = useTranslations("platform");
+  const tError = usePlatformErrorText();
+  const queryClient = useQueryClient();
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const submit = async ({ reason, password }: { reason: string; password: string }) => {
+    if (!target) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await platformMutations.reactivateUser(target.id, { reason, password });
+      toast.success(t("users.reactivateSuccess", { email: target.email }));
+      void queryClient.invalidateQueries({ queryKey: ["platform", "users"] });
+      onClose();
+    } catch (e) {
+      setError(tError(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <ReauthDialog
+      open={!!target}
+      onOpenChange={(open) => !open && onClose()}
+      titleKey="dialogs.reactivateTitle"
+      descriptionKey="dialogs.reactivateBody"
       values={target ? { email: target.email } : undefined}
       submitting={submitting}
       error={error}

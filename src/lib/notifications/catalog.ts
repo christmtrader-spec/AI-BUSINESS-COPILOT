@@ -59,6 +59,15 @@ export const NOTIFICATION_TYPES = [
   // restock is a success (no alert), and stock-out is already covered by
   // the same low-stock event (qty 0 ≤ any threshold).
   "BUSINESS_INVENTORY_LOW_STOCK",
+  // Prompt 62 (§10/§18) — Support Center + account suspension lifecycle.
+  // Deliberately ABSENT (noise avoidance): SUPPORT_TICKET_STATUS_CHANGED —
+  // intermediate status flips would spam the requester; the REPLY and
+  // RESOLVED events are the ones a requester must hear about.
+  "SUPPORT_TICKET_CREATED",
+  "SUPPORT_TICKET_REPLY",
+  "SUPPORT_TICKET_RESOLVED",
+  "SYSTEM_ACCOUNT_SUSPENDED",
+  "SYSTEM_ACCOUNT_RESTORED",
   "SYSTEM_ANNOUNCEMENT",
 ] as const;
 
@@ -668,6 +677,120 @@ export const NOTIFICATION_CATALOG: Record<NotificationType, NotificationCatalogE
     emailDefaultEnabled: false,
     source: "authorized platform operator service ONLY — no customer-controlled creation (§154/§155)",
     dedupe: "announcement:<operatorMessageId>",
+  },
+
+  /* ------------------ Prompt 62 — Support Center (§10/§18) ------------------ */
+
+  SUPPORT_TICKET_CREATED: {
+    type: "SUPPORT_TICKET_CREATED",
+    category: "SYSTEM",
+    priority: "NORMAL",
+    severity: "INFO",
+    channels: inAppAlwaysEmailOptional,
+    mandatory: true,
+    preferenceAvailable: true,
+    titleKey: "items.SUPPORT_TICKET_CREATED.title",
+    bodyKey: "items.SUPPORT_TICKET_CREATED.body",
+    emailTemplateKey: "items.SUPPORT_TICKET_CREATED.email",
+    dataSchema: z.object({
+      ticketId: domainId,
+      ticketNumber: boundedInt(2_000_000_000),
+      subject: boundedText(140),
+    }),
+    actionRoute: "support",
+    expiresAfterDays: 60,
+    emailDefaultEnabled: true,
+    source: "POST /api/v1/support/tickets · POST /api/v1/platform/support/tickets (Prompt 62 §10.1)",
+    dedupe: "support:created:<ticketId>",
+  },
+  SUPPORT_TICKET_REPLY: {
+    type: "SUPPORT_TICKET_REPLY",
+    category: "SYSTEM",
+    priority: "NORMAL",
+    severity: "INFO",
+    channels: inAppAlwaysEmailOptional,
+    mandatory: true,
+    preferenceAvailable: true,
+    titleKey: "items.SUPPORT_TICKET_REPLY.title",
+    bodyKey: "items.SUPPORT_TICKET_REPLY.body",
+    emailTemplateKey: "items.SUPPORT_TICKET_REPLY.email",
+    dataSchema: z.object({
+      ticketId: domainId,
+      ticketNumber: boundedInt(2_000_000_000),
+      subject: boundedText(140),
+    }),
+    actionRoute: "support",
+    expiresAfterDays: 60,
+    emailDefaultEnabled: true,
+    source: "POST /api/v1/platform/support/tickets/[id]/messages (CUSTOMER visibility ONLY — internal notes never notify, §10.2)",
+    dedupe: "support:reply:<messageId>",
+  },
+  SUPPORT_TICKET_RESOLVED: {
+    type: "SUPPORT_TICKET_RESOLVED",
+    category: "SYSTEM",
+    priority: "NORMAL",
+    severity: "SUCCESS",
+    channels: inAppAlwaysEmailOptional,
+    mandatory: true,
+    preferenceAvailable: true,
+    titleKey: "items.SUPPORT_TICKET_RESOLVED.title",
+    bodyKey: "items.SUPPORT_TICKET_RESOLVED.body",
+    emailTemplateKey: "items.SUPPORT_TICKET_RESOLVED.email",
+    dataSchema: z.object({
+      ticketId: domainId,
+      ticketNumber: boundedInt(2_000_000_000),
+      subject: boundedText(140),
+      summary: boundedText(300),
+    }),
+    actionRoute: "support",
+    expiresAfterDays: 60,
+    emailDefaultEnabled: true,
+    source: "POST /api/v1/platform/support/tickets/[id]/resolve (resolution summary REQUIRED, §10.4)",
+    dedupe: "support:resolved:<ticketId>:<timestamp>",
+  },
+
+  /* --------------- Prompt 62 — account suspension (§8.3/§18) ---------------- */
+
+  SYSTEM_ACCOUNT_SUSPENDED: {
+    type: "SYSTEM_ACCOUNT_SUSPENDED",
+    category: "SECURITY",
+    priority: "CRITICAL",
+    severity: "WARNING",
+    channels: alwaysInAppEmail,
+    mandatory: true,
+    preferenceAvailable: false,
+    titleKey: "items.SYSTEM_ACCOUNT_SUSPENDED.title",
+    bodyKey: "items.SYSTEM_ACCOUNT_SUSPENDED.body",
+    emailTemplateKey: "items.SYSTEM_ACCOUNT_SUSPENDED.email",
+    dataSchema: z.object({
+      reason: boundedText(500),
+      suspendedAt: isoTimestamp,
+    }),
+    actionRoute: "dashboard",
+    expiresAfterDays: null,
+    emailDefaultEnabled: true,
+    source: "POST /api/v1/platform/users/[id]/suspend (operator lifecycle, §8.3 — reason-mandatory + audited)",
+    dedupe: "platform:suspended:<userId>:<sessionVersion>",
+  },
+  SYSTEM_ACCOUNT_RESTORED: {
+    type: "SYSTEM_ACCOUNT_RESTORED",
+    category: "SECURITY",
+    priority: "HIGH",
+    severity: "SUCCESS",
+    channels: alwaysInAppEmail,
+    mandatory: true,
+    preferenceAvailable: false,
+    titleKey: "items.SYSTEM_ACCOUNT_RESTORED.title",
+    bodyKey: "items.SYSTEM_ACCOUNT_RESTORED.body",
+    emailTemplateKey: "items.SYSTEM_ACCOUNT_RESTORED.email",
+    dataSchema: z.object({
+      restoredAt: isoTimestamp,
+    }),
+    actionRoute: "dashboard",
+    expiresAfterDays: null,
+    emailDefaultEnabled: true,
+    source: "POST /api/v1/platform/users/[id]/reactivate (operator lifecycle, §8.3)",
+    dedupe: "platform:restored:<userId>:<sessionVersion>",
   },
 };
 

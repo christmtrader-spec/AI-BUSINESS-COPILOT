@@ -158,7 +158,9 @@ export async function assertFreshSession(session: Session | null): Promise<strin
 export async function findUserForSignIn(email: string) {
   return db.user.findUnique({
     where: { email },
-    select: { id: true, email: true, name: true, passwordHash: true, sessionVersion: true },
+    // suspendedAt (Prompt 62 §8.3) — the login gate reads it AFTER the
+    // password verdict so the code reveals nothing to non-owners.
+    select: { id: true, email: true, name: true, passwordHash: true, sessionVersion: true, suspendedAt: true },
   });
 }
 

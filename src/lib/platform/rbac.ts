@@ -37,6 +37,7 @@ export const PLATFORM_PERMISSIONS = [
   "platform:overview:read",
   "platform:businesses:read",
   "platform:users:read",
+  "platform:users:suspend", // Prompt 62 §8.3 — suspend/reactivate (with reason + audit)
   "platform:subscriptions:read",
   "platform:subscriptions:manage",
   "platform:payments:read",
@@ -47,6 +48,10 @@ export const PLATFORM_PERMISSIONS = [
   "platform:ai-cost:read",
   "platform:ai-cost:manage",
   "platform:ai-cost:reconcile",
+  "platform:support:read", // Prompt 62 §10 — Support Center
+  "platform:support:assign",
+  "platform:support:update",
+  "platform:support:resolve",
   "platform:security:read",
   "platform:security:manage",
   "platform:audit:read",
@@ -70,8 +75,13 @@ const ROLE_PERMISSIONS: Record<PlatformRole, readonly PlatformPermission[]> = {
     "platform:overview:read",
     "platform:businesses:read",
     "platform:users:read",
+    "platform:users:suspend",
     "platform:subscriptions:read",
     "platform:payments:read",
+    "platform:support:read",
+    "platform:support:assign",
+    "platform:support:update",
+    "platform:support:resolve",
     "platform:audit:read",
     "platform:system:read",
   ],
@@ -86,6 +96,7 @@ const ROLE_PERMISSIONS: Record<PlatformRole, readonly PlatformPermission[]> = {
     "platform:payments:reconcile",
     "platform:pricing:read",
     "platform:pricing:manage",
+    "platform:support:read", // sees tickets; billing mutations stay in the billing domain
     "platform:audit:read",
     "platform:system:read",
   ],
@@ -97,6 +108,7 @@ const ROLE_PERMISSIONS: Record<PlatformRole, readonly PlatformPermission[]> = {
     "platform:ai-cost:read",
     "platform:ai-cost:manage",
     "platform:ai-cost:reconcile",
+    "platform:support:read", // AI-quota diagnostics inside ticket threads
     "platform:audit:read",
     "platform:system:read",
   ],
@@ -105,6 +117,8 @@ const ROLE_PERMISSIONS: Record<PlatformRole, readonly PlatformPermission[]> = {
     "platform:overview:read",
     "platform:businesses:read",
     "platform:users:read",
+    "platform:users:suspend", // security response — reason-mandatory, audited
+    "platform:support:read", // ticket context for incident response
     "platform:security:read",
     "platform:security:manage",
     "platform:audit:read",
@@ -120,6 +134,7 @@ const ROLE_PERMISSIONS: Record<PlatformRole, readonly PlatformPermission[]> = {
     "platform:payments:read",
     "platform:pricing:read",
     "platform:ai-cost:read",
+    "platform:support:read",
     "platform:security:read",
     "platform:audit:read",
     "platform:operators:read",

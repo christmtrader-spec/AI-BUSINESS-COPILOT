@@ -160,6 +160,13 @@ export function ReauthDialog({
     setLastValues(values);
   }
   const renderValues = (values ?? lastValues ?? {}) as Record<string, string | number>;
+  // Prompt 62 — the dialog title/description interpolate {email}-style
+  // variables. JSX children evaluate EAGERLY on every render, so formatting
+  // while the dialog has never been opened (no values yet) throws
+  // next-intl FORMATTING_ERRORs into the console on every page load. Format
+  // only once the dialog is open (or has values remembered for its exit
+  // animation) — behavior otherwise unchanged.
+  const canFormat = open || lastValues != null;
 
   React.useEffect(() => {
     if (open) {
@@ -181,8 +188,12 @@ export function ReauthDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{t(titleKey as Parameters<typeof t>[0], renderValues)}</DialogTitle>
-          <DialogDescription>{t(descriptionKey as Parameters<typeof t>[0], renderValues)}</DialogDescription>
+          {canFormat ? (
+            <>
+              <DialogTitle>{t(titleKey as Parameters<typeof t>[0], renderValues)}</DialogTitle>
+              <DialogDescription>{t(descriptionKey as Parameters<typeof t>[0], renderValues)}</DialogDescription>
+            </>
+          ) : null}
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
@@ -318,6 +329,16 @@ export function usePlatformErrorText() {
           "TRIAL_DISABLED",
           "BUSINESS_NOT_ELIGIBLE",
           "SESSION_INVALIDATED",
+          // Prompt 62 — Support Center + user lifecycle
+          "SUPPORT_TICKET_NOT_FOUND",
+          "SUPPORT_INVALID_TRANSITION",
+          "SUPPORT_RESOLUTION_REQUIRED",
+          "SUPPORT_TICKET_CLOSED",
+          "PLATFORM_USER_NOT_FOUND",
+          "PLATFORM_USER_ALREADY_SUSPENDED",
+          "PLATFORM_USER_NOT_SUSPENDED",
+          "PLATFORM_USER_IS_OPERATOR",
+          "PLATFORM_USER_SELF_TARGET",
         ];
         if ((knownKeys as string[]).includes(code)) {
           return tErr(code as Parameters<typeof tErr>[0]);

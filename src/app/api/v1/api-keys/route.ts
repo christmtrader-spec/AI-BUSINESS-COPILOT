@@ -12,13 +12,17 @@ import { ApiError, ok, parseBody, route } from "@/lib/api-helpers";
 import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { rateLimit } from "@/lib/rate-limit";
-import { generateApiKey } from "@/lib/api-keys";
+import { generateApiKey, serializeApiKeyScopes, apiKeyMonthlyQuota } from "@/lib/api-keys";
+import { isValidApiKeyScopeList } from "@/lib/api-key-scopes";
 import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 const createSchema = z.object({
   name: z.string().trim().min(1).max(80),
+  // R61-3 — optional closed-set scope list. Missing/empty → ["read"]
+  // (legacy full access). Unknown tokens → 422 (never silently widened).
+  scopes: z.array(z.string().trim().min(1).max(24)).max(4).optional(),
 });
 
 export const GET = route(async (req: NextRequest) => {
@@ -35,13 +39,14 @@ export const GET = route(async (req: NextRequest) => {
       scopes: true,
       lastUsedAt: true,
       requestCount: true,
+      periodCount: true,
       revokedAt: true,
       createdAt: true,
       createdBy: { select: { name: true, email: true } },
     },
   });
 
-  return ok({ items: keys });
+  return ok({ items: keys, quotaMonthly: apiKeyMonthlyQuota() });
 });
 
 export const POST = route(async (req: NextRequest) => {
@@ -71,6 +76,19 @@ export const POST = route(async (req: NextRequest) => {
 
   const { plaintext, prefix, keyHash } = generateApiKey();
 
+  // Scope normalization (R61-3): every token must be in the closed set;
+  // storing the canonical serialized form (deduped, ordered, no blanks).
+  const requestedScopes = input.scopes ?? ["read"];
+  if (!isValidApiKeyScopeList(requestedScopes)) {
+    throw new ApiError(
+      422,
+      "VALIDATION_ERROR",
+      "scopes must be a non-empty list of known scopes: read, read:customers, read:products, read:sales.",
+      { field: "scopes" },
+    );
+  }
+  const scopes = serializeApiKeyScopes(requestedScopes as readonly string[]);
+
   const created = await db.$transaction(async (tx) => {
     const key = await tx.apiKey.create({
       data: {
@@ -79,7 +97,7 @@ export const POST = route(async (req: NextRequest) => {
         name: input.name,
         prefix,
         keyHash,
-        scopes: "read",
+        scopes,
       },
       select: {
         id: true,

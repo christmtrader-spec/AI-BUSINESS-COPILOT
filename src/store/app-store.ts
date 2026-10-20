@@ -41,6 +41,8 @@ export type AppView =
   /** Prompt 32 — notification center (#/notifications, §109) + preferences (#/settings/notifications, §63). */
   | { kind: "notifications" }
   | { kind: "settings:notifications" }
+  /** Prompt 62 — Support Center (#/support): my tickets + thread. */
+  | { kind: "support" }
   /** Prompt 33 — Search Results Center (#/search, #/search?q=…, §13). */
   | { kind: "search"; query?: string }
   /**
@@ -197,6 +199,7 @@ export const PLATFORM_SECTIONS = [
   "overview",
   "businesses",
   "users",
+  "support",
   "subscriptions",
   "payments",
   "pricing",
@@ -387,6 +390,8 @@ export function viewToHash(view: AppView): string | null {
       return "#/data";
     case "notifications":
       return "#/notifications";
+    case "support":
+      return "#/support";
     case "settings:notifications":
       return "#/settings/notifications";
     case "search": {
@@ -529,6 +534,7 @@ export function hashToView(hash: string): AppView {
   if (path === "settings/security") return { kind: "settings:security" };
   if (path === "data") return { kind: "settings:data" };
   if (path === "notifications") return { kind: "notifications" };
+  if (path === "support") return { kind: "support" };
   if (path === "settings/notifications") return { kind: "settings:notifications" };
   // Prompt 33 — Search Results Center deep links (#/search, #/search?q=…).
   if (path === "search") {

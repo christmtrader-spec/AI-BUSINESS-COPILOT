@@ -4,9 +4,12 @@
  *
  * Auth: `Authorization: Bearer ck_...` (API key — NOT a user session).
  * The key's business owns every returned row (A01/A02 by construction).
- * Scope: "read" only. Rate limit: 120 requests/minute per key.
- * Resources: customers | products | sales — bounded to the 500 most recent
- * non-deleted rows, minimal field sets (no secrets, no scoping internals).
+ * Scopes (R61-3): "read" covers every resource; "read:<resource>" covers
+ * exactly one — a key without the resource's scope gets 403 BEFORE any
+ * data is touched or quota is consumed. Monthly per-key quota on top of
+ * the 120/min sliding-window rate limit. Resources: customers | products
+ * | sales — bounded to the 500 most recent non-deleted rows, minimal field
+ * sets (no secrets, no scoping internals).
  *
  * The `route()` wrapper is NOT used here: it maps unauthenticated errors
  * fine, but open-API responses must be cache-banned and identify the key —
@@ -18,6 +21,8 @@ import {
   OPEN_API_RESOURCES,
   getApiKeyContext,
   touchApiKey,
+  consumeApiKeyQuota,
+  scopeCoversResource,
   type OpenApiResource,
 } from "@/lib/api-keys";
 import { rateLimit } from "@/lib/rate-limit";
@@ -43,6 +48,27 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
     throw new ApiError(429, "RATE_LIMITED", "API key rate limit exceeded (120/min).", {
       retryAfterMs: limit.retryAfterMs,
     });
+  }
+
+  // R61-3 scope gate — BEFORE any data access and BEFORE quota consumption:
+  // a denied request must neither read rows nor burn the caller's quota.
+  if (!scopeCoversResource(keyCtx.scopes, resource as OpenApiResource)) {
+    throw new ApiError(
+      403,
+      "PERMISSION_DENIED",
+      `This API key is not scoped for "${resource}".`,
+    );
+  }
+
+  // R61-3 monthly quota — metered per key (UTC month bucket).
+  const quota = await consumeApiKeyQuota(keyCtx.keyId);
+  if (!quota.allowed) {
+    throw new ApiError(
+      429,
+      "QUOTA_EXCEEDED",
+      `API key monthly quota exhausted (${quota.limit} requests). Resets at the start of the next UTC month.`,
+      { retryAfterMs: quota.retryAfterMs },
+    );
   }
 
   touchApiKey(keyCtx.keyId);
@@ -100,5 +126,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   const res = ok({ items: data });
   res.headers.set("cache-control", "no-store");
   res.headers.set("x-ratelimit-remaining", String(limit.remaining));
+  res.headers.set("x-quota-limit", String(quota.limit));
+  res.headers.set("x-quota-remaining", String(quota.remaining));
   return res;
 });

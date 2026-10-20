@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
 import { DataTable, Ltr } from "@/components/shared/data-table";
+import { toJalali, formatJalaliDisplay } from "@/lib/jalali";
 import { FinanceStatusBadge, fmtDate, fmtMoney, useInvalidateFinance } from "../finance-shared/finance-kit";
 import { PaymentFormDialog, type PaymentTarget } from "../payments/payment-form-dialog";
 import { invalidateEntityDetail } from "@/modules/entities/entity-api";
@@ -76,35 +77,65 @@ function vatPercentLabel(rateBp: number): string {
 }
 
 /**
- * Build a self-contained, print-friendly invoice document and open the
- * browser print dialog. Purely client-side narration of server data —
- * every number comes from the fetched SaleDetail (A08/A11).
+ * Official document serial — deterministic and honest: issue year + the
+ * per-business invoice number. This identifies the DOCUMENT (e.g. for
+ * bookkeeping references); it deliberately does NOT claim any government
+ * registration (no tax-authority codes are fabricated).
  */
-function printInvoice(
+function invoiceSerial(issueDate: string, number: number): string {
+  const year = new Date(issueDate).getUTCFullYear();
+  return `${year}-INV-${String(number).padStart(4, "0")}`;
+}
+
+/** Jalali display line for fa invoices (official Iranian date form). */
+function jalaliDateLine(issueDate: string): string {
+  const d = new Date(issueDate);
+  if (Number.isNaN(d.getTime())) return "";
+  return formatJalaliDisplay(toJalali(d), { long: true, locale: "fa" });
+}
+
+/**
+ * Labels + serial context shared by the preview and the print window —
+ * ONE source of truth: the preview iframe renders byte-identical HTML to
+ * what gets printed.
+ */
+type InvoiceLabels = {
+  invoice: string;
+  date: string;
+  serial: string;
+  customer: string;
+  walkIn: string;
+  item: string;
+  qty: string;
+  unitPrice: string;
+  lineTotal: string;
+  subtotal: string;
+  discount: string;
+  vat: string;
+  total: string;
+  paid: string;
+  balance: string;
+  payments: string;
+  noPayments: string;
+  footer: string;
+};
+
+/**
+ * Build the self-contained, print-friendly invoice document. Purely
+ * client-side narration of server data — every number comes from the
+ * fetched SaleDetail (A08/A11). Persian (fa) invoices additionally show
+ * the official Jalali issue date next to the Gregorian one. The SAME html
+ * is rendered in the in-app preview iframe and handed to the print window
+ * — what you review is exactly what prints.
+ */
+function buildInvoiceHtml(
   data: SaleDetail,
   business: BusinessSummary,
-  labels: {
-    invoice: string;
-    date: string;
-    customer: string;
-    walkIn: string;
-    item: string;
-    qty: string;
-    unitPrice: string;
-    lineTotal: string;
-    subtotal: string;
-    discount: string;
-    vat: string;
-    total: string;
-    paid: string;
-    balance: string;
-    payments: string;
-    noPayments: string;
-    footer: string;
-  },
-): void {
+  labels: InvoiceLabels,
+): string {
   const fmt = (minor: number) => fmtMoney(business, minor);
   const numberLabel = `INV-${String(data.sale.number).padStart(4, "0")}`;
+  const serial = invoiceSerial(data.sale.issueDate, data.sale.number);
   const rtl = business.locale === "fa";
   const esc = escapeHtml;
 
@@ -164,7 +195,9 @@ function printInvoice(
       <span class="muted">${esc(labels.invoice)} <span class="inv-number">${esc(numberLabel)}</span></span>
     </div>
     <div class="muted" style="text-align:${rtl ? "left" : "right"}">
-      ${esc(labels.date)}<br />${esc(fmtDate(business, data.sale.issueDate))}
+      ${esc(labels.date)}<br /><strong>${esc(fmtDate(business, data.sale.issueDate))}</strong>${
+        rtl ? `<br /><span>${esc(jalaliDateLine(data.sale.issueDate))}</span>` : ""
+      }<br /><small>${esc(labels.serial)}: <span class="inv-number">${esc(serial)}</span></small>
     </div>
   </header>
   <p><strong>${esc(labels.customer)}:</strong> ${esc(data.sale.customerName ?? labels.walkIn)}</p>
@@ -195,6 +228,11 @@ function printInvoice(
 </body>
 </html>`;
 
+  return html;
+}
+
+/** Open the OS print dialog with the EXACT document shown in the preview. */
+function printInvoiceHtml(html: string): void {
   const win = window.open("", "_blank", "width=820,height=920");
   if (!win) return;
   win.document.open();
@@ -224,6 +262,7 @@ export function SaleDetailDialog({
   const invalidate = useInvalidateFinance();
   const queryClient = useQueryClient();
   const [payOpen, setPayOpen] = useState(false);
+  const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
 
   const { data, isLoading, error, refetch } = useQuery<SaleDetail>({
     queryKey: ["sales", "detail", saleId],
@@ -257,6 +296,33 @@ export function SaleDetailDialog({
 
   const open = saleId !== null;
   const s = data?.sale;
+
+  /** Shared label pack for BOTH the preview iframe and the print window. */
+  const invoiceLabels: InvoiceLabels | null =
+    data != null
+      ? {
+          invoice: t("printInvoiceLabel"),
+          date: t("printDateLabel"),
+          serial: t("printSerialLabel"),
+          customer: t("printCustomerLabel"),
+          walkIn: t("walkIn"),
+          item: t("colItem"),
+          qty: t("colQty"),
+          unitPrice: t("colUnitPrice"),
+          lineTotal: t("colLineTotal"),
+          subtotal: t("subtotal"),
+          discount: t("discount"),
+          vat: t("vatLabel"),
+          total: t("total"),
+          paid: t("paid"),
+          balance: t("balance"),
+          payments: t("payments"),
+          noPayments: t("noPayments"),
+          footer: t("printFooter"),
+        }
+      : null;
+  const invoiceHtml =
+    data != null && invoiceLabels != null ? buildInvoiceHtml(data, business, invoiceLabels) : "";
   const presetTarget: PaymentTarget | null =
     s != null
       ? {
@@ -300,27 +366,7 @@ export function SaleDetailDialog({
                     variant="outline"
                     size="sm"
                     className="ms-auto h-8"
-                    onClick={() =>
-                      printInvoice(data, business, {
-                        invoice: t("printInvoiceLabel"),
-                        date: t("printDateLabel"),
-                        customer: t("printCustomerLabel"),
-                        walkIn: t("walkIn"),
-                        item: t("colItem"),
-                        qty: t("colQty"),
-                        unitPrice: t("colUnitPrice"),
-                        lineTotal: t("colLineTotal"),
-                        subtotal: t("subtotal"),
-                        discount: t("discount"),
-                        vat: t("vatLabel"),
-                        total: t("total"),
-                        paid: t("paid"),
-                        balance: t("balance"),
-                        payments: t("payments"),
-                        noPayments: t("noPayments"),
-                        footer: t("printFooter"),
-                      })
-                    }
+                    onClick={() => setPrintPreviewOpen(true)}
                   >
                     <Printer className="size-4" aria-hidden="true" />
                     {t("print")}
@@ -491,6 +537,49 @@ export function SaleDetailDialog({
         business={business}
         presetTarget={presetTarget}
       />
+
+      {/*
+        Print PREVIEW — final review before issuance (R61-2). The iframe is
+        fully sandboxed (no scripts) and renders byte-identical HTML to what
+        the print window receives, so what is reviewed is what prints.
+      */}
+      <Dialog open={printPreviewOpen} onOpenChange={setPrintPreviewOpen}>
+        <DialogContent className="flex h-[85svh] max-w-3xl flex-col gap-3 overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Printer className="size-4" aria-hidden="true" />
+              {t("printPreviewTitle")}
+              {s ? (
+                <span className="font-mono text-xs text-muted-foreground" dir="ltr">
+                  {invoiceSerial(s.issueDate, s.number)}
+                </span>
+              ) : null}
+            </DialogTitle>
+            <DialogDescription>{t("printPreviewDesc")}</DialogDescription>
+          </DialogHeader>
+          {invoiceHtml ? (
+            <iframe
+              title={t("printPreviewTitle")}
+              srcDoc={invoiceHtml}
+              sandbox=""
+              className="min-h-0 w-full flex-1 rounded-lg border bg-white"
+            />
+          ) : null}
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setPrintPreviewOpen(false)}>
+              {tCommon("cancel")}
+            </Button>
+            <Button
+              size="sm"
+              disabled={!invoiceHtml}
+              onClick={() => printInvoiceHtml(invoiceHtml)}
+            >
+              <Printer className="size-4" aria-hidden="true" />
+              {t("printNow")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

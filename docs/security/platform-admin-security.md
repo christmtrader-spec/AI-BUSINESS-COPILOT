@@ -163,3 +163,82 @@ enforce it). The platform can never lock itself out of operator management.
   (business deletion requires the standard owner flow). There is no hidden
   deletion bypass.
 - Deactivating an operator never touches the user's tenant memberships.
+
+## 20. Support Center + account suspension (Prompt 62)
+
+### 20.1 Support Center (§10)
+
+ONE ticketing subsystem — `SupportTicket` + `SupportTicketMessage`
+(`src/lib/platform/support.ts` is the only write path; routes cannot
+bypass the state machine or the visibility law).
+
+- **Status machine** (deny-by-default, explicit allowlist):
+  `OPEN → TRIAGED → IN_PROGRESS → WAITING_FOR_CUSTOMER / WAITING_FOR_INTERNAL_ACTION → RESOLVED → CLOSED`;
+  `RESOLVED → OPEN` is the only reopen edge (exercisable by the requester
+  replying or by an operator); `CLOSED` is terminal. Invalid transitions
+  → `422 SUPPORT_INVALID_TRANSITION`.
+- **Resolution law**: a ticket is NEVER resolved without a resolution
+  summary (≥10 chars) — `POST .../resolve` enforces it, the summary lands
+  in the audit before/after, and the requester is notified (fire-safe).
+- **Visibility law**: INTERNAL operator notes are filtered at the SERVICE
+  layer (`ticketRequesterDetailDto`); the tenant API surface can never
+  return them (proven by the R62 leak test, 68/68).
+- **Requester identity**: the tenant route derives `requesterId` from the
+  session only; the operator "on behalf" flow validates the requester
+  server-side. Client-supplied identities are ignored (§79/§132).
+- **Permissions** (added to the catalog this phase):
+  `platform:support:read` (SUPPORT/BILLING/AI_COST/SECURITY/READONLY/SUPER),
+  `platform:support:update` (SUPPORT/SUPER), `platform:support:assign`
+  (SUPPORT/SUPER), `platform:support:resolve` (SUPPORT/SUPER).
+  PLATFORM_BILLING reads tickets but cannot mutate them (separation of
+  duties — verified by the R62 battery).
+- **Diagnostics** (ticket detail): bounded (≤10 rows/window), redacted
+  (types + codes + timestamps, no payloads), permission-conditional
+  (security events only with `platform:security:read`; targeted audit only
+  with `platform:audit:read`). Facts only — no speculative root causes.
+- **Audit**: every operator mutation writes `support.ticket.*` rows via the
+  shared `platformAudit` pipeline (sanitized before/after, role snapshot).
+  The requester's own actions are not operator actions — the thread is
+  their record.
+
+### 20.2 Account suspension (§8.3)
+
+`POST /api/v1/platform/users/[id]/suspend` + `/reactivate`
+(`src/lib/platform/user-lifecycle.ts`).
+
+- Permission `platform:users:suspend` (SUPPORT/SECURITY/SUPER only) +
+  current-password reauthentication (§56) + reason MANDATORY
+  (10..500 chars) + per-operator rate limit (10/15min) + audited
+  (`platform.user.suspend` / `platform.user.reactivate`, reason recorded).
+- **Guards**: self-suspension denied (`PLATFORM_USER_SELF_TARGET`);
+  platform operators are NOT targetable (`PLATFORM_USER_IS_OPERATOR` —
+  their lifecycle is the operator deactivate path, which structurally
+  prevents last-super-admin lockout); already-suspended/not-suspended
+  repeats return explicit 409s (safe retries, no silent no-ops).
+- **Session kill**: `sessionVersion` increments inside the suspend
+  transaction — every previously issued JWT fails the freshness gate on
+  the very next request (proven live: `401 SESSION_INVALIDATED`).
+- **Login block**: NextAuth authorize rejects suspended accounts with the
+  FIXED code `ACCOUNT_SUSPENDED`, evaluated AFTER the password verdict —
+  only the legitimate owner learns the account is suspended (no
+  enumeration gain). SecurityEvent `platform.account.suspended` recorded.
+- **Notification**: mandatory in-app + email (`SYSTEM_ACCOUNT_SUSPENDED` /
+  `SYSTEM_ACCOUNT_RESTORED`) through the standard notification platform.
+- **No data deletion**: suspension clears nothing; reactivation restores
+  exactly the sign-in capability.
+
+### 20.3 Deliberate deferrals (honest boundaries)
+
+- **Two-person approval** for high-risk actions is NOT implemented this
+  phase. The implemented approval controls are: password reauthentication,
+  reason-mandatory audit, role separation, last-admin protection, and
+  rate limits. A formal request/approval workflow (AdminApprovalRequest)
+  remains future work — deferred rather than simulated (§15.3 allows
+  implementing it only where it can be completed safely and tested).
+- **Temporary support access / impersonation** (§16) is NOT implemented —
+  the default support model is diagnostic access through the ticket
+  thread + bounded diagnostics panel. No impersonation path exists
+  (static check: "no impersonation endpoints" stays green).
+- Platform audit rows are ordinary database rows (documented in §15 of
+  the Prompt-28 section): tamper-evidence is the append-only API surface
+  (no update/delete endpoints), not cryptography — unchanged this phase.

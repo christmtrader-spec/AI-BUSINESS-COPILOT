@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { ArrowLeftRight, Download, Package, Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowLeftRight, CheckSquare, Download, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useBillingErrorText } from "@/hooks/use-billing-error-text";
 import { api, ApiClientError } from "@/lib/api-client";
@@ -74,6 +74,8 @@ export function ProductsView({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [stockTarget, setStockTarget] = useState<Product | null>(null);
+  // R61-6 bulk selection — current-page ids only (honest scope).
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
   const { data, isLoading, isFetching, error, refetch } = useQuery<ProductPage>({
     queryKey: ["products", q, page],
@@ -109,6 +111,43 @@ export function ProductsView({
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
+
+  function toggleRow(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function togglePage() {
+    setSelected((prev) => {
+      const allSelected = items.length > 0 && items.every((p) => prev.has(p.id));
+      return allSelected ? new Set() : new Set(items.map((p) => p.id));
+    });
+  }
+
+  const bulkMutation = useMutation({
+    mutationFn: async (input: { isActive: boolean }) =>
+      api<{ matched: number; requested: number; isActive: boolean }>("/api/v1/products/bulk-status", {
+        method: "POST",
+        body: JSON.stringify({ ids: [...selected], isActive: input.isActive }),
+      }),
+    onSuccess: (res) => {
+      toast({ title: t("bulkDone", { matched: res.matched }) });
+      setSelected(new Set());
+      void queryClient.invalidateQueries({ queryKey: ["products"] });
+      void queryClient.invalidateQueries({ queryKey: ["audit"] });
+    },
+    onError: (err) => {
+      toast({
+        title: billingErrorText(err) || (err instanceof ApiClientError ? err.message : tErrors("generic")),
+        variant: "destructive",
+      });
+    },
+  });
+
   const fmt = (minor: number) => formatMoney(minor, business);
 
   // Export the full catalog (current search applied — the visible list is
@@ -210,6 +249,7 @@ export function ProductsView({
               onChange={(v) => {
                 setQ(v);
                 setPage(1);
+                setSelected(new Set()); // stale cross-page selection is a footgun
               }}
               placeholder={t("searchPlaceholder")}
             />
@@ -224,11 +264,80 @@ export function ProductsView({
             </div>
           ) : (
             <>
+              {/* R61-6 bulk action bar — only when a writable user has a selection. */}
+              {writable && selected.size > 0 ? (
+                <div
+                  className="bg-primary/5 mb-4 flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2"
+                  data-testid="bulk-bar"
+                >
+                  <CheckSquare className="text-primary size-4" aria-hidden="true" />
+                  <span className="text-sm font-medium tabular-nums">
+                    {t("bulkSelected", { count: selected.size })}
+                  </span>
+                  <div className="ms-auto flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      disabled={bulkMutation.isPending}
+                      onClick={() => bulkMutation.mutate({ isActive: true })}
+                    >
+                      {t("bulkActivate")}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      disabled={bulkMutation.isPending}
+                      onClick={() => bulkMutation.mutate({ isActive: false })}
+                    >
+                      {t("bulkDeactivate")}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8"
+                      onClick={() => setSelected(new Set())}
+                    >
+                      {tCommon("cancel")}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
               <DataTable<Product>
                 ariaLabel={tNav("products")}
                 sortLocale={business.locale}
                 refreshing={isFetching && !isLoading}
                 columns={[
+                  ...(writable
+                    ? [
+                        {
+                          id: "select",
+                          header: (
+                            <input
+                              type="checkbox"
+                              className="accent-primary size-4 align-middle"
+                              checked={items.length > 0 && items.every((p) => selected.has(p.id))}
+                              onChange={togglePage}
+                              aria-label={t("selectAll")}
+                            />
+                          ),
+                          cell: (p: Product) => (
+                            // stopPropagation — the row itself navigates on click.
+                            <div onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                className="accent-primary size-4 align-middle"
+                                checked={selected.has(p.id)}
+                                onChange={() => toggleRow(p.id)}
+                                aria-label={t("selectRow", { name: p.name })}
+                              />
+                            </div>
+                          ),
+                        },
+                      ]
+                    : []),
                   {
                     id: "product",
                     header: t("colProduct"),
@@ -362,7 +471,15 @@ export function ProductsView({
                   )
                 }
               />
-              <Pagination page={page} pageSize={10} total={total} onPage={setPage} />
+              <Pagination
+                page={page}
+                pageSize={10}
+                total={total}
+                onPage={(p) => {
+                  setPage(p);
+                  setSelected(new Set()); // stale cross-page selection is a footgun
+                }}
+              />
             </>
           )}
         </CardContent>

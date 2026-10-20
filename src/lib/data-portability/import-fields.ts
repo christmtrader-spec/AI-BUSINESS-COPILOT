@@ -23,7 +23,12 @@ export type ImportFieldType =
   | "phone"
   | "money" // decimal string → integer minor units (business precision, §77)
   | "integer"
-  | "boolean";
+  | "boolean"
+  // R61-7 — Gregorian ISO (YYYY-MM-DD) OR Jalali (e.g. 1404/07/01, Persian
+  // digits accepted) auto-detected → ISO date string. No current dataset
+  // ships a date field yet; the type + parser are unit-tested and ready so
+  // date-bearing datasets (sales import) need zero validator changes.
+  | "date";
 
 export type ImportField = {
   name: string; // stable machine field name (§120)

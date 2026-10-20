@@ -6,6 +6,7 @@ import { useTranslations } from "next-intl";
 import { Copy, KeyRound, Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
+import { API_KEY_SCOPES } from "@/lib/api-key-scopes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -49,10 +50,19 @@ type ApiKeyRow = {
   scopes: string;
   lastUsedAt: string | null;
   requestCount: number;
+  periodCount?: number;
   revokedAt: string | null;
   createdAt: string;
   createdBy: { name: string | null; email: string } | null;
 };
+
+/** "read,read:products" → readable tokens for badges (closed set only). */
+function scopeTokens(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => (API_KEY_SCOPES as readonly string[]).includes(s));
+}
 
 export function ApiKeysCard({ activeId, editable }: { activeId: string; editable: boolean }) {
   const t = useTranslations("settings");
@@ -60,26 +70,40 @@ export function ApiKeysCard({ activeId, editable }: { activeId: string; editable
   const queryClient = useQueryClient();
 
   const [name, setName] = useState("");
+  const [scopes, setScopes] = useState<string[]>(["read"]);
   const [created, setCreated] = useState<{ id: string; key: string } | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<ApiKeyRow | null>(null);
 
-  const { data, isLoading } = useQuery<{ items: ApiKeyRow[] }>({
+  const { data, isLoading } = useQuery<{ items: ApiKeyRow[]; quotaMonthly?: number }>({
     queryKey: ["api-keys", activeId],
     queryFn: () => api("/api/v1/api-keys"),
     enabled: Boolean(activeId),
   });
+  const quotaMonthly = data?.quotaMonthly ?? null;
+
+  function toggleScope(scope: string) {
+    setScopes((prev) => {
+      if (prev.includes(scope)) {
+        // never allow an empty selection — keep at least one scope
+        return prev.length > 1 ? prev.filter((s) => s !== scope) : prev;
+      }
+      const next = scope === "read" ? ["read"] : [...prev.filter((s) => s !== "read"), scope];
+      return next;
+    });
+  }
 
   const createMutation = useMutation({
     mutationFn: async () => {
       const res = await api<ApiKeyRow & { key: string }>("/api/v1/api-keys", {
         method: "POST",
-        body: JSON.stringify({ name: name.trim() }),
+        body: JSON.stringify({ name: name.trim(), scopes }),
       });
       return res;
     },
     onSuccess: (key) => {
       setCreated({ id: key.id, key: key.key });
       setName("");
+      setScopes(["read"]);
       void queryClient.invalidateQueries({ queryKey: ["api-keys", activeId] });
     },
     onError: (err) => {
@@ -147,6 +171,29 @@ export function ApiKeysCard({ activeId, editable }: { activeId: string; editable
                 placeholder={t("apiKeyNamePlaceholder")}
                 maxLength={80}
               />
+              {/* R61-3 scope picker — closed set; "read" is exclusive-full. */}
+              <div
+                className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1"
+                role="group"
+                aria-label={t("apiKeyScopesLabel")}
+              >
+                {(API_KEY_SCOPES as readonly string[]).map((scope) => (
+                  <label key={scope} className="flex cursor-pointer items-center gap-1.5 text-xs">
+                    <input
+                      type="checkbox"
+                      className="accent-primary size-3.5"
+                      checked={scopes.includes(scope)}
+                      onChange={() => toggleScope(scope)}
+                    />
+                    <code className="text-[11px]" dir="ltr">
+                      {scope}
+                    </code>
+                  </label>
+                ))}
+              </div>
+              <p className="text-muted-foreground text-[11px]" dir="auto">
+                {t("apiKeyScopesHint")}
+              </p>
             </div>
             <Button type="submit" size="sm" disabled={!name.trim() || createMutation.isPending}>
               {createMutation.isPending ? (
@@ -182,9 +229,24 @@ export function ApiKeysCard({ activeId, editable }: { activeId: string; editable
                       </Badge>
                     ) : null}
                   </p>
-                  <p className="text-muted-foreground mt-0.5 text-xs tabular-nums" dir="ltr">
-                    {k.prefix}… · {t("apiKeyRequests", { count: k.requestCount })}
-                    {k.lastUsedAt ? ` · ${t("apiKeyLastUsed")}` : ""}
+                  <p className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-1 text-xs">
+                    <span className="tabular-nums" dir="ltr">
+                      {k.prefix}…
+                    </span>
+                    {scopeTokens(k.scopes).map((s) => (
+                      <Badge key={s} variant="secondary" className="font-mono text-[10px]" dir="ltr">
+                        {s}
+                      </Badge>
+                    ))}
+                    <span className="tabular-nums" dir="ltr">
+                      · {t("apiKeyRequests", { count: k.requestCount })}
+                    </span>
+                    {typeof k.periodCount === "number" && quotaMonthly != null ? (
+                      <span className="tabular-nums" dir="ltr">
+                        · {t("apiKeyMonthlyUsage", { used: k.periodCount, quota: quotaMonthly })}
+                      </span>
+                    ) : null}
+                    {k.lastUsedAt ? <span>· {t("apiKeyLastUsed")}</span> : ""}
                   </p>
                 </div>
                 {k.revokedAt === null && editable ? (

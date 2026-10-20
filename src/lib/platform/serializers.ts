@@ -80,6 +80,9 @@ export type PlatformUserDTO = {
   ownedBusinessCount: number;
   membershipCount: number;
   isPlatformOperator: boolean;
+  // Prompt 62 §8.3 — suspension state (reason itself is NOT exposed in the
+  // list — it is visible to the user in their notification; §15.1 law).
+  suspendedAt: string | null;
 };
 
 export function platformUserDto(
@@ -91,6 +94,7 @@ export function platformUserDto(
     createdAt: Date;
     updatedAt: Date;
     sessionVersion: number;
+    suspendedAt?: Date | null;
   },
   counts: { ownedBusinesses: number; memberships: number },
   isPlatformOperator: boolean,
@@ -106,6 +110,7 @@ export function platformUserDto(
     ownedBusinessCount: counts.ownedBusinesses,
     membershipCount: counts.memberships,
     isPlatformOperator,
+    suspendedAt: u.suspendedAt ? u.suspendedAt.toISOString() : null,
   };
 }
 

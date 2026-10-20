@@ -1,6 +1,13 @@
 /**
  * scripts/prompt38-unit.ts — Prompt 38 (§38-a) unit harness.
  *
+ * RUNNER LAW: must run as `bun --conditions react-server scripts/prompt38-unit.ts`.
+ * The notifications modules (catalog/templates) carry the product-side
+ * `import "server-only"` law; the react-server condition resolves that
+ * marker to a no-op for pure unit execution WITHOUT weakening the product
+ * law itself (same documented pattern as the P27 legal harness runner note;
+ * Prompt 62 regression round).
+ *
  * Meaningful assertions across the required areas: threshold predicate
  * purity, deterministic sourceEventId identity law, recipient role
  * vocabulary, per-run bounds (option > env > default, clamped), CLI flag
@@ -9,7 +16,7 @@
  * rendering (en + fa, null SKU/unit fallbacks), i18n parity, and the
  * absence-of-noise law (no restock/stock-out types).
  *
- * Run: bun --preload ./scripts/lib/register-server-only-shim.ts scripts/prompt38-unit.ts
+ * Run: bun --conditions react-server scripts/prompt38-unit.ts
  */
 
 let passed = 0;
@@ -150,7 +157,7 @@ console.log("[6 catalog entry]");
 {
   const entry = NOTIFICATION_CATALOG.BUSINESS_INVENTORY_LOW_STOCK;
   ok("6a. type registered", isNotificationType("BUSINESS_INVENTORY_LOW_STOCK"));
-  ok("6b. total type count is 23", NOTIFICATION_TYPES.length === 23);
+  ok("6b. total type count is 28 (18 P32-P38 + 5 Prompt-62 support/suspension)", NOTIFICATION_TYPES.length === 28);
   ok("6c. category BUSINESS", entry.category === "BUSINESS");
   ok("6d. priority NORMAL", entry.priority === "NORMAL");
   ok("6e. severity WARNING (never ERROR)", entry.severity === "WARNING");

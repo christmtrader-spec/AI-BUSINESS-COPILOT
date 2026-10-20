@@ -10,6 +10,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { BusinessWebGLBackground } from "@/components/fx/business-webgl-bg";
 import { AppHeader } from "./header";
 import { AppSidebar } from "./app-sidebar";
+import { BottomNav } from "./bottom-nav";
 import { CommandPalette } from "./command-palette";
 import { ModuleBoundary } from "./module-boundary";
 import { warmHeavyQueries, onIdle } from "./prefetch";
@@ -59,6 +60,7 @@ import { AgingDetailsView } from "../balances/aging-details-view";
 import { SubscriptionView } from "../billing/subscription-view";
 import { PaymentReturnView } from "../billing/payment-return-view";
 import { AuditView } from "../audit/audit-view";
+import { SupportCenterView } from "../support/support-view";
 import { ComingSoonView } from "./coming-soon-view";
 
 /** Sidebar label key for the current view (used for <title> too). */
@@ -80,6 +82,9 @@ function labelKeyOf(view: AppView): string {
       return "dataPortability";
     case "notifications":
       return "notifications";
+    // Prompt 62 — Support Center document title.
+    case "support":
+      return "support";
     case "settings:notifications":
       return "notifications";
     // Prompt 33 — Search Results Center document title.
@@ -233,7 +238,12 @@ export function AppShell({
       <div aria-hidden="true" className="bg-app-fallback pointer-events-none fixed inset-0 -z-20" />
       <BusinessWebGLBackground className="opacity-35 dark:opacity-30" />
       <AppSidebar membership={membership} side={dir === "rtl" ? "right" : "left"} />
-      <SidebarInset className="bg-background/85 dark:bg-background/80">
+      {/* R61 — mobile clearance: the fixed bottom nav overlays the viewport
+          bottom, so the whole content column (main + sticky footer) ends
+          ABOVE it on small screens. Desktop is untouched (md:pb-0). The
+          env() term mirrors the bar's own safe-area padding on notched
+          devices so the footer never hides behind the home indicator. */}
+      <SidebarInset className="bg-background/85 pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0 dark:bg-background/80">
         {/* a11y: keyboard users can jump past the navigation chrome */}
         <a
           href="#main-content"
@@ -264,6 +274,7 @@ export function AppShell({
               {view.kind === "settings:security" ? <SecurityCenterView /> : null}
               {view.kind === "settings:data" ? <DataPortabilityView role={role} /> : null}
               {view.kind === "notifications" ? <NotificationsView /> : null}
+              {view.kind === "support" ? <SupportCenterView business={membership!.business} /> : null}
               {view.kind === "settings:notifications" ? <NotificationsPreferencesView /> : null}
               {view.kind === "search" ? <SearchCenterView /> : null}
               {view.kind === "crm" ? (
@@ -576,6 +587,7 @@ export function AppShell({
           </div>
         </footer>
       </SidebarInset>
+      <BottomNav />
       <CommandPalette membership={membership} />
     </SidebarProvider>
   );

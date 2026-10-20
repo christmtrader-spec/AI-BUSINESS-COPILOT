@@ -131,6 +131,8 @@ export const ACTION_ROUTES = [
   // workspace. Product deep-links (#/products/<id>) are deliberately
   // absent (same law as crmTasks — no deep links yet).
   "products",
+  // Prompt 62 — the tenant Support Center (my tickets + thread).
+  "support",
 ] as const;
 
 export type ActionRoute = (typeof ACTION_ROUTES)[number];
@@ -165,5 +167,8 @@ export function actionRoutePath(route: ActionRoute): string {
     case "products":
       // Prompt 38 — the CTA opens the existing Products workspace.
       return "#/products";
+    case "support":
+      // Prompt 62 — the tenant Support Center workspace.
+      return "#/support";
   }
 }

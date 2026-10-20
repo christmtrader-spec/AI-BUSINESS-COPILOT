@@ -41,7 +41,7 @@ export const GET = route(async (req: NextRequest) => {
       skip: p.skip,
       select: {
         id: true, name: true, email: true, locale: true,
-        createdAt: true, updatedAt: true, sessionVersion: true,
+        createdAt: true, updatedAt: true, sessionVersion: true, suspendedAt: true,
         _count: { select: { ownedBusinesses: true, memberships: true } },
         platformOperator: { select: { id: true, active: true, role: true } },
       },

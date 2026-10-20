@@ -29,6 +29,15 @@ model User {
   // non-null = verified. NEVER inferred from email formatting, and existing
   // accounts are NOT bulk-marked verified (§225 — no evidence exists).
   emailVerifiedAt DateTime?
+  // Prompt 62 §8.3 — platform-account suspension. NULL = active account.
+  // Suspension NEVER deletes user data (§8.3) and NEVER targets platform
+  // operators (the operator lifecycle uses the sanctioned deactivate path).
+  // sessionVersion is bumped at suspend time so every live JWT dies at the
+  // next freshness gate — an already-authenticated session cannot ride
+  // through a suspension (§8.3).
+  suspendedAt           DateTime?
+  suspensionReason      String?
+  suspendedByOperatorId String? // plain ref (audit law) — outlives operators
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -102,6 +111,13 @@ model User {
   // evidence survives the creator's departure; keys die with the business).
   apiKeyCreations             ApiKey[]                 @relation("ApiKeyCreator")
   webhookCreations            WebhookEndpoint[]        @relation("WebhookCreator")
+
+  // Prompt 62 — Support Center. requester is SetNull + email/name snapshots
+  // (SalesOrder.customerNameAtOrder law): a support conversation never
+  // blocks account deletion and never becomes unreadable afterwards (the
+  // deletion matrix documents this BEFORE the migration).
+  supportTickets        SupportTicket[]
+  supportTicketMessages SupportTicketMessage[]
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +332,8 @@ model Business {
   crmTasks             CrmTask[]
   // Prompt 40 — physical stock-count sessions (tenant-scoped, cascade).
   inventoryStocktakes  InventoryStocktake[]
+  // Prompt 62 — Support Center (SetNull + name snapshot; see SupportTicket).
+  supportTickets       SupportTicket[]
   // Prompt 41 — procurement commitment documents (tenant-scoped, cascade).
   purchaseOrders       PurchaseOrder[]
   // Prompt 42 — goods receipt documents (tenant-scoped, cascade; §22).
@@ -1431,7 +1449,8 @@ model PlatformOperator {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  auditLogs PlatformAuditLog[]
+  auditLogs       PlatformAuditLog[]
+  assignedTickets SupportTicket[]
 
   @@index([role, active])
 }
@@ -1463,6 +1482,76 @@ model PlatformAuditLog {
   @@index([targetUserId])
   @@index([targetBusinessId])
   @@index([requestId])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 62 — SUPPORT CENTER (§10).
+//
+// Laws:
+//  - ONE ticketing subsystem (no duplicate support models — §10/§19).
+//  - Statuses/categories/priorities are strings validated against the
+//    closed sets in src/lib/platform/support.ts (SQLite has no enums —
+//    same law as roles).
+//  - INTERNAL messages are platform-operator notes — the TENANT API can
+//    never return them (§10.2); only CUSTOMER-visibility rows do.
+//  - Deletion: requester/author/business links are SetNull with creation
+//    snapshots (email/name frozen at creation), so account or tenant
+//    deletion neither blocks on tickets nor destroys support history;
+//    messages cascade with their ticket (a thread never outlives it).
+//  - `number` is a human-friendly stable reference (SUP-<number> in UI);
+//    the cuid `id` remains the external API key.
+// ---------------------------------------------------------------------------
+model SupportTicket {
+  id                 String   @id @default(cuid())
+  // Human-friendly stable reference (SUP-<number> in the UI). SQLite cannot
+  // autoincrement a non-id column, so the service layer assigns it inside
+  // the creation transaction (max+1 + unique retry on collision).
+  number             Int      @unique
+  requesterId        String?
+  requester          User?    @relation(fields: [requesterId], references: [id], onDelete: SetNull)
+  requesterEmailAtCreation String
+  requesterNameAtCreation  String?
+  businessId         String?
+  business           Business? @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  businessNameAtCreation   String?
+  subject            String
+  description        String
+  category           String   // closed set — BILLING|TECHNICAL|ACCOUNT|AI_COPILOT|FEATURE_REQUEST|OTHER
+  priority           String   @default("NORMAL") // LOW|NORMAL|HIGH|URGENT
+  status             String   @default("OPEN") // OPEN|TRIAGED|IN_PROGRESS|WAITING_FOR_CUSTOMER|WAITING_FOR_INTERNAL_ACTION|RESOLVED|CLOSED
+  assigneeOperatorId String?
+  assignee           PlatformOperator? @relation(fields: [assigneeOperatorId], references: [id], onDelete: SetNull)
+  firstResponseAt    DateTime? // first OPERATOR message with CUSTOMER visibility
+  resolvedAt         DateTime?
+  closedAt           DateTime?
+  resolutionSummary  String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  messages SupportTicketMessage[]
+
+  @@index([status, createdAt])
+  @@index([requesterId, createdAt])
+  @@index([businessId])
+  @@index([assigneeOperatorId, status])
+  @@index([priority, status])
+  @@index([category, status])
+}
+
+model SupportTicketMessage {
+  id               String   @id @default(cuid())
+  ticketId         String
+  ticket           SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorUserId     String?
+  author           User?    @relation(fields: [authorUserId], references: [id], onDelete: SetNull)
+  authorKind       String   // REQUESTER | OPERATOR
+  authorNameAtPost String?
+  visibility       String   // CUSTOMER | INTERNAL — the tenant API filters INTERNAL out at the SERVICE layer
+  body             String
+  createdAt        DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+  @@index([authorUserId])
 }
 
 // ---------------------------------------------------------------------------
@@ -2906,10 +2995,17 @@ model ApiKey {
   // SHA-256 hex of the full plaintext key. UNIQUE — a leaked key rotates,
   // never duplicates.
   keyHash     String    @unique
-  // Closed set, validated in the service layer. "read" = open GET surface.
+  // Closed set, validated in the service layer. Comma-separated canonical
+  // scopes (src/lib/api-key-scopes.ts): "read" = every open GET resource;
+  // "read:<resource>" = exactly that resource (customers/products/sales).
   scopes      String    @default("read")
   lastUsedAt  DateTime?
   requestCount Int      @default(0)
+  // R61-3 monthly usage metering (UTC month buckets, best-effort accounting):
+  // periodStart holds the "YYYY-MM" bucket of periodCount; a rolled bucket
+  // resets the counter on first use of the new month.
+  periodStart String?
+  periodCount Int       @default(0)
   revokedAt   DateTime?
   createdAt   DateTime  @default(now())
 

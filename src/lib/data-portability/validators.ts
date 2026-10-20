@@ -21,6 +21,10 @@ import "server-only";
 
 import { MoneyParseError, parseDecimalToMinor } from "./money-csv";
 import { IMPORT_CATALOG, normalizeForMatch, type ImportDatasetKey, type ImportField } from "./import-catalog";
+import { normalizePersianNumeric, parseImportDate } from "./import-date";
+
+// Pure laws live in ./import-date (unit-testable); re-exported for route use.
+export { normalizePersianNumeric, parseImportDate } from "./import-date";
 
 export const ROW_ERROR_CODES = [
   "ROW_REQUIRED_FIELD_MISSING",
@@ -89,7 +93,7 @@ function validateField(field: ImportField, rawValue: string, decimalPrecision: n
     }
     case "money": {
       try {
-        return parseDecimalToMinor(value, decimalPrecision);
+        return parseDecimalToMinor(normalizePersianNumeric(value), decimalPrecision);
       } catch (error) {
         if (error instanceof MoneyParseError) {
           throw new RowValidationError({ rowNumber: 0, field: field.name, code: "ROW_INVALID_AMOUNT" });
@@ -98,10 +102,11 @@ function validateField(field: ImportField, rawValue: string, decimalPrecision: n
       }
     }
     case "integer": {
-      if (!/^\d{1,10}$/.test(value)) {
+      const normalizedInt = normalizePersianNumeric(value);
+      if (!/^\d{1,10}$/.test(normalizedInt)) {
         throw new RowValidationError({ rowNumber: 0, field: field.name, code: "ROW_INVALID_NUMBER" });
       }
-      const n = Number(value);
+      const n = Number(normalizedInt);
       if (!Number.isSafeInteger(n) || n > 2_000_000_000) {
         throw new RowValidationError({ rowNumber: 0, field: field.name, code: "ROW_INVALID_NUMBER" });
       }
@@ -111,6 +116,13 @@ function validateField(field: ImportField, rawValue: string, decimalPrecision: n
       const lowered = value.toLowerCase();
       if (lowered === "true" || lowered === "false") return lowered === "true";
       throw new RowValidationError({ rowNumber: 0, field: field.name, code: "ROW_INVALID_BOOLEAN" });
+    }
+    case "date": {
+      const iso = parseImportDate(value);
+      if (iso === null) {
+        throw new RowValidationError({ rowNumber: 0, field: field.name, code: "ROW_INVALID_DATE" });
+      }
+      return iso;
     }
   }
 }

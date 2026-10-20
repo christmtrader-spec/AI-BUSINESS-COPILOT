@@ -26,7 +26,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     ROW_DUPLICATE: "Duplicate of an existing record or an earlier row.",
     ROW_FOREIGN_REFERENCE_NOT_FOUND: "Referenced record not found.",
     ROW_UNSUPPORTED_FIELD: "This field is not importable.",
-    ROW_INVALID_DATE: "Invalid date (use ISO 8601).",
+    ROW_INVALID_DATE: "Invalid date (ISO 8601 or Jalali, e.g. 1404/07/01).",
   },
   fa: {
     ROW_REQUIRED_FIELD_MISSING: "یک فیلد الزامی خالی است.",
@@ -39,7 +39,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     ROW_DUPLICATE: "تکراریِ یک رکورد موجود یا یک ردیف قبلی است.",
     ROW_FOREIGN_REFERENCE_NOT_FOUND: "رکورد ارجاع‌شده یافت نشد.",
     ROW_UNSUPPORTED_FIELD: "این فیلد قابل درون‌ریزی نیست.",
-    ROW_INVALID_DATE: "تاریخ نامعتبر است (ISO 8601).",
+    ROW_INVALID_DATE: "تاریخ نامعتبر است (میلادی ISO 8601 یا شمسی مانند ۱۴۰۴/۰۷/۰۱).",
   },
 };
 

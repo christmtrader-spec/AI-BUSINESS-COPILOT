@@ -10,6 +10,7 @@ import {
   HandCoins,
   KanbanSquare,
   LayoutDashboard,
+  LifeBuoy,
   Package,
   PanelLeftClose,
   PanelLeftOpen,
@@ -84,7 +85,8 @@ type NavItem = {
     | "billing"
     | "security"
     | "dataPortability"
-    | "profile";
+    | "profile"
+    | "support";
   icon: LucideIcon;
   soon?: boolean;
 };
@@ -125,6 +127,7 @@ const INTELLIGENCE: NavItem[] = [
 ];
 
 const PLATFORM: NavItem[] = [
+  { view: { kind: "support" }, labelKey: "support", icon: LifeBuoy },
   { view: { kind: "audit" }, labelKey: "audit", icon: ScrollText },
   { view: { kind: "settings:members" }, labelKey: "teamMembers", icon: Users },
   { view: { kind: "settings:business" }, labelKey: "settings", icon: Settings },

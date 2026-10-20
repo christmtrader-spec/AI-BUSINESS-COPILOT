@@ -212,10 +212,23 @@ function staticScans() {
   check("platform role never derived from client input", escalation.length === 0, escalation.join(","));
 
   // §56/§34: sensitive mutations require reauth + audit.
-  const mutationRoutes = routeFiles.filter((f) => /pause|resume|plan\/route|trial\/route|invalidate-sessions|reverify|investigation|activate|deactivate|verify\/route|reconciliation|operators\/route|operators\/\[id\]/.test(f));
+  // Prompt 62: suspend/reactivate join the sensitive set (account-lifecycle).
+  const mutationRoutes = routeFiles.filter((f) => /pause|resume|plan\/route|trial\/route|invalidate-sessions|reverify|investigation|activate|deactivate|verify\/route|reconciliation|operators\/route|operators\/\[id\]|suspend|reactivate/.test(f));
   const missingReauth = mutationRoutes.filter((f) => !routeSrc.get(f).includes("assertPlatformReauth"));
   check("sensitive platform mutations require reauthentication", missingReauth.length === 0, missingReauth.join(","));
-  const missingAudit = mutationRoutes.filter((f) => !routeSrc.get(f).includes("platformAudit"));
+  // Audit may live in the route OR in the src/lib/platform service the route
+  // delegates to (Prompt 62 — transactional audit inside the domain
+  // transaction, §73). The scan follows the import to keep the check honest.
+  const platformLibSrc = walkSrc(`${ROOT}/src/lib/platform`).map((f) => readFileSync(f, "utf8")).join("\n");
+  const missingAudit = mutationRoutes.filter((f) => {
+    const src = routeSrc.get(f);
+    if (src.includes("platformAudit")) return false;
+    const imports = [...src.matchAll(/from "@\/lib\/platform\/([a-z-]+)"/g)].map((m) => m[1]);
+    return !imports.some((mod) => {
+      const p = `${ROOT}/src/lib/platform/${mod}.ts`;
+      return existsSync(p) && readFileSync(p, "utf8").includes("platformAudit");
+    });
+  });
   check("sensitive platform mutations are audited", missingAudit.length === 0, missingAudit.join(","));
 
   // §57: rate limiting on sensitive mutations.

@@ -46,6 +46,9 @@ export const SECURITY_EVENTS = {
   passwordResetCompleted: "auth.password.reset_completed",
   stepUpPasswordVerified: "auth.stepup.password_verified",
   stepUpMfaVerified: "auth.stepup.mfa_verified",
+  // Prompt 62 §8.3 — platform suspension lifecycle (fixed vocabulary §423).
+  accountSuspended: "platform.account.suspended",
+  accountReactivated: "platform.account.reactivated",
 } as const;
 
 export type SecurityEventType =

@@ -21,7 +21,7 @@ export const GET = route(async (req: NextRequest, { params }: { params: Promise<
     where: { id },
     select: {
       id: true, name: true, email: true, locale: true,
-      createdAt: true, updatedAt: true, sessionVersion: true,
+      createdAt: true, updatedAt: true, sessionVersion: true, suspendedAt: true,
       _count: { select: { ownedBusinesses: true, memberships: true } },
       platformOperator: { select: { id: true, active: true, role: true } },
       ownedBusinesses: { select: { id: true, name: true, slug: true, currencyCode: true } },

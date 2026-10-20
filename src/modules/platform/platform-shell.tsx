@@ -20,6 +20,7 @@ import {
   Building2,
   Gauge,
   LayoutDashboard,
+  LifeBuoy,
   PanelsTopLeft,
   ScrollText,
   ShieldCheck,
@@ -63,6 +64,7 @@ const SECTION_LABELS: Record<PlatformSection, string> = {
   overview: "sections.overview",
   businesses: "sections.businesses",
   users: "sections.users",
+  support: "sections.support",
   subscriptions: "sections.subscriptions",
   payments: "sections.payments",
   pricing: "sections.pricing",
@@ -80,6 +82,12 @@ const GROUPS: Array<{ labelKey: string; entries: NavEntry[] }> = [
     entries: [
       { section: "businesses", labelKey: "sections.businesses", icon: Building2, permission: "platform:businesses:read" },
       { section: "users", labelKey: "sections.users", icon: Users, permission: "platform:users:read" },
+    ],
+  },
+  {
+    labelKey: "groups.support",
+    entries: [
+      { section: "support", labelKey: "sections.support", icon: LifeBuoy, permission: "platform:support:read" },
     ],
   },
   {
@@ -217,6 +225,7 @@ export function PlatformShell({
 const OverviewView = lazy(() => import("./overview-view").then((m) => ({ default: m.OverviewView })));
 const BusinessesView = lazy(() => import("./businesses-view").then((m) => ({ default: m.BusinessesView })));
 const UsersView = lazy(() => import("./users-view").then((m) => ({ default: m.UsersView })));
+const SupportView = lazy(() => import("./support-view").then((m) => ({ default: m.SupportView })));
 const SubscriptionsView = lazy(() => import("./subscriptions-view").then((m) => ({ default: m.SubscriptionsView })));
 const PaymentsView = lazy(() => import("./payments-view").then((m) => ({ default: m.PaymentsView })));
 const PricingView = lazy(() => import("./pricing-view").then((m) => ({ default: m.PricingView })));
@@ -243,6 +252,8 @@ function PlatformSectionContent({ section }: { section: PlatformSection }) {
       return <BusinessesView />;
     case "users":
       return <UsersView />;
+    case "support":
+      return <SupportView />;
     case "subscriptions":
       return <SubscriptionsView />;
     case "payments":

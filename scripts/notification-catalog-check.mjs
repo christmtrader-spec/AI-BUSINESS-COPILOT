@@ -183,6 +183,30 @@ const EXAMPLE_DATA = {
     lowStockAt: 5,
   },
   SYSTEM_ANNOUNCEMENT: { message: "Scheduled maintenance on Sunday." },
+  // Prompt 62 — Support Center + account suspension (bounded, schema-conformant).
+  SUPPORT_TICKET_CREATED: {
+    ticketId: "ticket00001abc",
+    ticketNumber: 12,
+    subject: "Cannot record a payment",
+  },
+  SUPPORT_TICKET_REPLY: {
+    ticketId: "ticket00001abc",
+    ticketNumber: 12,
+    subject: "Cannot record a payment",
+  },
+  SUPPORT_TICKET_RESOLVED: {
+    ticketId: "ticket00001abc",
+    ticketNumber: 12,
+    subject: "Cannot record a payment",
+    summary: "The payment method was missing a currency; re-tested successfully.",
+  },
+  SYSTEM_ACCOUNT_SUSPENDED: {
+    reason: "Suspected fraudulent activity under investigation.",
+    suspendedAt: "2026-09-30T10:00:00.000Z",
+  },
+  SYSTEM_ACCOUNT_RESTORED: {
+    restoredAt: "2026-09-30T10:00:00.000Z",
+  },
 };
 
 for (const entry of NOTIFICATION_TYPE_LIST) {

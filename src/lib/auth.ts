@@ -29,6 +29,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { findUserForSignIn } from "@/lib/auth-security";
+import { SIGNIN_ERROR_ACCOUNT_SUSPENDED } from "@/lib/platform/user-lifecycle";
 import { recordSecurityEvent, SECURITY_EVENTS } from "@/lib/auth/security-events/service";
 import {
   generateSessionId,
@@ -50,6 +51,10 @@ import { SESSION_MAX_AGE_SECONDS } from "@/lib/auth/config";
 
 /** Fixed client-visible sign-in error codes (no secrets, §111/§422). */
 export const SIGNIN_ERROR_MFA_REQUIRED = "MFA_REQUIRED";
+/** Prompt 62 §8.3 — suspended accounts cannot sign in (fixed code, revealed
+ *  only after a VALID password — no enumeration gain). Defined in
+ *  lib/platform/user-lifecycle; re-exported here for the auth module seam. */
+export { SIGNIN_ERROR_ACCOUNT_SUSPENDED };
 /** Fixed reason code for rate-limited login attempts (§91). */
 const LOGIN_RATE_LIMITED = "RATE_LIMITED";
 
@@ -235,6 +240,22 @@ export const authOptions: NextAuthOptions = {
             userAgent,
           });
           return null;
+        }
+
+        // Prompt 62 §8.3 — suspension check AFTER the password verdict:
+        // only the legitimate owner (or an attacker who already has the
+        // password) learns the account is suspended. Every live JWT for this
+        // user already died at the sessionVersion bump (suspend time).
+        if (user.suspendedAt) {
+          await recordSecurityEvent({
+            eventType: SECURITY_EVENTS.loginFailed,
+            userId: user.id,
+            reasonCode: "ACCOUNT_SUSPENDED",
+            success: false,
+            ip,
+            userAgent,
+          });
+          throw new Error(SIGNIN_ERROR_ACCOUNT_SUSPENDED);
         }
 
         // §54 — MFA enabled ⇒ password success is NEVER a full session.

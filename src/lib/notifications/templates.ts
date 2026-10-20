@@ -247,6 +247,29 @@ function deriveValues(type: NotificationType, data: Record<string, unknown>, loc
     }
     case "SYSTEM_ANNOUNCEMENT":
       return { message: String(data.message ?? "") };
+    // Prompt 62 — Support Center + account suspension (§10/§8.3). The
+    // ticket reference uses the human-friendly SUP-XXXX form; the subject
+    // is the only user-authored fragment and it enters as plain text into
+    // plain-string templates (never HTML interpolation client-side, §151).
+    case "SUPPORT_TICKET_CREATED":
+    case "SUPPORT_TICKET_REPLY":
+      return {
+        reference: `SUP-${String(Number(data.ticketNumber ?? 0)).padStart(4, "0")}`,
+        subject: String(data.subject ?? ""),
+      };
+    case "SUPPORT_TICKET_RESOLVED":
+      return {
+        reference: `SUP-${String(Number(data.ticketNumber ?? 0)).padStart(4, "0")}`,
+        subject: String(data.subject ?? ""),
+        summary: String(data.summary ?? ""),
+      };
+    case "SYSTEM_ACCOUNT_SUSPENDED":
+      return {
+        reason: String(data.reason ?? ""),
+        date: formatDateTime(String(data.suspendedAt), locale),
+      };
+    case "SYSTEM_ACCOUNT_RESTORED":
+      return { date: formatDateTime(String(data.restoredAt), locale) };
     default: {
       // Exhaustiveness guard — a new catalog type MUST add a case above.
       const exhaustive: never = type;

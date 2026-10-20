@@ -158,6 +158,77 @@ export type PlatformUser = {
   ownedBusinessCount: number;
   membershipCount: number;
   isPlatformOperator: boolean;
+  suspendedAt: string | null;
+};
+
+/* --------------------- Prompt 62 — Support Center (§10) -------------------- */
+
+export type PlatformSupportTicket = {
+  id: string;
+  number: number;
+  reference: string;
+  subject: string;
+  category: string;
+  priority: string;
+  status: string;
+  requesterEmail: string;
+  requesterName: string | null;
+  businessName: string | null;
+  businessId: string | null;
+  assigneeOperatorId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  firstResponseAt: string | null;
+  resolvedAt: string | null;
+};
+
+export type PlatformSupportMessage = {
+  id: string;
+  authorKind: string;
+  authorName: string | null;
+  visibility: string;
+  body: string;
+  createdAt: string;
+};
+
+export type PlatformTicketDiagnostics = {
+  subscription: {
+    status: string;
+    planName: string | null;
+    currentPeriodStart: string | null;
+    currentPeriodEnd: string | null;
+    trialEndsAt: string | null;
+  } | null;
+  requester: {
+    totalTickets: number;
+    recentTickets: Array<{ id: string; number: number; subject: string; status: string; createdAt: string }>;
+  };
+  failedDeliveries: Array<{
+    notificationType: string;
+    channel: string;
+    status: string;
+    failureCode: string | null;
+    createdAt: string;
+  }>;
+  securityEvents: Array<{ eventType: string; success: boolean; createdAt: string }> | null;
+  recentTargetedAudit: Array<{ action: string; createdAt: string; operatorRole: string | null }> | null;
+  windows: { diagnosticsLimit: number };
+};
+
+export type PlatformSupportTicketDetail = PlatformSupportTicket & {
+  description: string;
+  resolutionSummary: string | null;
+  closedAt: string | null;
+  assigneeRole: string | null;
+  allowedTransitions: string[];
+  messages: PlatformSupportMessage[];
+};
+
+export type PlatformTicketViewer = {
+  operatorId: string;
+  canAssign: boolean;
+  canUpdate: boolean;
+  canResolve: boolean;
 };
 
 export type PlatformSubscription = {
@@ -315,6 +386,18 @@ export const platformQueries = {
     platformApi<{ users: PlatformUser[]; page: PageMeta }>(
       `/api/v1/platform/users${params ? `?${params}` : ""}`,
     ),
+  supportTickets: (params: string) =>
+    platformApi<{
+      tickets: PlatformSupportTicket[];
+      page: PageMeta;
+      facets: { statuses: string[]; priorities: string[]; categories: string[] };
+    }>(`/api/v1/platform/support/tickets${params ? `?${params}` : ""}`),
+  supportTicket: (id: string) =>
+    platformApi<{
+      ticket: PlatformSupportTicketDetail;
+      diagnostics: PlatformTicketDiagnostics;
+      viewer: PlatformTicketViewer;
+    }>(`/api/v1/platform/support/tickets/${id}`),
   subscriptions: (params: string) =>
     platformApi<{ subscriptions: PlatformSubscription[]; page: PageMeta }>(
       `/api/v1/platform/subscriptions${params ? `?${params}` : ""}`,
@@ -445,6 +528,34 @@ export const platformMutations = {
   invalidateSessions: (userId: string, body: { reason: string; password: string }) =>
     platformApi<{ invalidated: boolean; requestId: string }>(
       `/api/v1/platform/users/${userId}/invalidate-sessions`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  suspendUser: (userId: string, body: { reason: string; password: string }) =>
+    platformApi<{ user: { id: string; suspendedAt: string; sessionVersion: number } }>(
+      `/api/v1/platform/users/${userId}/suspend`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  reactivateUser: (userId: string, body: { reason: string; password: string }) =>
+    platformApi<{ user: { id: string; suspendedAt: null; sessionVersion: number } }>(
+      `/api/v1/platform/users/${userId}/reactivate`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  supportPatchTicket: (
+    id: string,
+    body: { status?: string; priority?: string; assigneeOperatorId?: string | null },
+  ) =>
+    platformApi<{ ticket: Record<string, unknown> }>(
+      `/api/v1/platform/support/tickets/${id}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
+  supportMessage: (id: string, body: { body: string; visibility: "CUSTOMER" | "INTERNAL" }) =>
+    platformApi<{ message: PlatformSupportMessage }>(
+      `/api/v1/platform/support/tickets/${id}/messages`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  supportResolve: (id: string, body: { resolutionSummary: string }) =>
+    platformApi<{ ticket: { id: string; status: string; resolvedAt: string; resolutionSummary: string } }>(
+      `/api/v1/platform/support/tickets/${id}/resolve`,
       { method: "POST", body: JSON.stringify(body) },
     ),
   reverifyPayment: (sessionId: string, body: { reason: string; password: string }) =>
