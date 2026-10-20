@@ -16,6 +16,7 @@ import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { listParams, productCreateSchema } from "@/lib/schemas";
 import { assertWithinLimitIn, getEntitlementContextTx } from "@/lib/billing";
+import { dispatchWebhooks } from "@/lib/webhooks";
 
 export const dynamic = "force-dynamic";
 
@@ -93,6 +94,15 @@ export const POST = route(async (req: NextRequest) => {
     },
     { isolationLevel: "Serializable" },
   );
+
+  // §W — fire-and-forget AFTER commit; a webhook can never break a product.
+  void dispatchWebhooks(ctx.businessId, "product.created", {
+    id: product.id,
+    name: product.name,
+    salePriceMinor: product.salePriceMinor,
+    stockQty: product.stockQty,
+    lowStockAt: product.lowStockAt,
+  });
 
   return ok(product, 201);
 });

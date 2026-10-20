@@ -14,6 +14,7 @@ import { listParams, saleCreateSchema, statusParam } from "@/lib/schemas";
 import { formatInvoiceNumber } from "@/lib/finance";
 import { localMonthKey, monthWindow } from "@/lib/reports";
 import { vatMinor } from "@/lib/money";
+import { dispatchWebhooks } from "@/lib/webhooks";
 
 export const dynamic = "force-dynamic";
 
@@ -257,6 +258,18 @@ export const POST = route(async (req: NextRequest) => {
     );
 
     return created;
+  });
+
+  // §W — fire-and-forget AFTER commit; a webhook can never break a sale.
+  void dispatchWebhooks(ctx.businessId, "sale.created", {
+    id: sale.id,
+    number: sale.number,
+    totalMinor: sale.totalMinor,
+    subtotalMinor: sale.subtotalMinor,
+    discountMinor: sale.discountMinor,
+    taxMinor: sale.taxMinor,
+    taxRateBp: sale.taxRateBp,
+    customerId: sale.customerId ?? null,
   });
 
   return ok({ id: sale.id, number: sale.number, totalMinor: sale.totalMinor }, 201);

@@ -17,6 +17,7 @@ import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { listParams, partyCreateSchema } from "@/lib/schemas";
 import { assertWithinLimitIn, getEntitlementContextTx } from "@/lib/billing";
+import { dispatchWebhooks } from "@/lib/webhooks";
 
 export const dynamic = "force-dynamic";
 
@@ -88,6 +89,14 @@ export const POST = route(async (req: NextRequest) => {
     },
     { isolationLevel: "Serializable" },
   );
+
+  // §W — fire-and-forget AFTER commit; a webhook can never break a customer.
+  void dispatchWebhooks(ctx.businessId, "customer.created", {
+    id: customer.id,
+    name: customer.name,
+    email: customer.email ?? null,
+    phone: customer.phone ?? null,
+  });
 
   return ok(customer, 201);
 });

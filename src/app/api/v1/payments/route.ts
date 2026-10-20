@@ -14,6 +14,7 @@ import { db } from "@/lib/db";
 import { listParams, paymentCreateSchema } from "@/lib/schemas";
 import { statusOf } from "@/lib/money";
 import { rateLimit } from "@/lib/rate-limit";
+import { dispatchWebhooks } from "@/lib/webhooks";
 
 export const dynamic = "force-dynamic";
 
@@ -181,6 +182,16 @@ export const POST = route(async (req: NextRequest) => {
     );
 
     return created;
+  });
+
+  // §W — fire-and-forget AFTER commit; a webhook can never break a payment.
+  void dispatchWebhooks(ctx.businessId, "payment.created", {
+    id: payment.id,
+    direction: payment.direction,
+    amountMinor: payment.amountMinor,
+    method: payment.method,
+    saleId: payment.saleId ?? null,
+    expenseId: payment.expenseId ?? null,
   });
 
   return ok(payment, 201);

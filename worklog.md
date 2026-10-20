@@ -5625,3 +5625,140 @@ Stage Summary:
   restarts are routine, not code regressions. P51-R1-FINAL
   (BUSINESSES_MAX semantics) remains a separate pending task and was NOT
   started this round.
+
+---
+Task ID: 3 (Prompt 53 — "ادامه ساخت فوق حرفه ای و پیشرفته")
+Agent: Z.ai Code (main orchestrator)
+Task: Continue super-professional advancement + deep-test the whole project,
+scan for and fix every bug, and fix any error surfaced. New feature built
+this round: OUTBOUND WEBHOOKS (§W) — the event-driven half of the F8 open-
+API story.
+
+Work Log:
+- FULL SCAN FIRST (all EXECUTED): tsc 0 · lint clean · i18n CLEAN (176
+  files / 2906 usages) · e2e-smoke 90/90 · prompt34-unit 139/139 ·
+  prompt20-billing 56/56 · data-portability 53/53 ·
+  businesses-limit-validation 25/25 (P51-R1-FINAL §2) · exports-round-unit
+  20/20 (via --preload server-only shim) · verify-billing-catalog OK.
+- Browser sweep of ALL 10 Prompt-52 features (real flows): F1 export
+  buttons (sales/reports/audit/payments), F2 quick action New invoice →
+  #/sales + auto-opened create dialog, F3 VAT detail dialog math
+  (Subtotal $300.00 + VAT(10%) $30.00 = Total $330.00; balance $330) and
+  the form live preview, F4 Jalali "This month" = «۱ مهر ۱۴۰۵ — ۳۰ مهر
+  ۱۴۰۵ · 2026-09-23 — 2026-10-22» with 1 invoice in range, F5 PWA assets
+  (manifest/sw/icon-192 all 200; sw.js logic reviewed; dev-guard BY
+  DESIGN — PwaRegister skips localhost so HMR is never fought), F6 Stripe
+  adapter (522 lines, registered in registry, env-gated LIVE/SANDBOX), F7
+  tour (activates after flag removal on 1920; Escape persists
+  abc-tour-v1; the earlier "not showing" was my test regex, NOT a bug),
+  F8/F9 settings cards present, F10 audit action-contains "sale" narrows
+  5 rows → 1 (Sale · zblz09). Locale switcher PATCH verified BOTH ways
+  (qa52 en→fa→en persisted in DB each time). Mobile 390 + FA-RTL: zero
+  horizontal overflow.
+- BUG #1 FIXED (user-facing, P18 regression): POST
+  /api/v1/auth/password-reset/request returned 503
+  RESET_DELIVERY_UNAVAILABLE — the sandbox revert had restored a 50-byte
+  .env (DATABASE_URL only), so appBaseUrl() (APP_BASE_URL/NEXTAUTH_URL)
+  threw and the route's catch classified it as transport failure.
+  LOSSLESS repair: extracted the CURRENTLY EFFECTIVE dev fallback secret
+  ("ai-business-copilot-dev-secret-stable", confirmed via auth.ts §68-75
+  + process env of the running server) into .env so existing session
+  JWTs stay decryptable (zero forced log-outs), appended the full
+  env-repair baseline (NEXTAUTH_URL, APP_BASE_URL, BILLING_TRIALS_*,
+  MFA_ENABLED + fresh MFA_ENCRYPTION_KEY — safe: MfaCredential count = 0,
+  AUTH_EMAIL_VERIFICATION_MODE), restarted, re-ran env-repair.mjs (migrations
+  ledger also gone → 29/29 re-baselined; billing/pricing/dev/e2e fixtures).
+  VERIFIED live: reset request → 200 + [email:console-transport] line in
+  dev.log; prompt18-auth-check 28/28; qa52 browser session SURVIVED the
+  restart (no logout).
+- Suite-runner correction (harness, not product): prompt19/22/23/24 must
+  run under BUN (they inline a Bun.plugin shim); under node they crash —
+  after the fix: p19 24/24, p22 72/72, p23 34/34, p24 67/67.
+- NEW FEATURE §W — Outbound Webhooks:
+  - Schema (one db:push): WebhookEndpoint {businessId cascade,
+    createdById SetNull, url, prefix, secretBox (secret-box AES-256-GCM
+    v1 envelope — the SAME at-rest base as MFA TOTP secrets §188-§197),
+    events (comma-joined closed set), active, failureCount, lastStatus,
+    lastDeliveryAt} + WebhookDelivery ledger {endpoint cascade, event,
+    TRUNCATED payload (8 KiB), status, ok, attempt, error, durationMs}.
+    Design decision (industry law — Stripe/GitHub): the SIGNING secret is
+    stored encrypted-REVERSIBLY (not hashed) because deliveries must be
+    signed at send time; shown once, never retrievable.
+  - src/lib/webhooks.ts: generateWebhookSecret (whsec_ + 40 hex),
+    signPayload/verifySignature (t=<unix>,v1=<hex> HMAC-SHA256 over
+    "<t>.<body>" — the SAME envelope the Stripe adapter verifies, so
+    receivers implement ONE verification routine), guardWebhookUrl
+    (https required in production; dev allows http public/loopback; userinfo
+    rejected; private ranges ALWAYS blocked incl. localhost-in-prod —
+    opts.isProd injectable for tests; documented honest limitation: a
+    scheme/host allow-guard, NOT a DNS-rebinding defense),
+    dispatchWebhooks (FIRE-AND-FORGET after commit — never throws, never
+    awaits the money path; ledger write failures swallowed by contract),
+    sendTestDelivery (awaitable, honest status/error), auto-disable at 5
+    consecutive failures with an audit row (webhook.auto_disable), manual
+    resume/URL-change resets the failure streak.
+  - Routes (settings:read / settings:manage law, rate-limited, audited):
+    GET/POST /api/v1/webhooks (max 5 active, one-time secret in the 201),
+    PATCH/DELETE /api/v1/webhooks/[id] (pause/resume/URL/events; delete
+    cascades the ledger; confirm dialog in UI), POST
+    /api/v1/webhooks/[id]/test (10/5min), GET
+    /api/v1/webhooks/[id]/deliveries (bounded 20). Next-16 dynamic-route
+    law: { params }: { params: Promise<{ id }> }.
+  - Emission points (5, all `void dispatchWebhooks(...)` AFTER the
+    business tx commits): sales POST (sale.created: number, total/
+    subtotal/discount/tax minors, taxRateBp, customerId), payments POST
+    (payment.created), expenses POST (expense.created), customers POST
+    (customer.created), products POST (product.created).
+  - Settings UI WebhooksCard (wired between ApiKeysCard and DigestCard):
+    add form (URL + event checkboxes), one-time secret dialog with
+    x-abc-signature hint, active Switch, Send test (honest toast with
+    the real HTTP status), Deliveries ledger dialog (status/ERR + ms +
+    timestamp + "diagnostic ledger only" note), Delete confirm. All
+    strings in en+fa (webhooks namespace, 23 keys; +
+    settings.deliveriesLedgerNote). i18n CLEAN (177 files / 2932 usages).
+- TESTS (scripts/webhooks-check.ts, 55/55 ALL GREEN):
+  - Unit (30): secret shape, signature envelope + verify accept/tamper/
+    wrong-secret/malformed/tolerance, closed event set, guard matrix in
+    dev AND forced-prod (incl. http-loopback rejected by scheme first,
+    https-loopback blocked in prod).
+  - Live E2E (25, real server + real Bun.serve receiver on :4599):
+    register → credentials callback → create business → 401 without
+    session → 422 private URL → 422 unknown event → create endpoint →
+    one-time secret → secret NEVER in list → ping.test delivered AND
+    HMAC-verified by the receiver → real customer create →
+    customer.created delivered ASYNC + signature-verified + payload
+    carries the customer → ledger rows (ping.test + customer.created,
+    both ok) → PAUSED endpoint receives NOTHING (12 × 250ms negative
+    poll) → delete endpoint → delete throwaway business.
+- Browser UI verification of §W: card renders in settings; created an
+  endpoint via the FORM (secret dialog shown, whsec captured); Send test
+  → receiver counter incremented (2 after two sends); Deliveries dialog
+  shows ping.test + the "Diagnostic ledger only" note; delete via
+  confirm → list empty + toast, receiver silent. Mobile 390 (no
+  overflow) + FA-RTL (وب‌هوک‌ها, افزودن نقطه‌ی دریافت, dir=rtl) verified;
+  language switched back to EN (fixture state restored).
+- FINAL BATTERY (post-feature): tsc 0 · lint clean · i18n CLEAN ·
+  webhooks-check 55/55 · e2e-smoke 90/90 · prompt34-unit 139/139 ·
+  prompt20-billing 56/56 (one transient 1-fail on a parallel-collision
+  run; clean re-run green) · prompt18 28/28 · data-portability 53/53 ·
+  verify-billing-catalog OK · DB integrity ok (env-repair step 6).
+- CLEANUP: receiver process killed; UI test endpoint deleted; throwaway
+  webhooks-check business deleted by the harness itself (suite-owned
+  user remains, same policy as e2e-smoke throwaway owners).
+
+Stage Summary:
+- The platform now has the complete integrations story: §F8 read API +
+  §W outbound webhooks (HMAC-signed, fire-and-forget, honest ledger,
+  auto-disable) + §F6 Stripe alongside Zarinpal.
+- The recurring sandbox-revert damage class is now handled: billing
+  self-heal (P53) + env baseline re-append (this round, LOSSLESS for
+  sessions) + migrations re-baseline via env-repair.mjs.
+- Password reset is working again end-to-end (root-caused, losslessly
+  fixed, suite-verified).
+- Honest limitations (documented in-code): webhook URL guard is a
+  scheme/host allow-guard (not DNS-rebinding-proof); no offline replay
+  queue (deliveries are best-effort; ledger is diagnostic); signing
+  secret rotation = delete + recreate.
+- P51-R1-FINAL §2 limit contracts remain green (25/25) — untouched.
+- BUILD: NOT EXECUTED (standing sandbox law — dev server owns .next on
+  :3000).

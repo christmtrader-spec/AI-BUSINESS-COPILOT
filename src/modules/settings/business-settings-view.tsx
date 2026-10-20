@@ -53,6 +53,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/shared/primitives";
 import { ApiKeysCard } from "./api-keys-card";
+import { WebhooksCard } from "./webhooks-card";
 import { DigestCard } from "./digest-card";
 import type { BusinessSummary } from "../shell/types";
 
@@ -650,6 +651,9 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
 
       {/* Prompt 52 §F8 — public API keys for external accounting tools. */}
       {activeId ? <ApiKeysCard activeId={activeId} editable={editable} /> : null}
+
+      {/* Prompt 53 §W — outbound webhook endpoints (event-driven integrations). */}
+      {activeId ? <WebhooksCard activeId={activeId} editable={editable} /> : null}
 
       {/* Task 2-b F9 — weekly digest preview (never sends from the request path). */}
       {activeId ? <DigestCard activeId={activeId} /> : null}

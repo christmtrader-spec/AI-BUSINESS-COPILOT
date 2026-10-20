@@ -7,6 +7,7 @@ import { ApiError, ok, parseBody, route } from "@/lib/api-helpers";
 import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
+import { dispatchWebhooks } from "@/lib/webhooks";
 import { expenseCreateSchema, listParams, statusParam } from "@/lib/schemas";
 import { localMonthKey, monthWindow } from "@/lib/reports";
 
@@ -160,6 +161,15 @@ export const POST = route(async (req: NextRequest) => {
     );
 
     return created;
+  });
+
+  // §W — fire-and-forget AFTER commit; a webhook can never break an expense.
+  void dispatchWebhooks(ctx.businessId, "expense.created", {
+    id: expense.id,
+    category: expense.category,
+    amountMinor: expense.amountMinor,
+    supplierId: expense.supplierId ?? null,
+    dueDate: expense.dueDate ? expense.dueDate.toISOString() : null,
   });
 
   return ok(expense, 201);

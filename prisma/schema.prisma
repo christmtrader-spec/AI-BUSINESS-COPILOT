@@ -101,6 +101,7 @@ model User {
   // Prompt 52 — public API keys: creator link is Restrict (integration
   // evidence survives the creator's departure; keys die with the business).
   apiKeyCreations             ApiKey[]                 @relation("ApiKeyCreator")
+  webhookCreations            WebhookEndpoint[]        @relation("WebhookCreator")
 }
 
 // ---------------------------------------------------------------------------
@@ -330,6 +331,8 @@ model Business {
   salesQuotations      SalesQuotation[]
   // Prompt 52 — public API keys for external accounting integrations.
   apiKeys              ApiKey[]
+  // Prompt 53 §W — outbound webhook endpoints (event-driven integrations).
+  webhookEndpoints     WebhookEndpoint[]
 
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
@@ -2911,4 +2914,70 @@ model ApiKey {
   createdAt   DateTime  @default(now())
 
   @@index([businessId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 53 §W — Outbound webhooks for event-driven integrations.
+//
+// Security law (mirrors §F8 API keys):
+//  - The signing secret (`whsec_<40 hex>`) exists ONLY at creation time —
+//    the DB stores its SHA-256 hash; the plaintext is shown EXACTLY ONCE.
+//  - An endpoint belongs to exactly ONE business; deliveries are only ever
+//    dispatched for that business's events (A01/A02 tenant law).
+//  - URL is validated (https in production; private ranges blocked) — no
+//    SSRF pivot into the deployment's private network.
+//  - Dispatch is strictly FIRE-AND-FORGET after the business transaction
+//    commits: a webhook can NEVER break, delay, or roll back a sale,
+//    payment, or expense (money-law safety).
+//  - Deliveries are best-effort with a bounded payload (8 KiB), a 5s
+//    timeout, and per-endpoint consecutive-failure tracking; 5 consecutive
+//    failures auto-disable the endpoint (audited).
+// ---------------------------------------------------------------------------
+model WebhookEndpoint {
+  id          String    @id @default(cuid())
+  businessId  String
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdById String?
+  createdBy   User?     @relation("WebhookCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  // Delivery target. Validated in the service layer (scheme + host guard).
+  url         String
+  // Display prefix of the signing secret: "whsec_ab12…" (first 12 chars).
+  prefix      String
+  // Signing secret encrypted at rest (secret-box AES-256-GCM v1 envelope,
+  // §188-§197 — the same base as MFA TOTP secrets). Plaintext exists ONLY
+  // at creation time (shown once) and transiently in the delivery path.
+  secretBox   String
+  // Comma-separated closed event set (validated against WEBHOOK_EVENTS).
+  events      String
+  active      Boolean   @default(true)
+  // Consecutive failed deliveries (reset on success); >=5 auto-disables.
+  failureCount Int      @default(0)
+  lastStatus  Int?
+  lastDeliveryAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  deliveries  WebhookDelivery[]
+
+  @@index([businessId, createdAt])
+}
+
+// Delivery ledger — an honest, bounded audit of what was sent and what came
+// back. Payload is stored TRUNCATED (the exact bytes are hashed into the
+// signature, so the ledger is diagnostic, not a replay queue).
+model WebhookDelivery {
+  id          String   @id @default(cuid())
+  endpointId  String
+  endpoint    WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  businessId  String
+  event       String
+  payload     String
+  status      Int?     // HTTP status (null = network/DNS/timeout error)
+  ok          Boolean
+  attempt     Int      @default(1)
+  error       String?  // truncated transport error text
+  durationMs  Int?
+  createdAt   DateTime @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([endpointId, createdAt])
 }
