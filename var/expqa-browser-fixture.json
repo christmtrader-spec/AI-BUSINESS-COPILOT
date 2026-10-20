@@ -1,22 +1,22 @@
 {
-  "email": "expqa-owner-muvggnxg@expqa.test",
+  "email": "expqa-owner-mvgkw6er@expqa.test",
   "password": "testpass123",
-  "businessId": "cmuvggolj019cmgi9f11tsjmf",
+  "businessId": "cmvgkw9l5000fniw9q44rw2z8",
   "businessName": "EXPQA-BROWSE-BIZ",
-  "stocktakeId": "cmuvggp0w01b5mgi9i090lmbt",
+  "stocktakeId": "cmvgkwbsl0028niw95cplqlip",
   "products": [
     {
-      "id": "cmuvggoma019pmgi9v5gwxu7w",
+      "id": "cmvgkw9uu000sniw9cy8uqg7y",
       "name": "Widget Alpha",
       "stockQty": 0
     },
     {
-      "id": "cmuvggoor019xmgi9oum0nmus",
+      "id": "cmvgkwam20010niw9bpuhwajf",
       "name": "Widget Beta",
       "stockQty": 0
     },
     {
-      "id": "cmuvggori01a5mgi940ragzls",
+      "id": "cmvgkwap40018niw9owmcvk4j",
       "name": "Widget Gamma",
       "stockQty": 0
     }

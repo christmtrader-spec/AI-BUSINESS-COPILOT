@@ -5903,3 +5903,25 @@ Stage Summary:
   covers business-limit flows).
 - BUILD: NOT EXECUTED (standing sandbox law — dev server owns .next on
   :3000).
+
+---
+Task ID: R60 (Prompt 60 — "ادامه ساخت فوق حرفه ای و پیشرفته … پیشنهاد همه موارد با ریز جزئیات کامل و دقیق همراه با تست دقیق و عمیق و تمام پروژه رو اسکن کن")
+Agent: main (Z.ai Code)
+Task: Full-project scan → identify & fix all bugs; deep verification of the 10-item feature list; detailed Persian proposal report.
+
+Work Log:
+- Recon: confirmed ALL 10 Prompt-52 items already exist from prior rounds (exports kit, dashboard quick actions, VAT engine, Jalali presets, PWA sw.js+manifest, Stripe lib+checkout, onboarding tour, API keys ck_+rate-limit, digest-preview, audit advanced filters) — this round's mandate therefore = scan/fix/verify + next-tier proposal.
+- BUG #1 (FIXED): scripts/exports-round-unit.ts crashed at import — "server-only" thrown by src/lib/inventory/stocktake/export.ts (module-level law added in a later round broke the pure-unit harness). Fix: extracted the byte-identical slug law into NEW pure module src/lib/filename-slug.ts (referenceSlug(ref, fallback)); export.ts re-exports stocktakeReferenceSlug() as identity wrapper; unit script imports the pure module. 20/20 green again; zero product-behavior change.
+- BUG #2 (FIXED, PRODUCT): route POST /api/v1/webhooks/[id]/test DID NOT EXIST — the settings Webhooks card «ارسال آزمایشی» (Send test) button called api('/api/v1/webhooks/{id}/test') and got 404 (dev.log: "POST /api/v1/webhooks/[id]/test 404"); harness webhooks-check.ts also crashed there. lib sendTestDelivery() existed since §W. Fix: recreated the route (settings:manage, rateLimit 10/min, ENDPOINT_NOT_FOUND→404 mapping, ok({ok,status,error}) shape the card consumes). webhooks-check.ts 55/55 GREEN (incl. live ping.test + HMAC verify + real customer.created async delivery).
+- BUG #3 (FIXED, ENVIRONMENT): /privacy + /terms + /pricing hung forever (>240s) while / was 200 — dev.log showed Turbopack backend PANIC "inner_of_uppers_lost_follower" corrupting the incremental compile cache (uncompiled routes hang). Fix: killed dev server, wiped .next, clean restart → all three pages 200 (<6s first compile, <0.6s warm). public-legal-links-check 39/39 green after. Environment class (same family as the stale tsbuildinfo incident), NOT product code.
+- FALSE ALARM investigated & closed: audit "Action contains" appeared to match non-matching rows — root cause: input applies on Enter/submit BY DESIGN (comment in code); after submit ?action=customer returns ONLY customer rows (verified in-browser via network log).
+- FULL BATTERY (all EXECUTED this round): tsc 0 · lint 0 · i18n-audit CLEAN (178 files / 2957 usages / 0 gaps) · e2e-smoke 90/90 · exports-round-unit 20/20 · xlsx-export-check 15/15 · reorder-check 18/18 · aging-unit 41/41 · prompt17 30/30 · prompt18 28/28 · prompt19 24/24 · prompt20 56/56 · prompt21 76/76 · prompt22 72/72 · webhooks-check 55/55 · exports-round-check 65/65 · prompt47 263/263 · prompt48 212/212 · prompt49 108/108 · prompt50 93/93 · prompt51 82/82 · privacy-deletion 32/32 · prompt34-unit 139/139 · prompt34-entity 117/117 · notification-catalog 473/473 · payables-aging 39/39 · crm-static 20/20 · entity-static 20/20 · data-portability-audit 53/53 · public-legal-links 39/39 · production-config ACCEPTABLE (0 blocking).
+- BROWSER QA (agent-browser, real session, sara@copilot.dev fixture): login → app shell ✓; SESSION PERSISTENCE re-verified (reload keeps session — 5③ fix holding) ✓; dashboard Quick actions: New invoice→#/sales dialog ✓, Record payment→#/payments dialog ✓, New expense→#/expenses dialog ✓; Audit log: filters (action submit, entityType, actor, from/to pickers, CSV-from-same-filter) ✓; Settings webhooks + API-keys cards render ✓; console 0 errors ✓; zero horizontal overflow at 390×844 AND 1920×1080 (sw==cw) ✓; screenshots qa-r60-mobile-dash-fa.png / qa-r60-desktop-dash.png.
+- Sandbox incidents (recurring class, all healed): dev server killed 4× mid-round (ensure-dev.sh restarts; battery re-runs after each).
+
+Stage Summary:
+- Product bugs found & fixed this round: 2 (missing webhook /test route; broken unit harness via server-only leak) + 1 environment corruption resolved.
+- The 10-item Prompt-52 feature list is COMPLETE and now re-verified end-to-end with 30+ green batteries and live browser flows.
+- Honest limits (unchanged): XLSX numbers are IEEE-754 doubles (CSV is the bit-exact archive); digest is preview+settings only (no scheduler); Stripe activates only with env keys (registry fail-closed); PWA SW registration is dev-guarded (prod-only).
+- Next-tier proposals delivered to the user in Persian (P56 candidates: digest scheduler, VAT print preview hardening,Stripe live-key ops runbook, API-key scopes v2, saved audit views, dashboard KPI drilldowns, mobile bottom-nav, bulk ops, import wizard v2, notification digests).
+- BUILD: NOT EXECUTED (standing sandbox law — dev server owns .next on :3000).

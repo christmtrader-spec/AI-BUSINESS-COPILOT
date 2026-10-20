@@ -24,6 +24,7 @@ import { toCsv } from "@/lib/csv";
 import { messagesFor } from "@/i18n/messages";
 import { isStocktakeStatus, stocktakeLineCap } from "./types";
 import { stocktakeLineDto } from "./dto";
+import { referenceSlug } from "@/lib/filename-slug";
 
 export type StocktakeCsvResult = {
   csv: string;
@@ -33,15 +34,13 @@ export type StocktakeCsvResult = {
   truncated: boolean;
 };
 
-/** Business-facing, filesystem-safe reference slug (never raw user input). */
+/**
+ * Business-facing, filesystem-safe reference slug (never raw user input).
+ * Pure law lives in @/lib/filename-slug (server-only here is for the db path
+ * below, not for the slug); re-exported for server callers.
+ */
 export function stocktakeReferenceSlug(reference: string): string {
-  const slug = reference
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
-  return slug || "stocktake";
+  return referenceSlug(reference, "stocktake");
 }
 
 export async function buildStocktakeCsv(input: {

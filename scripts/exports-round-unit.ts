@@ -10,7 +10,11 @@
  *  4. StocktakeCsvResult honesty — cap+1 fetch law is encoded in the export lib
  */
 import { toCsv, csvCell } from "../src/lib/csv";
-import { stocktakeReferenceSlug } from "../src/lib/inventory/stocktake/export";
+// NOTE: the slug law lives in the PURE @/lib/filename-slug module — the
+// stocktake export module is server-only (db) and cannot be imported by
+// plain bun scripts. The stocktake wrapper is identity ("stocktake" fallback).
+import { referenceSlug as stocktakeReferenceSlugPure } from "../src/lib/filename-slug";
+const stocktakeReferenceSlug = (r: string) => stocktakeReferenceSlugPure(r, "stocktake");
 import en from "../src/i18n/messages/en";
 import fa from "../src/i18n/messages/fa";
 
