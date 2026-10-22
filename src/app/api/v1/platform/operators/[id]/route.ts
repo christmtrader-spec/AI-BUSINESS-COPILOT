@@ -80,11 +80,35 @@ export const PATCH = route(async (req: NextRequest, { params }: { params: Promis
 
   const requestId = requestIdOf(req);
   const updated = await db.$transaction(async (tx) => {
+    // PROMPT 63 F-1 (TOCTOU fix, §55): the update runs FIRST — acquiring the
+    // SQLite write lock and serializing against any concurrent operator
+    // mutation — and the last-super-admin invariant is then verified INSIDE
+    // the same transaction. If the platform would be left with ZERO active
+    // super admins, the throw rolls this demotion back, so the loser of a
+    // concurrent race cannot remove the last admin. (A count-before-update
+    // ordering would still race under snapshot reads: both transactions
+    // could count a survivor that the other is about to demote.)
     const op = await tx.platformOperator.update({
       where: { id },
       data: { role: nextRole, active: nextActive },
       include: { user: { select: { email: true, name: true } } },
     });
+    const removedActiveSuperAdmin =
+      target.role === "PLATFORM_SUPER_ADMIN" &&
+      target.active &&
+      (nextRole !== "PLATFORM_SUPER_ADMIN" || !nextActive);
+    if (removedActiveSuperAdmin) {
+      const remainingActiveSuperAdmins = await tx.platformOperator.count({
+        where: { role: "PLATFORM_SUPER_ADMIN", active: true },
+      });
+      if (remainingActiveSuperAdmins === 0) {
+        throw new ApiError(
+          409,
+          "PLATFORM_LAST_ADMIN_PROTECTED",
+          "The last active super admin cannot be deactivated or demoted.",
+        );
+      }
+    }
     await platformAudit(
       {
         operatorId: ctx.operatorId,

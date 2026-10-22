@@ -1,0 +1,930 @@
+# PROMPT 63
+
+## AI BUSINESS COPILOT
+
+### Deep Technical Audit, Security Hardening, Defect Remediation, Regression Testing & End-to-End Verification
+
+You are acting as a principal software architect, senior full-stack engineer, application security specialist, database engineer, QA automation engineer, DevOps engineer, and technical auditor.
+
+Your task is to perform a rigorous, evidence-based audit of the EXISTING AI BUSINESS COPILOT codebase, identify and fix verified defects, validate critical security boundaries, execute the available test suites, and produce an accurate final verification report.
+
+This is a controlled remediation phase, not a greenfield development project.
+
+Do not optimize for pleasing the project owner. Optimize for correctness, security, reliability, maintainability, financial integrity, and actual production readiness.
+
+Work directly on the existing repository.
+
+Do not merely provide recommendations. Inspect the implementation, reproduce defects when possible, fix confirmed problems, add regression tests, and verify the changes.
+
+---
+
+# SECTION 0 — NON-NEGOTIABLE EXECUTION RULES
+
+## 0.1 Inspect Before Modifying
+
+Before changing any file:
+
+1. Identify the actual repository root.
+2. Inspect the current Git branch and commit.
+3. Inspect the working tree and preserve any existing uncommitted changes.
+4. Read the project instructions, including applicable `AGENTS.md`, README files, package scripts, configuration files, and relevant Worklog entries.
+5. Inspect the latest project architecture and dependency configuration.
+6. Identify the actual implementations of the platform-admin, authentication, RBAC, support, billing, pricing, AI-cost, audit, tenant-isolation, and notification subsystems.
+7. Determine which parts of Prompt 62 already exist.
+8. Identify existing tests and their actual execution commands.
+9. Establish a baseline before making changes.
+
+Do not assume that the repository still matches an earlier inspection. The current repository is the source of truth.
+
+If the current codebase differs from previous reports, follow the current implementation and document the discrepancy.
+
+## 0.2 Preserve Existing Functionality
+
+Follow strict incremental-development principles.
+
+* Do not rewrite working modules merely to simplify the audit.
+* Do not replace the application architecture.
+* Do not migrate frameworks.
+* Do not introduce PostgreSQL, Redis, or other infrastructure without a demonstrated technical necessity and explicit project justification.
+* Do not delete existing functionality to make tests pass.
+* Do not silently weaken authentication, authorization, validation, financial controls, or tenant isolation.
+* Do not change public API contracts unnecessarily.
+* Do not introduce unrelated features.
+* Do not overwrite user changes.
+* Do not create duplicate services or competing sources of truth.
+* Do not create another platform-admin panel.
+* Do not mark unfinished functionality as implemented.
+* Do not disable failing tests simply to obtain a green result.
+
+Every modification must have a clear technical justification.
+
+Prefer the smallest safe fix that addresses the verified root cause.
+
+## 0.3 Evidence-Based Reporting
+
+For every important finding, record:
+
+* Finding ID.
+* Severity.
+* Affected module or file.
+* Exact defect or risk.
+* Evidence supporting the finding.
+* Whether the issue was reproduced.
+* Root cause.
+* Applied fix, if any.
+* Regression test added or updated.
+* Actual verification result.
+* Remaining limitations.
+
+Use these statuses consistently:
+
+* `EXECUTED-PASS`
+* `EXECUTED-FAIL`
+* `BLOCKED`
+* `NOT-EXECUTED`
+* `REPORTED-FROM-WORKLOG`
+* `STATIC-REVIEW-ONLY`
+
+Never report a test as executed unless the command or test actually ran and its result was observed.
+
+A previous Worklog entry is historical evidence, not proof that the current code passes.
+
+If a command fails because of missing dependencies, credentials, unavailable services, environment restrictions, or unrelated infrastructure, report the exact blocker. Do not convert a blocked test into a pass.
+
+Never invent test counts, browser results, coverage percentages, security certifications, or production-readiness claims.
+
+---
+
+# SECTION 1 — BASELINE AND REPOSITORY HEALTH
+
+Inspect the complete project structure and establish a reproducible baseline.
+
+Verify:
+
+1. Git branch and commit.
+2. Working-tree status.
+3. Dependency manager and lockfile consistency.
+4. Runtime and framework versions.
+5. TypeScript configuration.
+6. Lint configuration.
+7. Unit and integration test configuration.
+8. E2E test configuration.
+9. Database schema and migrations.
+10. Environment variable validation.
+11. Build and start scripts.
+12. CI configuration, if present.
+13. Existing security and operational documentation.
+14. Worklog accuracy and completeness.
+
+Determine the correct package manager from the repository configuration. Do not arbitrarily mix npm, pnpm, Yarn, and Bun.
+
+Inspect available scripts before executing them.
+
+Do not install or upgrade dependencies indiscriminately.
+
+Do not delete lockfiles, generated artifacts, or project data to force a successful build.
+
+Record the baseline results before making any fixes.
+
+If a dependency installation is required, use the project's documented package manager and respect the existing lockfile.
+
+---
+
+# SECTION 2 — PLATFORM ADMIN AUTHENTICATION AND RBAC
+
+Audit the existing platform-admin security implementation.
+
+Relevant areas may include:
+
+* `src/lib/platform/auth.ts`
+* `src/lib/platform/rbac.ts`
+* `src/lib/platform/http.ts`
+* `src/lib/platform/audit.ts`
+* `src/lib/platform/user-lifecycle.ts`
+* `src/app/api/v1/platform/`
+* Platform-admin UI and supporting services.
+* Platform security documentation.
+* Existing operator-bootstrap scripts.
+
+Verify the actual paths and implementation before relying on these examples.
+
+## 2.1 Authentication
+
+Verify that:
+
+* Platform-admin requests require authenticated platform-operator sessions.
+* Tenant membership or tenant-admin privileges do not grant platform-admin access.
+* Platform privileges are derived from trusted server-side data.
+* Session invalidation and session-version checks are consistently enforced.
+* Disabled, suspended, expired, or otherwise invalid sessions cannot perform protected operations.
+* High-risk actions require the documented reauthentication process.
+* Authentication errors do not disclose sensitive internal information.
+* No endpoint trusts a client-supplied role, permission list, or operator identity.
+* Bootstrap procedures do not expose default credentials or public privilege-escalation endpoints.
+
+Test both successful and unsuccessful authentication paths.
+
+## 2.2 Authorization and Permission Boundaries
+
+Audit every platform API route and its HTTP methods.
+
+Build an inventory containing:
+
+* Route and HTTP method.
+* Authentication requirement.
+* Required permission.
+* Additional validation.
+* Reauthentication requirement, where applicable.
+* Audit-log behavior.
+* Test coverage.
+* Verification status.
+
+Verify that authorization is enforced on the server for every protected operation.
+
+UI visibility is not authorization.
+
+Test the existing roles individually, including:
+
+* `PLATFORM_SUPER_ADMIN`
+* `PLATFORM_SUPPORT`
+* `PLATFORM_BILLING`
+* `PLATFORM_AI_COST`
+* `PLATFORM_SECURITY`
+* `PLATFORM_READONLY`
+
+Use the roles actually defined by the current codebase if they have changed.
+
+Verify that permissions follow least privilege.
+
+A read-only operator must not be able to perform mutations by calling an API directly.
+
+A support operator must not gain billing, security, or unrestricted user-management privileges unless explicitly granted by the documented permission model.
+
+Test both allowed and forbidden operations.
+
+Check for:
+
+* Missing permission checks.
+* Incorrect permission mappings.
+* Inconsistent checks between routes.
+* Insecure default behavior.
+* Object-level authorization failures.
+* Privilege escalation.
+* HTTP method bypasses.
+* Unprotected secondary endpoints.
+* Inconsistent error responses that reveal protected information.
+
+Do not assume every route file corresponds to exactly one endpoint. Count route files, exported HTTP handlers, and actual logical endpoints separately when reporting coverage.
+
+## 2.3 Super-Admin Lifecycle
+
+Verify that:
+
+* The last active super-admin cannot be removed or disabled through ordinary lifecycle operations.
+* Concurrent operations cannot trivially bypass the last-super-admin safeguard.
+* Platform operators cannot accidentally suspend or modify their own account in a way that locks the platform out, unless an explicitly safe recovery mechanism exists.
+* Operator bootstrap and recovery procedures are documented and appropriately restricted.
+* Role changes, deactivation, and other privileged lifecycle operations are audited.
+
+Do not invent a public recovery endpoint.
+
+---
+
+# SECTION 3 — TENANT ISOLATION AND CUSTOMER DATA PROTECTION
+
+Treat tenant isolation as a critical security boundary.
+
+Inspect all relevant database access layers, API routes, server actions, services, exports, and background jobs.
+
+Verify that a tenant user cannot access another tenant's:
+
+* Accounts.
+* Transactions.
+* Financial statements.
+* Invoices.
+* Customers.
+* Suppliers.
+* Inventory.
+* CRM records.
+* Documents and attachments.
+* Reports and exports.
+* Notifications.
+* Subscription information not intended for that tenant.
+* AI-generated business information.
+* Usage records.
+* Audit records.
+* Integration credentials.
+
+Inspect:
+
+* Missing tenant filters.
+* Client-controlled tenant identifiers.
+* Insecure direct object references.
+* Cross-tenant foreign-key relationships.
+* Background jobs that lose tenant context.
+* Export endpoints.
+* Bulk operations.
+* Search and reporting services.
+* Caches and derived data.
+* AI context construction.
+* File-storage access.
+* Error messages that expose records from other tenants.
+
+For each applicable operation, verify that tenant identity is obtained from a trusted server-side context and that requested resources are authorized against it.
+
+Do not rely on a UI filter to establish isolation.
+
+Add automated cross-tenant regression tests using at least two distinct tenants and representative roles.
+
+Tests must prove both:
+
+1. A tenant can access its own authorized records.
+2. The same tenant cannot read, update, delete, export, or infer another tenant's protected records.
+
+Test unauthorized object IDs and forged tenant IDs.
+
+Where an operation is legitimately platform-wide, verify that it uses the dedicated platform authorization path instead of weakening tenant-level checks.
+
+Do not expose real customer data during testing.
+
+---
+
+# SECTION 4 — CUSTOMER ACCOUNT LIFECYCLE AND SUPPORT CENTER
+
+Audit:
+
+* Account suspension and reactivation.
+* Session invalidation.
+* User notifications.
+* Support ticket creation.
+* Ticket ownership and access.
+* Internal notes.
+* Ticket replies.
+* Resolution summaries.
+* Reopening rules.
+* Ticket status transitions.
+* Platform-operator access to customer support data.
+* Support-related audit events.
+
+Verify that internal notes never leak through APIs, serializers, exports, notifications, or client-side state.
+
+Test all documented ticket transitions.
+
+Test invalid transitions, unauthorized ticket access, duplicate submissions, malformed input, and concurrent updates where relevant.
+
+Verify that suspension prevents future authenticated access through all relevant authentication paths, not just the primary login screen.
+
+Verify that reactivation does not silently restore old sessions if the intended security design requires new authentication.
+
+Do not implement account impersonation as part of this phase.
+
+Do not add temporary support access unless it is already part of the current design and can be verified safely.
+
+If a feature is intentionally absent, document the limitation instead of inventing a partial implementation.
+
+---
+
+# SECTION 5 — FINANCIAL INTEGRITY AND BILLING AUDIT
+
+This section is critical.
+
+Inspect the existing implementations of:
+
+* `PricingService`
+* Subscription lifecycle.
+* Payment-provider verification.
+* Invoice generation.
+* Tax calculations.
+* Refunds and cancellations.
+* Usage metering.
+* AI Cost Ledger.
+* Financial exports.
+* Audit logging.
+* Tenant financial calculations.
+
+Use the actual names and paths found in the repository.
+
+## 5.1 Money and Arithmetic
+
+Verify that:
+
+* Monetary values use integer minor units or an appropriately precise decimal representation.
+* Financial calculations do not rely on unsafe floating-point arithmetic.
+* Currency precision is handled correctly.
+* Rounding rules are explicit and consistent.
+* Overflow and invalid numeric values are rejected.
+* Currency conversions do not silently mix currencies.
+* Tax calculations use documented rules and explicit rounding.
+* Financial totals reconcile with their underlying records.
+
+Do not change historical financial data merely to make calculations match.
+
+If a discrepancy is found, reproduce it with a deterministic fixture and fix the underlying logic.
+
+## 5.2 Payment Integrity
+
+Verify that:
+
+* The trusted payment-provider verification flow determines payment truth.
+* Client-side success messages cannot independently activate a paid subscription.
+* Provider callbacks and webhooks validate authenticity according to the provider's protocol.
+* Duplicate webhook delivery does not duplicate financial effects.
+* Retries are safe and idempotent.
+* Invalid, replayed, or mismatched events are rejected.
+* Payment amounts, currencies, references, and customer identities are verified.
+* Subscription state transitions are consistent with verified payment events.
+* Failed, pending, refunded, cancelled, and disputed payments are represented correctly where supported.
+
+Do not use real payment credentials or perform live charges.
+
+Use mocks, sandbox integrations, or deterministic fixtures.
+
+If sandbox credentials are unavailable, mark the corresponding live-provider verification `BLOCKED` and still test the local verification logic.
+
+## 5.3 Pricing and Subscription Authority
+
+Verify that `PricingService`, or the current designated pricing authority, is the sole source of customer-facing prices.
+
+Check that the browser cannot submit arbitrary prices and obtain an unauthorized purchase.
+
+Test subscription period calculations, renewal, expiry, cancellation, upgrades, downgrades, and invoice consistency where supported.
+
+Do not introduce a second competing pricing source.
+
+## 5.4 AI Usage and Cost Controls
+
+Verify that the designated usage service is the authoritative AI quota enforcement layer.
+
+Verify that the AI Cost Ledger is the authoritative record for AI costs.
+
+Test:
+
+* Requests at the quota limit.
+* Requests exceeding the quota.
+* Concurrent requests competing for remaining quota.
+* Failed model requests.
+* Retries.
+* Duplicate accounting events.
+* Missing or malformed usage metadata.
+* Unexpected model pricing metadata.
+* Provider failures.
+* Usage reconciliation.
+* Separation between customer charges and internal AI provider costs.
+
+A model response must never be able to fabricate authoritative financial totals or bypass quota enforcement.
+
+Use deterministic financial queries as the source of financial facts. LLMs may explain those facts but must not invent balances, transactions, costs, or accounting records.
+
+If exact provider costs cannot be verified because authoritative rates are missing, mark the issue clearly. Do not invent production rates or silently substitute estimates for actual costs.
+
+---
+
+# SECTION 6 — AUDIT LOGGING, SECURITY EVENTS, AND ANNOUNCEMENTS
+
+Inspect the current platform audit implementation.
+
+Verify that security-sensitive mutations produce appropriate audit records, including:
+
+* Operator role changes.
+* User suspension and reactivation.
+* Subscription changes.
+* Payment-related administrative actions.
+* Pricing changes.
+* AI usage or cost adjustments.
+* Support-ticket administrative actions.
+* Announcement creation and delivery.
+* Security configuration changes.
+* Failed high-risk operations where required.
+
+Verify that audit records contain sufficient actor, action, target, timestamp, and outcome context without exposing secrets or unnecessary personal data.
+
+Check for accidental updates or deletions of historical audit entries.
+
+Do not claim cryptographic tamper-evidence unless it is actually implemented and verified.
+
+Review audit retention and storage limitations.
+
+## Announcements
+
+Verify:
+
+* Recipient validation.
+* Authorization.
+* Input validation.
+* Maximum recipient constraints.
+* Partial-failure reporting.
+* Duplicate delivery handling.
+* Audit events.
+* Localization.
+* Safe rendering of user-supplied content.
+
+Do not report all deliveries as successful when only some succeeded.
+
+Do not trigger real bulk communications during testing.
+
+---
+
+# SECTION 7 — API VALIDATION AND APPLICATION SECURITY
+
+Review the application using a risk-based security audit.
+
+Inspect:
+
+* Input schemas.
+* Output serializers.
+* Authentication middleware.
+* Authorization checks.
+* Rate limits.
+* CSRF protection where applicable.
+* CORS configuration.
+* Content Security Policy and other security headers.
+* Session cookie attributes.
+* Password handling.
+* Secret management.
+* Environment validation.
+* File upload and download paths.
+* SQL injection risks.
+* Cross-site scripting risks.
+* Open redirects.
+* Server-side request forgery risks where external URLs are fetched.
+* Path traversal.
+* Unsafe deserialization.
+* Sensitive information in logs.
+* Error disclosure.
+* Dependency vulnerabilities.
+* Abuse-prone AI endpoints.
+* Expensive reporting or export operations.
+* Unbounded queries and payloads.
+
+Do not introduce security middleware blindly. Confirm how the existing framework and architecture handle each concern.
+
+For every security control, distinguish:
+
+* Verified implemented.
+* Partially implemented.
+* Missing.
+* Not applicable.
+* Not verifiable in the current environment.
+
+Do not expose, print, or commit secrets.
+
+If secret-like values are found, report their file locations and remediation steps without copying their contents into the Worklog or final report.
+
+Do not make live destructive requests against production systems.
+
+---
+
+# SECTION 8 — DATABASE, MIGRATIONS, AND DATA CONSISTENCY
+
+Inspect the current database schema, ORM configuration, migrations, indexes, and constraints.
+
+Verify:
+
+* Required foreign keys.
+* Unique constraints.
+* Appropriate indexes.
+* Referential integrity.
+* Transaction boundaries.
+* Atomicity of financial operations.
+* Concurrent update handling.
+* Idempotency constraints.
+* Correct rollback behavior.
+* Safe migration ordering.
+* Consistency between schema and application code.
+* No unexpected schema drift.
+
+Pay particular attention to operations that modify multiple records, such as:
+
+* Payment confirmation and subscription activation.
+* Usage reservation and usage settlement.
+* Customer suspension and session invalidation.
+* Support-ticket resolution and audit creation.
+* Refund and financial-ledger updates.
+
+Where appropriate, use database transactions and unique constraints to protect invariants.
+
+Do not create migrations merely to satisfy a test if the schema does not require the change.
+
+Never run destructive migrations against production data.
+
+Use an isolated test database for integration tests.
+
+If a test database is not available, report which database-dependent tests could not run.
+
+---
+
+# SECTION 9 — INTERNATIONALIZATION, RTL/LTR, AND UI REGRESSION
+
+Verify the existing English and Persian interfaces.
+
+Test:
+
+* English LTR layout.
+* Persian RTL layout.
+* Language switching.
+* Text overflow.
+* Long localized strings.
+* Tables and forms.
+* Dialogs and menus.
+* Navigation.
+* Validation messages.
+* Loading, empty, error, and success states.
+* Responsive layouts.
+* Keyboard accessibility.
+* Focus management.
+* Screen-reader labels where applicable.
+* Color contrast.
+* Interactive controls.
+* Permission-dependent UI.
+* Mobile navigation.
+
+Use the existing design system and component conventions.
+
+Do not redesign the application during this phase.
+
+If browser automation is available, run representative desktop and mobile flows using the existing test infrastructure.
+
+At minimum, use the project's documented viewport targets where applicable, including:
+
+* 360 × 640
+* 390 × 844
+* 412 × 915
+* 1366 × 768
+* 1920 × 1080
+
+Report which viewport tests actually ran.
+
+Do not claim visual QA if only source code was inspected.
+
+Do not capture or expose real customer data in screenshots.
+
+---
+
+# SECTION 10 — AI SAFETY AND FINANCIAL ANSWER CORRECTNESS
+
+Audit all AI features that interact with customer financial or business information.
+
+Verify that:
+
+1. Tenant context is constructed from authenticated server-side data.
+2. User prompts cannot override server-side permissions.
+3. Retrieved records are tenant-scoped.
+4. The model cannot directly grant itself tools or permissions.
+5. Tool execution has explicit authorization.
+6. Tool arguments are validated.
+7. Financial calculations remain deterministic.
+8. AI output is not trusted as a source of accounting truth.
+9. Model failures and malformed responses are handled safely.
+10. Sensitive records are not unnecessarily sent to external model providers.
+11. Provider errors do not leak secrets.
+12. AI quota enforcement cannot be bypassed through alternate endpoints.
+13. Prompt injection in retrieved documents cannot override system security boundaries.
+14. Logs avoid recording unnecessary sensitive prompts or financial information.
+
+Create adversarial regression tests for the most important risks.
+
+Examples include:
+
+* A prompt requesting another tenant's financial records.
+* A retrieved document instructing the model to ignore access restrictions.
+* A user asking the AI to fabricate a balance.
+* A request attempting to bypass AI quotas.
+* Malformed tool arguments.
+* A model response claiming a payment succeeded without a verified payment event.
+
+Test actual application controls, not merely the model's verbal refusal.
+
+---
+
+# SECTION 11 — TESTING STRATEGY
+
+Build a risk-based verification matrix.
+
+Do not indiscriminately execute every command without checking its purpose and side effects.
+
+Inspect each available test script before running it.
+
+Run appropriate checks in a safe order:
+
+1. Baseline environment checks.
+2. TypeScript type checking.
+3. Linting.
+4. Unit tests.
+5. Existing project-specific regression checks.
+6. Platform-admin tests.
+7. Tenant-isolation tests.
+8. Billing and financial-integrity tests.
+9. AI quota and cost tests.
+10. Database integration tests.
+11. API authorization tests.
+12. E2E tests.
+13. Browser and responsive checks, if available.
+14. Production build, if the environment safely permits it.
+
+Follow the actual project scripts and conventions.
+
+Do not assume commands such as `bun run test` or `npm run build` exist without inspecting `package.json` and the package manager configuration.
+
+If a previous environment restriction prevents a production build, investigate whether the restriction still applies. Do not bypass the restriction by deleting active build artifacts or terminating a running process without authorization.
+
+## Test design requirements
+
+For critical authorization and financial operations, include:
+
+* Positive cases.
+* Negative cases.
+* Boundary cases.
+* Malformed input.
+* Unauthorized access.
+* Concurrent requests where relevant.
+* Duplicate delivery or retry behavior.
+* Regression cases for previously identified defects.
+
+Use isolated test data.
+
+Avoid network calls and live provider operations unless the environment is explicitly configured for safe sandbox testing.
+
+Tests must be deterministic wherever practical.
+
+If flaky tests are found, investigate their root cause rather than repeatedly rerunning them until they pass.
+
+## Coverage reporting
+
+Report actual results, including:
+
+* Number of tests discovered.
+* Number executed.
+* Number passed.
+* Number failed.
+* Number skipped.
+* Number blocked.
+* Relevant test commands.
+* Execution environment.
+* Coverage results, if measured.
+
+Do not invent coverage numbers.
+
+If a test suite does not expose test counts, state that the exact count was not available.
+
+---
+
+# SECTION 12 — ROOT-CAUSE REMEDIATION
+
+After baseline inspection, prioritize findings according to risk.
+
+Suggested priority:
+
+* P0: Critical data exposure, privilege escalation, financial corruption, or account takeover.
+* P1: High-impact authorization, payment, tenant-isolation, or quota-enforcement defects.
+* P2: Significant correctness, reliability, workflow, or operational defects.
+* P3: Minor defects, usability issues, and maintainability improvements.
+
+For each confirmed defect:
+
+1. Reproduce the issue when feasible.
+2. Identify the root cause.
+3. Implement the smallest safe fix.
+4. Add or update a regression test.
+5. Run the relevant targeted test.
+6. Run broader regression tests affected by the change.
+7. Review the diff for unintended side effects.
+8. Record the outcome in the findings register.
+
+If the defect cannot be reproduced but a credible code-level vulnerability is visible, document the evidence and confidence level.
+
+Do not silently skip difficult findings.
+
+If a fix would require a significant architectural change, data migration, unavailable credentials, or a risky production operation, document the blocker and propose a safe implementation plan rather than making an unreviewed high-risk change.
+
+Do not claim that the entire project is bug-free. The goal is to identify and remediate the defects discoverable within the defined scope and environment.
+
+---
+
+# SECTION 13 — REGRESSION PROTECTION
+
+After applying fixes:
+
+* Re-run relevant tests.
+* Check for unintended changes to public APIs.
+* Verify that existing working features remain functional.
+* Check database migration compatibility.
+* Verify EN/FA localization remains intact.
+* Verify RTL/LTR behavior remains intact.
+* Verify tenant isolation has not weakened.
+* Verify platform-admin permissions remain least-privilege.
+* Verify financial and AI authority boundaries remain intact.
+* Verify that logging does not disclose secrets.
+* Review the complete diff.
+
+Do not introduce a new test that simply duplicates an existing test without adding meaningful coverage.
+
+Do not weaken assertions to make the suite pass.
+
+If a test reveals a pre-existing unrelated failure, record it separately.
+
+---
+
+# SECTION 14 — DOCUMENTATION AND WORKLOG
+
+Update the project's existing Worklog using its established format.
+
+Do not create a competing Worklog if one already exists.
+
+Record:
+
+* Prompt number: 63.
+* Start and completion timestamps, using the environment's actual timestamps.
+* Baseline Git commit.
+* Repository state before and after modifications.
+* Scope of the audit.
+* Modules inspected.
+* Findings and severity.
+* Confirmed root causes.
+* Files modified.
+* Fixes applied.
+* Tests actually executed.
+* Exact commands.
+* Pass/fail/blocked results.
+* Build result.
+* Browser QA result.
+* Database test result.
+* Known limitations.
+* Remaining risks.
+* Recommended next actions.
+
+Clearly separate:
+
+1. Work performed and independently observed.
+2. Results inherited from earlier Worklog entries.
+3. Static code review findings.
+4. Tests blocked by environmental constraints.
+5. Features not implemented.
+6. Features intentionally excluded from scope.
+
+Do not remove historical Worklog records.
+
+Update relevant security documentation if the audit reveals a material change in behavior.
+
+Keep documentation concise enough to remain useful but detailed enough to support future verification.
+
+---
+
+# SECTION 15 — REQUIRED FINAL DELIVERABLES
+
+At completion, provide the following deliverables.
+
+## A. Executive Summary
+
+Include:
+
+* Overall repository health.
+* Highest-risk findings.
+* Critical fixes completed.
+* Critical findings still open.
+* Whether production readiness has been demonstrated, not merely assumed.
+
+## B. Findings Register
+
+Use a table:
+
+| ID | Severity | Module | Finding | Evidence | Fix | Regression Test | Status |
+| -- | -------- | ------ | ------- | -------- | --- | --------------- | ------ |
+
+Include confirmed issues and material unresolved risks.
+
+Do not inflate findings by counting the same root cause repeatedly.
+
+## C. Security Verification Matrix
+
+Include:
+
+* Platform authentication.
+* Platform RBAC.
+* Tenant isolation.
+* Session invalidation.
+* Support-ticket access.
+* Audit logging.
+* Payment verification.
+* Pricing authority.
+* AI quota enforcement.
+* AI Cost Ledger.
+* Secret management.
+* Database integrity.
+* AI financial-answer boundaries.
+
+For each, report implementation status and actual verification evidence.
+
+## D. Test Execution Report
+
+For every executed command, include:
+
+* Exact command.
+* Actual result.
+* Test counts where available.
+* Execution status.
+* Any blocker.
+
+## E. Change Summary
+
+List changed files grouped by subsystem and explain why each change was necessary.
+
+## F. Remaining Risks and Blockers
+
+Identify what still needs attention.
+
+Do not conceal missing features, incomplete test coverage, or unverified production behavior.
+
+## G. Worklog Confirmation
+
+Identify the exact Worklog file updated and summarize its contents.
+
+## H. Next-Step Recommendation
+
+Recommend the next phase only after evaluating the actual results.
+
+Do not automatically begin another implementation phase.
+
+Do not invent a future prompt number if the project convention differs.
+
+---
+
+# SECTION 16 — ACCEPTANCE CRITERIA
+
+This phase can be considered complete only when:
+
+1. The existing repository has been inspected.
+2. A baseline has been recorded.
+3. The highest-risk reachable security and financial boundaries have been reviewed.
+4. Confirmed defects have been fixed where safely possible.
+5. Regression tests have been added for material fixes.
+6. Relevant available tests have actually run.
+7. Failed and blocked tests are reported honestly.
+8. The complete diff has been reviewed.
+9. The Worklog has been updated.
+10. Remaining risks are documented.
+11. No unrelated rewrite has been introduced.
+12. No feature has been falsely reported as implemented.
+13. No production credentials, financial data, or secrets have been exposed.
+14. No unsafe production-side effects have been performed.
+
+If any acceptance criterion cannot be satisfied, report it explicitly.
+
+Do not claim full completion when critical criteria remain blocked.
+
+---
+
+# FINAL EXECUTION DIRECTIVE
+
+Begin by inspecting the actual current repository and recording the baseline.
+
+Then execute the audit in a risk-based order.
+
+Do not stop after generating a checklist or writing a report.
+
+Investigate the implementation, fix verified defects, create meaningful regression tests, and execute the tests that the current environment supports.
+
+Do not fabricate evidence.
+
+Do not start Prompt 64 or another feature-development phase automatically.
+
+The final objective is a demonstrably more secure, reliable, and correct AI BUSINESS COPILOT codebase, supported by reproducible evidence and an honest account of what remains unverified.

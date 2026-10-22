@@ -318,6 +318,11 @@ model Business {
   subscriptionEvents   SubscriptionEvent[]
   usagePeriods         UsagePeriod[]
   usageEvents          UsageEvent[]
+  // PROMPT 63 F-3 — AI Cost Ledger rows share the business lifecycle:
+  // a cost record without its anchor UsageEvent (which cascades) is an
+  // unreconcilable orphan, so the ledger cascades with the business like
+  // every other business-scoped financial record (74-relation convention).
+  aiCostRecords        AiCostRecord[]
   checkoutSessions     CheckoutSession[]
   // Prompt 31 — customer data portability jobs (tenant-scoped, cascade).
   dataExportJobs       DataExportJob[]
@@ -1340,7 +1345,12 @@ model AiCostRecord {
   usageEventId             String  @unique
   // Logical AI operation correlation (Prompt 21 requestId semantics).
   requestId                String
+  // PROMPT 63 F-3 — real relation with Cascade: UsageEvent (the anchor)
+  // cascades with the business, so a surviving cost row would be an
+  // orphan whose anchor can never come back (verified defect: 5 orphan
+  // rows surfaced by ai-cost-consistency after business cleanup).
   businessId               String
+  business                 Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   usagePeriodId            String?
   // Plan snapshot AT USAGE TIME (§25) — later plan changes never rewrite it.
   planCodeAtUsage          String

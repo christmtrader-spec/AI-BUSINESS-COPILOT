@@ -314,7 +314,22 @@ section("PREFERENCES");
 const prefs = await apiJson(fA2, "/api/v1/me/notification-preferences");
 check("PREFS: effective map returned (§60)", prefs.res.status === 200 && Array.isArray(prefs.body?.data?.preferences));
 // Prompt 37 catalog extension: 19 → 22 types (BUSINESS_CRM_TASK_*).
-check("PREFS: all 23 catalog types present (§36; 38-F: +BUSINESS_INVENTORY_LOW_STOCK)", new Set((prefs.body?.data?.preferences ?? []).map((p) => p.notificationType)).size === 23, `types=${new Set((prefs.body?.data?.preferences ?? []).map((p) => p.notificationType)).size}`);
+// PROMPT 63 fix: the catalog legitimately GREW to 28 types (R60/R61 added
+// inventory-digest, weekly-digest, api-key and stocktake types), so an
+// exact `=== 23` count was a stale expectation that failed against the
+// real catalog. The honest invariant is SUPERSET semantics derived from
+// the AUTHORITATIVE catalog at runtime: every type declared in
+// src/lib/notifications/catalog.ts must have a preferences row (§60 —
+// the effective map covers the whole catalog), and the total must be ≥ 23.
+const catalogSrc = readFileSync("src/lib/notifications/catalog.ts", "utf8");
+const catalogTypesMatch = catalogSrc.match(/export const NOTIFICATION_TYPES[\s\S]*?\] as const/);
+const catalogTypes = (catalogTypesMatch?.[0].match(/"[A-Z_]+"/g) ?? []).map((s) => s.slice(1, -1));
+check("PREFS: catalog parse sane (≥23 authoritative types)", catalogTypes.length >= 23, `catalog=${catalogTypes.length}`);
+check("PREFS: every authoritative catalog type has a preferences row (§60 superset law)", (() => {
+  const present = new Set((prefs.body?.data?.preferences ?? []).map((p) => p.notificationType));
+  const missing = catalogTypes.filter((t) => !present.has(t));
+  return present.size >= 23 && missing.length === 0;
+})(), `types=${new Set((prefs.body?.data?.preferences ?? []).map((p) => p.notificationType)).size} catalog=${catalogTypes.length}`);
 check("PREFS: mandatory channels not overridable (§64)", (prefs.body?.data?.preferences ?? []).every((p) => (p.mandatory ? !p.overridable && p.enabled === true : true)));
 check("PREFS: IN_APP always mandatory across catalog (§10)", (prefs.body?.data?.preferences ?? []).filter((p) => p.channel === "IN_APP").every((p) => p.mandatory));
 
