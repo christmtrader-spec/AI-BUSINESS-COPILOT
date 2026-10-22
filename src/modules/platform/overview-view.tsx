@@ -7,15 +7,19 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
+import { ArrowRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAppStore } from "@/store/app-store";
 import { platformQueries } from "./platform-api";
 import { formatCount, StatusBadge } from "./kit";
 
 export function OverviewView() {
   const t = useTranslations("platform");
   const tSub = useTranslations("platform.subscriptionStatus");
+  const navigate = useAppStore((s) => s.navigate);
   const { data, isLoading, isError } = useQuery({
     queryKey: ["platform", "overview"],
     queryFn: platformQueries.overview,
@@ -81,6 +85,8 @@ export function OverviewView() {
     },
   ];
 
+  const security = data.security;
+
   return (
     <div className="space-y-6">
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label={t("overview.title")}>
@@ -95,6 +101,52 @@ export function OverviewView() {
             </CardContent>
           </Card>
         ))}
+
+        {/* Prompt 63 — Security summary card (same grid area as the support
+            cards). Warning-toned accent when failed logins exist; the label
+            itself carries the meaning so color is never the only signal. */}
+        {security ? (
+          <Card className={security.failedLoginsWindow > 0 ? "border-amber-500/40" : undefined}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">{t("overview.securityTitle")}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span>{t("overview.securityLogins")}</span>
+                <span className="tabular-nums">{formatCount(security.loginsWindow)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span
+                  className={
+                    security.failedLoginsWindow > 0 ? "text-amber-700 dark:text-amber-400" : undefined
+                  }
+                >
+                  {t("overview.securityFailedLogins")}
+                </span>
+                <span
+                  className={`tabular-nums ${
+                    security.failedLoginsWindow > 0 ? "text-amber-700 dark:text-amber-400" : ""
+                  }`}
+                >
+                  {formatCount(security.failedLoginsWindow)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span>{t("overview.securitySuspended")}</span>
+                <span className="tabular-nums">{formatCount(security.suspendedUsers)}</span>
+              </div>
+              <Button
+                variant="link"
+                size="sm"
+                className="text-muted-foreground h-auto p-0 text-xs"
+                onClick={() => navigate({ kind: "platform", section: "security" })}
+              >
+                {t("overview.securityOpen")}
+                <ArrowRight className="size-3.5 rtl:-scale-x-100" aria-hidden="true" />
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
       </section>
 
       <div className="grid gap-4 lg:grid-cols-3">

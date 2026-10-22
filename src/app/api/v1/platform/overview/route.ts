@@ -15,6 +15,7 @@ import { db } from "@/lib/db";
 import { getAiCostHealth } from "@/lib/ai/cost/economics";
 import { publicPlatformConfigSummary } from "@/lib/legal/public-config";
 import { SUPPORT_TICKET_OPEN_STATUSES } from "@/lib/platform/support";
+import { SECURITY_EVENTS } from "@/lib/auth/security-events/service";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +43,9 @@ export const GET = route(async (_req: NextRequest) => {
     supportOpen,
     supportAwaitingFirstResponse,
     supportUrgentOpen,
+    securityLoginsWindow,
+    securityFailedLoginsWindow,
+    securitySuspendedUsers,
   ] = await Promise.all([
     db.user.count(),
     db.business.count(),
@@ -76,6 +80,15 @@ export const GET = route(async (_req: NextRequest) => {
         priority: "URGENT",
       },
     }),
+    // R63-P — Security Center headline (counts only, safe for every
+    // platform role; the feed itself stays behind platform:security:read).
+    db.securityEvent.count({
+      where: { eventType: SECURITY_EVENTS.loginSuccess, createdAt: { gte: from } },
+    }),
+    db.securityEvent.count({
+      where: { eventType: SECURITY_EVENTS.loginFailed, createdAt: { gte: from } },
+    }),
+    db.user.count({ where: { suspendedAt: { not: null } } }),
   ]);
 
   const byStatus = Object.fromEntries(
@@ -150,6 +163,12 @@ export const GET = route(async (_req: NextRequest) => {
       open: supportOpen,
       awaitingFirstResponse: supportAwaitingFirstResponse,
       urgentOpen: supportUrgentOpen,
+    },
+    security: {
+      /** Counts over the SAME windowDays as every other overview card (30d). */
+      loginsWindow: securityLoginsWindow,
+      failedLoginsWindow: securityFailedLoginsWindow,
+      suspendedUsers: securitySuspendedUsers,
     },
   });
 });

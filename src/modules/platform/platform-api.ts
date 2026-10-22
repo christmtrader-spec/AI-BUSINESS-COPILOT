@@ -105,6 +105,8 @@ export type PlatformOverview = {
     awaitingFirstResponse: number;
     urgentOpen: number;
   };
+  /** Prompt 63 — Security Center counters (window = windowDays). */
+  security: { loginsWindow: number; failedLoginsWindow: number; suspendedUsers: number };
 };
 
 export type PlatformBusiness = {
@@ -361,6 +363,32 @@ export type PlatformAuditEntry = {
   createdAt: string;
 };
 
+/* ---------------- Prompt 63 — Security Center (ورود و خروج) ---------------- */
+
+export type PlatformSecuritySummary = {
+  generatedAt: string;
+  logins24h: number;
+  failedLogins24h: number;
+  rateLimitedLogins24h: number;
+  mfaFailures24h: number;
+  sessionRevocations7d: number;
+  suspendedUsers: number;
+  activeOperators: number;
+  activeSessions: number;
+  eventTypes24h: Record<string, number>;
+};
+
+export type PlatformSecurityEvent = {
+  id: string;
+  eventType: string;
+  success: boolean;
+  reasonCode: string | null;
+  email: string | null;
+  userAgent: string | null;
+  ipHashPrefix: string | null;
+  createdAt: string;
+};
+
 export type PlatformOperator = {
   id: string;
   userId: string;
@@ -501,6 +529,12 @@ export const platformQueries = {
   audit: (params: string) =>
     platformApi<{ entries: PlatformAuditEntry[]; page: PageMeta }>(
       `/api/v1/platform/audit${params ? `?${params}` : ""}`,
+    ),
+  securitySummary: () =>
+    platformApi<PlatformSecuritySummary>("/api/v1/platform/security/summary"),
+  securityEvents: (params: string) =>
+    platformApi<{ events: PlatformSecurityEvent[]; page: PageMeta; facets: { eventTypes: string[] } }>(
+      `/api/v1/platform/security/events${params ? `?${params}` : ""}`,
     ),
   operators: (params: string) =>
     platformApi<{ operators: PlatformOperator[]; page: PageMeta }>(

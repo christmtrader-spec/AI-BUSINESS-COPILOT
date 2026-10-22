@@ -109,7 +109,7 @@ const GROUPS: Array<{ labelKey: string; entries: NavEntry[] }> = [
     entries: [
       { section: "audit", labelKey: "sections.audit", icon: ScrollText, permission: "platform:audit:read" },
       { section: "operators", labelKey: "sections.operators", icon: UsersRound, permission: "platform:operators:read" },
-      { section: "security", labelKey: "sections.security", icon: ShieldCheck, permission: "platform:audit:read" },
+      { section: "security", labelKey: "sections.security", icon: ShieldCheck, permission: "platform:security:read" },
     ],
   },
   {
@@ -154,10 +154,7 @@ export function PlatformShell({
                 <SidebarGroupContent>
                   <SidebarMenu>
                     {visible.map((entry) => {
-                      const active =
-                        section === entry.section ||
-                        // security landing highlights audit entries too
-                        (entry.section === "audit" && section === "security");
+                      const active = section === entry.section;
                       return (
                         <SidebarMenuItem key={entry.section}>
                           <SidebarMenuButton
@@ -231,6 +228,7 @@ const PaymentsView = lazy(() => import("./payments-view").then((m) => ({ default
 const PricingView = lazy(() => import("./pricing-view").then((m) => ({ default: m.PricingView })));
 const AiCostView = lazy(() => import("./ai-cost-view").then((m) => ({ default: m.AiCostView })));
 const AuditView = lazy(() => import("./audit-view").then((m) => ({ default: m.PlatformAuditView })));
+const SecurityView = lazy(() => import("./security-view").then((m) => ({ default: m.SecurityView })));
 const OperatorsView = lazy(() => import("./operators-view").then((m) => ({ default: m.OperatorsView })));
 const SystemView = lazy(() => import("./system-view").then((m) => ({ default: m.SystemView })));
 
@@ -263,8 +261,9 @@ function PlatformSectionContent({ section }: { section: PlatformSection }) {
     case "ai-cost":
       return <AiCostView />;
     case "audit":
-    case "security":
       return <AuditView />;
+    case "security":
+      return <SecurityView />;
     case "operators":
       return <OperatorsView />;
     case "system":
