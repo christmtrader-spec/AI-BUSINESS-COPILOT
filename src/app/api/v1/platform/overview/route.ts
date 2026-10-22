@@ -14,6 +14,7 @@ import { platformOk } from "@/lib/platform/http";
 import { db } from "@/lib/db";
 import { getAiCostHealth } from "@/lib/ai/cost/economics";
 import { publicPlatformConfigSummary } from "@/lib/legal/public-config";
+import { SUPPORT_TICKET_OPEN_STATUSES } from "@/lib/platform/support";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,9 @@ export const GET = route(async (_req: NextRequest) => {
     openAnomalies,
     operators,
     trustConfig,
+    supportOpen,
+    supportAwaitingFirstResponse,
+    supportUrgentOpen,
   ] = await Promise.all([
     db.user.count(),
     db.business.count(),
@@ -55,6 +59,23 @@ export const GET = route(async (_req: NextRequest) => {
     db.aiCostAnomaly.count({ where: { status: "OPEN" } }),
     db.platformOperator.count({ where: { active: true } }),
     publicPlatformConfigSummary(),
+    // Prompt 62 §7.2 — support-desk operational metrics (counts only; the
+    // operator still needs platform:support:read to open any ticket).
+    db.supportTicket.count({
+      where: { status: { in: [...SUPPORT_TICKET_OPEN_STATUSES] } },
+    }),
+    db.supportTicket.count({
+      where: {
+        status: { in: [...SUPPORT_TICKET_OPEN_STATUSES] },
+        firstResponseAt: null,
+      },
+    }),
+    db.supportTicket.count({
+      where: {
+        status: { in: [...SUPPORT_TICKET_OPEN_STATUSES] },
+        priority: "URGENT",
+      },
+    }),
   ]);
 
   const byStatus = Object.fromEntries(
@@ -124,6 +145,11 @@ export const GET = route(async (_req: NextRequest) => {
       readinessBlockers,
       /** The honest headline: NOT ready while any category is unconfigured. */
       verdict: readinessBlockers.length === 0 ? "READY" : "PARTIALLY_READY",
+    },
+    support: {
+      open: supportOpen,
+      awaitingFirstResponse: supportAwaitingFirstResponse,
+      urgentOpen: supportUrgentOpen,
     },
   });
 });

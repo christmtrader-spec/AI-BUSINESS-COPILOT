@@ -45,6 +45,18 @@ export const SUPPORT_TICKET_STATUSES = [
 ] as const;
 export type SupportTicketStatus = (typeof SUPPORT_TICKET_STATUSES)[number];
 
+/**
+ * Prompt 62 §7.2 — the "unresolved" subset used by platform diagnostics
+ * (overview cards). RESOLVED/CLOSED are terminal and never counted as open.
+ */
+export const SUPPORT_TICKET_OPEN_STATUSES = [
+  "OPEN",
+  "TRIAGED",
+  "IN_PROGRESS",
+  "WAITING_FOR_CUSTOMER",
+  "WAITING_FOR_INTERNAL_ACTION",
+] as const;
+
 export const SUPPORT_TICKET_CATEGORIES = [
   "BILLING",
   "TECHNICAL",

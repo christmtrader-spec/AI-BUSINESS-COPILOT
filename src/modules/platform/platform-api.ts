@@ -99,6 +99,12 @@ export type PlatformOverview = {
     readinessBlockers: Array<{ key: string; status: string }>;
     verdict: string;
   };
+  /** Prompt 62 §7.2 — support-desk counters (server-derived, unresolved set). */
+  support: {
+    open: number;
+    awaitingFirstResponse: number;
+    urgentOpen: number;
+  };
 };
 
 export type PlatformBusiness = {
@@ -538,6 +544,12 @@ export const platformMutations = {
   reactivateUser: (userId: string, body: { reason: string; password: string }) =>
     platformApi<{ user: { id: string; suspendedAt: null; sessionVersion: number } }>(
       `/api/v1/platform/users/${userId}/reactivate`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** Prompt 62 §18 — explicit-recipient system announcement (server caps 50). */
+  sendAnnouncement: (body: { recipientUserIds: string[]; message: string }) =>
+    platformApi<{ accepted: number; rejected: number }>(
+      `/api/v1/platform/notifications/announcements`,
       { method: "POST", body: JSON.stringify(body) },
     ),
   supportPatchTicket: (

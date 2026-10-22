@@ -65,6 +65,20 @@ export function OverviewView() {
           ? t("overview.noData")
           : `${(data.ai.costCoverageBps / 100).toFixed(1)}%`,
     },
+    // Prompt 62 §7.2 — support-desk counters.
+    { title: t("overview.supportOpen"), value: formatCount(data.support.open) },
+    {
+      title: t("overview.supportAwaiting"),
+      value: formatCount(data.support.awaitingFirstResponse),
+    },
+    {
+      title: t("overview.supportUrgent"),
+      value: formatCount(data.support.urgentOpen),
+      status:
+        data.support.urgentOpen > 0
+          ? { key: "URGENT", label: t("support.priority.URGENT") }
+          : null,
+    },
   ];
 
   return (

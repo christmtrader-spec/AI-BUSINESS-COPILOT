@@ -8,12 +8,22 @@ import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Ban, KeyRound, ShieldCheck } from "lucide-react";
+import { Ban, KeyRound, Megaphone, ShieldCheck, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
   TableBody,
@@ -35,17 +45,27 @@ import { usePlatformSelf } from "./use-platform-self";
 import { useSession } from "next-auth/react";
 
 const PAGE_SIZE = 20;
+/** Mirror of the server cap (§155 — bounded recipients per announcement). */
+const ANNOUNCE_RECIPIENT_CAP = 50;
+const ANNOUNCE_MESSAGE_MAX = 500;
+
+/** Roles the server admits for announcements (§18 — mirrors the API gate). */
+function canAnnounceRole(role: string | undefined): boolean {
+  return role === "PLATFORM_SUPER_ADMIN" || role === "PLATFORM_SUPPORT";
+}
 
 export function UsersView() {
   const t = useTranslations("platform");
   const { status: sessionStatus } = useSession();
   const self = usePlatformSelf(sessionStatus === "authenticated");
   const canSuspend = !!self.data?.permissions.includes("platform:users:suspend");
+  const canAnnounce = canAnnounceRole(self.data?.role);
   const [email, setEmail] = React.useState("");
   const [page, setPage] = React.useState(1);
   const [invalidateTarget, setInvalidateTarget] = React.useState<PlatformUser | null>(null);
   const [suspendTarget, setSuspendTarget] = React.useState<PlatformUser | null>(null);
   const [reactivateTarget, setReactivateTarget] = React.useState<PlatformUser | null>(null);
+  const [announceOpen, setAnnounceOpen] = React.useState(false);
 
   const params = new URLSearchParams();
   if (email) params.set("email", email);
@@ -79,6 +99,12 @@ export function UsersView() {
               placeholder="user@example.com"
             />
           </div>
+          {canAnnounce ? (
+            <Button variant="outline" onClick={() => setAnnounceOpen(true)}>
+              <Megaphone className="size-4" aria-hidden="true" />
+              {t("announce.trigger")}
+            </Button>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -223,6 +249,7 @@ export function UsersView() {
       <InvalidateDialog target={invalidateTarget} onClose={() => setInvalidateTarget(null)} />
       <SuspendDialog target={suspendTarget} onClose={() => setSuspendTarget(null)} />
       <ReactivateDialog target={reactivateTarget} onClose={() => setReactivateTarget(null)} />
+      <AnnounceDialog open={announceOpen} onClose={() => setAnnounceOpen(false)} />
     </div>
   );
 }
@@ -335,5 +362,188 @@ function ReactivateDialog({ target, onClose }: { target: PlatformUser | null; on
       error={error}
       onSubmit={(p) => void submit({ reason: p.reason, password: p.password })}
     />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 62 §18 — system-announcement composer. Explicit recipients ONLY
+// (never an audience query — §155), capped at 50 like the server, plain
+// text message, honest accepted/rejected result surfaced to the operator.
+// The dialog body unmounts on close so composer state always resets.
+// ---------------------------------------------------------------------------
+function AnnounceDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useTranslations("platform");
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t("announce.title")}</DialogTitle>
+          <DialogDescription>{t("announce.description")}</DialogDescription>
+        </DialogHeader>
+        {open ? <AnnounceForm onClose={onClose} /> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AnnounceForm({ onClose }: { onClose: () => void }) {
+  const t = useTranslations("platform");
+  const tError = usePlatformErrorText();
+  const [search, setSearch] = React.useState("");
+  const [selected, setSelected] = React.useState<Array<{ id: string; email: string }>>([]);
+  const [message, setMessage] = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [validation, setValidation] = React.useState<string | null>(null);
+
+  const listParams = new URLSearchParams();
+  if (search) listParams.set("email", search);
+  listParams.set("page", "1");
+  listParams.set("pageSize", "10");
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["platform", "users", "announce-picker", listParams.toString()],
+    queryFn: () => platformQueries.users(listParams.toString()),
+    refetchOnWindowFocus: false,
+    placeholderData: (prev) => prev,
+  });
+  const candidates = (data?.users ?? []).filter((u) => !selected.some((s) => s.id === u.id));
+  const atCap = selected.length >= ANNOUNCE_RECIPIENT_CAP;
+
+  const toggle = (u: PlatformUser) => {
+    setValidation(null);
+    setSelected((prev) => {
+      if (prev.some((s) => s.id === u.id)) return prev.filter((s) => s.id !== u.id);
+      if (prev.length >= ANNOUNCE_RECIPIENT_CAP) return prev;
+      return [...prev, { id: u.id, email: u.email }];
+    });
+  };
+
+  const submit = async () => {
+    const trimmed = message.trim();
+    if (selected.length === 0) {
+      setValidation(t("announce.validationRecipients"));
+      return;
+    }
+    if (!trimmed) {
+      setValidation(t("announce.validationMessage"));
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await platformMutations.sendAnnouncement({
+        recipientUserIds: selected.map((s) => s.id),
+        message: trimmed,
+      });
+      if (result.rejected > 0) {
+        toast.warning(t("announce.partialSuccess", { accepted: result.accepted, rejected: result.rejected }));
+      } else {
+        toast.success(t("announce.success", { accepted: result.accepted }));
+      }
+      onClose();
+    } catch (e) {
+      setError(tError(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1.5">
+        <Label htmlFor="pf-announce-search">{t("announce.searchLabel")}</Label>
+        <Input
+          id="pf-announce-search"
+          type="email"
+          dir="ltr"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="user@example.com"
+        />
+      </div>
+
+      {selected.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5" aria-label={t("announce.selectedLabel")}>
+          {selected.map((s) => (
+            <Badge key={s.id} variant="outline" className="gap-1 py-1">
+              <span dir="ltr" className="text-xs">{s.email}</span>
+              <button
+                type="button"
+                aria-label={`${t("common.remove")} ${s.email}`}
+                className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => setSelected((prev) => prev.filter((x) => x.id !== s.id))}
+              >
+                <X className="size-3" aria-hidden="true" />
+              </button>
+            </Badge>
+          ))}
+        </div>
+      ) : null}
+
+      <p className="text-muted-foreground text-xs" aria-live="polite">
+        {t("announce.selectedCount", { selected: selected.length, cap: ANNOUNCE_RECIPIENT_CAP })}
+        {atCap ? ` — ${t("announce.capReached")}` : ""}
+      </p>
+
+      <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2" role="listbox" aria-label={t("announce.resultsLabel")}>
+        {isLoading ? (
+          <p className="text-muted-foreground p-2 text-xs">{t("announce.searching")}</p>
+        ) : candidates.length === 0 ? (
+          <p className="text-muted-foreground p-2 text-xs">{t("announce.noResults")}</p>
+        ) : (
+          candidates.map((u) => (
+            <label
+              key={u.id}
+              className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent/40"
+            >
+              <Checkbox
+                checked={false}
+                disabled={atCap}
+                onCheckedChange={() => toggle(u)}
+                aria-label={u.email}
+              />
+              <span dir="ltr" className="text-xs font-medium">{u.email}</span>
+              {u.name ? <span className="text-muted-foreground truncate text-xs">{u.name}</span> : null}
+            </label>
+          ))
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="pf-announce-message">{t("announce.messageLabel")}</Label>
+        <Textarea
+          id="pf-announce-message"
+          value={message}
+          onChange={(e) => {
+            setMessage(e.target.value.slice(0, ANNOUNCE_MESSAGE_MAX));
+            setValidation(null);
+          }}
+          maxLength={ANNOUNCE_MESSAGE_MAX}
+          rows={4}
+          dir="auto"
+          aria-describedby="pf-announce-counter"
+        />
+        <p id="pf-announce-counter" className="text-muted-foreground text-xs tabular-nums">
+          {message.length}/{ANNOUNCE_MESSAGE_MAX}
+        </p>
+      </div>
+
+      {validation ? (
+        <p role="alert" className="text-destructive text-sm">{validation}</p>
+      ) : null}
+      {error ? (
+        <p role="alert" className="text-destructive text-sm">{error}</p>
+      ) : null}
+
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose} disabled={submitting}>
+          {t("common.cancel")}
+        </Button>
+        <Button onClick={() => void submit()} disabled={submitting}>
+          {submitting ? t("announce.sending") : t("announce.send")}
+        </Button>
+      </DialogFooter>
+    </div>
   );
 }
