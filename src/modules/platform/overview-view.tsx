@@ -43,7 +43,7 @@ export function OverviewView() {
     );
   }
 
-  const cards: Array<{ title: string; value: string; status?: { key: string; label: string } | null }> = [
+  const cards: Array<{ title: string; value: string; status?: { key: string; label: string } | null; danger?: boolean }> = [
     { title: t("overview.users"), value: formatCount(data.users) },
     { title: t("overview.businesses"), value: formatCount(data.businesses) },
     { title: t("overview.activeOperators"), value: formatCount(data.activeOperators) },
@@ -83,6 +83,13 @@ export function OverviewView() {
           ? { key: "URGENT", label: t("support.priority.URGENT") }
           : null,
     },
+    // R64 — 4th support counter: open unanswered tickets past the 4h SLA.
+    // Guarded with ?? 0 so a stale cached pre-deploy overview never crashes.
+    {
+      title: t("overview.slaOverdue"),
+      value: formatCount(data.support?.slaOverdue ?? 0),
+      danger: (data.support?.slaOverdue ?? 0) > 0,
+    },
   ];
 
   const security = data.security;
@@ -91,12 +98,14 @@ export function OverviewView() {
     <div className="space-y-6">
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label={t("overview.title")}>
         {cards.map((c) => (
-          <Card key={c.title}>
+          <Card key={c.title} className={c.danger ? "border-destructive/40" : undefined}>
             <CardHeader className="pb-1">
               <CardTitle className="text-muted-foreground text-xs font-medium">{c.title}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-1">
-              <p className="text-2xl font-semibold tabular-nums">{c.value}</p>
+              <p className={`text-2xl font-semibold tabular-nums ${c.danger ? "text-destructive" : ""}`}>
+                {c.value}
+              </p>
               {c.status ? <StatusBadge status={c.status.key} label={c.status.label} /> : null}
             </CardContent>
           </Card>

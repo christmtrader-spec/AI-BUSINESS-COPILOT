@@ -140,6 +140,41 @@ export const SUPPORT_RESOLUTION_MIN = 10;
 export const SUPPORT_RESOLUTION_MAX = 2_000;
 /** List pages never return more than the platform MAX_PAGE_SIZE. */
 export const SUPPORT_LIST_MAX = 100;
+
+// ---------------------------------------------------------------------------
+// First-response SLA (R64) — server-side single source of truth so every
+// surface (list rows, detail, overview counters) computes the SAME verdict.
+// Honest by design: a plain wall-clock law, not a business-hours calendar.
+// ---------------------------------------------------------------------------
+
+/** First response due after 4h (wall clock from ticket creation). */
+export const SUPPORT_FIRST_RESPONSE_SLA_HOURS = 4;
+/** Amber warning band opens 1h before the deadline. */
+export const SUPPORT_FIRST_RESPONSE_DUE_SOON_HOURS = 3;
+
+export type FirstResponseSla = "met" | "due_soon" | "overdue" | "open" | "na";
+
+/**
+ * SLA verdict for ONE ticket at time `now`:
+ *  - "met"      — first operator response recorded (§10.2 firstResponseAt);
+ *  - "due_soon" — unresolved, unanswered, older than DUE_SOON but < SLA;
+ *  - "overdue"  — unresolved, unanswered, past the SLA deadline;
+ *  - "open"     — unresolved + unanswered but still fresh (< DUE_SOON);
+ *  - "na"       — terminal (RESOLVED/CLOSED) with no response ever — the
+ *                 deadline is no longer actionable, so it is not graded.
+ */
+export function firstResponseSlaOf(
+  t: { firstResponseAt: Date | null; status: string; createdAt: Date },
+  now: Date = new Date(),
+): FirstResponseSla {
+  if (t.firstResponseAt) return "met";
+  const terminal = !(SUPPORT_TICKET_OPEN_STATUSES as readonly string[]).includes(t.status);
+  if (terminal) return "na";
+  const ageHours = (now.getTime() - t.createdAt.getTime()) / 3_600_000;
+  if (ageHours >= SUPPORT_FIRST_RESPONSE_SLA_HOURS) return "overdue";
+  if (ageHours >= SUPPORT_FIRST_RESPONSE_DUE_SOON_HOURS) return "due_soon";
+  return "open";
+}
 /** Bounded diagnostics windows (§10.3/§22) — no unbounded scans. */
 const DIAGNOSTICS_LIMIT = 10;
 
@@ -371,6 +406,8 @@ export function ticketListItemDto(t: SupportTicket & { assignee?: { id: string; 
     updatedAt: t.updatedAt.toISOString(),
     firstResponseAt: t.firstResponseAt ? t.firstResponseAt.toISOString() : null,
     resolvedAt: t.resolvedAt ? t.resolvedAt.toISOString() : null,
+    // R64 — first-response SLA verdict, computed server-side (one authority).
+    sla: firstResponseSlaOf(t),
   };
 }
 

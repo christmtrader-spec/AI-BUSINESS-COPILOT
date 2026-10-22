@@ -6044,3 +6044,123 @@ Stage Summary:
 - RBAC precision fix: security section visibility now matches its backend permission exactly.
 - Honest limits: counters are COUNT-only (no identities in summary); the feed shows hashed-IP prefixes by design (raw IPs are never stored); events die with their user (privacy-first cascade, verified); read rate-limit is per-operator in-memory (single-instance sandbox law, as documented for the tenant limiter).
 - Next candidates: security-event export (scoped, audited), per-event-type trend sparkline on the summary, anomaly flag for failed-login bursts, operator session listing under Operators view.
+
+---
+Task ID: R64-UI
+Agent: subagent (frontend-styling-expert)
+Task: Platform R64 client-side UI — security bursts card + anomaly dialog + CSV
+export, operator session registry w/ surgical revocation, support SLA badges,
+overview SLA counter, EN/FA i18n (backend by main agent; zero backend edits).
+
+Work Log:
+- Read worklog (R62/R63-P conventions) + platform-api.ts / security-view.tsx /
+  operators-view.tsx / support-view.tsx / overview-view.tsx / kit.tsx /
+  platform-shell.tsx / users-view.tsx (invalidate-sessions gating) /
+  use-platform-self.ts / @/lib/csv / i18n platform.* BEFORE writing anything;
+  read-only recon of the new backend routes to mirror contracts verbatim.
+- platform-api.ts (append-only): PlatformSecuritySummary.failedLoginBursts1h;
+  PlatformOverview.support.slaOverdue; PlatformSupportTicket.sla union;
+  NEW PlatformSecurityAnomalies / PlatformOperatorSession(s) types;
+  platformQueries.securityAnomalies + operatorSessions;
+  platformMutations.revokeOperatorSession (DELETE sessions/[sessionId]);
+  NEW exportSecurityEventsCsv(params) — raw fetch credentials:"same-origin",
+  reads CSV text + x-export-truncated/x-export-rows headers, JSON error
+  envelope → ApiClientError on !ok so usePlatformErrorText just works.
+- security-view.tsx: (1) summary card #2 "failed login bursts (60 min)"
+  directly after failedLogins24h — <button> (existing onClick renderer) with
+  aria-label, border-destructive/40 + TriangleAlert danger accent when >0,
+  opens anomalies dialog; skeleton count 8→9. (2) amber burst banner ABOVE the
+  events list (icon + interpolated text — color never sole carrier) with
+  "View burst details" button. (3) AnomaliesDialog (useQuery enabled on open):
+  "By email" (mono dir=ltr) / "By IP prefix" (ip#<prefix> mono dir=ltr)
+  groups, count Badges (formatCount), lastAt formatDateTime, honest "none"
+  line per empty group, threshold/window caption built from the SERVER's own
+  values (client never restates constants); pf-sec-anom-* testids throughout.
+  (4) Export CSV button next to Reset in the filter card: query-string builder
+  EXTRACTED into shared buildFilterParams() so the events useQuery key and the
+  export always describe the same on-screen filters (one builder, two
+  consumers); downloadCsv(`security-events-<stamp>.csv`) via @/lib/csv,
+  success toast with row count, honest 5000-cap truncation warning, error
+  toast via usePlatformErrorText, Loader2+disabled while exporting.
+- operators-view.tsx: per-row "Sessions" affordance (History icon, consistent
+  with row actions) → OperatorSessionsDialog (operatorSessions query,
+  live-first defensive re-sort): deviceLabel (or "Unknown device"), live→
+  emerald "Live" / revoked→muted "Revoked" / expired(not revoked && !live)→
+  outline "Expired", createdAt+lastSeenAt formatted, ip#<prefix> mono dir=ltr,
+  activeCount + truncated note in dialog header, pf-op-sess-* testids.
+  Revoke button on LIVE sessions ONLY when usePlatformSelf grants
+  platform:security:manage (mirror of users-view's permission gating, hide
+  not disable) → RevokeSessionDialog: reason 3..300 with live {n}/300 counter
+  + required current-password (server assertPlatformReauth demands it — same
+  rules as every ReauthDialog), alreadyRevoked → toast.info, success toast +
+  invalidate/refetch sessions query.
+- support-view.tsx: SlaBadge next to status badge in BOTH desktop table cell
+  and mobile card (flex-wrap group, wrap-safe at 390px): overdue→destructive,
+  due_soon→amber, met→quiet emerald outline + Check icon; open/na render
+  nothing; unknown/undefined verdict (stale cache) renders nothing. pf-sla-*
+  testids.
+- overview-view.tsx: 4th support counter "SLA overdue" card (formatCount,
+  tabular-nums, ?? 0 stale-cache guard) with border-destructive/40 +
+  text-destructive accent when >0 via a new per-card danger flag.
+- i18n en.ts + fa.ts, symmetric key-by-key (surgical anchors, no reordering):
+  platform.security +15 (bursts card/banner/dialog groups/none/lastAt/
+  threshold caption, export button + success/truncated toasts; fa uses
+  ۶۰/آستانه/دست‌کم, «خوشه‌های ورود ناموفق»), platform.operators +16 (sessions
+  dialog, live/revoked/expired, revoke flow; «نشست‌ها»، «ابطال»),
+  platform.support.sla ×3 (fa: «SLA نقض شده/نزدیک به سقف SLA/SLA رعایت شد»),
+  platform.overview.slaOverdue ×1.
+- VERIFY (static only, per brief): bunx tsc --noEmit → 0 errors; bun run lint
+  → clean; bun scripts/i18n-audit.ts → CLEAN (182 files / 3160 usages /
+  Missing-at-usage 0 / parity gaps 0). Dev server NOT run; build NOT run; no
+  test batteries (main agent owns them). Zero files under src/app/api/** or
+  src/lib/** touched by this task.
+
+Stage Summary:
+- R64 UI surface complete: Security Center now answers "is something attacking
+  us right now" (bursts card + banner + drill-down dialog naming the emails /
+  hashed-IP prefixes — identities the feed already exposes, same permission)
+  and ships an audited, filter-mirroring CSV export; Operators view gained the
+  session registry with surgical single-device revocation (password reauth +
+  audited, alreadyRevoked handled honestly); Support Center surfaces the
+  first-response SLA verdict per ticket; Overview carries the SLA-overdue
+  counter with a danger accent.
+- Honest deviations (documented): (1) overview support counters are three
+  separate cards in this codebase, so the "4th row" shipped as a 4th sibling
+  card — same grid, same danger-accent treatment; no "Open Support Center"
+  button exists there, so nothing to keep unchanged. (2) sessions activeCount
+  renders in the dialog header description (title keeps {email}) — read as
+  "shown in dialog title" satisfied at the header level. (3) revoke dialog
+  password is REQUIRED (server assertPlatformReauth 403s without it), matching
+  the users-view reauth pattern rather than an optional field. (4) export cap
+  5000 mirrored as a client constant for the truncation copy only — the
+  server's header remains the source of truth.
+- i18n symmetry re-verified programmatically (FA-MISSING/EN-MISSING = 0).
+---
+Task ID: R64 (Prompt 64 — «ادامه ساخت فوق حرفه‌ای … پیشنهاد همه موارد … تست دقیق و عمیق … تمام پروژه رو اسکن کن و باگها رو شناسایی و درست کن»)
+Agent: main (Z.ai Code) + subagent R64-UI (frontend-styling-expert)
+Task: Next-tier proposals with deep testing; full-project scan; identify and fix all bugs; fix any errors surfaced.
+
+Work Log:
+- BASELINE: git clean (R63-P committed at 6f7d5e7), tsc 0, lint clean, dev READY. worklog tail + platform recon confirmed the Prompt-62/63 console (40 routes, 12 sections) as the enhancement base — no second panel built.
+- SCAN PHASE (bugs found & fixed BEFORE new features):
+  - ENV WIPE (7th documented occurrence): .env reduced to DATABASE_URL-only → env-repair ALL GREEN (29→30 migrations, seeds, fixtures, integrity ok, fk 0).
+  - MIGRATION DRIFT: prompt63_ai_cost_record_business_cascade existed in repo but unapplied (29 vs 30). Live DB already carried the exact DDL (ON DELETE CASCADE FK verified byte-for-byte) — reconciled DATA-SAFELY via `prisma migrate resolve --applied` (never migrate dev). migrate status now "up to date".
+  - SECURITY GAP (P1, product): getPlatformContext NEVER checked the per-device session registry — tenant routes 401'd revoked devices (assertFreshSession) while platform routes kept accepting the JWT. A session revoked per-device (Operators-view revoke / self-service sign-out) stayed FULLY usable against all 40+ platform routes. FIX: registry gate added to the platform auth chain (session → version → REGISTRY → operator-active → permission), SESSION_REVOKED rethrown honestly by /self probe. Proven live: revoked jar → /me 401 SESSION_REVOKED (before: /self still 200; after: 401).
+  - STATIC-SCAN PRECISION: prompt28 mutation regex matched `operators/[id]` as a substring, flagging the read-only sessions GET. Refined to `operators/[id]/route|sessions/[sessionId]/route` — the new DELETE stays in the sensitive set (it has reauth+audit+rateLimit), the GET is correctly out. Coverage strengthened, not weakened.
+  - CSV BOM: res.text() strips the BOM per fetch spec — battery asserts raw bytes (EF BB BF) instead. Product was always correct.
+- R64 FEATURES (backend by main, UI by R64-UI subagent):
+  - SECURITY-EVENT CSV EXPORT: GET /api/v1/platform/security/events/export — same allowlisted filters as the feed (shared parser module security-filters.ts — one parser, two consumers §81), 5/min per-operator rate limit, hard cap 5000 rows (+1 probe row detects truncation without a count query), RFC-4180 CSV w/ BOM via src/lib/csv toCsv, x-export-rows/x-export-truncated headers, AUDITED (platform.security.events_exported with filters+rows), 12-hex IP prefixes only (no raw IP exists anywhere in the path).
+  - FAILED-LOGIN BURST ANOMALIES: NEW security-anomalies.ts (60-min window, threshold ≥5, bounded groupBy 200/axis, email axis via userId→email lookup, IP axis full-hash keyed → 12-hex prefix out) + GET /security/anomalies (identity-bearing companion; every identity already visible in the feed under the SAME permission) + summary.failedLoginBursts1h (COUNT-only law preserved in the summary).
+  - OPERATOR SESSION LISTING + SURGICAL REVOKE: GET /operators/[id]/sessions (operators:read; live-first DTO w/ deviceLabel, ipHashPrefix, live/revoked) + DELETE /operators/[id]/sessions/[sessionId] (security:manage + canInvalidateSessions + reason-mandatory + reauth §56 + 10/15min + transactional audit platform.operator_session_revoked + SecurityEvent auth.session.revoked; §126 no-existence-oracle 404s; §210 idempotent alreadyRevoked).
+  - FIRST-RESPONSE SLA: SUPPORT_FIRST_RESPONSE_SLA_HOURS=4 / DUE_SOON=3 + firstResponseSlaOf() in support.ts (one authority: met/due_soon/overdue/open/na) → ticketListItemDto.sla + overview.support.slaOverdue (4th support metric). Terminal-without-response = na (not graded) — honest.
+- UI (R64-UI subagent): bursts summary card (#9, danger accent, opens dialog), amber burst banner + details dialog (email/IP groups, mono dir=ltr, server threshold/window caption), Export CSV honoring on-screen filters via shared buildFilterParams() (downloadCsv + row-count toast + honest 5000-cap truncation warning), Operators sessions dialog (Live/Revoked/Expired badges, revoke confirm w/ reason counter + required reauth password, permission-gated by platform:security:manage exactly like users-view), support SLA badges (overdue danger / due_soon amber / met quiet emerald; open/na silent), overview 4th support card w/ danger accent. i18n +15/+16/+3/+1 keys SYMMETRIC en/fa (proper Persian + Persian digits ۲۴/۶۰). tsc 0 · lint clean · i18n-audit CLEAN 182/3160/0.
+- TESTS: NEW scripts/r64-security-ops-check.ts — 69/69 GREEN live: auth matrix (19 checks across 4 new endpoints × anon/tenant/BILLING/SUPPORT/READONLY/SECURITY/SUPER), CSV content laws (raw-byte BOM, CRLF, exact 8 columns, filters honored, unknown eventType 422, no raw IP, prefix ≤12 hex, headers), audit row assertions, burst engine (email=6, ip=5, below-threshold absent, summary==anomalies), operator sessions (DTO contract, revoke → jar dies 401 SESSION_REVOKED, idempotent re-delete, foreign 404s, short reason 422, transactional audit + SecurityEvent), SLA verdicts (open/overdue/due_soon/met/na + overview counter == DB truth ≥1), export rate limit (5 ok then 429), zero residue. Defensive pre-sweep for crashed-run fixtures.
+- FULL REGRESSION (all EXECUTED on the fixed chain): e2e-smoke 90/90 · prompt28 86/86 · r62-support 68/68 · r62-overview-announce 21/21 · r63-audit 15/15 · r63-security-center 43/43 · r64-security-ops 69/69 · i18n CLEAN · tsc 0 · lint clean. BUILD: NOT EXECUTED (standing sandbox law).
+- BROWSER QA (agent-browser, real QA operator via sanctioned CLI): Security Center renders bursts card "Failed login bursts (60 min): 2" live; banner + dialog show email bucket (6) + IP bucket; Export CSV DOWNLOADED a real file (18 rows, header exact, hashed prefixes) to /home/z/Downloads; Operators sessions dialog (Live badge, Chrome on Linux, ip#prefix) + revoke form (1/300 counter, disabled-until-valid) + WRONG-PASSWORD reauth live error "Reauthentication failed"; support row shows "Open SLA overdue" badge; overview "SLA overdue: 1" card; fa/RTL «خوشه‌های ورود ناموفق (۶۰ دقیقه)», «SLA نقض شده», dir=rtl; mobile 390×844 zero overflow on security+support; screenshots qa-r64-*.png ×7.
+- INCIDENTS: dev server killed 4× by sandbox (ensure-dev restarts); two battery crashes during development were BATTERY bugs (body double-read, res.text() BOM spec) — product untouched; crashed battery runs left fixture residue (incl. 10 stale operators w/ 2 active SUPER_ADMINs — swept FK-safe to operators=0; pre-sweep added to the battery for self-healing).
+- STATE RESTORED: QA operator + visual fixtures removed (ops=0, zero r64 residue), locale back EN/LTR, viewport 1440×900, dev log clean.
+
+Stage Summary:
+- The admin panel's security layer is now genuinely multi-layer: the per-device registry gate closes a real platform-wide auth gap (found by live probing, fixed with one §81 single-path addition), and four new operator capabilities (audited CSV export, burst anomaly detection, session visibility + surgical revoke, SLA law) ship behind deny-by-default RBAC with rate limits and audit trails.
+- Honest limits: burst threshold/window are fixed server constants (not tunable — documented law); export truncation at 5000 was header-verified, not exercised with 5001 rows; anomaly identity exposure is aggregation of already-visible feed data, not a new visibility surface; SLA is wall-clock (no business-hours calendar); rate limits remain in-memory per-instance (documented sandbox law).
+- Next candidates: burst threshold/window per-operator config; scheduled SLA breach notifications; operator-session analytics (last-seen heat); two-person approval for high-risk financial actions (from R62 candidates).

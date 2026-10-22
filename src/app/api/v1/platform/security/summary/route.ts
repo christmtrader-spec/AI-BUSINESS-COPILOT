@@ -18,6 +18,7 @@ import { getPlatformContext, platformError, requirePlatformPermission } from "@/
 import { platformOk } from "@/lib/platform/http";
 import { db } from "@/lib/db";
 import { SECURITY_EVENTS } from "@/lib/auth/security-events/service";
+import { computeFailedLoginBursts } from "@/lib/platform/security-anomalies";
 import { rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -45,6 +46,7 @@ export const GET = route(async (req: NextRequest) => {
     activeOperators,
     activeSessions,
     eventsByType,
+    bursts,
   ] = await Promise.all([
     db.securityEvent.count({
       where: { eventType: SECURITY_EVENTS.loginSuccess, createdAt: { gte: from24h } },
@@ -77,6 +79,10 @@ export const GET = route(async (req: NextRequest) => {
       where: { createdAt: { gte: from24h } },
       _count: { _all: true },
     }),
+    // R64 — burst COUNT only (the summary keeps its no-identities law; the
+    // identity-bearing detail lives behind the same permission in
+    // /security/anomalies).
+    computeFailedLoginBursts(),
   ]);
 
   const eventTypes24h: Record<string, number> = Object.fromEntries(
@@ -94,5 +100,6 @@ export const GET = route(async (req: NextRequest) => {
     activeOperators,
     activeSessions,
     eventTypes24h,
+    failedLoginBursts1h: bursts.totalBursts,
   });
 });

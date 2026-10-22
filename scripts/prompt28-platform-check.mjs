@@ -213,7 +213,7 @@ function staticScans() {
 
   // §56/§34: sensitive mutations require reauth + audit.
   // Prompt 62: suspend/reactivate join the sensitive set (account-lifecycle).
-  const mutationRoutes = routeFiles.filter((f) => /pause|resume|plan\/route|trial\/route|invalidate-sessions|reverify|investigation|activate|deactivate|verify\/route|reconciliation|operators\/route|operators\/\[id\]|suspend|reactivate/.test(f));
+  const mutationRoutes = routeFiles.filter((f) => /pause|resume|plan\/route|trial\/route|invalidate-sessions|reverify|investigation|activate|deactivate|verify\/route|reconciliation|operators\/route|operators\/\[id\]\/route|sessions\/\[sessionId\]\/route|suspend|reactivate/.test(f));
   const missingReauth = mutationRoutes.filter((f) => !routeSrc.get(f).includes("assertPlatformReauth"));
   check("sensitive platform mutations require reauthentication", missingReauth.length === 0, missingReauth.join(","));
   // Audit may live in the route OR in the src/lib/platform service the route

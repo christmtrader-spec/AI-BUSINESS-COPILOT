@@ -14,7 +14,7 @@ import { platformOk } from "@/lib/platform/http";
 import { db } from "@/lib/db";
 import { getAiCostHealth } from "@/lib/ai/cost/economics";
 import { publicPlatformConfigSummary } from "@/lib/legal/public-config";
-import { SUPPORT_TICKET_OPEN_STATUSES } from "@/lib/platform/support";
+import { SUPPORT_TICKET_OPEN_STATUSES, SUPPORT_FIRST_RESPONSE_SLA_HOURS } from "@/lib/platform/support";
 import { SECURITY_EVENTS } from "@/lib/auth/security-events/service";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +43,7 @@ export const GET = route(async (_req: NextRequest) => {
     supportOpen,
     supportAwaitingFirstResponse,
     supportUrgentOpen,
+    supportSlaOverdue,
     securityLoginsWindow,
     securityFailedLoginsWindow,
     securitySuspendedUsers,
@@ -78,6 +79,15 @@ export const GET = route(async (_req: NextRequest) => {
       where: {
         status: { in: [...SUPPORT_TICKET_OPEN_STATUSES] },
         priority: "URGENT",
+      },
+    }),
+    // R64 — first-response SLA breaches: open + unanswered + past the 4h
+    // deadline. Same server law as ticketListItemDto (one authority).
+    db.supportTicket.count({
+      where: {
+        status: { in: [...SUPPORT_TICKET_OPEN_STATUSES] },
+        firstResponseAt: null,
+        createdAt: { lt: new Date(now.getTime() - SUPPORT_FIRST_RESPONSE_SLA_HOURS * 3_600_000) },
       },
     }),
     // R63-P — Security Center headline (counts only, safe for every
@@ -163,6 +173,7 @@ export const GET = route(async (_req: NextRequest) => {
       open: supportOpen,
       awaitingFirstResponse: supportAwaitingFirstResponse,
       urgentOpen: supportUrgentOpen,
+      slaOverdue: supportSlaOverdue,
     },
     security: {
       /** Counts over the SAME windowDays as every other overview card (30d). */

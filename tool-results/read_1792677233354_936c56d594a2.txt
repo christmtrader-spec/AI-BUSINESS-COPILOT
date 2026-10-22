@@ -1,0 +1,965 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * Platform Support Center (§10) — ticket list, thread, transitions,
+     5→ * resolution workflow and bounded diagnostics.
+     6→ *
+     7→ * UI laws carried over from the Prompt-28 console: permission-gated actions
+     8→ * (hidden, not disabled — §87), explicit loading/empty/error states, EN/FA +
+     9→ * RTL + dark via the existing primitives, table on desktop / cards on mobile.
+    10→ * INTERNAL notes are visually distinct (amber) and exist ONLY in this
+    11→ * operator surface — the tenant API can never return them (§10.2).
+    12→ */
+    13→import * as React from "react";
+    14→import { useQuery, useQueryClient } from "@tanstack/react-query";
+    15→import { useTranslations } from "next-intl";
+    16→import { toast } from "sonner";
+    17→import { CheckCheck, LifeBuoy, MessageSquarePlus, Search, UserCheck, UserX } from "lucide-react";
+    18→import { Button } from "@/components/ui/button";
+    19→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+    20→import { Input } from "@/components/ui/input";
+    21→import { Label } from "@/components/ui/label";
+    22→import { Badge } from "@/components/ui/badge";
+    23→import { Textarea } from "@/components/ui/textarea";
+    24→import { Separator } from "@/components/ui/separator";
+    25→import {
+    26→  Dialog,
+    27→  DialogContent,
+    28→  DialogDescription,
+    29→  DialogHeader,
+    30→  DialogTitle,
+    31→} from "@/components/ui/dialog";
+    32→import {
+    33→  Select,
+    34→  SelectContent,
+    35→  SelectItem,
+    36→  SelectTrigger,
+    37→  SelectValue,
+    38→} from "@/components/ui/select";
+    39→import {
+    40→  Table,
+    41→  TableBody,
+    42→  TableCell,
+    43→  TableHead,
+    44→  TableHeader,
+    45→  TableRow,
+    46→} from "@/components/ui/table";
+    47→import {
+    48→  platformMutations,
+    49→  platformQueries,
+    50→  type PlatformSupportTicket,
+    51→  type PlatformSupportTicketDetail,
+    52→  type PlatformTicketDiagnostics,
+    53→  type PlatformTicketViewer,
+    54→} from "./platform-api";
+    55→import { EmptyState, ListSkeleton, PaginationBar, StatusBadge, formatDateTime, usePlatformErrorText } from "./kit";
+    56→
+    57→const PAGE_SIZE = 20;
+    58→
+    59→export function SupportView() {
+    60→  const t = useTranslations("platform");
+    61→  const tError = usePlatformErrorText();
+    62→  const queryClient = useQueryClient();
+    63→
+    64→  const [status, setStatus] = React.useState("");
+    65→  const [priority, setPriority] = React.useState("");
+    66→  const [category, setCategory] = React.useState("");
+    67→  const [assignee, setAssignee] = React.useState("");
+    68→  const [q, setQ] = React.useState("");
+    69→  const [page, setPage] = React.useState(1);
+    70→  const [openTicketId, setOpenTicketId] = React.useState<string | null>(null);
+    71→  const [createOpen, setCreateOpen] = React.useState(false);
+    72→
+    73→  const hasFilters = !!(status || priority || category || assignee || q);
+    74→
+    75→  const params = new URLSearchParams();
+    76→  if (status) params.set("status", status);
+    77→  if (priority) params.set("priority", priority);
+    78→  if (category) params.set("category", category);
+    79→  if (assignee) params.set("assignee", assignee);
+    80→  if (q) params.set("q", q);
+    81→  params.set("page", String(page));
+    82→  params.set("pageSize", String(PAGE_SIZE));
+    83→
+    84→  const { data, isLoading, isError } = useQuery({
+    85→    queryKey: ["platform", "support-tickets", params.toString()],
+    86→    queryFn: () => platformQueries.supportTickets(params.toString()),
+    87→    refetchOnWindowFocus: false,
+    88→    placeholderData: (prev) => prev,
+    89→  });
+    90→
+    91→  const rows: PlatformSupportTicket[] = data?.tickets ?? [];
+    92→  const facets = data?.facets;
+    93→
+    94→  const clearFilters = () => {
+    95→    setStatus("");
+    96→    setPriority("");
+    97→    setCategory("");
+    98→    setAssignee("");
+    99→    setQ("");
+   100→    setPage(1);
+   101→  };
+   102→
+   103→  const refresh = () => {
+   104→    void queryClient.invalidateQueries({ queryKey: ["platform", "support-tickets"] });
+   105→    void queryClient.invalidateQueries({ queryKey: ["platform", "support-ticket"] });
+   106→    void queryClient.invalidateQueries({ queryKey: ["platform", "overview"] });
+   107→  };
+   108→
+   109→  return (
+   110→    <div className="space-y-4">
+   111→      <Card>
+   112→        <CardContent className="grid gap-3 pt-4 md:grid-cols-[repeat(4,minmax(0,1fr))_auto]">
+   113→          <div className="space-y-1.5">
+   114→            <Label htmlFor="pf-sup-status">{t("support.filterStatus")}</Label>
+   115→            <Select value={status} onValueChange={(v) => { setStatus(v === "ALL" ? "" : v); setPage(1); }}>
+   116→              <SelectTrigger id="pf-sup-status" aria-label={t("support.filterStatus")}>
+   117→                <SelectValue placeholder={t("support.filterAll")} />
+   118→              </SelectTrigger>
+   119→              <SelectContent>
+   120→                <SelectItem value="ALL">{t("support.filterAll")}</SelectItem>
+   121→                {(facets?.statuses ?? []).map((s) => (
+   122→                  <SelectItem key={s} value={s}>{t(`support.status.${s}` as Parameters<typeof t>[0])}</SelectItem>
+   123→                ))}
+   124→              </SelectContent>
+   125→            </Select>
+   126→          </div>
+   127→          <div className="space-y-1.5">
+   128→            <Label htmlFor="pf-sup-priority">{t("support.filterPriority")}</Label>
+   129→            <Select value={priority} onValueChange={(v) => { setPriority(v === "ALL" ? "" : v); setPage(1); }}>
+   130→              <SelectTrigger id="pf-sup-priority" aria-label={t("support.filterPriority")}>
+   131→                <SelectValue placeholder={t("support.filterAll")} />
+   132→              </SelectTrigger>
+   133→              <SelectContent>
+   134→                <SelectItem value="ALL">{t("support.filterAll")}</SelectItem>
+   135→                {(facets?.priorities ?? []).map((p) => (
+   136→                  <SelectItem key={p} value={p}>{t(`support.priority.${p}` as Parameters<typeof t>[0])}</SelectItem>
+   137→                ))}
+   138→              </SelectContent>
+   139→            </Select>
+   140→          </div>
+   141→          <div className="space-y-1.5">
+   142→            <Label htmlFor="pf-sup-category">{t("support.filterCategory")}</Label>
+   143→            <Select value={category} onValueChange={(v) => { setCategory(v === "ALL" ? "" : v); setPage(1); }}>
+   144→              <SelectTrigger id="pf-sup-category" aria-label={t("support.filterCategory")}>
+   145→                <SelectValue placeholder={t("support.filterAll")} />
+   146→              </SelectTrigger>
+   147→              <SelectContent>
+   148→                <SelectItem value="ALL">{t("support.filterAll")}</SelectItem>
+   149→                {(facets?.categories ?? []).map((c) => (
+   150→                  <SelectItem key={c} value={c}>{t(`support.category.${c}` as Parameters<typeof t>[0])}</SelectItem>
+   151→                ))}
+   152→              </SelectContent>
+   153→            </Select>
+   154→          </div>
+   155→          <div className="space-y-1.5">
+   156→            <Label htmlFor="pf-sup-q">{t("support.filterSearch")}</Label>
+   157→            <div className="relative">
+   158→              <Search className="text-muted-foreground pointer-events-none absolute top-2.5 size-4 ltr:left-2.5 rtl:right-2.5" aria-hidden="true" />
+   159→              <Input
+   160→                id="pf-sup-q"
+   161→                className="ltr:pl-8 rtl:pr-8"
+   162→                dir="auto"
+   163→                value={q}
+   164→                onChange={(e) => { setQ(e.target.value); setPage(1); }}
+   165→                placeholder={t("support.filterSearchPlaceholder")}
+   166→              />
+   167→            </div>
+   168→          </div>
+   169→          <div className="flex items-end gap-2">
+   170→            {hasFilters ? (
+   171→              <Button variant="ghost" size="sm" onClick={clearFilters}>{t("support.clearFilters")}</Button>
+   172→            ) : null}
+   173→            <Button size="sm" onClick={() => setCreateOpen(true)}>
+   174→              <MessageSquarePlus className="size-4" aria-hidden="true" />
+   175→              {t("support.newTicket")}
+   176→            </Button>
+   177→          </div>
+   178→          <div className="md:col-span-4">
+   179→            <Label htmlFor="pf-sup-assignee" className="sr-only">{t("support.filterAssignee")}</Label>
+   180→            <Select value={assignee} onValueChange={(v) => { setAssignee(v === "ALL" ? "" : v); setPage(1); }}>
+   181→              <SelectTrigger id="pf-sup-assignee" aria-label={t("support.filterAssignee")} className="w-full md:w-64">
+   182→                <SelectValue placeholder={t("support.filterAllAssignees")} />
+   183→              </SelectTrigger>
+   184→              <SelectContent>
+   185→                <SelectItem value="ALL">{t("support.filterAllAssignees")}</SelectItem>
+   186→                <SelectItem value="me">{t("support.filterAssignedToMe")}</SelectItem>
+   187→                <SelectItem value="unassigned">{t("support.filterUnassigned")}</SelectItem>
+   188→              </SelectContent>
+   189→            </Select>
+   190→          </div>
+   191→        </CardContent>
+   192→      </Card>
+   193→
+   194→      {isLoading ? (
+   195→        <ListSkeleton />
+   196→      ) : isError ? (
+   197→        <EmptyState label={t("errors.PLATFORM_INVALID_OPERATION")} />
+   198→      ) : rows.length === 0 ? (
+   199→        <EmptyState label={hasFilters ? t("support.emptyFiltered") : t("support.empty")} />
+   200→      ) : (
+   201→        <>
+   202→          <div className="hidden overflow-hidden rounded-md border md:block">
+   203→            <Table>
+   204→              <TableHeader>
+   205→                <TableRow>
+   206→                  <TableHead>{t("support.colReference")}</TableHead>
+   207→                  <TableHead>{t("support.colSubject")}</TableHead>
+   208→                  <TableHead>{t("support.colRequester")}</TableHead>
+   209→                  <TableHead>{t("support.colBusiness")}</TableHead>
+   210→                  <TableHead>{t("support.colStatus")}</TableHead>
+   211→                  <TableHead>{t("support.colPriority")}</TableHead>
+   212→                  <TableHead>{t("support.colCreated")}</TableHead>
+   213→                </TableRow>
+   214→              </TableHeader>
+   215→              <TableBody>
+   216→                {rows.map((ticket) => (
+   217→                  <TableRow
+   218→                    key={ticket.id}
+   219→                    className="cursor-pointer"
+   220→                    onClick={() => setOpenTicketId(ticket.id)}
+   221→                  >
+   222→                    <TableCell className="font-mono text-xs">{ticket.reference}</TableCell>
+   223→                    <TableCell className="max-w-[22rem]">
+   224→                      <span className="line-clamp-1 text-sm" dir="auto">{ticket.subject}</span>
+   225→                    </TableCell>
+   226→                    <TableCell>
+   227→                      <span dir="ltr" className="text-xs">{ticket.requesterEmail}</span>
+   228→                    </TableCell>
+   229→                    <TableCell className="text-sm" dir="auto">{ticket.businessName ?? "—"}</TableCell>
+   230→                    <TableCell>
+   231→                      <StatusBadge status={ticket.status} label={t(`support.status.${ticket.status}` as Parameters<typeof t>[0])} />
+   232→                    </TableCell>
+   233→                    <TableCell>
+   234→                      <Badge variant="outline" className={priorityClasses(ticket.priority)}>
+   235→                        {t(`support.priority.${ticket.priority}` as Parameters<typeof t>[0])}
+   236→                      </Badge>
+   237→                    </TableCell>
+   238→                    <TableCell className="text-xs">{formatDateTime(ticket.createdAt)}</TableCell>
+   239→                  </TableRow>
+   240→                ))}
+   241→              </TableBody>
+   242→            </Table>
+   243→          </div>
+   244→
+   245→          <div className="space-y-2 md:hidden">
+   246→            {rows.map((ticket) => (
+   247→              <Card
+   248→                key={ticket.id}
+   249→                className="cursor-pointer py-0 transition-colors hover:bg-accent/40"
+   250→                onClick={() => setOpenTicketId(ticket.id)}
+   251→              >
+   252→                <CardContent className="space-y-2 p-4">
+   253→                  <div className="flex items-center justify-between gap-2">
+   254→                    <span className="font-mono text-xs">{ticket.reference}</span>
+   255→                    <StatusBadge status={ticket.status} label={t(`support.status.${ticket.status}` as Parameters<typeof t>[0])} />
+   256→                  </div>
+   257→                  <p className="text-sm font-medium" dir="auto">{ticket.subject}</p>
+   258→                  <p className="text-muted-foreground text-xs" dir="ltr">{ticket.requesterEmail}</p>
+   259→                  <div className="flex items-center gap-2">
+   260→                    <Badge variant="outline" className={priorityClasses(ticket.priority)}>
+   261→                      {t(`support.priority.${ticket.priority}` as Parameters<typeof t>[0])}
+   262→                    </Badge>
+   263→                    <span className="text-muted-foreground text-xs">{formatDateTime(ticket.createdAt)}</span>
+   264→                  </div>
+   265→                </CardContent>
+   266→              </Card>
+   267→            ))}
+   268→          </div>
+   269→
+   270→          <PaginationBar
+   271→            page={data?.page.page ?? 1}
+   272→            hasNext={data?.page.hasNext ?? false}
+   273→            onPrev={() => setPage((p) => Math.max(1, p - 1))}
+   274→            onNext={() => setPage((p) => p + 1)}
+   275→          />
+   276→        </>
+   277→      )}
+   278→
+   279→      <TicketDetailDialog
+   280→        ticketId={openTicketId}
+   281→        onClose={() => setOpenTicketId(null)}
+   282→        onChanged={refresh}
+   283→      />
+   284→      <CreateTicketDialog
+   285→        open={createOpen}
+   286→        onOpenChange={setCreateOpen}
+   287→        onCreated={(id) => {
+   288→          refresh();
+   289→          setCreateOpen(false);
+   290→          setOpenTicketId(id);
+   291→        }}
+   292→      />
+   293→    </div>
+   294→  );
+   295→}
+   296→
+   297→function priorityClasses(priority: string): string {
+   298→  switch (priority) {
+   299→    case "URGENT":
+   300→      return "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-400";
+   301→    case "HIGH":
+   302→      return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400";
+   303→    case "LOW":
+   304→      return "border-muted-foreground/30 bg-muted/40 text-muted-foreground";
+   305→    default:
+   306→      return "";
+   307→  }
+   308→}
+   309→
+   310→/* ------------------------------ detail dialog ------------------------------ */
+   311→
+   312→function TicketDetailDialog({
+   313→  ticketId,
+   314→  onClose,
+   315→  onChanged,
+   316→}: {
+   317→  ticketId: string | null;
+   318→  onClose: () => void;
+   319→  onChanged: () => void;
+   320→}) {
+   321→  const t = useTranslations("platform");
+   322→  const tError = usePlatformErrorText();
+   323→
+   324→  const { data, isLoading, isError } = useQuery({
+   325→    queryKey: ["platform", "support-ticket", ticketId],
+   326→    queryFn: () => platformQueries.supportTicket(ticketId!),
+   327→    enabled: !!ticketId,
+   328→    refetchOnWindowFocus: false,
+   329→  });
+   330→
+   331→  return (
+   332→    <Dialog open={!!ticketId} onOpenChange={(open) => !open && onClose()}>
+   333→      <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-3xl">
+   334→        {isLoading ? (
+   335→          <ListSkeleton />
+   336→        ) : isError || !data ? (
+   337→          <EmptyState label={t("errors.PLATFORM_INVALID_OPERATION")} />
+   338→        ) : (
+   339→          <TicketDetailBody
+   340→            ticket={data.ticket}
+   341→            diagnostics={data.diagnostics}
+   342→            viewer={data.viewer}
+   343→            onChanged={onChanged}
+   344→            onClose={onClose}
+   345→          />
+   346→        )}
+   347→      </DialogContent>
+   348→    </Dialog>
+   349→  );
+   350→}
+   351→
+   352→function TicketDetailBody({
+   353→  ticket,
+   354→  diagnostics,
+   355→  viewer,
+   356→  onChanged,
+   357→  onClose,
+   358→}: {
+   359→  ticket: PlatformSupportTicketDetail;
+   360→  diagnostics: PlatformTicketDiagnostics;
+   361→  viewer: PlatformTicketViewer;
+   362→  onChanged: () => void;
+   363→  onClose: () => void;
+   364→}) {
+   365→  const t = useTranslations("platform");
+   366→  const tError = usePlatformErrorText();
+   367→
+   368→  const [reply, setReply] = React.useState("");
+   369→  const [visibility, setVisibility] = React.useState<"CUSTOMER" | "INTERNAL">("CUSTOMER");
+   370→  const [busy, setBusy] = React.useState(false);
+   371→  const [error, setError] = React.useState<string | null>(null);
+   372→  const [resolveOpen, setResolveOpen] = React.useState(false);
+   373→
+   374→  const act = async (fn: () => Promise<unknown>, successKey: string) => {
+   375→    setBusy(true);
+   376→    setError(null);
+   377→    try {
+   378→      await fn();
+   379→      toast.success(t(successKey));
+   380→      onChanged();
+   381→    } catch (e) {
+   382→      setError(tError(e));
+   383→    } finally {
+   384→      setBusy(false);
+   385→    }
+   386→  };
+   387→
+   388→  const sendReply = () => {
+   389→    if (!reply.trim()) return;
+   390→    void act(async () => {
+   391→      await platformMutations.supportMessage(ticket.id, { body: reply, visibility });
+   392→      setReply("");
+   393→    }, "support.toastReplySent");
+   394→  };
+   395→
+   396→  return (
+   397→    <div className="flex min-h-0 flex-col gap-4">
+   398→      <DialogHeader>
+   399→        <DialogTitle className="flex flex-wrap items-center gap-2" dir="auto">
+   400→          <span className="font-mono text-sm text-muted-foreground">{ticket.reference}</span>
+   401→          {ticket.subject}
+   402→        </DialogTitle>
+   403→        <DialogDescription className="flex flex-wrap items-center gap-2">
+   404→          <StatusBadge status={ticket.status} label={t(`support.status.${ticket.status}` as Parameters<typeof t>[0])} />
+   405→          <Badge variant="outline" className={priorityClasses(ticket.priority)}>
+   406→            {t(`support.priority.${ticket.priority}` as Parameters<typeof t>[0])}
+   407→          </Badge>
+   408→          <Badge variant="outline">{t(`support.category.${ticket.category}` as Parameters<typeof t>[0])}</Badge>
+   409→          <span dir="ltr" className="text-xs">{ticket.requesterEmail}</span>
+   410→          {ticket.businessName ? <span className="text-xs" dir="auto">· {ticket.businessName}</span> : null}
+   411→        </DialogDescription>
+   412→      </DialogHeader>
+   413→
+   414→      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pe-1" role="log" aria-label={t("support.threadLabel")}>
+   415→        <div className="rounded-md border bg-muted/30 p-3">
+   416→          <p className="text-muted-foreground mb-1 text-xs font-medium">{t("support.originalRequest")}</p>
+   417→          <p className="whitespace-pre-wrap text-sm" dir="auto">{ticket.description}</p>
+   418→        </div>
+   419→
+   420→        {ticket.messages.map((m) => (
+   421→          <div
+   422→            key={m.id}
+   423→            className={
+   424→              m.visibility === "INTERNAL"
+   425→                ? "rounded-md border border-amber-500/40 bg-amber-500/10 p-3"
+   426→                : "rounded-md border p-3"
+   427→            }
+   428→          >
+   429→            <div className="mb-1 flex flex-wrap items-center gap-2">
+   430→              <Badge variant={m.authorKind === "OPERATOR" ? "default" : "outline"} className="text-[10px]">
+   431→                {m.authorKind === "OPERATOR" ? t("support.authorOperator") : t("support.authorRequester")}
+   432→              </Badge>
+   433→              {m.visibility === "INTERNAL" ? (
+   434→                <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-700 dark:text-amber-400">
+   435→                  {t("support.internalNote")}
+   436→                </Badge>
+   437→              ) : null}
+   438→              <span className="text-muted-foreground text-[11px]">{formatDateTime(m.createdAt)}</span>
+   439→            </div>
+   440→            <p className="whitespace-pre-wrap text-sm" dir="auto">{m.body}</p>
+   441→          </div>
+   442→        ))}
+   443→
+   444→        {ticket.status === "RESOLVED" && ticket.resolutionSummary ? (
+   445→          <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3">
+   446→            <p className="mb-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+   447→              {t("support.resolutionSummaryLabel")}
+   448→            </p>
+   449→            <p className="whitespace-pre-wrap text-sm" dir="auto">{ticket.resolutionSummary}</p>
+   450→          </div>
+   451→        ) : null}
+   452→      </div>
+   453→
+   454→      {error ? (
+   455→        <p role="alert" className="text-destructive text-sm">{error}</p>
+   456→      ) : null}
+   457→
+   458→      {ticket.status !== "CLOSED" && viewer.canUpdate ? (
+   459→        <div className="space-y-2">
+   460→          <Label htmlFor="pf-sup-reply">{t("support.replyLabel")}</Label>
+   461→          <Textarea
+   462→            id="pf-sup-reply"
+   463→            rows={3}
+   464→            dir="auto"
+   465→            value={reply}
+   466→            onChange={(e) => setReply(e.target.value)}
+   467→            placeholder={visibility === "INTERNAL" ? t("support.replyInternalPlaceholder") : t("support.replyPlaceholder")}
+   468→            maxLength={2000}
+   469→          />
+   470→          <div className="flex flex-wrap items-center gap-2">
+   471→            <Select value={visibility} onValueChange={(v) => setVisibility(v as "CUSTOMER" | "INTERNAL")}>
+   472→              <SelectTrigger className="w-44" aria-label={t("support.visibilityLabel")}>
+   473→                <SelectValue />
+   474→              </SelectTrigger>
+   475→              <SelectContent>
+   476→                <SelectItem value="CUSTOMER">{t("support.visibilityCustomer")}</SelectItem>
+   477→                <SelectItem value="INTERNAL">{t("support.visibilityInternal")}</SelectItem>
+   478→              </SelectContent>
+   479→            </Select>
+   480→            <Button size="sm" disabled={busy || !reply.trim()} onClick={sendReply}>
+   481→              {t("support.sendReply")}
+   482→            </Button>
+   483→          </div>
+   484→        </div>
+   485→      ) : null}
+   486→
+   487→      <Separator />
+   488→
+   489→      <div className="flex flex-wrap items-center gap-2">
+   490→        {viewer.canAssign ? (
+   491→          ticket.assigneeOperatorId === viewer.operatorId ? (
+   492→            <Button
+   493→              variant="outline"
+   494→              size="sm"
+   495→              disabled={busy}
+   496→              onClick={() => void act(() => platformMutations.supportPatchTicket(ticket.id, { assigneeOperatorId: null }), "support.toastUnassigned")}
+   497→            >
+   498→              <UserX className="size-3.5" aria-hidden="true" />
+   499→              {t("support.unassignMe")}
+   500→            </Button>
+   501→          ) : (
+   502→            <Button
+   503→              variant="outline"
+   504→              size="sm"
+   505→              disabled={busy}
+   506→              onClick={() => void act(() => platformMutations.supportPatchTicket(ticket.id, { assigneeOperatorId: "me" }), "support.toastAssigned")}
+   507→            >
+   508→              <UserCheck className="size-3.5" aria-hidden="true" />
+   509→              {t("support.assignMe")}
+   510→            </Button>
+   511→          )
+   512→        ) : null}
+   513→
+   514→        {viewer.canUpdate ? (
+   515→          <Select
+   516→            value={ticket.priority}
+   517→            onValueChange={(v) =>
+   518→              v !== ticket.priority
+   519→                ? void act(() => platformMutations.supportPatchTicket(ticket.id, { priority: v }), "support.toastPriority")
+   520→                : undefined
+   521→            }
+   522→          >
+   523→            <SelectTrigger className="h-9 w-36" aria-label={t("support.filterPriority")}>
+   524→              <SelectValue />
+   525→            </SelectTrigger>
+   526→            <SelectContent>
+   527→              {["LOW", "NORMAL", "HIGH", "URGENT"].map((p) => (
+   528→                <SelectItem key={p} value={p}>{t(`support.priority.${p}` as Parameters<typeof t>[0])}</SelectItem>
+   529→              ))}
+   530→            </SelectContent>
+   531→          </Select>
+   532→        ) : null}
+   533→
+   534→        {viewer.canUpdate
+   535→          ? ticket.allowedTransitions
+   536→              .filter((s) => s !== "RESOLVED")
+   537→              .map((s) => (
+   538→                <Button
+   539→                  key={s}
+   540→                  variant="outline"
+   541→                  size="sm"
+   542→                  disabled={busy}
+   543→                  onClick={() => void act(() => platformMutations.supportPatchTicket(ticket.id, { status: s }), "support.toastStatus")}
+   544→                >
+   545→                  {t(`support.status.${s}` as Parameters<typeof t>[0])}
+   546→                </Button>
+   547→              ))
+   548→          : null}
+   549→
+   550→        {viewer.canResolve && ticket.status !== "RESOLVED" && ticket.status !== "CLOSED" ? (
+   551→          <Button size="sm" disabled={busy} onClick={() => setResolveOpen(true)}>
+   552→            <CheckCheck className="size-3.5" aria-hidden="true" />
+   553→            {t("support.resolveButton")}
+   554→          </Button>
+   555→        ) : null}
+   556→      </div>
+   557→
+   558→      <Separator />
+   559→      <DiagnosticsPanel diagnostics={diagnostics} />
+   560→
+   561→      <ResolveDialog
+   562→        open={resolveOpen}
+   563→        onOpenChange={setResolveOpen}
+   564→        submitting={busy}
+   565→        onSubmit={(summary) => {
+   566→          void act(async () => {
+   567→            await platformMutations.supportResolve(ticket.id, { resolutionSummary: summary });
+   568→            setResolveOpen(false);
+   569→            onClose();
+   570→          }, "support.toastResolved");
+   571→        }}
+   572→      />
+   573→    </div>
+   574→  );
+   575→}
+   576→
+   577→function ResolveDialog({
+   578→  open,
+   579→  onOpenChange,
+   580→  submitting,
+   581→  onSubmit,
+   582→}: {
+   583→  open: boolean;
+   584→  onOpenChange: (open: boolean) => void;
+   585→  submitting: boolean;
+   586→  onSubmit: (summary: string) => void;
+   587→}) {
+   588→  const t = useTranslations("platform");
+   589→  const [summary, setSummary] = React.useState("");
+   590→  React.useEffect(() => {
+   591→    if (open) setSummary("");
+   592→  }, [open]);
+   593→  const ok = summary.trim().length >= 10 && !submitting;
+   594→
+   595→  return (
+   596→    <Dialog open={open} onOpenChange={onOpenChange}>
+   597→      <DialogContent className="sm:max-w-md">
+   598→        <DialogHeader>
+   599→          <DialogTitle>{t("support.resolveTitle")}</DialogTitle>
+   600→          <DialogDescription>{t("support.resolveDesc")}</DialogDescription>
+   601→        </DialogHeader>
+   602→        <div className="space-y-3">
+   603→          <div className="space-y-1.5">
+   604→            <Label htmlFor="pf-sup-resolution">{t("support.resolutionSummaryLabel")}</Label>
+   605→            <Textarea
+   606→              id="pf-sup-resolution"
+   607→              rows={4}
+   608→              dir="auto"
+   609→              value={summary}
+   610→              onChange={(e) => setSummary(e.target.value)}
+   611→              maxLength={2000}
+   612→            />
+   613→            {summary.trim().length > 0 && summary.trim().length < 10 ? (
+   614→              <p className="text-destructive text-xs">{t("support.resolutionTooShort")}</p>
+   615→            ) : null}
+   616→          </div>
+   617→          <div className="flex justify-end gap-2">
+   618→            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+   619→              {t("common.cancel")}
+   620→            </Button>
+   621→            <Button size="sm" disabled={!ok} onClick={() => onSubmit(summary.trim())}>
+   622→              {t("support.resolveConfirm")}
+   623→            </Button>
+   624→          </div>
+   625→        </div>
+   626→      </DialogContent>
+   627→    </Dialog>
+   628→  );
+   629→}
+   630→
+   631→/* ------------------------------- diagnostics ------------------------------- */
+   632→
+   633→function DiagnosticsPanel({ diagnostics }: { diagnostics: PlatformTicketDiagnostics }) {
+   634→  const t = useTranslations("platform");
+   635→  return (
+   636→    <Card className="border-dashed py-0">
+   637→      <CardHeader className="pb-2">
+   638→        <CardTitle className="flex items-center gap-2 text-sm">
+   639→          <LifeBuoy className="size-4" aria-hidden="true" />
+   640→          {t("support.diagnosticsTitle")}
+   641→        </CardTitle>
+   642→        <CardDescription className="text-xs">{t("support.diagnosticsDesc")}</CardDescription>
+   643→      </CardHeader>
+   644→      <CardContent className="grid gap-3 text-xs sm:grid-cols-2">
+   645→        <div>
+   646→          <p className="text-muted-foreground mb-1 font-medium">{t("support.diagSubscription")}</p>
+   647→          {diagnostics.subscription ? (
+   648→            <p>
+   649→              {diagnostics.subscription.planName ?? "—"} ·{" "}
+   650→              <StatusBadge
+   651→                status={diagnostics.subscription.status}
+   652→                label={diagnostics.subscription.status}
+   653→              />{" "}
+   654→              {diagnostics.subscription.currentPeriodEnd
+   655→                ? `· ${formatDateTime(diagnostics.subscription.currentPeriodEnd)}`
+   656→                : ""}
+   657→            </p>
+   658→          ) : (
+   659→            <p className="text-muted-foreground">{t("support.diagNoBusiness")}</p>
+   660→          )}
+   661→        </div>
+   662→        <div>
+   663→          <p className="text-muted-foreground mb-1 font-medium">{t("support.diagRequesterTickets")}</p>
+   664→          <p className="tabular-nums">{t("support.diagTicketCount", { count: diagnostics.requester.totalTickets })}</p>
+   665→          {diagnostics.requester.recentTickets.length > 0 ? (
+   666→            <ul className="mt-1 space-y-0.5">
+   667→              {diagnostics.requester.recentTickets.slice(0, 3).map((rt) => (
+   668→                <li key={rt.id} className="text-muted-foreground truncate" dir="auto">
+   669→                  SUP-{String(rt.number).padStart(4, "0")} · {rt.subject} · {t(`support.status.${rt.status}` as Parameters<typeof t>[0])}
+   670→                </li>
+   671→              ))}
+   672→            </ul>
+   673→          ) : null}
+   674→        </div>
+   675→        <div>
+   676→          <p className="text-muted-foreground mb-1 font-medium">{t("support.diagFailedDeliveries")}</p>
+   677→          {diagnostics.failedDeliveries.length === 0 ? (
+   678→            <p className="text-muted-foreground">{t("support.diagNone")}</p>
+   679→          ) : (
+   680→            <ul className="space-y-0.5">
+   681→              {diagnostics.failedDeliveries.map((d, i) => (
+   682→                <li key={i} className="text-muted-foreground">
+   683→                  {d.notificationType} · {d.channel} · {d.failureCode ?? "FAILED"} · {formatDateTime(d.createdAt)}
+   684→                </li>
+   685→              ))}
+   686→            </ul>
+   687→          )}
+   688→        </div>
+   689→        {diagnostics.securityEvents ? (
+   690→          <div>
+   691→            <p className="text-muted-foreground mb-1 font-medium">{t("support.diagSecurityEvents")}</p>
+   692→            {diagnostics.securityEvents.length === 0 ? (
+   693→              <p className="text-muted-foreground">{t("support.diagNone")}</p>
+   694→            ) : (
+   695→              <ul className="space-y-0.5">
+   696→                {diagnostics.securityEvents.map((s, i) => (
+   697→                  <li key={i} className="text-muted-foreground">
+   698→                    {s.eventType} · {s.success ? "✓" : "✗"} · {formatDateTime(s.createdAt)}
+   699→                  </li>
+   700→                ))}
+   701→              </ul>
+   702→            )}
+   703→          </div>
+   704→        ) : null}
+   705→      </CardContent>
+   706→    </Card>
+   707→  );
+   708→}
+   709→
+   710→/* ------------------------------ create dialog ------------------------------ */
+   711→
+   712→function CreateTicketDialog({
+   713→  open,
+   714→  onOpenChange,
+   715→  onCreated,
+   716→}: {
+   717→  open: boolean;
+   718→  onOpenChange: (open: boolean) => void;
+   719→  onCreated: (ticketId: string) => void;
+   720→}) {
+   721→  const t = useTranslations("platform");
+   722→  const tError = usePlatformErrorText();
+   723→
+   724→  const [email, setEmail] = React.useState("");
+   725→  const [matches, setMatches] = React.useState<Array<{ id: string; email: string; name: string | null }>>([]);
+   726→  const [requesterId, setRequesterId] = React.useState("");
+   727→  const [businessId, setBusinessId] = React.useState("");
+   728→  const [businessQuery, setBusinessQuery] = React.useState("");
+   729→  const [businessMatches, setBusinessMatches] = React.useState<Array<{ id: string; name: string }>>([]);
+   730→  const [subject, setSubject] = React.useState("");
+   731→  const [category, setCategory] = React.useState("TECHNICAL");
+   732→  const [priority, setPriority] = React.useState("NORMAL");
+   733→  const [description, setDescription] = React.useState("");
+   734→  const [busy, setBusy] = React.useState(false);
+   735→  const [error, setError] = React.useState<string | null>(null);
+   736→
+   737→  // Requester lookup — reuses the EXISTING platform users search (§21).
+   738→  React.useEffect(() => {
+   739→    if (!open) return;
+   740→    const emailTrim = email.trim();
+   741→    if (emailTrim.length < 3) {
+   742→      setMatches([]);
+   743→      return;
+   744→    }
+   745→    const controller = new AbortController();
+   746→    const timer = setTimeout(() => {
+   747→      platformQueries.users(`email=${encodeURIComponent(emailTrim)}&pageSize=5`)
+   748→        .then((d) => setMatches(d.users.map((u) => ({ id: u.id, email: u.email, name: u.name }))))
+   749→        .catch(() => setMatches([]));
+   750→    }, 300);
+   751→    return () => {
+   752→      controller.abort();
+   753→      clearTimeout(timer);
+   754→    };
+   755→  }, [email, open]);
+   756→
+   757→  // Optional business attach — reuses the EXISTING platform businesses search.
+   758→  React.useEffect(() => {
+   759→    if (!open) return;
+   760→    const q = businessQuery.trim();
+   761→    if (q.length < 2 || businessId) {
+   762→      setBusinessMatches([]);
+   763→      return;
+   764→    }
+   765→    const timer = setTimeout(() => {
+   766→      platformQueries.businesses(`q=${encodeURIComponent(q)}&pageSize=5`)
+   767→        .then((d) => setBusinessMatches(d.businesses.map((b) => ({ id: b.id, name: b.name }))))
+   768→        .catch(() => setBusinessMatches([]));
+   769→    }, 300);
+   770→    return () => clearTimeout(timer);
+   771→  }, [businessQuery, businessId, open]);
+   772→
+   773→  React.useEffect(() => {
+   774→    if (open) {
+   775→      setEmail("");
+   776→      setMatches([]);
+   777→      setRequesterId("");
+   778→      setBusinessId("");
+   779→      setBusinessQuery("");
+   780→      setBusinessMatches([]);
+   781→      setSubject("");
+   782→      setCategory("TECHNICAL");
+   783→      setPriority("NORMAL");
+   784→      setDescription("");
+   785→      setError(null);
+   786→    }
+   787→  }, [open]);
+   788→
+   789→  const canSubmit =
+   790→    !!requesterId && subject.trim().length >= 5 && description.trim().length >= 10 && !busy;
+   791→
+   792→  const submit = async () => {
+   793→    setBusy(true);
+   794→    setError(null);
+   795→    try {
+   796→      const res = await fetch("/api/v1/platform/support/tickets", {
+   797→        method: "POST",
+   798→        headers: { "content-type": "application/json" },
+   799→        credentials: "same-origin",
+   800→        body: JSON.stringify({
+   801→          requesterId,
+   802→          ...(businessId ? { businessId } : {}),
+   803→          subject: subject.trim(),
+   804→          description: description.trim(),
+   805→          category,
+   806→          priority,
+   807→        }),
+   808→      });
+   809→      const body = (await res.json()) as
+   810→        | { ok: true; data: { ticket: { id: string } } }
+   811→        | { ok: false; error: { code: string; message: string } };
+   812→      if (!res.ok || !body.ok) {
+   813→        const message =
+   814→          body.ok === false ? body.error.message : "Request failed.";
+   815→        setError(message || "Request failed.");
+   816→        return;
+   817→      }
+   818→      onCreated(body.data.ticket.id);
+   819→    } catch (e) {
+   820→      setError(tError(e));
+   821→    } finally {
+   822→      setBusy(false);
+   823→    }
+   824→  };
+   825→
+   826→  return (
+   827→    <Dialog open={open} onOpenChange={onOpenChange}>
+   828→      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+   829→        <DialogHeader>
+   830→          <DialogTitle>{t("support.createTitle")}</DialogTitle>
+   831→          <DialogDescription>{t("support.createDesc")}</DialogDescription>
+   832→        </DialogHeader>
+   833→        <div className="space-y-3">
+   834→          <div className="space-y-1.5">
+   835→            <Label htmlFor="pf-sup-c-email">{t("support.createRequester")}</Label>
+   836→            <Input
+   837→              id="pf-sup-c-email"
+   838→              type="email"
+   839→              dir="ltr"
+   840→              value={email}
+   841→              onChange={(e) => {
+   842→                setEmail(e.target.value);
+   843→                setRequesterId("");
+   844→              }}
+   845→              placeholder="user@example.com"
+   846→            />
+   847→            {matches.length > 0 ? (
+   848→              <div className="max-h-32 space-y-1 overflow-y-auto rounded-md border p-1">
+   849→                {matches.map((m) => (
+   850→                  <button
+   851→                    key={m.id}
+   852→                    type="button"
+   853→                    className={`w-full rounded px-2 py-1.5 text-start text-xs hover:bg-accent ${requesterId === m.id ? "bg-accent" : ""}`}
+   854→                    onClick={() => {
+   855→                      setRequesterId(m.id);
+   856→                      setEmail(m.email);
+   857→                    }}
+   858→                  >
+   859→                    <span dir="ltr">{m.email}</span>
+   860→                    {m.name ? <span className="text-muted-foreground" dir="auto"> — {m.name}</span> : null}
+   861→                  </button>
+   862→                ))}
+   863→              </div>
+   864→            ) : null}
+   865→          </div>
+   866→
+   867→          <div className="space-y-1.5">
+   868→            <Label htmlFor="pf-sup-c-business">{t("support.createBusiness")}</Label>
+   869→            <Input
+   870→              id="pf-sup-c-business"
+   871→              dir="auto"
+   872→              value={businessId ? (businessMatches.find((b) => b.id === businessId)?.name ?? "") : businessQuery}
+   873→              onChange={(e) => {
+   874→                setBusinessId("");
+   875→                setBusinessQuery(e.target.value);
+   876→              }}
+   877→              placeholder={t("support.createBusinessPlaceholder")}
+   878→            />
+   879→            {businessMatches.length > 0 ? (
+   880→              <div className="max-h-32 space-y-1 overflow-y-auto rounded-md border p-1">
+   881→                {businessMatches.map((b) => (
+   882→                  <button
+   883→                    key={b.id}
+   884→                    type="button"
+   885→                    className={`w-full rounded px-2 py-1.5 text-start text-xs hover:bg-accent ${businessId === b.id ? "bg-accent" : ""}`}
+   886→                    onClick={() => setBusinessId(b.id)}
+   887→                    dir="auto"
+   888→                  >
+   889→                    {b.name}
+   890→                  </button>
+   891→                ))}
+   892→              </div>
+   893→            ) : null}
+   894→          </div>
+   895→
+   896→          <div className="space-y-1.5">
+   897→            <Label htmlFor="pf-sup-c-subject">{t("support.createSubject")}</Label>
+   898→            <Input
+   899→              id="pf-sup-c-subject"
+   900→              dir="auto"
+   901→              value={subject}
+   902→              onChange={(e) => setSubject(e.target.value)}
+   903→              maxLength={140}
+   904→            />
+   905→          </div>
+   906→
+   907→          <div className="grid grid-cols-2 gap-3">
+   908→            <div className="space-y-1.5">
+   909→              <Label htmlFor="pf-sup-c-category">{t("support.filterCategory")}</Label>
+   910→              <Select value={category} onValueChange={setCategory}>
+   911→                <SelectTrigger id="pf-sup-c-category" aria-label={t("support.filterCategory")}>
+   912→                  <SelectValue />
+   913→                </SelectTrigger>
+   914→                <SelectContent>
+   915→                  {["BILLING", "TECHNICAL", "ACCOUNT", "AI_COPILOT", "FEATURE_REQUEST", "OTHER"].map((c) => (
+   916→                    <SelectItem key={c} value={c}>{t(`support.category.${c}` as Parameters<typeof t>[0])}</SelectItem>
+   917→                  ))}
+   918→                </SelectContent>
+   919→              </Select>
+   920→            </div>
+   921→            <div className="space-y-1.5">
+   922→              <Label htmlFor="pf-sup-c-priority">{t("support.filterPriority")}</Label>
+   923→              <Select value={priority} onValueChange={setPriority}>
+   924→                <SelectTrigger id="pf-sup-c-priority" aria-label={t("support.filterPriority")}>
+   925→                  <SelectValue />
+   926→                </SelectTrigger>
+   927→                <SelectContent>
+   928→                  {["LOW", "NORMAL", "HIGH", "URGENT"].map((p) => (
+   929→                    <SelectItem key={p} value={p}>{t(`support.priority.${p}` as Parameters<typeof t>[0])}</SelectItem>
+   930→                  ))}
+   931→                </SelectContent>
+   932→              </Select>
+   933→            </div>
+   934→          </div>
+   935→
+   936→          <div className="space-y-1.5">
+   937→            <Label htmlFor="pf-sup-c-desc">{t("support.createDescription")}</Label>
+   938→            <Textarea
+   939→              id="pf-sup-c-desc"
+   940→              rows={4}
+   941→              dir="auto"
+   942→              value={description}
+   943→              onChange={(e) => setDescription(e.target.value)}
+   944→              maxLength={5000}
+   945→            />
+   946→          </div>
+   947→
+   948→          {error ? (
+   949→            <p role="alert" className="text-destructive text-sm">{error}</p>
+   950→          ) : null}
+   951→
+   952→          <div className="flex justify-end gap-2">
+   953→            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+   954→              {t("common.cancel")}
+   955→            </Button>
+   956→            <Button size="sm" disabled={!canSubmit} onClick={() => void submit()}>
+   957→              {t("support.createSubmit")}
+   958→            </Button>
+   959→          </div>
+   960→        </div>
+   961→      </DialogContent>
+   962→    </Dialog>
+   963→  );
+   964→}
+   965→

@@ -31,7 +31,13 @@ export const GET = route(async (_req: NextRequest) => {
       error && typeof error === "object" && "code" in error
         ? (error as { code: string }).code
         : null;
-    if (code === "SESSION_INVALIDATED" || code === "PLATFORM_UNAUTHENTICATED") throw error;
+    if (
+      code === "SESSION_INVALIDATED" ||
+      code === "SESSION_REVOKED" || // R64 — per-device registry gate now enforced platform-side too
+      code === "PLATFORM_UNAUTHENTICATED"
+    ) {
+      throw error;
+    }
     throw platformError(403, "PLATFORM_FORBIDDEN", "You do not have platform access.");
   }
 });

@@ -104,6 +104,8 @@ export type PlatformOverview = {
     open: number;
     awaitingFirstResponse: number;
     urgentOpen: number;
+    /** R64 — open unanswered tickets past the 4h first-response SLA. */
+    slaOverdue: number;
   };
   /** Prompt 63 — Security Center counters (window = windowDays). */
   security: { loginsWindow: number; failedLoginsWindow: number; suspendedUsers: number };
@@ -188,6 +190,12 @@ export type PlatformSupportTicket = {
   updatedAt: string;
   firstResponseAt: string | null;
   resolvedAt: string | null;
+  /**
+   * R64 — first-response SLA verdict: met = operator responded; due_soon /
+   * overdue = unanswered open ticket aging past 3h/4h; open = fresh; na =
+   * resolved/closed with no response ever.
+   */
+  sla: "met" | "due_soon" | "overdue" | "open" | "na";
 };
 
 export type PlatformSupportMessage = {
@@ -375,6 +383,8 @@ export type PlatformSecuritySummary = {
   suspendedUsers: number;
   activeOperators: number;
   activeSessions: number;
+  /** R64 — failed-login storm buckets (email or hashed-IP) in the last 60 min, threshold ≥5. */
+  failedLoginBursts1h: number;
   eventTypes24h: Record<string, number>;
 };
 
@@ -387,6 +397,42 @@ export type PlatformSecurityEvent = {
   userAgent: string | null;
   ipHashPrefix: string | null;
   createdAt: string;
+};
+
+/**
+ * R64 — failed-login burst detail (GET /security/anomalies). The
+ * identity-bearing companion of the COUNT-only summary: emails and the SAME
+ * 12-hex IP prefixes the events feed already shows, grouped over the sliding
+ * window. Server owns window/threshold constants — the client never tunes them.
+ */
+export type PlatformSecurityAnomalies = {
+  generatedAt: string;
+  windowMinutes: number;
+  threshold: number;
+  emailBursts: Array<{ key: string; count: number; lastAt: string }>;
+  ipBursts: Array<{ key: string; count: number; lastAt: string }>;
+  totalBursts: number;
+};
+
+/** R64 — one row of the operator session registry (GET /operators/[id]/sessions). */
+export type PlatformOperatorSession = {
+  id: string;
+  deviceLabel: string | null;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  revoked: boolean;
+  revokedAt: string | null;
+  /** Server-computed: not revoked AND not expired. */
+  live: boolean;
+  ipHashPrefix: string | null;
+};
+
+export type PlatformOperatorSessions = {
+  operator: { id: string; email: string | null; name: string | null; role: string; active: boolean };
+  activeCount: number;
+  sessions: PlatformOperatorSession[];
+  truncated: boolean;
 };
 
 export type PlatformOperator = {
@@ -536,10 +582,14 @@ export const platformQueries = {
     platformApi<{ events: PlatformSecurityEvent[]; page: PageMeta; facets: { eventTypes: string[] } }>(
       `/api/v1/platform/security/events${params ? `?${params}` : ""}`,
     ),
+  securityAnomalies: () =>
+    platformApi<PlatformSecurityAnomalies>("/api/v1/platform/security/anomalies"),
   operators: (params: string) =>
     platformApi<{ operators: PlatformOperator[]; page: PageMeta }>(
       `/api/v1/platform/operators${params ? `?${params}` : ""}`,
     ),
+  operatorSessions: (operatorId: string) =>
+    platformApi<PlatformOperatorSessions>(`/api/v1/platform/operators/${operatorId}/sessions`),
   system: () => platformApi<PlatformSystem>("/api/v1/platform/system"),
 };
 
@@ -688,4 +738,55 @@ export const platformMutations = {
       `/api/v1/platform/operators/${id}`,
       { method: "PATCH", body: JSON.stringify(body) },
     ),
+  /** R64 — surgical single-session revocation (one device dies, the rest survive). */
+  revokeOperatorSession: (
+    operatorId: string,
+    sessionId: string,
+    body: { reason: string; password: string },
+  ) =>
+    platformApi<{ revoked: boolean; alreadyRevoked: boolean; requestId: string }>(
+      `/api/v1/platform/operators/${operatorId}/sessions/${sessionId}`,
+      { method: "DELETE", body: JSON.stringify(body) },
+    ),
 };
+
+/**
+ * R64 — raw CSV export for the security events feed. Unlike platformApi()
+ * (JSON envelope only), a SUCCESSFUL export responds with CSV TEXT plus
+ * x-export-truncated / x-export-rows headers, so it needs its own reader.
+ * Errors still arrive as the standard JSON error envelope → ApiClientError,
+ * so every existing error surface (usePlatformErrorText) just works.
+ */
+export async function exportSecurityEventsCsv(
+  params: string,
+): Promise<{ csv: string; truncated: boolean; rows: number }> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1/platform/security/events/export${params ? `?${params}` : ""}`, {
+      credentials: "same-origin",
+    });
+  } catch {
+    throw new ApiClientError("NETWORK_ERROR", "Network error. Please try again.", 0);
+  }
+  if (!res.ok) {
+    let err: { code: string; message: string; details?: unknown } | null = null;
+    try {
+      const body = (await res.json()) as Envelope<unknown> | null;
+      err = body && body.ok === false ? body.error : null;
+    } catch {
+      err = null; // non-JSON failure body — fall through to the generic error
+    }
+    throw new ApiClientError(
+      err?.code ?? "HTTP_ERROR",
+      err?.message ?? "Request failed.",
+      res.status,
+      err?.details,
+    );
+  }
+  const csv = await res.text();
+  return {
+    csv,
+    truncated: res.headers.get("x-export-truncated") === "true",
+    rows: Number(res.headers.get("x-export-rows") ?? "0"),
+  };
+}

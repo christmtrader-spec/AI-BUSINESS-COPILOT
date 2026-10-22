@@ -7,17 +7,25 @@
  * through the safe error mapper (§86/§137) — never raw server text.
  * Mono/technical tokens (event types, reason codes, ip hashes) always
  * render dir="ltr" so EN/FA + RTL behave identically.
+ *
+ * R64 — failed-login burst surfacing (summary card + anomaly banner +
+ * detail dialog over /security/anomalies) and an audited CSV export that
+ * mirrors the EXACT on-screen filter set (one shared builder, two consumers).
  */
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
+import { toast } from "sonner";
 import {
   Ban,
+  Download,
   KeyRound,
+  Loader2,
   LogIn,
   LogOut,
   Monitor,
   ShieldAlert,
+  TriangleAlert,
   UserX,
   UsersRound,
   type LucideIcon,
@@ -25,6 +33,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -35,9 +51,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { downloadCsv, exportStamp } from "@/lib/csv";
 import {
+  exportSecurityEventsCsv,
   platformQueries,
   type PlatformSecurityEvent,
+  type PlatformSecurityAnomalies,
 } from "./platform-api";
 import {
   EmptyState,
@@ -54,6 +73,9 @@ const PAGE_SIZE = 20;
 /** "Show me the failed logins" preset — fixed server event-type vocabulary. */
 const FAILED_LOGIN_PRESET = { eventType: "auth.login.failed", result: "FAILED" as const };
 
+/** Mirror of the server's SECURITY_EXPORT_MAX_ROWS — for the honest truncation toast. */
+const SECURITY_EXPORT_CAP = 5_000;
+
 const USER_AGENT_CLIP = 40;
 
 export function SecurityView() {
@@ -68,6 +90,8 @@ export function SecurityView() {
   const [toDraft, setToDraft] = React.useState("");
   const [applied, setApplied] = React.useState({ user: "", from: "", to: "" });
   const [page, setPage] = React.useState(1);
+  const [anomOpen, setAnomOpen] = React.useState(false);
+  const [exporting, setExporting] = React.useState(false);
 
   const applyDrafts = React.useCallback(() => {
     setApplied({ user: userDraft.trim(), from: fromDraft, to: toDraft });
@@ -94,19 +118,30 @@ export function SecurityView() {
     setPage(1);
   }, []);
 
-  const params = new URLSearchParams();
-  if (eventType) params.set("eventType", eventType);
-  if (result === "SUCCESS") params.set("success", "true");
-  if (result === "FAILED") params.set("success", "false");
-  if (applied.user) {
-    // A value containing "@" is treated as an email; anything else as a user id.
-    if (applied.user.includes("@")) params.set("email", applied.user);
-    else params.set("userId", applied.user);
-  }
-  if (applied.from) params.set("createdFrom", applied.from);
-  if (applied.to) params.set("createdTo", applied.to);
-  params.set("page", String(page));
-  params.set("pageSize", String(PAGE_SIZE));
+  // ONE shared filter builder — the events feed AND the CSV export must
+  // always describe the same on-screen filter set (R64: one builder,
+  // two consumers, like the server's own §81 parser law).
+  const buildFilterParams = React.useCallback(() => {
+    const p = new URLSearchParams();
+    if (eventType) p.set("eventType", eventType);
+    if (result === "SUCCESS") p.set("success", "true");
+    if (result === "FAILED") p.set("success", "false");
+    if (applied.user) {
+      // A value containing "@" is treated as an email; anything else as a user id.
+      if (applied.user.includes("@")) p.set("email", applied.user);
+      else p.set("userId", applied.user);
+    }
+    if (applied.from) p.set("createdFrom", applied.from);
+    if (applied.to) p.set("createdTo", applied.to);
+    return p;
+  }, [eventType, result, applied]);
+
+  const eventsParams = React.useMemo(() => {
+    const p = buildFilterParams();
+    p.set("page", String(page));
+    p.set("pageSize", String(PAGE_SIZE));
+    return p.toString();
+  }, [buildFilterParams, page]);
 
   const summary = useQuery({
     queryKey: ["platform", "security", "summary"],
@@ -115,15 +150,43 @@ export function SecurityView() {
     placeholderData: (prev) => prev,
   });
   const events = useQuery({
-    queryKey: ["platform", "security", "events", params.toString()],
-    queryFn: () => platformQueries.securityEvents(params.toString()),
+    queryKey: ["platform", "security", "events", eventsParams],
+    queryFn: () => platformQueries.securityEvents(eventsParams),
     refetchOnWindowFocus: false,
     placeholderData: (prev) => prev,
+  });
+  // R64 — burst detail. Fetched only while the dialog is open (permission is
+  // the same platform:security:read; server re-verifies per call).
+  const anomalies = useQuery({
+    queryKey: ["platform", "security", "anomalies"],
+    queryFn: platformQueries.securityAnomalies,
+    enabled: anomOpen,
+    refetchOnWindowFocus: false,
   });
 
   const summaryError = summary.isError ? errorText(summary.error) : null;
   const eventsError = events.isError ? errorText(events.error) : null;
   const rows: PlatformSecurityEvent[] = events.data?.events ?? [];
+
+  const handleExportCsv = React.useCallback(async () => {
+    setExporting(true);
+    try {
+      // Export reads the SAME committed filters the list is showing — never
+      // the un-applied drafts.
+      const filters = buildFilterParams().toString();
+      const { csv, truncated, rows: exportedRows } = await exportSecurityEventsCsv(filters);
+      downloadCsv(`security-events-${exportStamp()}.csv`, csv);
+      if (truncated) {
+        toast.warning(t("security.exportTruncated", { rows: exportedRows, cap: SECURITY_EXPORT_CAP }));
+      } else {
+        toast.success(t("security.exportSuccess", { rows: exportedRows }));
+      }
+    } catch (e) {
+      toast.error(errorText(e));
+    } finally {
+      setExporting(false);
+    }
+  }, [buildFilterParams, errorText, t]);
 
   const summaryCards: Array<{
     key: string;
@@ -141,6 +204,14 @@ export function SecurityView() {
           icon: ShieldAlert,
           danger: summary.data.failedLogins24h > 0,
           onClick: applyFailedLoginPreset,
+        },
+        {
+          key: "failedLoginBursts",
+          label: t("security.failedLoginBursts"),
+          value: summary.data.failedLoginBursts1h,
+          icon: TriangleAlert,
+          danger: summary.data.failedLoginBursts1h > 0,
+          onClick: () => setAnomOpen(true),
         },
         { key: "logins", label: t("security.logins"), value: summary.data.logins24h, icon: LogIn },
         { key: "rateLimited", label: t("security.rateLimited"), value: summary.data.rateLimitedLogins24h, icon: Ban },
@@ -161,7 +232,7 @@ export function SecurityView() {
 
       {summary.isLoading && !summary.data ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-hidden="true">
-          {Array.from({ length: 8 }).map((_, i) => (
+          {Array.from({ length: 9 }).map((_, i) => (
             <Skeleton key={i} className="h-24 w-full" />
           ))}
         </div>
@@ -300,10 +371,51 @@ export function SecurityView() {
               <Button type="button" variant="outline" onClick={resetFilters}>
                 {t("security.reset")}
               </Button>
+              <Button
+                type="button"
+                variant="outline"
+                data-testid="pf-sec-export"
+                disabled={exporting}
+                onClick={() => void handleExportCsv()}
+              >
+                {exporting ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Download className="size-4" aria-hidden="true" />
+                )}
+                {exporting ? t("security.exportingCsv") : t("security.exportCsv")}
+              </Button>
             </div>
           </form>
         </CardContent>
       </Card>
+
+      {/* R64 — burst banner: sits ABOVE the events list, only when the
+          summary actually counts an active burst. Icon + text carry the
+          meaning; amber is the accent, never the sole signal. */}
+      {summary.data && summary.data.failedLoginBursts1h > 0 ? (
+        <div
+          data-testid="pf-sec-anom-banner"
+          className="flex flex-wrap items-center gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3"
+        >
+          <TriangleAlert
+            className="size-4 shrink-0 text-amber-700 dark:text-amber-400"
+            aria-hidden="true"
+          />
+          <p className="min-w-48 flex-1 text-sm text-amber-900 dark:text-amber-200">
+            {t("security.anomBanner", { total: summary.data.failedLoginBursts1h })}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="pf-sec-anom-open"
+            onClick={() => setAnomOpen(true)}
+          >
+            {t("security.anomBannerAction")}
+          </Button>
+        </div>
+      ) : null}
 
       {events.isLoading && !events.data ? (
         <ListSkeleton />
@@ -368,6 +480,88 @@ export function SecurityView() {
           />
         </>
       )}
+
+      <AnomaliesDialog open={anomOpen} onOpenChange={setAnomOpen} query={anomalies} />
     </div>
+  );
+}
+
+/**
+ * R64 — failed-login burst detail. Two labeled groups (by email / by IP
+ * prefix) over the server-owned window; the server's own threshold/window
+ * values render in the caption so the client never restates them from
+ * guesses. Empty groups say so honestly.
+ */
+function AnomaliesDialog({
+  open,
+  onOpenChange,
+  query,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  query: { data?: PlatformSecurityAnomalies; isLoading: boolean; isError: boolean; error: unknown };
+}) {
+  const t = useTranslations("platform");
+  const errorText = usePlatformErrorText();
+  const data = query.data;
+
+  const renderGroup = (title: string, buckets: PlatformSecurityAnomalies["emailBursts"], testid: string, ipMode: boolean) => (
+    <div className="space-y-1.5" data-testid={testid}>
+      <p className="text-xs font-semibold">{title}</p>
+      {buckets.length === 0 ? (
+        <p className="text-muted-foreground text-xs">{t("security.anomNone")}</p>
+      ) : (
+        <ul className="space-y-1">
+          {buckets.map((b) => (
+            <li
+              key={b.key}
+              data-testid="pf-sec-anom-row"
+              className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border p-2 text-xs"
+            >
+              <span className="font-mono font-medium" dir="ltr">
+                {ipMode ? `ip#${b.key}` : b.key}
+              </span>
+              <Badge variant="outline" className="tabular-nums">
+                {formatCount(b.count)}
+              </Badge>
+              <span className="text-muted-foreground ms-auto">
+                {t("security.anomLastAt")}: {formatDateTime(b.lastAt)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t("security.anomTitle")}</DialogTitle>
+          <DialogDescription>{t("security.anomDesc")}</DialogDescription>
+        </DialogHeader>
+        {query.isLoading && !data ? (
+          <ListSkeleton />
+        ) : query.isError ? (
+          <p role="alert" className="text-destructive text-sm">
+            {errorText(query.error)}
+          </p>
+        ) : data ? (
+          <div className="space-y-4">
+            {renderGroup(t("security.anomByEmail"), data.emailBursts, "pf-sec-anom-email", false)}
+            {renderGroup(t("security.anomByIp"), data.ipBursts, "pf-sec-anom-ip", true)}
+            <p className="text-muted-foreground text-xs" data-testid="pf-sec-anom-threshold">
+              {t("security.anomThreshold", { threshold: data.threshold, window: data.windowMinutes })}
+            </p>
+          </div>
+        ) : null}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {t("common.cancel")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

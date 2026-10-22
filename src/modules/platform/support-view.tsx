@@ -14,7 +14,7 @@ import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { CheckCheck, LifeBuoy, MessageSquarePlus, Search, UserCheck, UserX } from "lucide-react";
+import { Check, CheckCheck, LifeBuoy, MessageSquarePlus, Search, UserCheck, UserX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -228,7 +228,10 @@ export function SupportView() {
                     </TableCell>
                     <TableCell className="text-sm" dir="auto">{ticket.businessName ?? "—"}</TableCell>
                     <TableCell>
-                      <StatusBadge status={ticket.status} label={t(`support.status.${ticket.status}` as Parameters<typeof t>[0])} />
+                      <div className="flex items-center gap-1.5">
+                        <StatusBadge status={ticket.status} label={t(`support.status.${ticket.status}` as Parameters<typeof t>[0])} />
+                        <SlaBadge verdict={ticket.sla} />
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline" className={priorityClasses(ticket.priority)}>
@@ -252,7 +255,10 @@ export function SupportView() {
                 <CardContent className="space-y-2 p-4">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-mono text-xs">{ticket.reference}</span>
-                    <StatusBadge status={ticket.status} label={t(`support.status.${ticket.status}` as Parameters<typeof t>[0])} />
+                    <div className="flex flex-wrap items-center justify-end gap-1.5">
+                      <StatusBadge status={ticket.status} label={t(`support.status.${ticket.status}` as Parameters<typeof t>[0])} />
+                      <SlaBadge verdict={ticket.sla} />
+                    </div>
                   </div>
                   <p className="text-sm font-medium" dir="auto">{ticket.subject}</p>
                   <p className="text-muted-foreground text-xs" dir="ltr">{ticket.requesterEmail}</p>
@@ -305,6 +311,30 @@ function priorityClasses(priority: string): string {
     default:
       return "";
   }
+}
+
+/**
+ * R64 — first-response SLA verdict badge, rendered ONLY for actionable
+ * verdicts (overdue / due_soon / met); "open" and "na" stay silent to keep
+ * the row quiet. Icon + label always carry the meaning — color is only the
+ * accent (§ tone law). Unknown/undefined verdicts (stale cache) render
+ * nothing instead of guessing.
+ */
+function SlaBadge({ verdict }: { verdict: string }) {
+  const t = useTranslations("platform");
+  if (verdict !== "overdue" && verdict !== "due_soon" && verdict !== "met") return null;
+  const classes =
+    verdict === "overdue"
+      ? "border-destructive/40 bg-destructive/10 text-destructive"
+      : verdict === "due_soon"
+        ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+        : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
+  return (
+    <Badge variant="outline" className={`${classes} whitespace-nowrap`} data-testid={`pf-sla-${verdict}`}>
+      {verdict === "met" ? <Check className="size-3" aria-hidden="true" /> : null}
+      {t(`support.sla.${verdict}` as Parameters<typeof t>[0])}
+    </Badge>
+  );
 }
 
 /* ------------------------------ detail dialog ------------------------------ */

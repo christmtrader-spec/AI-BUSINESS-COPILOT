@@ -73,6 +73,27 @@ export async function getPlatformContext(req?: Request): Promise<PlatformContext
     throw platformError(401, "SESSION_INVALIDATED", "Your session was invalidated. Please sign in again.");
   }
 
+  // R64 FIX (Prompt 30 §81) — per-device registry gate: the TENANT chain has
+  // always enforced this (assertFreshSession), but the platform chain did
+  // NOT — a single-session revocation (per-device revokedAt, e.g. the
+  // Operators-view revoke or self-service device sign-out) left the JWT
+  // fully usable against every platform route. One validation path (§81):
+  // sid-bearing sessions MUST be live (present, unrevoked, unexpired) here
+  // exactly as they must be on the tenant side. Legacy sid-less JWTs keep
+  // the documented compat-window behavior (§83/§226).
+  const sid = (session.user as { sid?: string }).sid;
+  if (sid) {
+    const { checkSessionRegistry } = await import("@/lib/auth/sessions/service");
+    const registry = await checkSessionRegistry(sid, user.id);
+    if (!registry.ok) {
+      throw platformError(
+        401,
+        registry.reason === "REVOKED" ? "SESSION_REVOKED" : "SESSION_INVALIDATED",
+        "This device was signed out. Please sign in again.",
+      );
+    }
+  }
+
   const operator = await db.platformOperator.findUnique({ where: { userId } });
   if (!operator) {
     // Tenant users are plain 403 — no information about the platform layer.
