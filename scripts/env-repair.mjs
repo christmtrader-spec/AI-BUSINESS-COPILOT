@@ -101,6 +101,8 @@ const MIGRATIONS = [
   "20261023070000_prompt65_platform_approval_requests",
   // R67 — platform operator invitation (admin registration) table.
   "20261023100000_r67_platform_operator_invites",
+  // R68 — platform setup key (cold-start first-operator bootstrap) table.
+  "20261023120000_r68_platform_setup_keys",
 ];
 
 function log(step, msg) {

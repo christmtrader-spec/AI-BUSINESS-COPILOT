@@ -50,6 +50,7 @@ model User {
   invitesAccepted      BusinessInvite[]      @relation("InviteAcceptor")
   platformInvitesCreated  PlatformOperatorInvite[] @relation("PlatformInviteCreator")
   platformInvitesAccepted PlatformOperatorInvite[] @relation("PlatformInviteAcceptor")
+  platformSetupKeysUsed   PlatformSetupKey[]       @relation("PlatformSetupKeyUser")
   chatSessions         ChatSession[]
   chatMessages         ChatMessage[]
   passwordResetTokens  PasswordResetToken[]
@@ -1495,6 +1496,36 @@ model PlatformOperatorInvite {
 
   @@index([email])
   @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// R68 — PLATFORM SETUP KEY (cold-start fix for the first operator).
+//
+// The R67 invite flow requires an EXISTING super admin to mint invites —
+// with zero operators the console is an honest dead end. LAWS (§9/§61):
+//  - The key is minted ONLY by the offline CLI (scripts/platform-setup-key.ts)
+//    which refuses when any operator exists — NO public bootstrap route.
+//  - The raw key is displayed EXACTLY ONCE (display-once law, §60); only the
+//    SHA-256 hash is persisted — the hash IS the lookup key (unique).
+//  - Single-use, expiring; optional boundEmail pins redemption to one
+//    account. Redemption requires an authenticated, registry-fresh session
+//    and is audited (SecurityEvent + platform audit).
+//  - The endpoint self-disables forever once the first operator exists
+//    (setupRequired = operators === 0).
+// ---------------------------------------------------------------------------
+model PlatformSetupKey {
+  id           String    @id @default(cuid())
+  // SHA-256 hex of the opaque base64url key — raw key NEVER stored (§14).
+  keyHash      String    @unique
+  // Optional: when set, ONLY this account may redeem the key.
+  boundEmail   String?
+  expiresAt    DateTime
+  usedAt       DateTime?
+  usedByUserId String?
+  usedByUser   User?     @relation("PlatformSetupKeyUser", fields: [usedByUserId], references: [id], onDelete: SetNull)
+  createdAt    DateTime  @default(now())
+
+  @@index([expiresAt])
 }
 
 // ---------------------------------------------------------------------------

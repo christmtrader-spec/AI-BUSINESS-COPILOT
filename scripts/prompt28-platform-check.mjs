@@ -156,8 +156,16 @@ function staticScans() {
   // pattern, same trust model as verify-email): the opaque single-use token
   // IS the authorization. It is rate-limited per IP+token, audited, and
   // records SecurityEvents; the token is never stored in any payload.
+  // R68 documented exception: /platform/setup is the cold-start FIRST-
+  // operator gate — pre-operator BY DEFINITION (no PlatformOperator row can
+  // exist yet). It still gates on the FULL session-side chain
+  // (getPlatformSessionUser: session → user → sessionVersion → per-device
+  // registry) PLUS a single-use offline-minted setup key; rate-limited,
+  // audited, SecurityEvents recorded, key never stored in any payload, and
+  // the window self-disables once any operator exists.
   // EVERY OTHER platform route MUST keep the platform auth chain.
-  const AUTH_EXCEPTIONS = /platform[\\/]invites[\\/]\[token\][\\/]route\.ts$/;
+  const AUTH_EXCEPTIONS =
+    /platform[\\/](invites[\\/]\[token\]|setup)[\\/]route\.ts$/;
   let missingAuth = 0;
   for (const [f, src] of routeSrc) {
     if (!src.includes("getPlatformContext") && !AUTH_EXCEPTIONS.test(f)) {

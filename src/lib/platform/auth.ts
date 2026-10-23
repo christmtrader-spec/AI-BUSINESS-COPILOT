@@ -58,7 +58,19 @@ export function platformError(
   return new ApiError(status, code, message, details);
 }
 
-export async function getPlatformContext(req?: Request): Promise<PlatformContext> {
+export type PlatformSessionUser = {
+  session: Session;
+  userId: string;
+  email: string;
+};
+
+/**
+ * Session-side prefix of the platform gate (§81 — one validation path):
+ *   session → userId → User → sessionVersion → per-device registry.
+ * Shared by getPlatformContext (operator chain) and the R68 pre-operator
+ * setup route (which by definition runs BEFORE an operator row exists).
+ */
+export async function getPlatformSessionUser(): Promise<PlatformSessionUser> {
   const session = await getServerSession(authOptions);
   const userId = (session?.user as { id?: string } | undefined)?.id;
   if (!session || !userId) {
@@ -99,6 +111,12 @@ export async function getPlatformContext(req?: Request): Promise<PlatformContext
     }
   }
 
+  return { session, userId: user.id, email: user.email };
+}
+
+export async function getPlatformContext(req?: Request): Promise<PlatformContext> {
+  const { session, userId, email } = await getPlatformSessionUser();
+
   const operator = await db.platformOperator.findUnique({ where: { userId } });
   if (!operator) {
     // Tenant users are plain 403 — no information about the platform layer.
@@ -135,8 +153,8 @@ export async function getPlatformContext(req?: Request): Promise<PlatformContext
   return {
     session,
     operatorId: operator.id,
-    userId: user.id,
-    email: user.email,
+    userId,
+    email,
     role: operator.role as PlatformRole,
     permissions: permissionsOfPlatformRole(operator.role as PlatformRole),
   };

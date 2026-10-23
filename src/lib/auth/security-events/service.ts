@@ -54,6 +54,10 @@ export const SECURITY_EVENTS = {
   operatorInviteRevoked: "platform.operator.invite_revoked",
   operatorInviteAccepted: "platform.operator.invite_accepted",
   operatorInviteRedeemFailed: "platform.operator.invite_redeem_failed",
+  // R68 — platform setup key lifecycle (cold-start first operator, §423).
+  platformSetupKeyMinted: "platform.setup.key_minted",
+  platformSetupClaimed: "platform.setup.claimed",
+  platformSetupClaimFailed: "platform.setup.claim_failed",
 } as const;
 
 export type SecurityEventType =

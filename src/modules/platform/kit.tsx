@@ -41,9 +41,17 @@ export const PLATFORM_GRADIENT_TEXT =
   "bg-gradient-to-br from-[#C165DD] to-[#5C27FE] bg-clip-text text-transparent";
 export const PLATFORM_BRAND_BADGE =
   "border-[#C165DD]/30 bg-gradient-to-br from-[#C165DD]/15 to-[#5C27FE]/15 text-[#a13fd6] dark:text-[#C165DD]";
-/** R67 — the platform primary CTA (invite operator, join redemption, enroll). */
+/** R67 — the platform primary CTA (invite operator, join redemption, enroll).
+ * R68 fix: the base Button's default variant is ITSELF a gradient
+ * (from-emerald-600 to-teal-600 + dark:from-emerald-500 dark:to-teal-500).
+ * Those dark: variant utilities (0,2,0 specificity) beat the plain purple
+ * from/to (0,1,0) in dark mode — the CTA rendered TEAL whenever dark. The
+ * explicit dark: overrides below are merged by tailwind-merge (same modifier
+ * group → the later class wins) so the brand purple holds in both modes;
+ * disabled:bg-transparent keeps the disabled state a clean faded purple
+ * instead of bleeding the emerald base through disabled:opacity-50. */
 export const PLATFORM_GRADIENT_CTA =
-  "bg-gradient-to-r from-[#C165DD] to-[#5C27FE] text-white shadow-lg shadow-[#5C27FE]/25 hover:from-[#d180e4] hover:to-[#6f3bff]";
+  "bg-gradient-to-r from-[#C165DD] to-[#5C27FE] text-white shadow-lg shadow-[#5C27FE]/25 hover:from-[#d180e4] hover:to-[#6f3bff] dark:from-[#C165DD] dark:to-[#5C27FE] dark:hover:from-[#d180e4] dark:hover:to-[#6f3bff] dark:shadow-[#5C27FE]/20 disabled:bg-transparent disabled:shadow-none";
 
 /* ------------------------------ status badges ----------------------------- */
 
