@@ -164,7 +164,13 @@ export function AppRoot() {
   }
 
   if (!authenticated) {
-    return <AuthView />;
+    // R66 — an unauthenticated visitor to #/platform gets the PLATFORM
+    // sign-in presentation directly (same NextAuth + MFA infrastructure,
+    // platform branding only — §6 dedicated entry without a parallel auth
+    // system). Every other unauthenticated state keeps the default view.
+    return (
+      <AuthView variant={view.kind === "platform" ? "platform" : "default"} />
+    );
   }
 
   if (businessesLoading) {

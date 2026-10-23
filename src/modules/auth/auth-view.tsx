@@ -5,6 +5,8 @@ import { signIn, signOut, useSession } from "next-auth/react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import {
+  ArrowLeft,
+  ArrowUpRight,
   Eye,
   EyeOff,
   KeyRound,
@@ -862,6 +864,7 @@ export function AuthView({ variant = "default" }: { variant?: "default" | "platf
             }}
           />
         ) : (
+        <div className="w-full space-y-4">
         <Card className={glassCardClass}>
           <CardTopHairline />
           <CardHeader className="space-y-1.5">
@@ -1114,12 +1117,94 @@ export function AuthView({ variant = "default" }: { variant?: "default" | "platf
             </form>
           </CardContent>
         </Card>
+        {/* R66 — platform admin entry section (default landing only; the
+            platform variant already IS the admin sign-in). */}
+        {variant === "default" ? <PlatformAdminEntry /> : <BackToAppSignIn />}
+        </div>
         )}
         </motion.div>
       </main>
         </div>
       </div>
     </div>
+  );
+}
+
+/* ------------------ Platform admin entry section (R66) ------------------- */
+
+/**
+ * R66 — the landing (default) sign-in carries a discreet but discoverable
+ * entry to the platform administration console. Presentation ONLY: it never
+ * collects credentials here, never discloses whether any email belongs to
+ * an operator (§6 anti-enumeration), and simply routes to #/platform where
+ * the SAME NextAuth + MFA infrastructure renders the platform-branded
+ * sign-in (MFA challenge, recovery codes, platform MFA enforcement gate).
+ */
+function PlatformAdminEntry() {
+  const t = useTranslations("auth");
+  const navigate = useAppStore((s) => s.navigate);
+
+  return (
+    <section
+      aria-labelledby="platform-admin-entry-title"
+      className="border-border/60 bg-background/75 dark:bg-card/60 relative overflow-hidden rounded-xl border backdrop-blur-xl"
+      data-view="platform-admin-entry"
+    >
+      {/* Top hairline accent — same signature as the main auth card. */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent"
+      />
+      <div className="flex items-start gap-3 p-4">
+        <span
+          aria-hidden="true"
+          className="border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 flex size-10 shrink-0 items-center justify-center rounded-lg border"
+        >
+          <ShieldCheck className="size-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p id="platform-admin-entry-title" className="text-sm font-semibold tracking-tight">
+            {t("adminEntry.title")}
+          </p>
+          <p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">
+            {t("adminEntry.description")}
+          </p>
+        </div>
+      </div>
+      <div className="px-4 pb-4">
+        <Button
+          type="button"
+          variant="outline"
+          className="border-emerald-500/40 text-emerald-700 hover:bg-emerald-500/10 hover:text-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-500/10 dark:hover:text-emerald-300 h-10 w-full transition-colors"
+          onClick={() => navigate({ kind: "platform", section: "overview" })}
+        >
+          <ShieldCheck className="size-4" aria-hidden="true" />
+          {t("adminEntry.cta")}
+          <ArrowUpRight className="size-4" aria-hidden="true" />
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * R66 — escape hatch on the platform-branded sign-in: a visitor who reached
+ * #/platform by accident can return to the regular app sign-in. Navigation
+ * only — zero auth logic (same pattern as goBackToSignIn in AuthView).
+ */
+function BackToAppSignIn() {
+  const t = useTranslations("auth");
+  const navigate = useAppStore((s) => s.navigate);
+
+  return (
+    <button
+      type="button"
+      className="text-muted-foreground hover:text-foreground focus-visible:ring-ring mx-auto flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:outline-none"
+      onClick={() => navigate({ kind: "dashboard" })}
+    >
+      <ArrowLeft className="size-3.5 rtl:rotate-180" aria-hidden="true" />
+      {t("adminEntry.backToApp")}
+    </button>
   );
 }
 

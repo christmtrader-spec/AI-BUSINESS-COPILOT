@@ -168,6 +168,16 @@ const en = {
     deleteAccountBlocked: "You still own a business. Delete it first from Business settings, then return here to delete your account.",
     deleteSuccess: "Your account has been deleted.",
     privacyNote: "Your account is password-protected, and each business's data is isolated and enforced on the server.",
+    // R66 — platform admin entry section on the default landing sign-in.
+    // Presentation only: routes to #/platform where the SAME NextAuth + MFA
+    // infrastructure renders the platform-branded sign-in (no parallel auth,
+    // no operator-identity disclosure — §6 anti-enumeration preserved).
+    adminEntry: {
+      title: "Platform admin sign-in",
+      description: "For authorized platform operators only — secure console access with mandatory two-factor authentication and full auditing.",
+      cta: "Admin sign in",
+      backToApp: "Back to app sign-in",
+    },
     errors: {
       invalidCredentials: "Incorrect email or password.",
       rateLimited: "Too many attempts. Please wait a moment and try again.",
