@@ -40,6 +40,10 @@ import { Label } from "@/components/ui/label";
 import { useAppStore } from "@/store/app-store";
 import { signOutWithRevoke } from "@/lib/sign-out-with-revoke";
 import { ApiClientError } from "@/lib/api-client";
+// R67 — brand CTA paint for the platform's own primary action. The amber
+// gate (policy warning) + destructive/amber semantics stay untouched —
+// only the BRAND surface (the enroll CTA) carries the gradient.
+import { PLATFORM_GRADIENT_CTA } from "./kit";
 import { platformSelfService } from "./platform-api";
 
 type Setup = { otpauthUri: string; manualKey: string; qrDataUri: string };
@@ -66,7 +70,11 @@ export function MfaGateScreen() {
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           {!blocked ? (
-            <Button data-testid="pf-mfa-enroll" onClick={() => setDialogOpen(true)}>
+            <Button
+              data-testid="pf-mfa-enroll"
+              className={PLATFORM_GRADIENT_CTA}
+              onClick={() => setDialogOpen(true)}
+            >
               <ShieldCheck className="size-4" aria-hidden="true" />
               {t("mfaGate.enrollNow")}
             </Button>

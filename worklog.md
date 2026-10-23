@@ -6239,3 +6239,193 @@ Stage Summary:
 - The landing page now carries the requested admin login section: a discoverable, security-honest door to the platform console that reuses the EXISTING authentication + MFA stack (no second credential surface), with the platform-branded sign-in finally reachable by deep link. Server-side security unchanged — presentation and routing only.
 - Honest limits: the admin entry is visible to ALL visitors by design (it discloses nothing about who is an operator — the console's RBAC/MFA gates remain the actual boundary); BUILD not executed (standing sandbox law); rate limits remain in-memory per-instance.
 - Next candidates: smoke-suite user-level pre-sweep; remember-me/last-used-admin-door hint (localStorage, non-sensitive); platform sign-in locale persistence polish.
+
+---
+Task ID: R67-UI
+Agent: subagent (frontend-styling-expert)
+Task: R67 frontend — purple brand gradient sweep (#C165DD→#5C27FE), operator
+invite UI (admin registration), NEW platform-join redemption view, NEW access
+matrix view + section registration, symmetric EN/FA i18n. Zero backend edits
+(main agent owns src/app/api/**, prisma/**, src/lib/**).
+
+Work Log:
+- Read worklog tail (R64-UI/R64/R65-A/R65/R66) for conventions BEFORE writing:
+  testid prefixes (pf-*), kit primitives (ReauthDialog/PaginationBar/StatusBadge/
+  usePlatformErrorText), i18n symmetry law (surgical anchors, never reorder),
+  hide-not-disable (§87), display-once law (§60), honest-UI laws. Read the
+  backend R67 routes + src/lib/platform/operator-invites.ts read-only to mirror
+  the contracts verbatim (invite DTO without token, ONE-TIME create payload,
+  anonymous preview/redeem, access matrix from the live RBAC registry).
+- kit.tsx (define ONCE, reuse everywhere): PLATFORM_GRADIENT_BG / _SOFT /
+  _TEXT / PLATFORM_BRAND_BADGE (+ PLATFORM_GRADIENT_CTA = the sanctioned
+  purple CTA pattern with the #d180e4→#6f3bff hover + #5C27FE/25 shadow).
+  toneOf += "REVOKED" → danger (semantic completion for invite badges;
+  TONE_CLASS.success/emerald untouched).
+- platform-api.ts (append-only): PlatformOperatorInvite (mirrors
+  operatorInviteDto — token NEVER in list DTOs), PlatformInviteCreateResult,
+  PlatformInvitePreview, PlatformAccessInfo, PLATFORM_INVITE_STATUSES;
+  platformQueries.operatorInvites + access (keys ["platform","invites"],
+  ["platform","access"]); platformMutations.createOperatorInvite (POST
+  /operators/invites, super-only + reauth §56) + revokeOperatorInvite
+  (DELETE …/[inviteId], idempotent §210); NEW platformJoinService
+  {preview, redeem} for the ANONYMOUS /platform/invites/[token] routes (same
+  {ok,data} envelope so platformApi works with no platform session — §161).
+- operators-view.tsx: header "Invite operator" button rendered ONLY when
+  self.permissions includes platform:operators:manage (hide-not-disable; the
+  server additionally enforces super-only) with the purple CTA;
+  InviteDialog = name(min2)/email(dir=ltr)/role Select(ROLES + roles.* labels)/
+  reason 3..300 with live counter + current-password (same reauth visual
+  contract as every dialog in the view), submit disabled until valid, purple
+  CTA; on 201 the dialog body SWAPS to the ONE-TIME disclosure (§60): amber
+  warning banner, mono dir=ltr readonly input with the server-made
+  `#/platform-join/<token>` link, Copy (navigator.clipboard + honest success
+  toast; clipboard-denied falls through silently — never faked), server-stated
+  expiry window ({hours} interpolated → FA renders ۷۲ automatically), Done →
+  invalidate invites; ESC/X dismissal is LOCKED while the token is on screen
+  (only Done exits — same law as the MFA recovery-codes dialog). Invitations
+  = collapsible section BELOW the operators table (this view has no tabs):
+  desktop table (hidden md:block, overflow-x-auto) + 390px stacked cards
+  (approvals-view pattern), columns email(mono ltr)/name/role badge/
+  StatusBadge(status)/inviter email/acceptedAt|expiresAt (formatDateTime),
+  Revoke affordance (PENDING only + operators:manage) → RevokeInviteDialog
+  (reason 3..300 + counter + password; alreadyRevoked → toast.info),
+  PaginationBar on page meta, honest empty state. testids pf-inv-*.
+- NEW platform-join-view.tsx (PlatformJoinView({token}), rendered OUTSIDE the
+  auth gate by app-root): centered max-w-md column on a pure-CSS gradient
+  page bg `from-[#C165DD]/10 via-background to-[#5C27FE]/10` (BusinessWebGL
+  deliberately NOT used — lighter anonymous page), glass auth-family card +
+  purple hairline + PLATFORM_GRADIENT ShieldCheck badge. States: skeleton →
+  PENDING form | ACCEPTED/REVOKED/EXPIRED/invalid-token unavailable cards with
+  DISTINCT copy per state (+ "Go to admin sign-in" → navigate platform
+  overview; unknown future status values degrade to the generic copy instead
+  of a missing-message crash). Form: read-only email (mono, dir=ltr); if
+  accountExists → "Current password" + "prove control — the password is NOT
+  changed" copy; else new password + confirm + policy hint; show/hide toggles
+  (44px hit, aria-pressed); submit = purple gradient + Loader2. Error mapping:
+  PLATFORM_INVITE_PASSWORD_MISMATCH → specific (redemption never changes a
+  password), RATE_LIMITED, VALIDATION_ERROR, NETWORK_ERROR, generic. Success:
+  purple CheckCircle2 (green-free), granted-role badge, created-vs-bound
+  account copy, mfaNote (first sign-in hits the fail-closed MFA gate — exactly
+  correct), CTA → platform sign-in. testids pf-join-*.
+- NEW access-view.tsx + shell registration: SECTION_LABELS.access,
+  security-group entry {access, KeyRound icon, permission
+  platform:overview:read}, lazy AccessView + switch case. ZERO hardcoded
+  matrix data — everything from the live ["platform","access"] query:
+  purple policy strip (raw mfaEnforcement enum in mono, wildcard = "None
+  (deny-by-default)", invite TTL from policy.inviteTtlHours, approval-kinds
+  count); 6 role cards (roles.* labels, permissionCount, amber "MFA required"
+  chip when mfaRequired, Crown for isSuper); desktop matrix (max-h-[60vh]
+  overflow-auto, sticky thead z-20 + sticky FIRST COLUMN via `sticky start-0`
+  (logical = RTL-correct) with corner cell stacking both) — rows grouped by
+  domain with mono domain header rows, columns = server role order, cells =
+  Check / muted —, cell title = permission id; filters: id search, domain
+  Select (unique domains, first-appearance order), "write only" checkbox,
+  honest "{shown} of {total}" counter + Refresh; mobile = per-permission
+  cards with enabled-role chips. testids pf-acc-*.
+- platform-shell.tsx (purple sweep): logo badge emerald box → PLATFORM_
+  GRADIENT_BG with white Activity icon; IdentityMenu MFA-ON chip emerald →
+  PLATFORM_BRAND_BADGE (amber OFF chip untouched — a warning is never brand
+  paint); ACTIVE nav item = PLATFORM_GRADIENT_SOFT + font-medium + brand-tint
+  icon, with data-[active=true]:bg-transparent/text-foreground overrides
+  (tailwind-merge wins over the shadcn sidebar accent classes); label text
+  keeps foreground for contrast (see deviations).
+- auth-view.tsx (purple sweep, variant-scoped): platform badge box emerald →
+  PLATFORM_BRAND_BADGE; sign-in submit button now variant-driven via
+  tenantPrimaryButtonClass (existing emerald string byte-identical) vs
+  platformPrimaryButtonClass (PLATFORM_GRADIENT_CTA + transition-all +
+  hover:shadow-[#5C27FE]/40) — ONLY variant==="platform" turns purple;
+  ForgotPassword/ResetPassword/MFA-login buttons stay tenant-emerald (shared/
+  tenant flows, per brief); PlatformAdminEntry: hairline via-emerald-500/50 →
+  via-[#C165DD]/60, shield span → PLATFORM_BRAND_BADGE, CTA outline →
+  border-[#C165DD]/40 text-[#a13fd6] dark:text-[#C165DD] hover:bg-[#C165DD]/10.
+- mfa-gate.tsx: "Enroll now" (the platform's own primary action) →
+  PLATFORM_GRADIENT_CTA (brand surface). Amber gate card/warning/session-ended
+  + destructive semantics UNCHANGED. mfa-gate had NO emerald hits (verified).
+- i18n en.ts/fa.ts, symmetric key-by-key (surgical anchors, no reordering):
+  platform.sections.access ("Access"/«کنترل دسترسی‌ها»), platform.invites.*
+  (34 keys), platform.join.* (35 keys incl. unavailable.{ACCEPTED,REVOKED,
+  EXPIRED,invalid}{Title,Body} + errors.*), platform.access.* (24 keys).
+  Proper Persian throughout: «دعوت اپراتور», «ثبت‌نام ادمین»,
+  «ماتریس دسترسی‌ها», «این پیوند دعوت فقط یک‌بار نمایش داده می‌شود…», «ابرادمین»;
+  ۷۲ comes from the SERVER number via next-intl locale formatting (never a
+  hardcoded Persian-digit string). Roles reuse the existing platform.roles.*.
+- VERIFY (static only, per brief): bunx tsc --noEmit → 0 errors (the 2
+  baseline errors — missing "access" label + missing PlatformJoinView module —
+  are exactly what this task fixed); bun run lint → clean; bun scripts/
+  i18n-audit.ts → CLEAN (186 files / 3347 usages / Missing-at-usage 0 /
+  parity 0). Dev server NOT run; build NOT run; test batteries NOT run (main
+  agent owns them). Zero files under src/app/api/**, src/lib/**, prisma/**
+  touched by this task.
+
+Emerald/teal decision log (every hit consciously decided):
+- → PURPLE (brand): platform-shell logo badge + IdentityMenu MFA-on chip;
+  auth-view platform-variant header badge + platform sign-in submit +
+  PlatformAdminEntry (hairline/shield/CTA); mfa-gate enroll CTA (had none —
+  added brand); operators-view invite CTA (new, purple from birth).
+- KEPT EMERALD (semantic, never brand): kit TONE_CLASS.success; approvals-view
+  APPROVED/EXECUTED badges; operators-view "Active" operator badge + session
+  "Live" badge; support-view SLA-met badge + resolved banner; users-view
+  "is platform operator" indicator badge; join-invite-view (tenant flow).
+- KEPT EMERALD (tenant surfaces, per brief): auth-view forgot-password /
+  reset-password / MFA-login submit buttons (tenant + shared flows).
+- KEPT: amber warnings (mfa-gate, MFA-off chip, invite once-warning) and all
+  destructive/red — semantics unchanged.
+
+Stage Summary:
+- R67 UI surface complete: the console now wears the exact reference purple
+  gradient (#C165DD→#5C27FE) on every BRAND surface (defined once in kit.tsx),
+  super admins can mint single-use expiring operator invites whose token is
+  disclosed exactly once with copy-to-clipboard, invitees redeem at an
+  anonymous #/platform-join/<token> page that honestly distinguishes
+  created-vs-bound accounts and never changes an existing password, and every
+  operator can read the live role×permission matrix with its real policy
+  values — zero hardcoded authorization data anywhere.
+- Honest deviations (documented): (1) "between security and audit" nav
+  placement was impossible (audit precedes security in the existing group
+  order) — access sits immediately AFTER security, BEFORE approvals; (2) the
+  "Internal operator layer" chip named in the brief IS the IdentityMenu
+  MFA-on chip (line ~294) — no separate emerald chip exists; the sidebar
+  subtitle text is plain muted (untouched); (3) active-nav highlight uses the
+  soft gradient bg + brand-tinted ICON, label text keeps foreground for WCAG
+  contrast (gradient-clipped text would fail 4.5:1 at the light end);
+  (4) PLATFORM_GRADIENT_TEXT exported but unused so far (part of the
+  sanctioned constant set, ready for future brand text); (5) EXPIRED join copy
+  says "validity window has passed" instead of hardcoding 72h (the TTL chip
+  shows the server's live value; static copy must not drift from it);
+  (6) InviteDialog invalidates the invites query BOTH at 201 and on Done —
+  Done alone would leave a stale list if the operator dismisses via Done-less
+  paths; (7) the token is re-fetchable server-side by the inviter? NO — it is
+  not: if the inviter loses the link before copying, the invite must be
+  revoked and re-minted (display-once law is absolute; the amber warning says
+  so explicitly).
+- Risks for the main agent's QA round: no live browser pass in this subagent
+  (per brief) — recommend verifying (a) the sticky first column under RTL,
+  (b) the 390px invites/access cards, (c) the one-time disclosure lock (ESC
+  ignored while token visible), (d) FA plural/number interpolation of
+  {hours}/{shown}/{total}/{count} (next-intl formats FA digits automatically),
+  (e) the purple CTA in dark mode (shadow-[#5C27FE]/25 may read subtly).
+- i18n symmetry re-verified programmatically (0 missing / 0 parity).
+
+---
+Task ID: R67 (user request — «همه رنگهای گردینت داخل پلتفرم → گردینت #C165DD→#5C27FE؛ ثبت‌نام ادمین اضافه شود؛ پنل ادمین پیشرفته‌تر/مدرن‌تر/حرفه‌ای‌تر با دسترسی‌های فوق‌حرفه‌ای»)
+Agent: main (Z.ai Code) + subagent R67-UI (frontend-styling-expert)
+Task: Platform purple rebrand + operator invitation ("admin registration") + Access matrix section — full-stack, tested end-to-end.
+
+Work Log:
+- BASELINE: git clean @R66 commit. ENV stable; 31 migrations; tsc 0; lint clean.
+- SCHEMA: new PlatformOperatorInvite model (migration 20261023100000_r67_platform_operator_invites — 32 applied / 0 pending; env-repair MIGRATIONS array extended per maintenance law). Shadow-DB drift blocked `migrate dev` (known sandbox disease) → migration SQL written by hand, verified via migrate deploy + db:push + live table probe.
+- BACKEND (single-authority §81): src/lib/platform/operator-invites.ts — ONE service: opaque 48-char base64url token (crypto.randomBytes), 72h TTL, status machine PENDING/ACCEPTED/REVOKED/EXPIRED, DTOs that NEVER carry the token, transactional exactly-once redemption (conditional updateMany claim + P2002→409 guard; create-then-claim inside one tx so the loser rolls back clean). SecurityEvent vocabulary +4 fixed constants (invite_created/revoked/accepted/redeem_failed — feed facets & filters auto-extend, §423 law).
+- ROUTES: POST/GET /platform/operators/invites (super-only + operators:manage + reauth + reason + 10/15min RL + audit + one-time token disclosure in the 201 only); DELETE /platform/operators/invites/[inviteId] (revoke: super-only + reauth + reason + audit; §210 idempotent alreadyRevoked; §126 404 foreign ids); GET/POST /platform/invites/[token] (anonymous-with-token §161 pattern: preview honest accountExists semantics; redemption with password policy — NEW account sets initial password, EXISTING account proves control with CURRENT password and is NEVER reset; failures → SecurityEvent with reason code; 10/10min per IP+token).
+- ACCESS MATRIX: GET /platform/access (any operator, overview:read) — roles×permissions derived from the LIVE rbac registry (26 permissions × 6 roles), reauthRequired flags from a documented REAL-enforcement map (route-scan evidence), policy block: mfaEnforcement (server law value), approvalKinds (pricing.activate), inviteTtlHours 72, wildcardPermissions:false (§5 surfaced honestly).
+- STORE/ROUTING: PLATFORM_SECTIONS + "access"; new view kind {kind:"platform-join", token} with #/platform-join/<token> deep link parsed BEFORE /platform (no prefix collision) and rendered OUTSIDE the auth gate in app-root (§161 — like verify-email).
+- UI (R67-UI subagent; full report in its appended worklog section): PLATFORM_GRADIENT_* constants defined ONCE in kit.tsx (#C165DD→#5C27FE); purple applied to shell logo badge + active nav + MFA chip, platform sign-in badge + CTA (variant-driven — tenant button byte-identical emerald), PlatformAdminEntry, mfa-gate enroll CTA, invite CTA; semantic status tones (success/danger/warning) deliberately UNCHANGED (documented decision list); NEW access-view.tsx (live-only matrix: policy strip, 6 role cards, sticky-header grouped table, search/domain/write-only filters, mobile cards, pf-acc-*); NEW platform-join-view.tsx (preview → unavailable states → existing/new-account forms → purple success with fail-closed MFA note, pf-join-*); operators-view invite dialog + one-time disclosure (copy link, 72h note) + collapsible invitations list (StatusBadge, revoke dialog, PaginationBar, pf-inv-*); i18n en/fa +~95 keys SYMMETRIC (proper Persian, Persian digits).
+- TESTS: NEW scripts/r67-admin-access-check.ts — 60/60 GREEN live: A auth matrix + token shape + duplicate/already-operator 409s + token NEVER in list DTOs + audit; B redemption (preview semantics, weak pw 422, new-account 200/accountCreated, second redeem 410, operator granted, per-request MFA fail-closed on /self 403 PLATFORM_MFA_REQUIRED, audit + SecurityEvent); C existing-account binding (wrong current pw 403 PASSWORD_MISMATCH, correct binds, no duplicate user); D revocation (role matrix, unknown 404, wrong reauth 403, idempotent, REVOKED preview, redeem 410, audited); E access matrix (gates, 26==registry, super=ALL, READONLY zero writes, reauth flags, approvalKinds, mfaEnforcement, no secrets). Two battery-side fixes during development (B10 semantics: no-MFA user logs in fine, the gate is per-request — B11 proves it; csrf parse bug).
+- REGRESSION (final state, all EXECUTED): e2e-smoke 90/90 · prompt28 87/87 (static scan updated: documented single exception for the anonymous-with-token invite redemption route; every other platform route still must call getPlatformContext) · r62-support 68/68 · r62-overview-announce 21/21 · r63-audit 15/15 · r63-security-center 43/43 (reachability check made pagination-resilient — feed grows with invite lifecycle events, page-1-of-50 no longer implies reachable) · r64-security-ops 69/69 · r65-zero-trust 51/51 · r67 60/60 (twice) · tsc 0 · lint clean · i18n-audit CLEAN 186 files / 3347 usages / 0 gaps.
+- BROWSER QA (agent-browser, real QA operator via r66 fixture): platform sign-in PURPLE (badge + gradient CTA, screenshot); MFA login → console renders purple logo badge + purple active nav + Access entry; Operators → "Invite operator" dialog (name/email/role/reason/reauth) → 201 → ONE-TIME link disclosure ("Treat it like a password", copy, 72h) → opened #/platform-join/<token> → preview (inviter, role Support, expiry) → new-password form → "Operator access activated" success with role badge + fail-closed MFA note; Access view renders the full live matrix (26 permissions, 6 role cards, policy strip) EN + FA/RTL (dir=rtl, «۲۶ از ۲۶ مجوز») + dark + mobile 390px zero overflow. Screenshots: qa-r67-platform-signin-purple / console-purple / invite-onetime / join-preview / join-success / access-view / access-fa / access-fa-dark / access-fa-dark-mobile.
+- STATE RESTORED: QA operator + redeemed Nova user + invite swept FK-safe; smoke throwaways swept; ONE REAL registered user (minassianchrist@gmail.com) found in DB and deliberately preserved; users=6 (5 fixtures + real user), operators=0, invites=0, fk=0, /api/health ok (32/0).
+- COMMITTED: R67 commit (schema, migration, service, 4 route files, access/join views, kit/shell/operators/auth/store/api changes, i18n, 3 scripts, battery).
+
+Stage Summary:
+- The platform console is now fully rebranded to the requested #C165DD→#5C27FE identity (single-source constants, semantics preserved), and "admin registration" exists as a genuinely enterprise flow: an authorized super admin mints a single-use 72h invite link; the invitee registers themselves; every step is permission-gated, reauth-protected, rate-limited, audited, and reflected in the Security Center feed. The new Access matrix renders the LIVE server registry — the same constants the enforcement chain uses — so the console can finally SHOW its own authorization model without a second source of truth.
+- Honest limits: no email is actually sent (the link is copied out-of-band — documented in-route; the "mailbox proof" model is the token handoff, stated in code); the redemption preview reveals accountExists for the invited email only (holder already knows it — no broader oracle); invite redemption is anonymous-with-token by design and the prompt28 static scan carries that single documented exception; rate limits remain in-memory per-instance (standing sandbox law); the reauthRequired map reflects CURRENT route enforcement (route-scan derived, not aspirational).
+- Next candidates: ai-cost.reconcile as the second approval kind (fills the approvals registry to 2); invite e-mail delivery behind the existing notification service when outbound mail is provisioned; operator invite → auto-enrollment nudge on first MFA gate visit.

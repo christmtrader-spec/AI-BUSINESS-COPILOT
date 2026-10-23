@@ -49,6 +49,11 @@ export const SECURITY_EVENTS = {
   // Prompt 62 §8.3 — platform suspension lifecycle (fixed vocabulary §423).
   accountSuspended: "platform.account.suspended",
   accountReactivated: "platform.account.reactivated",
+  // R67 — platform operator invitation lifecycle (fixed vocabulary §423).
+  operatorInviteCreated: "platform.operator.invite_created",
+  operatorInviteRevoked: "platform.operator.invite_revoked",
+  operatorInviteAccepted: "platform.operator.invite_accepted",
+  operatorInviteRedeemFailed: "platform.operator.invite_redeem_failed",
 } as const;
 
 export type SecurityEventType =

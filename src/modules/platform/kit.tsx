@@ -25,6 +25,26 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiClientError } from "@/lib/api-client";
 
+/* --------------------- R67 — platform brand gradient ---------------------- */
+
+/**
+ * R67 — the platform brand gradient (reference: light purple #C165DD →
+ * deep violet #5C27FE), defined ONCE here and reused by every BRAND surface
+ * (shell logo/active nav, platform sign-in, join page, invite CTA). Semantic
+ * status colors (emerald success / amber warning / destructive) are NOT
+ * touched — a status badge is never brand paint (kit law: color never the
+ * sole carrier, and success must stay success in both light and dark).
+ */
+export const PLATFORM_GRADIENT_BG = "bg-gradient-to-br from-[#C165DD] to-[#5C27FE]";
+export const PLATFORM_GRADIENT_SOFT = "bg-gradient-to-br from-[#C165DD]/15 to-[#5C27FE]/10";
+export const PLATFORM_GRADIENT_TEXT =
+  "bg-gradient-to-br from-[#C165DD] to-[#5C27FE] bg-clip-text text-transparent";
+export const PLATFORM_BRAND_BADGE =
+  "border-[#C165DD]/30 bg-gradient-to-br from-[#C165DD]/15 to-[#5C27FE]/15 text-[#a13fd6] dark:text-[#C165DD]";
+/** R67 — the platform primary CTA (invite operator, join redemption, enroll). */
+export const PLATFORM_GRADIENT_CTA =
+  "bg-gradient-to-r from-[#C165DD] to-[#5C27FE] text-white shadow-lg shadow-[#5C27FE]/25 hover:from-[#d180e4] hover:to-[#6f3bff]";
+
 /* ------------------------------ status badges ----------------------------- */
 
 export type BadgeTone = "success" | "warning" | "danger" | "neutral" | "info";
@@ -61,6 +81,7 @@ export function toneOf(status: string): BadgeTone {
     case "FAILED":
     case "BLOCKED":
     case "CANCELED":
+    case "REVOKED":
     case "CRITICAL":
     case "PLATFORM_OPERATOR_INACTIVE":
       return "danger";

@@ -33,6 +33,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { InputOTP, InputOTPGroup, InputOTPSlot, InputOTPSeparator } from "@/components/ui/input-otp";
 import { LocaleSwitcher, ThemeToggle } from "@/modules/shell/header";
 import { BusinessWebGLBackground } from "@/components/fx/business-webgl-bg";
+// R67 — the platform brand gradient lives in the platform kit (defined ONCE,
+// reused everywhere): the platform sign-in variant + admin entry repaint
+// their BRAND surfaces purple; tenant surfaces keep the emerald family.
+import { PLATFORM_BRAND_BADGE, PLATFORM_GRADIENT_CTA } from "@/modules/platform/kit";
 
 type AuthErrors = {
   invalidCredentials: string;
@@ -83,6 +87,16 @@ function mapApiError(err: unknown, t: AuthErrors): string {
 /** Shared styling for inline auth error boxes (role="alert"). */
 const errorBoxClass =
   "text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm";
+
+/**
+ * R67 — the sign-in submit button color follows the VARIANT: the platform
+ * variant carries the #C165DD→#5C27FE brand gradient; the tenant variant
+ * keeps the existing emerald→teal gradient byte-for-byte. Presentation
+ * only — same form, same NextAuth, same MFA flow for both.
+ */
+const tenantPrimaryButtonClass =
+  "h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400";
+const platformPrimaryButtonClass = `h-11 w-full ${PLATFORM_GRADIENT_CTA} transition-all hover:shadow-[#5C27FE]/40`;
 
 /* ─────────────── Modern auth presentation helpers (r52) ───────────────
    Glass card + hairline + icon badge + leading field icons + password
@@ -870,9 +884,10 @@ export function AuthView({ variant = "default" }: { variant?: "default" | "platf
           <CardHeader className="space-y-1.5">
             {variant === "platform" ? (
               <>
-                {/* R65 — platform branding header (reuses platform.* copy). */}
-                <div className="border-emerald-500/30 bg-emerald-500/15 flex items-center gap-2.5 rounded-md border px-3 py-2">
-                  <ShieldCheck className="size-4 shrink-0 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />
+                {/* R65 — platform branding header (reuses platform.* copy).
+                    R67 — brand paint is the purple gradient badge now. */}
+                <div className={`${PLATFORM_BRAND_BADGE} flex items-center gap-2.5 rounded-md border px-3 py-2`}>
+                  <ShieldCheck className="size-4 shrink-0" aria-hidden="true" />
                   <span className="grid leading-tight">
                     <span className="text-sm font-semibold">{tPlatform("title")}</span>
                     <span className="text-muted-foreground text-xs">{tPlatform("subtitle")}</span>
@@ -1045,7 +1060,7 @@ export function AuthView({ variant = "default" }: { variant?: "default" | "platf
 
               <Button
                 type="submit"
-                className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400"
+                className={variant === "platform" ? platformPrimaryButtonClass : tenantPrimaryButtonClass}
                 disabled={busy}
               >
                 {busy ? (
@@ -1150,15 +1165,16 @@ function PlatformAdminEntry() {
       className="border-border/60 bg-background/75 dark:bg-card/60 relative overflow-hidden rounded-xl border backdrop-blur-xl"
       data-view="platform-admin-entry"
     >
-      {/* Top hairline accent — same signature as the main auth card. */}
+      {/* Top hairline accent — same signature as the main auth card.
+          R67 — platform brand hairline (purple). */}
       <div
         aria-hidden="true"
-        className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent"
+        className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#C165DD]/60 to-transparent"
       />
       <div className="flex items-start gap-3 p-4">
         <span
           aria-hidden="true"
-          className="border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 flex size-10 shrink-0 items-center justify-center rounded-lg border"
+          className={`${PLATFORM_BRAND_BADGE} flex size-10 shrink-0 items-center justify-center rounded-lg border`}
         >
           <ShieldCheck className="size-5" />
         </span>
@@ -1175,7 +1191,7 @@ function PlatformAdminEntry() {
         <Button
           type="button"
           variant="outline"
-          className="border-emerald-500/40 text-emerald-700 hover:bg-emerald-500/10 hover:text-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-500/10 dark:hover:text-emerald-300 h-10 w-full transition-colors"
+          className="border-[#C165DD]/40 text-[#a13fd6] hover:bg-[#C165DD]/10 hover:text-[#a13fd6] dark:text-[#C165DD] dark:hover:bg-[#C165DD]/10 dark:hover:text-[#C165DD] h-10 w-full transition-colors"
           onClick={() => navigate({ kind: "platform", section: "overview" })}
         >
           <ShieldCheck className="size-4" aria-hidden="true" />

@@ -99,6 +99,8 @@ const MIGRATIONS = [
   // Prompt 65 — the two-person approval migration is genuinely applied
   // (31 applied / 0 pending via `migrate deploy`). Same maintenance law.
   "20261023070000_prompt65_platform_approval_requests",
+  // R67 — platform operator invitation (admin registration) table.
+  "20261023100000_r67_platform_operator_invites",
 ];
 
 function log(step, msg) {

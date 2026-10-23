@@ -26,6 +26,7 @@ import {
   Building2,
   ClipboardCheck,
   Gauge,
+  KeyRound,
   LayoutDashboard,
   LifeBuoy,
   LogOut,
@@ -82,6 +83,7 @@ import { toast } from "sonner";
 import { ApiClientError } from "@/lib/api-client";
 import { signOutWithRevoke } from "@/lib/sign-out-with-revoke";
 import { LocaleSwitcher, ThemeToggle } from "@/modules/shell/header";
+import { PLATFORM_BRAND_BADGE, PLATFORM_GRADIENT_BG, PLATFORM_GRADIENT_SOFT } from "./kit";
 import { platformSelfService, type PlatformSelf } from "./platform-api";
 
 type NavEntry = {
@@ -102,6 +104,7 @@ const SECTION_LABELS: Record<PlatformSection, string> = {
   pricing: "sections.pricing",
   "ai-cost": "sections.aiCost",
   security: "sections.security",
+  access: "sections.access",
   audit: "sections.audit",
   operators: "sections.operators",
   approvals: "sections.approvals",
@@ -143,6 +146,9 @@ const GROUPS: Array<{ labelKey: string; entries: NavEntry[] }> = [
       { section: "audit", labelKey: "sections.audit", icon: ScrollText, permission: "platform:audit:read" },
       { section: "operators", labelKey: "sections.operators", icon: UsersRound, permission: "platform:operators:read" },
       { section: "security", labelKey: "sections.security", icon: ShieldCheck, permission: "platform:security:read" },
+      // R67 §9 — the read-only role × permission matrix; every operator may
+      // SEE the access model (same platform:overview:read as the overview).
+      { section: "access", labelKey: "sections.access", icon: KeyRound, permission: "platform:overview:read" },
       // R65 §10 — two-person approval queue; every role can READ it.
       { section: "approvals", labelKey: "sections.approvals", icon: ClipboardCheck, permission: "platform:approvals:read" },
     ],
@@ -171,8 +177,12 @@ export function PlatformShell({
       <Sidebar side={dirOf(locale) === "rtl" ? "right" : "left"} collapsible="icon">
         <SidebarHeader>
           <div className="flex items-center gap-2 px-2 py-1.5">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-emerald-500/30 bg-emerald-500/15">
-              <Activity className="size-4 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />
+            {/* R67 — brand paint: the platform gradient replaces the emerald
+                box (brand, not semantic — status colors stay semantic). */}
+            <div
+              className={`flex size-8 shrink-0 items-center justify-center rounded-md border border-transparent ${PLATFORM_GRADIENT_BG}`}
+            >
+              <Activity className="size-4 text-white" aria-hidden="true" />
             </div>
             <div className="grid leading-tight group-data-[collapsible=icon]:hidden">
               <span className="text-sm font-semibold">{t("title")}</span>
@@ -197,8 +207,22 @@ export function PlatformShell({
                             isActive={active}
                             aria-current={active ? "page" : undefined}
                             onClick={() => navigate({ kind: "platform", section: entry.section })}
+                            // R67 — the active section carries the platform
+                            // brand gradient (soft) instead of the sidebar
+                            // accent; tailwind-merge lets these data-variant
+                            // overrides win over the shadcn active classes,
+                            // and the icon gets the brand tint (label keeps
+                            // foreground text for contrast).
+                            className={
+                              active
+                                ? `${PLATFORM_GRADIENT_SOFT} font-medium data-[active=true]:bg-transparent data-[active=true]:text-foreground`
+                                : undefined
+                            }
                           >
-                            <entry.icon className="size-4" aria-hidden="true" />
+                            <entry.icon
+                              className={`size-4 ${active ? "text-[#a13fd6] dark:text-[#C165DD]" : ""}`}
+                              aria-hidden="true"
+                            />
                             <span>{t(entry.labelKey as Parameters<typeof t>[0])}</span>
                           </SidebarMenuButton>
                         </SidebarMenuItem>
@@ -291,7 +315,10 @@ function IdentityMenu({
             {self.mfaEnabled ? (
               <Badge
                 variant="outline"
-                className="border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 gap-1"
+                // R67 — brand paint: MFA-on was emerald; the on-state is now
+                // the platform gradient badge (the honest amber off-state is
+                // untouched — a warning is never brand paint).
+                className={`${PLATFORM_BRAND_BADGE} gap-1`}
                 data-testid="pf-identity-mfa-on"
               >
                 <ShieldCheck className="size-3" aria-hidden="true" />
@@ -446,6 +473,7 @@ const AuditView = lazy(() => import("./audit-view").then((m) => ({ default: m.Pl
 const SecurityView = lazy(() => import("./security-view").then((m) => ({ default: m.SecurityView })));
 const OperatorsView = lazy(() => import("./operators-view").then((m) => ({ default: m.OperatorsView })));
 const ApprovalsView = lazy(() => import("./approvals-view").then((m) => ({ default: m.ApprovalsView })));
+const AccessView = lazy(() => import("./access-view").then((m) => ({ default: m.AccessView })));
 const SystemView = lazy(() => import("./system-view").then((m) => ({ default: m.SystemView })));
 
 function SectionFallback() {
@@ -484,6 +512,8 @@ function PlatformSectionContent({ section }: { section: PlatformSection }) {
       return <OperatorsView />;
     case "approvals":
       return <ApprovalsView />;
+    case "access":
+      return <AccessView />;
     case "system":
       return <SystemView />;
     default:

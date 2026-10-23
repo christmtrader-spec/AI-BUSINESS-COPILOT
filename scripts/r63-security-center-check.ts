@@ -225,7 +225,18 @@ async function main() {
     list.json.data.facets.eventTypes.includes("platform.account.suspended") &&
     list.json.data.facets.eventTypes.length >= 20,
     `count=${list.json.data.facets.eventTypes.length}`);
-  const seededInDefault = list.json.data.events.filter((e: any) => seededEventIds.includes(e.id)).length;
+  // R67 — pagination-resilient reachability: the feed grows with platform
+  // activity (invite lifecycle events etc.), so page 1 of 50 no longer
+  // guarantees a seat for the seeded rows. "Reachable in the default list"
+  // is honestly asserted by walking up to 3 pages of 100.
+  const seededSet = new Set(seededEventIds);
+  const foundSeeds = new Set<string>();
+  for (let p = 1; p <= 3 && foundSeeds.size < seededSet.size; p++) {
+    const pg = await SEC(`/api/v1/platform/security/events?page=${p}&pageSize=100`);
+    if (pg.status !== 200) break;
+    for (const e of pg.json?.data?.events ?? []) if (seededSet.has(e.id)) foundSeeds.add(e.id);
+  }
+  const seededInDefault = foundSeeds.size;
   check("all 8 seeded events reachable in default list", seededInDefault === 8, `found=${seededInDefault}`);
 
   const byType = await SEC("/api/v1/platform/security/events?eventType=auth.login.failed&pageSize=100");

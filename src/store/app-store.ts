@@ -147,6 +147,10 @@ export type AppView =
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
+  /** R67 — platform operator invite redemption (#/platform-join/<token>).
+   * Anonymous-with-token (§161 pattern): the OPAQUE token IS the
+   * authorization; renders OUTSIDE the auth gate like verify-email. */
+  | { kind: "platform-join"; token: string }
   | { kind: "forgot-password" }
   | { kind: "reset-password"; token: string }
   | { kind: "module"; module: string; /** optional sub-resource (e.g. reports ?month=YYYY-MM) */ param?: string }
@@ -206,6 +210,7 @@ export const PLATFORM_SECTIONS = [
   "pricing",
   "ai-cost",
   "security",
+  "access",
   "audit",
   "operators",
   "approvals",
@@ -289,6 +294,9 @@ export function viewKeyOf(view: AppView): string {
       ? `aging-details:${view.side}:${view.partyId ?? ""}:${view.bucket ?? ""}:${view.pastDue ? 1 : 0}`
       : view.kind === "join"
       ? `join:${view.token}`
+      // R67 — token is part of the identity (each link remounts cleanly).
+      : view.kind === "platform-join"
+      ? `platform-join:${view.token}`
       : view.kind === "reset-password"
         ? `reset:${view.token}`
         : view.kind === "verify-email"
@@ -510,6 +518,9 @@ export function viewToHash(view: AppView): string | null {
     }
     case "join":
       return `#/join/${view.token}`;
+    // R67 — platform operator invite redemption deep link.
+    case "platform-join":
+      return `#/platform-join/${view.token}`;
     case "forgot-password":
       return "#/forgot-password";
     case "reset-password":
@@ -563,6 +574,12 @@ export function hashToView(hash: string): AppView {
     const token = path.slice("join/".length);
     // Opaque invite token: non-empty, bounded length (server validates the rest).
     if (token.length > 0 && token.length <= 128) return { kind: "join", token };
+  }
+  // R67 — platform operator invite redemption deep link (before /platform so
+  // the two prefixes never collide).
+  if (path.startsWith("platform-join/")) {
+    const token = path.slice("platform-join/".length);
+    if (token.length > 0 && token.length <= 128) return { kind: "platform-join", token };
   }
   if (path === "forgot-password") return { kind: "forgot-password" };
   if (path.startsWith("verify-email/")) {

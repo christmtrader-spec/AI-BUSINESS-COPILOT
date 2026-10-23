@@ -7,6 +7,7 @@ import { useAppStore, hashToView, sameView } from "@/store/app-store";
 import { dirOf } from "@/i18n/config";
 import { Splash } from "@/components/shared/primitives";
 import { AuthView } from "@/modules/auth/auth-view";
+import { PlatformJoinView } from "@/modules/platform/platform-join-view";
 import { ProfileView } from "@/modules/settings/profile-view";
 import { VerifyEmailView } from "@/modules/settings/verify-email-view";
 import { SecurityCenterView } from "@/modules/settings/security-view";
@@ -161,6 +162,14 @@ export function AppRoot() {
   // success state must be visible even for a signed-out user.
   if (view.kind === "verify-email") {
     return <VerifyEmailView token={view.token} />;
+  }
+
+  // R67 — platform operator invite redemption ALSO renders before the auth
+  // gate: the opaque token is the authorization (§161 pattern), and a
+  // super admin inviting a colleague may itself be signed in (the view is
+  // account-scoped, never session-scoped).
+  if (view.kind === "platform-join") {
+    return <PlatformJoinView token={view.token} />;
   }
 
   if (!authenticated) {

@@ -151,9 +151,16 @@ function staticScans() {
   const routeSrc = new Map(routeFiles.map((f) => [f, readFileSync(f, "utf8")]));
 
   // §127: every platform route uses platform auth.
+  // R67 documented exception: /platform/invites/[token] is the operator
+  // invite REDEMPTION surface — deliberately anonymous-with-token (§161
+  // pattern, same trust model as verify-email): the opaque single-use token
+  // IS the authorization. It is rate-limited per IP+token, audited, and
+  // records SecurityEvents; the token is never stored in any payload.
+  // EVERY OTHER platform route MUST keep the platform auth chain.
+  const AUTH_EXCEPTIONS = /platform[\\/]invites[\\/]\[token\][\\/]route\.ts$/;
   let missingAuth = 0;
   for (const [f, src] of routeSrc) {
-    if (!src.includes("getPlatformContext")) {
+    if (!src.includes("getPlatformContext") && !AUTH_EXCEPTIONS.test(f)) {
       missingAuth++;
       console.error(`    route without platform auth: ${f}`);
     }

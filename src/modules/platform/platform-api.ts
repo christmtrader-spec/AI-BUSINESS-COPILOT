@@ -454,6 +454,73 @@ export type PlatformOperator = {
   updatedAt: string;
 };
 
+/* ------------- R67 — operator invitations ("admin registration") ---------- */
+
+export const PLATFORM_INVITE_STATUSES = ["PENDING", "ACCEPTED", "REVOKED", "EXPIRED"] as const;
+
+/** Mirrors the server's operatorInviteDto() — the token NEVER appears in a
+ * list DTO (§14: the token IS a credential, disclosed exactly once). */
+export type PlatformOperatorInvite = {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  status: (typeof PLATFORM_INVITE_STATUSES)[number] | string;
+  expiresAt: string;
+  acceptedAt: string | null;
+  createdAt: string;
+  createdBy: { name: string | null; email: string } | null;
+  acceptedByAccount: { email: string } | null;
+};
+
+/** POST /operators/invites 201 — the ONE-TIME disclosure payload (§60): the
+ * opaque token + a ready-made redemption link, shown once to the inviter. */
+export type PlatformInviteCreateResult = {
+  invite: PlatformOperatorInvite;
+  token: string;
+  redemptionUrl: string;
+  expiresInHours: number;
+  requestId: string;
+};
+
+/** GET /platform/invites/[token] — anonymous redemption preview (§161:
+ * the token IS the authorization). accountExists binds the password field
+ * semantics (set initial vs prove control). */
+export type PlatformInvitePreview = {
+  invite: {
+    email: string;
+    name: string;
+    role: string;
+    status: (typeof PLATFORM_INVITE_STATUSES)[number] | string;
+    expiresAt: string;
+    inviter: { name: string | null; email: string } | null;
+    accountExists: boolean;
+  };
+};
+
+/* ----------------------- R67 — access matrix (§9) -------------------------- */
+
+/** GET /platform/access — every value derives from the ACTUAL server RBAC
+ * registry (§81); the client renders it verbatim and hardcodes NOTHING. */
+export type PlatformAccessInfo = {
+  roles: Array<{ role: string; permissionCount: number; isSuper: boolean; mfaRequired: boolean }>;
+  permissions: Array<{
+    id: string;
+    domain: string;
+    scope: string;
+    write: boolean;
+    sensitive: boolean;
+    reauthRequired: boolean;
+    roles: string[];
+  }>;
+  policy: {
+    mfaEnforcement: string;
+    approvalKinds: string[];
+    inviteTtlHours: number;
+    wildcardPermissions: boolean;
+  };
+};
+
 export type PlatformSystem = {
   generatedAt: string;
   components: Array<{ key: string; status: string; detail: string | null }>;
@@ -637,6 +704,11 @@ export const platformQueries = {
     ),
   operatorSessions: (operatorId: string) =>
     platformApi<PlatformOperatorSessions>(`/api/v1/platform/operators/${operatorId}/sessions`),
+  operatorInvites: (params: string) =>
+    platformApi<{ invites: PlatformOperatorInvite[]; page: PageMeta }>(
+      `/api/v1/platform/operators/invites${params ? `?${params}` : ""}`,
+    ),
+  access: () => platformApi<PlatformAccessInfo>("/api/v1/platform/access"),
   approvals: (params: string) =>
     platformApi<{ approvals: PlatformApproval[]; meta: PageMeta }>(
       `/api/v1/platform/approvals${params ? `?${params}` : ""}`,
@@ -799,6 +871,26 @@ export const platformMutations = {
       `/api/v1/platform/operators/${operatorId}/sessions/${sessionId}`,
       { method: "DELETE", body: JSON.stringify(body) },
     ),
+  /** R67 — mint a single-use operator invite (super-only server-side;
+   * reauth §56, mandatory audited reason). The response carries the token
+   * EXACTLY ONCE — the client must treat it as display-once (§60). */
+  createOperatorInvite: (body: {
+    email: string;
+    name: string;
+    role: string;
+    reason: string;
+    password: string;
+  }) =>
+    platformApi<PlatformInviteCreateResult>("/api/v1/platform/operators/invites", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  /** R67 — revoke a pending invite (idempotent server-side §210). */
+  revokeOperatorInvite: (inviteId: string, body: { reason: string; password: string }) =>
+    platformApi<{ revoked: boolean; alreadyRevoked: boolean; requestId: string }>(
+      `/api/v1/platform/operators/invites/${inviteId}`,
+      { method: "DELETE", body: JSON.stringify(body) },
+    ),
   /** R65 §10 — second person approves (requester is refused server-side). */
   approveApproval: (id: string, body: { note?: string }) =>
     platformApi<{ approval: PlatformApproval; requestId: string }>(
@@ -859,6 +951,27 @@ export const platformSelfService = {
   revokeAllSessions: (body: { password: string; confirmation: "SIGN OUT ALL" }) =>
     platformApi<{ revokedCount: number; currentSessionKept: boolean }>(
       "/api/v1/me/security/sessions/revoke-all",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+};
+
+/**
+ * R67 — anonymous operator-invite redemption (the #/platform-join/<token>
+ * page, rendered OUTSIDE the auth gate). Same {ok,data} envelope as every
+ * other route so platformApi() works unchanged — the route itself does NOT
+ * require a platform session (the opaque token IS the authorization §161).
+ * GET previews role/inviter/expiry/accountExists; POST redeems exactly once
+ * (new account → initial password; existing account → CURRENT password,
+ * which is NEVER changed by redemption).
+ */
+export const platformJoinService = {
+  preview: (token: string) =>
+    platformApi<PlatformInvitePreview>(
+      `/api/v1/platform/invites/${encodeURIComponent(token)}`,
+    ),
+  redeem: (token: string, body: { password: string }) =>
+    platformApi<{ accepted: boolean; role: string; accountCreated: boolean }>(
+      `/api/v1/platform/invites/${encodeURIComponent(token)}`,
       { method: "POST", body: JSON.stringify(body) },
     ),
 };

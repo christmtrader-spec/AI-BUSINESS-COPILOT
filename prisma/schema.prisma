@@ -48,6 +48,8 @@ model User {
   payments             Payment[]
   invitesCreated       BusinessInvite[]      @relation("InviteCreator")
   invitesAccepted      BusinessInvite[]      @relation("InviteAcceptor")
+  platformInvitesCreated  PlatformOperatorInvite[] @relation("PlatformInviteCreator")
+  platformInvitesAccepted PlatformOperatorInvite[] @relation("PlatformInviteAcceptor")
   chatSessions         ChatSession[]
   chatMessages         ChatMessage[]
   passwordResetTokens  PasswordResetToken[]
@@ -1465,6 +1467,34 @@ model PlatformOperator {
   approvalRequestsApproved  PlatformApprovalRequest[] @relation("ApprovalRequestApprover")
 
   @@index([role, active])
+}
+
+/// R67 — platform operator invitation ("admin registration"): an existing
+/// authorized operator (super admin, reauth + reason + audit) mints a
+/// single-use, expiring opaque token for a named email + role; the invitee
+/// redeems it at #/platform-join/<token> by setting their OWN password.
+/// NO public bootstrap, NO default credentials, NO auto-creation from
+/// tenant requests (§9/§61 laws preserved — creation is always authorized
+/// by an existing operator and fully audited).
+model PlatformOperatorInvite {
+  id          String    @id @default(cuid())
+  // Opaque 48-char token; unique lookup by token — never guessable.
+  token       String    @unique
+  email       String
+  name        String
+  role        String
+  createdById String?
+  createdBy   User?     @relation("PlatformInviteCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  // Set at redemption — binds the acceptance to the REAL account.
+  acceptedUserId String?
+  acceptedUser   User?  @relation("PlatformInviteAcceptor", fields: [acceptedUserId], references: [id], onDelete: SetNull)
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([email])
+  @@index([createdAt])
 }
 
 // ---------------------------------------------------------------------------
