@@ -18,6 +18,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import {
   Ban,
+  ClipboardCheck,
   Download,
   KeyRound,
   Loader2,
@@ -25,6 +26,7 @@ import {
   LogOut,
   Monitor,
   ShieldAlert,
+  ShieldOff,
   TriangleAlert,
   UserX,
   UsersRound,
@@ -52,6 +54,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { downloadCsv, exportStamp } from "@/lib/csv";
+import { useAppStore } from "@/store/app-store";
 import {
   exportSecurityEventsCsv,
   platformQueries,
@@ -81,6 +84,9 @@ const USER_AGENT_CLIP = 40;
 export function SecurityView() {
   const t = useTranslations("platform");
   const errorText = usePlatformErrorText();
+  // R65 — the pending-approvals counter card deep-links to the queue
+  // (same navigation pattern as the overview "Open Security Center" card).
+  const navigate = useAppStore((s) => s.navigate);
 
   // Selects apply immediately; text/date drafts apply on Enter / Apply.
   const [eventType, setEventType] = React.useState("");
@@ -219,6 +225,25 @@ export function SecurityView() {
         { key: "revocations", label: t("security.revocations"), value: summary.data.sessionRevocations7d, icon: LogOut },
         { key: "suspendedUsers", label: t("security.suspendedUsers"), value: summary.data.suspendedUsers, icon: UserX },
         { key: "activeOperators", label: t("security.activeOperators"), value: summary.data.activeOperators, icon: UsersRound },
+        // R65 (§5.1) — operator MFA coverage: danger-accented while ANY active
+        // operator lacks two-factor, quiet when the fleet is covered. The ?? 0
+        // guard keeps a stale pre-deploy cached summary from crashing.
+        {
+          key: "operatorsWithoutMfa",
+          label: t("security.operatorsWithoutMfa"),
+          value: summary.data.activeOperatorsWithoutMfa ?? 0,
+          icon: ShieldOff,
+          danger: (summary.data.activeOperatorsWithoutMfa ?? 0) > 0,
+        },
+        // R65 (§10) — pending approvals: neutral, clickable → the queue
+        // (every role holds platform:approvals:read, per the server matrix).
+        {
+          key: "pendingApprovals",
+          label: t("security.pendingApprovals"),
+          value: summary.data.pendingApprovalRequests ?? 0,
+          icon: ClipboardCheck,
+          onClick: () => navigate({ kind: "platform", section: "approvals" }),
+        },
         { key: "activeSessions", label: t("security.activeSessions"), value: summary.data.activeSessions, icon: Monitor },
       ]
     : [];
@@ -232,7 +257,7 @@ export function SecurityView() {
 
       {summary.isLoading && !summary.data ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-hidden="true">
-          {Array.from({ length: 9 }).map((_, i) => (
+          {Array.from({ length: 11 }).map((_, i) => (
             <Skeleton key={i} className="h-24 w-full" />
           ))}
         </div>

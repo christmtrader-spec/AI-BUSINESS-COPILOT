@@ -10,20 +10,31 @@
  * There is deliberately NO platform navigation inside the tenant sidebar —
  * tenant users never see platform entries (§16); the console is reached by
  * operators directly (deep link / profile entry).
+ *
+ * R65 (§7.1) — the header now carries the operator IDENTITY: an account
+ * menu (email + role + honest MFA chip) with "back to workspace", per-device
+ * sign-out and a password-confirmed global sign-out. The approvals section
+ * (§10 two-person control) joins the security group.
  */
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useTranslations } from "next-intl";
+import { signOut } from "next-auth/react";
 import {
   Activity,
   Banknote,
   Bot,
   Building2,
+  ClipboardCheck,
   Gauge,
   LayoutDashboard,
   LifeBuoy,
+  LogOut,
+  MonitorSmartphone,
   PanelsTopLeft,
   ScrollText,
+  ShieldAlert,
   ShieldCheck,
+  UserRound,
   Users,
   UsersRound,
   Wallet,
@@ -46,11 +57,32 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { toast } from "sonner";
+import { ApiClientError } from "@/lib/api-client";
+import { signOutWithRevoke } from "@/lib/sign-out-with-revoke";
 import { LocaleSwitcher, ThemeToggle } from "@/modules/shell/header";
-import type { PlatformSelf } from "./platform-api";
+import { platformSelfService, type PlatformSelf } from "./platform-api";
 
 type NavEntry = {
   section: PlatformSection;
@@ -72,6 +104,7 @@ const SECTION_LABELS: Record<PlatformSection, string> = {
   security: "sections.security",
   audit: "sections.audit",
   operators: "sections.operators",
+  approvals: "sections.approvals",
   system: "sections.system",
 };
 
@@ -110,6 +143,8 @@ const GROUPS: Array<{ labelKey: string; entries: NavEntry[] }> = [
       { section: "audit", labelKey: "sections.audit", icon: ScrollText, permission: "platform:audit:read" },
       { section: "operators", labelKey: "sections.operators", icon: UsersRound, permission: "platform:operators:read" },
       { section: "security", labelKey: "sections.security", icon: ShieldCheck, permission: "platform:security:read" },
+      // R65 §10 — two-person approval queue; every role can READ it.
+      { section: "approvals", labelKey: "sections.approvals", icon: ClipboardCheck, permission: "platform:approvals:read" },
     ],
   },
   {
@@ -128,6 +163,7 @@ export function PlatformShell({
   const t = useTranslations("platform");
   const navigate = useAppStore((s) => s.navigate);
   const locale = useAppStore((s) => s.locale);
+  const [signOutAllOpen, setSignOutAllOpen] = useState(false);
   const can = (permission: string) => self.permissions.includes(permission);
 
   return (
@@ -204,13 +240,192 @@ export function PlatformShell({
             </Button>
             <LocaleSwitcher />
             <ThemeToggle />
+            <IdentityMenu self={self} onSignOutAll={() => setSignOutAllOpen(true)} />
           </div>
         </header>
         <main id="platform-main" className="flex-1 p-4 md:p-6">
           <PlatformSectionContent section={section} />
         </main>
       </SidebarInset>
+      {signOutAllOpen ? <SignOutAllDialog onClose={() => setSignOutAllOpen(false)} /> : null}
     </SidebarProvider>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* R65 §7.1 — operator identity menu. The trigger is an icon button with an
+/* aria-label (works identically on mobile); the content shows WHO is signed
+/* in (mono email, role badge) and HOW securely (honest MFA chip — amber
+/* "off" is never faked green), plus the three session-exit affordances.
+/* -------------------------------------------------------------------------- */
+
+function IdentityMenu({
+  self,
+  onSignOutAll,
+}: {
+  self: PlatformSelf;
+  onSignOutAll: () => void;
+}) {
+  const t = useTranslations("platform");
+  const navigate = useAppStore((s) => s.navigate);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" aria-label={t("identity.menuLabel")} data-testid="pf-identity-trigger">
+          <UserRound className="size-4" aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-72">
+        <DropdownMenuLabel className="space-y-1.5">
+          <span className="text-muted-foreground text-xs font-normal">{t("identity.signedInAs")}</span>
+          <span
+            className="block truncate font-mono text-xs font-semibold"
+            dir="ltr"
+            data-testid="pf-identity-email"
+          >
+            {self.email}
+          </span>
+          <span className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            <Badge variant="outline">{t(`roles.${self.role}` as Parameters<typeof t>[0])}</Badge>
+            {self.mfaEnabled ? (
+              <Badge
+                variant="outline"
+                className="border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 gap-1"
+                data-testid="pf-identity-mfa-on"
+              >
+                <ShieldCheck className="size-3" aria-hidden="true" />
+                {t("identity.mfaOn")}
+              </Badge>
+            ) : (
+              <Badge
+                variant="outline"
+                className="border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-400 gap-1"
+                data-testid="pf-identity-mfa-off"
+              >
+                <ShieldAlert className="size-3" aria-hidden="true" />
+                {t("identity.mfaOff")}
+              </Badge>
+            )}
+          </span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => navigate({ kind: "dashboard" })}>
+          <PanelsTopLeft className="size-4" aria-hidden="true" />
+          {t("backToWorkspace")}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          data-testid="pf-identity-signout-device"
+          onClick={() => void signOutWithRevoke("/")}
+        >
+          <LogOut className="size-4" aria-hidden="true" />
+          {t("identity.signOutDevice")}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          variant="destructive"
+          data-testid="pf-identity-signout-all"
+          onClick={onSignOutAll}
+        >
+          <MonitorSmartphone className="size-4" aria-hidden="true" />
+          {t("identity.signOutAll")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * Global sign-out (§80/§119): revoke-all needs the current password AND the
+ * typed confirmation "SIGN OUT ALL". Best-effort law (§79): the sign-out
+ * proceeds EVEN IF the revoke call fails — the failure is toasted honestly,
+ * never swallowed and never shown as success.
+ */
+function SignOutAllDialog({ onClose }: { onClose: () => void }) {
+  const t = useTranslations("platform");
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const CONFIRM_WORD = "SIGN OUT ALL";
+  const canSubmit = password.length > 0 && confirmation.trim() === CONFIRM_WORD && !submitting;
+
+  const submit = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await platformSelfService.revokeAllSessions({
+        password,
+        confirmation: CONFIRM_WORD,
+      });
+      toast.success(t("identity.signOutAllSuccess", { count: res.revokedCount }));
+    } catch (e) {
+      // §79 best-effort law: the sign-out proceeds even when the revoke call
+      // fails — the failure is toasted honestly, never shown as success. The
+      // ONE exception is a wrong password (the user simply mistyped): keep
+      // the dialog open for an honest retry instead of ejecting mid-edit.
+      if (e instanceof ApiClientError && e.code === "INVALID_CURRENT_PASSWORD") {
+        setError(t("identity.invalidPassword"));
+        setSubmitting(false);
+        return;
+      }
+      toast.error(t("identity.signOutAllFailed"));
+    }
+    await signOut({ callbackUrl: "/" });
+  };
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !submitting) onClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-md" data-testid="pf-signout-all-dialog">
+        <DialogHeader>
+          <DialogTitle>{t("identity.signOutAllTitle")}</DialogTitle>
+          <DialogDescription>{t("identity.signOutAllDesc")}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="pf-signout-all-password">{t("dialogs.currentPassword")}</Label>
+            <Input
+              id="pf-signout-all-password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="pf-signout-all-confirm">
+              {t("dialogs.typedConfirmation", { word: CONFIRM_WORD })}
+            </Label>
+            <Input
+              id="pf-signout-all-confirm"
+              value={confirmation}
+              onChange={(e) => setConfirmation(e.target.value)}
+              autoComplete="off"
+              dir="ltr"
+            />
+          </div>
+          {error ? (
+            <p role="alert" className="text-destructive text-sm">
+              {error}
+            </p>
+          ) : null}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={submitting}>
+            {t("common.cancel")}
+          </Button>
+          <Button variant="destructive" disabled={!canSubmit} onClick={() => void submit()}>
+            {submitting ? t("common.working") : t("identity.signOutAllConfirm")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -230,6 +445,7 @@ const AiCostView = lazy(() => import("./ai-cost-view").then((m) => ({ default: m
 const AuditView = lazy(() => import("./audit-view").then((m) => ({ default: m.PlatformAuditView })));
 const SecurityView = lazy(() => import("./security-view").then((m) => ({ default: m.SecurityView })));
 const OperatorsView = lazy(() => import("./operators-view").then((m) => ({ default: m.OperatorsView })));
+const ApprovalsView = lazy(() => import("./approvals-view").then((m) => ({ default: m.ApprovalsView })));
 const SystemView = lazy(() => import("./system-view").then((m) => ({ default: m.SystemView })));
 
 function SectionFallback() {
@@ -266,6 +482,8 @@ function PlatformSectionContent({ section }: { section: PlatformSection }) {
       return <SecurityView />;
     case "operators":
       return <OperatorsView />;
+    case "approvals":
+      return <ApprovalsView />;
     case "system":
       return <SystemView />;
     default:

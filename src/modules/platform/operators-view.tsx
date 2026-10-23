@@ -52,7 +52,7 @@ import {
   type PlatformOperatorSession,
 } from "./platform-api";
 import { EmptyState, ListSkeleton, ReauthDialog, formatDateTime, usePlatformErrorText } from "./kit";
-import { usePlatformSelf } from "./use-platform-self";
+import { isPlatformSelf, usePlatformSelf } from "./use-platform-self";
 
 const ROLES = [
   "PLATFORM_SUPER_ADMIN",
@@ -69,9 +69,12 @@ export function OperatorsView() {
   const queryClient = useQueryClient();
   const { status: sessionStatus } = useSession();
   const self = usePlatformSelf(sessionStatus === "authenticated");
+  // R65 — the probe can also return the "mfa-required" sentinel; narrow it
+  // so the permission checks below only ever see a real operator profile.
+  const selfData = isPlatformSelf(self.data) ? self.data : null;
   // R64 — same gating pattern as users-view's suspend/announce affordances:
   // the permission string decides visibility (hide, not disable, §87).
-  const canRevokeSessions = !!self.data?.permissions.includes("platform:security:manage");
+  const canRevokeSessions = !!selfData?.permissions.includes("platform:security:manage");
   const [includeInactive, setIncludeInactive] = React.useState(true);
   const [roleTarget, setRoleTarget] = React.useState<PlatformOperator | null>(null);
   const [deactivateTarget, setDeactivateTarget] = React.useState<PlatformOperator | null>(null);

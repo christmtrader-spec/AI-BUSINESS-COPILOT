@@ -41,7 +41,7 @@ import {
   formatDateTime,
   usePlatformErrorText,
 } from "./kit";
-import { usePlatformSelf } from "./use-platform-self";
+import { isPlatformSelf, usePlatformSelf } from "./use-platform-self";
 import { useSession } from "next-auth/react";
 
 const PAGE_SIZE = 20;
@@ -58,8 +58,10 @@ export function UsersView() {
   const t = useTranslations("platform");
   const { status: sessionStatus } = useSession();
   const self = usePlatformSelf(sessionStatus === "authenticated");
-  const canSuspend = !!self.data?.permissions.includes("platform:users:suspend");
-  const canAnnounce = canAnnounceRole(self.data?.role);
+  // R65 — narrow the probe union ("mfa-required" sentinel) to a real profile.
+  const selfData = isPlatformSelf(self.data) ? self.data : null;
+  const canSuspend = !!selfData?.permissions.includes("platform:users:suspend");
+  const canAnnounce = canAnnounceRole(selfData?.role);
   const [email, setEmail] = React.useState("");
   const [page, setPage] = React.useState(1);
   const [invalidateTarget, setInvalidateTarget] = React.useState<PlatformUser | null>(null);

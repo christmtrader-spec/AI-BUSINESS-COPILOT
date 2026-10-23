@@ -57,8 +57,12 @@ export async function platformApi<T>(
 export type PlatformSelf = {
   isOperator: true;
   operatorId: string;
+  /** R65 (§5.1) — the shell shows the operator identity in the account menu. */
+  email: string;
   role: string;
   permissions: string[];
+  /** R65 (§6.2) — the operator's OWN MFA status; drives the identity chip + gate. */
+  mfaEnabled: boolean;
 };
 
 export type PageMeta = {
@@ -385,6 +389,10 @@ export type PlatformSecuritySummary = {
   activeSessions: number;
   /** R64 — failed-login storm buckets (email or hashed-IP) in the last 60 min, threshold ≥5. */
   failedLoginBursts1h: number;
+  /** R65 (§5.1) — active operator rows whose user has NO MFA enabled. */
+  activeOperatorsWithoutMfa: number;
+  /** R65 (§10) — approval requests currently awaiting a second person. */
+  pendingApprovalRequests: number;
   eventTypes24h: Record<string, number>;
 };
 
@@ -449,6 +457,45 @@ export type PlatformOperator = {
 export type PlatformSystem = {
   generatedAt: string;
   components: Array<{ key: string; status: string; detail: string | null }>;
+};
+
+/* ------------ Prompt 65 — two-person approval (§10, R65-UI) ---------------- */
+
+export const APPROVAL_STATUSES = [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+  "CANCELLED",
+  "EXPIRED",
+  "EXECUTING",
+  "EXECUTED",
+  "FAILED",
+] as const;
+
+export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
+
+/** Mirrors the server's approvalDto() (src/lib/platform/approvals.ts). */
+export type PlatformApproval = {
+  id: string;
+  kind: string;
+  /** Server-bounded English description (e.g. "Activate price book <id>"). */
+  kindLabel: string;
+  /** e.g. { priceBookId } for pricing.activate. */
+  payload: Record<string, unknown> | null;
+  /** 12-hex correlation prefix of the SHA-256 payload hash. */
+  payloadHashPrefix: string;
+  reason: string;
+  status: ApprovalStatus | string;
+  requester: { id: string; email: string | null; role: string; active: boolean } | null;
+  approver: { id: string; email: string | null; role: string; active: boolean } | null;
+  approvalNote: string | null;
+  rejectionReason: string | null;
+  expiresAt: string;
+  approvedAt: string | null;
+  executedAt: string | null;
+  /** Value-free error code only (sanitized server-side) — never raw text. */
+  executeError: string | null;
+  createdAt: string;
 };
 
 /* --------------------------------- calls ---------------------------------- */
@@ -590,6 +637,10 @@ export const platformQueries = {
     ),
   operatorSessions: (operatorId: string) =>
     platformApi<PlatformOperatorSessions>(`/api/v1/platform/operators/${operatorId}/sessions`),
+  approvals: (params: string) =>
+    platformApi<{ approvals: PlatformApproval[]; meta: PageMeta }>(
+      `/api/v1/platform/approvals${params ? `?${params}` : ""}`,
+    ),
   system: () => platformApi<PlatformSystem>("/api/v1/platform/system"),
 };
 
@@ -747,6 +798,68 @@ export const platformMutations = {
     platformApi<{ revoked: boolean; alreadyRevoked: boolean; requestId: string }>(
       `/api/v1/platform/operators/${operatorId}/sessions/${sessionId}`,
       { method: "DELETE", body: JSON.stringify(body) },
+    ),
+  /** R65 §10 — second person approves (requester is refused server-side). */
+  approveApproval: (id: string, body: { note?: string }) =>
+    platformApi<{ approval: PlatformApproval; requestId: string }>(
+      `/api/v1/platform/approvals/${id}/approve`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** R65 §10 — rejection with a MANDATORY audited reason (3..300). */
+  rejectApproval: (id: string, body: { reason: string }) =>
+    platformApi<{ approval: PlatformApproval; requestId: string }>(
+      `/api/v1/platform/approvals/${id}/reject`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** R65 §10 — the REQUESTER withdraws their own still-pending request. */
+  cancelApproval: (id: string) =>
+    platformApi<{ approval: PlatformApproval; requestId: string }>(
+      `/api/v1/platform/approvals/${id}/cancel`,
+      { method: "POST", body: JSON.stringify({}) },
+    ),
+  /** R65 §10/§56 — execute an APPROVED (or retryable FAILED) request; the
+   * server 403s without the current password (assertPlatformReauth). */
+  executeApproval: (id: string, body: { password: string }) =>
+    platformApi<{ approval: PlatformApproval; requestId: string }>(
+      `/api/v1/platform/approvals/${id}/execute`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+};
+
+/**
+ * R65 — self-service session/MFA endpoints the console calls for the
+ * operator's OWN account (enrollment from the MFA gate, global sign-out
+ * from the identity menu). Same {ok,data} envelope as platform routes, so
+ * platformApi() works unchanged; errors arrive as ApiClientError with the
+ * documented codes (INVALID_CURRENT_PASSWORD, MFA_REAUTH_REQUIRED,
+ * MFA_ALREADY_ENABLED, MFA_NOT_CONFIGURED, MFA_INVALID_CODE, RATE_LIMITED).
+ */
+export const platformSelfService = {
+  /** Step-up reauthentication (§116) — opens the recent-password window. */
+  reauth: (body: { password: string }) =>
+    platformApi<{ passwordVerified: boolean; mfaVerified: boolean; windowSeconds: number }>(
+      "/api/v1/me/security/reauth",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** Begin TOTP enrollment — secret/QR returned ONCE (§40). */
+  mfaSetupStart: () =>
+    platformApi<{ otpauthUri: string; manualKey: string; qrDataUri: string }>(
+      "/api/v1/me/security/mfa/setup/start",
+      { method: "POST", body: "{}" },
+    ),
+  /** Verify the first code and enable MFA — recovery codes returned ONCE.
+   * Enabling kills ALL sessions server-side (§363). */
+  mfaSetupConfirm: (body: { code: string; confirmedSaved: true }) =>
+    platformApi<{ enabled: boolean; recoveryCodes: string[]; sessionsInvalidated: boolean }>(
+      "/api/v1/me/security/mfa/setup/confirm",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** Sign out every OTHER device (§80) — current session survives; the shell
+   * then signs out the current device client-side (best-effort law). */
+  revokeAllSessions: (body: { password: string; confirmation: "SIGN OUT ALL" }) =>
+    platformApi<{ revokedCount: number; currentSessionKept: boolean }>(
+      "/api/v1/me/security/sessions/revoke-all",
+      { method: "POST", body: JSON.stringify(body) },
     ),
 };
 

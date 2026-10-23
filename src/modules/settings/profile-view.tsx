@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Activity } from "lucide-react";
-import { usePlatformSelf } from "@/modules/platform/use-platform-self";
+import { isPlatformSelf, usePlatformSelf } from "@/modules/platform/use-platform-self";
 import { PageHeader } from "@/components/shared/primitives";
 
 type Me = { id: string; name: string | null; email: string; locale: string; createdAt: string };
@@ -109,7 +109,10 @@ export function ProfileView() {
   const [syncedName, setSyncedName] = useState<string | null>(null);
 
   // Prompt 28 — operator capability probe (only when the profile renders).
+  // R65 — narrow the probe union: only a REAL operator profile (not the
+  // "mfa-required" sentinel) may reveal the console entry point.
   const { data: platformSelf } = usePlatformSelf(true);
+  const operatorSelf = isPlatformSelf(platformSelf) ? platformSelf : null;
   // React "adjust state during render" pattern — avoids setState-in-effect.
   if (me && me.name !== syncedName) {
     setSyncedName(me.name);
@@ -383,8 +386,10 @@ export function ProfileView() {
 
       {/* Prompt 28 — platform console entry. Rendered ONLY when the server
           says this user is a platform operator (§16): tenants never see the
-          entry point, and the entry itself is verified again server-side. */}
-      {platformSelf ? (
+          entry point, and the entry itself is verified again server-side.
+          R65 — an operator gated by the MFA policy does NOT get the entry
+          here either; the console itself offers enrollment. */}
+      {operatorSelf ? (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">

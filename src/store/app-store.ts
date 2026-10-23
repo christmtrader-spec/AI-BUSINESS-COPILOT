@@ -193,7 +193,8 @@ export type KnownModule = (typeof KNOWN_MODULES)[number];
 /**
  * Prompt 28 — platform console sections (§15). `security` is the grouped
  * landing (audit + operators tabs per §87); `ai-cost` carries its internal
- * tabs inside the view (§38).
+ * tabs inside the view (§38). R65 (Prompt 65 §10) adds `approvals` — the
+ * two-person approval queue.
  */
 export const PLATFORM_SECTIONS = [
   "overview",
@@ -207,6 +208,7 @@ export const PLATFORM_SECTIONS = [
   "security",
   "audit",
   "operators",
+  "approvals",
   "system",
 ] as const;
 

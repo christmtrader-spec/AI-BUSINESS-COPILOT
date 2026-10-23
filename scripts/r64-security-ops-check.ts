@@ -26,6 +26,7 @@
 import { PrismaClient } from "@prisma/client";
 import { createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
+import { enrollFixtureMfa, platformMfaLogin, clearFixtureMfa } from "./lib/platform-mfa";
 
 const BASE = "http://localhost:3000";
 const PW = "R64Ops!x2026";
@@ -186,7 +187,9 @@ async function main() {
   // Below threshold: 3 events — must never appear as a burst.
   for (let i = 0; i < 3; i++) await seedEvent({ userId: lowUser.id, eventType: "auth.login.failed", success: false, reasonCode: "INVALID_CREDENTIALS", ip: `192.0.2.${90 + i}`, userAgent: UA });
 
-  const S = caller(await login(superUser.email));
+  // R65 — SUPER_ADMIN MFA enforcement: real-API enrollment (Prompt 65 §6.2).
+  const superMfa = await enrollFixtureMfa(caller(await login(superUser.email)), PW);
+  const S = caller(await platformMfaLogin(superUser.email, PW, superMfa.secret));
   const SEC = caller(await login(secUser.email));
   const BIL = caller(await login(bilUser.email));
   const RO = caller(await login(roUser.email));
@@ -382,6 +385,7 @@ async function main() {
     where: { OR: [{ operatorId: { in: operatorIds } }, { targetUserId: { in: createdUserIds } }] },
   });
   // Sessions cascade with users; operators deleted explicitly first.
+  await clearFixtureMfa(db, createdUserIds);
   await db.platformOperator.deleteMany({ where: { id: { in: operatorIds } } });
   await db.user.deleteMany({ where: { id: { in: createdUserIds } } });
 

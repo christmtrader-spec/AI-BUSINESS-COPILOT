@@ -30,6 +30,7 @@
 import { createRequire } from "node:module";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { enrollFixtureMfa, platformMfaLogin } from "./lib/platform-mfa.ts";
 
 const BASE = process.argv[2] ?? "http://localhost:3000";
 const ROOT = "/home/z/my-project";
@@ -320,6 +321,25 @@ async function main() {
   check("anonymous overview → 401 PLATFORM_UNAUTHENTICATED", anonOverview.status === 401 && anonOverview.json?.error?.code === "PLATFORM_UNAUTHENTICATED", JSON.stringify(anonOverview.json));
 
   check("operator login", (await login(opEmail, PASSWORD, "op")) === 302 || (await login(opEmail, PASSWORD, "op")) === 200);
+
+  // R65 — SUPER_ADMIN MFA enforcement (Prompt 65 §6.2): enroll via the REAL
+  // API flow on the fresh op session, then MFA-login and REPLACE the op jar.
+  {
+    const enrollCaller = async (path, init = {}) => {
+      const cookie = (jars.get("op") ?? []).join("; ");
+      const res = await fetch(`${BASE}${path}`, {
+        method: init.method ?? "GET",
+        headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+        body: init.body ?? undefined,
+      });
+      const json = await res.json().catch(() => null);
+      return { status: res.status, json, res };
+    };
+    const p28Mfa = await enrollFixtureMfa(enrollCaller, PASSWORD);
+    const mfaJar = await platformMfaLogin(opEmail, PASSWORD, p28Mfa.secret);
+    jars.set("op", [...mfaJar.entries()].map(([k, v]) => `${k}=${v}`));
+    check("operator MFA enrolled + MFA login (R65 §6.2)", true);
+  }
   check("readonly login", (await login(roEmail, PASSWORD, "ro")) === 302 || (await login(roEmail, PASSWORD, "ro")) === 200);
   check("security login", (await login(secEmail, PASSWORD, "sec")) === 302 || (await login(secEmail, PASSWORD, "sec")) === 200);
   check("tenant owner login", (await login(ownerEmail, TESTER_PASSWORD, "owner")) === 302 || (await login(ownerEmail, TESTER_PASSWORD, "owner")) === 200);

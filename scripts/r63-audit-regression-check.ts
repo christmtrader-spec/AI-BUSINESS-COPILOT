@@ -16,6 +16,7 @@
  */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { enrollFixtureMfa, platformMfaLogin, clearFixtureMfa } from "./lib/platform-mfa";
 import { readFileSync } from "node:fs";
 
 const BASE = "http://localhost:3000";
@@ -97,8 +98,12 @@ async function main() {
   await db.platformOperator.create({ data: { userId: supUser.id, role: "PLATFORM_SUPPORT", active: true } });
   createdOperatorIds.push(opA.id, opB.id);
 
-  const A = caller(await login(superAUser.email));
-  const B = caller(await login(superBUser.email));
+  // R65 — BOTH super-admins are MFA-enrolled via the REAL API flow
+  // (Prompt 65 §6.2 enforcement covers every PLATFORM_SUPER_ADMIN).
+  const mfaA = await enrollFixtureMfa(caller(await login(superAUser.email)), PW);
+  const mfaB = await enrollFixtureMfa(caller(await login(superBUser.email)), PW);
+  const A = caller(await platformMfaLogin(superAUser.email, PW, mfaA.secret));
+  const B = caller(await platformMfaLogin(superBUser.email, PW, mfaB.secret));
   const RO = caller(await login(roUser.email));
   const SUP = caller(await login(supUser.email));
   check("fixtures created + all 4 operator logins OK", true);
@@ -211,6 +216,7 @@ async function main() {
   check("F-3: business deletion cascades BOTH usage event AND cost record (no orphans)", orphanUsage === null && orphanCost === null, `usage=${orphanUsage ? "SURVIVED" : "deleted"} cost=${orphanCost ? "SURVIVED ✗" : "deleted"}`);
 
   console.log("== cleanup ==");
+  await clearFixtureMfa(db, createdUserIds);
   await db.platformOperator.deleteMany({ where: { userId: { in: createdUserIds } } });
   await db.user.deleteMany({ where: { id: { in: createdUserIds } } });
   const residueOps = await db.platformOperator.count({ where: { id: { in: createdOperatorIds } } });

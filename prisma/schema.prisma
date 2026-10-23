@@ -1461,8 +1461,57 @@ model PlatformOperator {
 
   auditLogs       PlatformAuditLog[]
   assignedTickets SupportTicket[]
+  approvalRequestsRequested PlatformApprovalRequest[] @relation("ApprovalRequestRequester")
+  approvalRequestsApproved  PlatformApprovalRequest[] @relation("ApprovalRequestApprover")
 
   @@index([role, active])
+}
+
+// ---------------------------------------------------------------------------
+// Prompt 65 §10 — TWO-PERSON APPROVAL for high-risk platform mutations.
+//
+// Laws:
+//  - The requested operation and its parameters are stored STRUCTURED and
+//    VALIDATED (payloadJson validated per-kind at creation; the payload is
+//    IMMUTABLE after creation — no edit API exists, so a material change
+//    can never inherit a prior approval).
+//  - payloadHash (SHA-256 of the canonical payload) travels with every
+//    execution check — an approved request can only execute its exact
+//    stored payload.
+//  - requesterId != approverId is enforced SERVER-SIDE at approval time
+//    (a second session of the same operator is still the same operator row
+//    — documented limitation of human-identity resolution).
+//  - Status state machine (single guarded transition each):
+//      PENDING → APPROVED | REJECTED | CANCELLED | EXPIRED(lazy)
+//      APPROVED → EXECUTED | FAILED | EXPIRED(lazy)
+//    Executed exactly once: the EXECUTED claim is an atomic conditional
+//    updateMany guarded on status+expiry inside the execution transaction.
+//  - expiresAt bounds BOTH approval and execution (bounded privilege).
+//  - reason is mandatory at creation and at rejection (accountability).
+model PlatformApprovalRequest {
+  id           String   @id @default(cuid())
+  kind         String
+  payloadJson  String
+  payloadHash  String
+  reason       String
+  status       String   @default("PENDING")
+  requesterId  String
+  requester    PlatformOperator   @relation("ApprovalRequestRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  approverId   String?
+  approver     PlatformOperator?  @relation("ApprovalRequestApprover", fields: [approverId], references: [id], onDelete: SetNull)
+  approvalNote String?
+  rejectionReason String?
+  expiresAt    DateTime
+  approvedAt   DateTime?
+  executedAt   DateTime?
+  executeError String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([status, expiresAt])
+  @@index([kind, status, createdAt])
+  @@index([requesterId, createdAt])
+  @@index([approverId])
 }
 
 model PlatformAuditLog {

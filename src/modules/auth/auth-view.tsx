@@ -484,9 +484,17 @@ function ResetPasswordCard({
   );
 }
 
-export function AuthView() {
+/**
+ * R65 — presentation-only platform variant: when the platform console renders
+ * the sign-in (unauthenticated visitor to #/platform), the SAME form carries
+ * platform branding (title/subtitle from the platform namespace) plus one
+ * security-note line. Zero auth-logic changes — the default variant is
+ * byte-identical to the previous behavior.
+ */
+export function AuthView({ variant = "default" }: { variant?: "default" | "platform" }) {
   const t = useTranslations("auth");
   const tCommon = useTranslations("common");
+  const tPlatform = useTranslations("platform");
   const view = useAppStore((s) => s.view);
   const navigate = useAppStore((s) => s.navigate);
   // next-intl's t is a function — nested property access (t.errors) is
@@ -857,6 +865,18 @@ export function AuthView() {
         <Card className={glassCardClass}>
           <CardTopHairline />
           <CardHeader className="space-y-1.5">
+            {variant === "platform" ? (
+              <>
+                {/* R65 — platform branding header (reuses platform.* copy). */}
+                <div className="border-emerald-500/30 bg-emerald-500/15 flex items-center gap-2.5 rounded-md border px-3 py-2">
+                  <ShieldCheck className="size-4 shrink-0 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />
+                  <span className="grid leading-tight">
+                    <span className="text-sm font-semibold">{tPlatform("title")}</span>
+                    <span className="text-muted-foreground text-xs">{tPlatform("subtitle")}</span>
+                  </span>
+                </div>
+              </>
+            ) : null}
             <AuthCardBadge>
               {mode === "signin" ? <LogIn className="size-5" /> : <UserPlus className="size-5" />}
             </AuthCardBadge>
@@ -868,6 +888,12 @@ export function AuthView() {
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {variant === "platform" ? (
+              <p className="text-muted-foreground border-border/60 mb-4 rounded-md border bg-muted/40 px-3 py-2 text-xs">
+                <ShieldCheck className="me-1.5 inline size-3.5" aria-hidden="true" />
+                {tPlatform("authNote")}
+              </p>
+            ) : null}
             <form onSubmit={onSubmit} className="space-y-4" noValidate>
               {mode === "signup" ? (
                 <div className="space-y-2">

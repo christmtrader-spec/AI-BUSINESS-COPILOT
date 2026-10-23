@@ -27,6 +27,11 @@ import { ApiError } from "@/lib/api-helpers";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { sessionVersionOf } from "@/lib/auth-security";
+import { platformRoleRequiresMfa } from "@/lib/auth/config";
+import {
+  getMfaCapabilityState,
+  userHasMfaEnabled,
+} from "@/lib/auth/mfa/service";
 import {
   canPlatform,
   permissionsOfPlatformRole,
@@ -101,6 +106,30 @@ export async function getPlatformContext(req?: Request): Promise<PlatformContext
   }
   if (!operator.active) {
     throw platformError(403, "PLATFORM_OPERATOR_INACTIVE", "This operator account is deactivated.");
+  }
+
+  // R65 (Prompt 65 §6.2) — PLATFORM MFA ENFORCEMENT GATE. Authorization is
+  // derived ONLY from the DB; this gate adds the MFA POLICY on top:
+  //   * the active enforcement mode (platformMfaEnforcement) decides WHICH
+  //     roles need MFA (default SUPER_ADMIN — the Prompt 65 target policy);
+  //   * the MFA capability must be AVAILABLE (feature on + valid key) AND
+  //     the operator must hold an ACTIVE credential — otherwise access is
+  //     DENIED (fail closed). A disabled/blocked MFA deployment can never
+  //     silently degrade privileged access to password-only.
+  //   * the check runs on EVERY request (cheap unique lookups) — disabling
+  //     MFA mid-session revokes privileged access on the next call.
+  //   * the error is value-free PLATFORM_MFA_REQUIRED — it never reveals
+  //     whether the capability is disabled vs blocked vs unenrolled.
+  if (platformRoleRequiresMfa(operator.role)) {
+    const mfaOk =
+      getMfaCapabilityState() === "AVAILABLE" && (await userHasMfaEnabled(userId));
+    if (!mfaOk) {
+      throw platformError(
+        403,
+        "PLATFORM_MFA_REQUIRED",
+        "Two-factor authentication must be active before platform access is granted.",
+      );
+    }
   }
 
   return {

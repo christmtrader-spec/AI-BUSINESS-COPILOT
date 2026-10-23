@@ -15,6 +15,7 @@
  */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { enrollFixtureMfa, platformMfaLogin, clearFixtureMfa } from "./lib/platform-mfa";
 
 const BASE = "http://localhost:3000";
 const PW = "R62Check!x2026";
@@ -110,7 +111,10 @@ async function main() {
   const anon = caller(new Map());
   const A = caller(await login(tenantA.email), bizA.id);
   const B = caller(await login(tenantB.email), bizB.id);
-  const SUPER = caller(await login(opSuperUser.email));
+  // R65 — SUPER_ADMIN is under MFA enforcement (Prompt 65 §6.2): enroll the
+  // fixture via the REAL API flow, then MFA-login for the privileged jar.
+  const superMfa = await enrollFixtureMfa(caller(await login(opSuperUser.email)), PW);
+  const SUPER = caller(await platformMfaLogin(opSuperUser.email, PW, superMfa.secret));
   const SUPPORT = caller(await login(opSupportUser.email));
   const RO = caller(await login(opReadonlyUser.email));
   const BILLING = caller(await login(opBillingUser.email));
@@ -344,6 +348,7 @@ async function main() {
   for (const id of createdBusinessIds) {
     await db.business.delete({ where: { id } }).catch(() => undefined);
   }
+  await clearFixtureMfa(db, createdUserIds);
   for (const id of createdUserIds) {
     await db.platformOperator.deleteMany({ where: { userId: id } });
     await db.user.delete({ where: { id } }).catch((e) => {

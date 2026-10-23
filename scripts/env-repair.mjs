@@ -89,6 +89,16 @@ const MIGRATIONS = [
   // Same maintenance law: keep every applied migration in this baseline
   // list so a sandbox revert never leaves it falsely pending.
   "20261013090000_prompt48_supplier_bills",
+  // Prompt 63 — the AiCostRecord business-cascade migration is genuinely
+  // applied (30 applied / 0 pending; live DB carries the exact DDL —
+  // ON DELETE CASCADE FK verified byte-for-byte, reconciled via
+  // `migrate resolve --applied`). Same maintenance law: keep every applied
+  // migration in this baseline list so a sandbox revert never leaves it
+  // falsely pending.
+  "20261022080000_prompt63_ai_cost_record_business_cascade",
+  // Prompt 65 — the two-person approval migration is genuinely applied
+  // (31 applied / 0 pending via `migrate deploy`). Same maintenance law.
+  "20261023070000_prompt65_platform_approval_requests",
 ];
 
 function log(step, msg) {

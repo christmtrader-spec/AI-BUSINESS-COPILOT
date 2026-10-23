@@ -24,6 +24,7 @@
 import { PrismaClient } from "@prisma/client";
 import { createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
+import { enrollFixtureMfa, platformMfaLogin, clearFixtureMfa } from "./lib/platform-mfa";
 
 const BASE = "http://localhost:3000";
 const PW = "R63Sec!x2026";
@@ -146,7 +147,9 @@ async function main() {
   // 8 days old — MUST be excluded from the 7d revocation counter.
   await seedEvent({ userId: tenantUser.id, eventType: "auth.session.revoked", success: true, createdAt: new Date(Date.now() - 8 * 86_400_000) });
 
-  const S = caller(await login(superUser.email));
+  // R65 — SUPER_ADMIN MFA enforcement: real-API enrollment (Prompt 65 §6.2).
+  const superMfa = await enrollFixtureMfa(caller(await login(superUser.email)), PW);
+  const S = caller(await platformMfaLogin(superUser.email, PW, superMfa.secret));
   const SEC = caller(await login(secUser.email));
   const BIL = caller(await login(bilUser.email));
   const RO = caller(await login(roUser.email));
@@ -293,6 +296,7 @@ async function main() {
   /* ----------------------------- cleanup ------------------------------- */
   console.log("== cleanup ==");
   await db.securityEvent.deleteMany({ where: { id: { in: seededEventIds } } });
+  await clearFixtureMfa(db, createdUserIds);
   await db.platformOperator.deleteMany({ where: { userId: { in: createdUserIds } } });
   await db.user.deleteMany({ where: { id: { in: createdUserIds } } });
   const residueEvents = await db.securityEvent.count({ where: { id: { in: seededEventIds } } });

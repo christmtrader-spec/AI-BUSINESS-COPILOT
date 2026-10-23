@@ -19,6 +19,7 @@ import { platformOk } from "@/lib/platform/http";
 import { db } from "@/lib/db";
 import { SECURITY_EVENTS } from "@/lib/auth/security-events/service";
 import { computeFailedLoginBursts } from "@/lib/platform/security-anomalies";
+import { platformMfaEnforcement } from "@/lib/auth/config";
 import { rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -47,6 +48,8 @@ export const GET = route(async (req: NextRequest) => {
     activeSessions,
     eventsByType,
     bursts,
+    activeOperatorsWithoutMfa,
+    pendingApprovalRequests,
   ] = await Promise.all([
     db.securityEvent.count({
       where: { eventType: SECURITY_EVENTS.loginSuccess, createdAt: { gte: from24h } },
@@ -83,6 +86,26 @@ export const GET = route(async (req: NextRequest) => {
     // identity-bearing detail lives behind the same permission in
     // /security/anomalies).
     computeFailedLoginBursts(),
+    // R65 (Prompt 65 §6.2/§11) — MFA coverage governance: active operators
+    // WITHOUT an enabled credential. COUNT-only (no identities); the exact
+    // enforcement population depends on the active policy (SUPER_ADMIN mode
+    // counts super-admins only). COUNT law preserved (§18/§90).
+    (async () => {
+      const mode = platformMfaEnforcement();
+      if (mode === "OFF") return 0;
+      const roleFilter =
+        mode === "ALL_OPERATORS" ? { active: true } : { active: true, role: "PLATFORM_SUPER_ADMIN" };
+      return db.platformOperator.count({
+        // "Not enrolled" = no credential row OR a still-pending row
+        // (enabledAt null — §38: pending setup never counts as MFA).
+        where: {
+          ...roleFilter,
+          user: { OR: [{ mfaCredential: { is: null } }, { mfaCredential: { enabledAt: null } }] },
+        },
+      });
+    })(),
+    // R65 (Prompt 65 §10/§11) — pending two-person approvals awaiting action.
+    db.platformApprovalRequest.count({ where: { status: "PENDING", expiresAt: { gt: now } } }),
   ]);
 
   const eventTypes24h: Record<string, number> = Object.fromEntries(
@@ -101,5 +124,7 @@ export const GET = route(async (req: NextRequest) => {
     activeSessions,
     eventTypes24h,
     failedLoginBursts1h: bursts.totalBursts,
+    activeOperatorsWithoutMfa,
+    pendingApprovalRequests,
   });
 });

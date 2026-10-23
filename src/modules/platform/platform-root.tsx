@@ -6,6 +6,11 @@
  * Gate order: session → capability probe → console. A tenant navigating
  * directly to #/platform/* sees the honest "no platform access" state —
  * never a crash, never a partial render of platform data.
+ *
+ * R65 (§6.2 fail-closed): an operator whose account lacks the mandatory MFA
+ * gets the dedicated MFA gate (amber policy notice + enrollment path) — a
+ * distinct state from a tenant's plain 403. Unauthenticated visitors get the
+ * platform-branded sign-in (variant="platform", presentation only).
  */
 import { useSession } from "next-auth/react";
 import { useTranslations } from "next-intl";
@@ -17,6 +22,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { AuthView } from "@/modules/auth/auth-view";
 import { usePlatformSelf } from "./use-platform-self";
 import { PlatformShell } from "./platform-shell";
+import { MfaGateScreen } from "./mfa-gate";
 
 export function PlatformRoot() {
   const { status } = useSession();
@@ -31,7 +37,12 @@ export function PlatformRoot() {
     return <Splash label={t("loading")} />;
   }
   if (status !== "authenticated") {
-    return <AuthView />;
+    return <AuthView variant="platform" />;
+  }
+  // R65 §6.2 — the operator exists but the zero-trust MFA policy blocks the
+  // console. Amber gate + honest enrollment; never a partial console render.
+  if (probe.data === "mfa-required") {
+    return <MfaGateScreen />;
   }
   if (probe.data == null) {
     return (

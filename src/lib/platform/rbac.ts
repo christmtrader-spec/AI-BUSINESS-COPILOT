@@ -57,6 +57,8 @@ export const PLATFORM_PERMISSIONS = [
   "platform:audit:read",
   "platform:operators:read",
   "platform:operators:manage",
+  "platform:approvals:read", // Prompt 65 §10 — two-person approval transparency (all roles)
+  "platform:approvals:manage", // create/approve/reject/cancel/execute approvals (approve/execute ALSO require the target operation's permission)
   "platform:system:read",
 ] as const;
 
@@ -76,6 +78,7 @@ const ROLE_PERMISSIONS: Record<PlatformRole, readonly PlatformPermission[]> = {
     "platform:businesses:read",
     "platform:users:read",
     "platform:users:suspend",
+    "platform:approvals:read", // R65 §10 — approval transparency (read-only)
     "platform:subscriptions:read",
     "platform:payments:read",
     "platform:support:read",
@@ -96,6 +99,8 @@ const ROLE_PERMISSIONS: Record<PlatformRole, readonly PlatformPermission[]> = {
     "platform:payments:reconcile",
     "platform:pricing:read",
     "platform:pricing:manage",
+    "platform:approvals:read", // R65 §10 — approval transparency (read-only)
+    "platform:approvals:manage", // R65 §10 — request/approve pricing activations (target-op permission still required)
     "platform:support:read", // sees tickets; billing mutations stay in the billing domain
     "platform:audit:read",
     "platform:system:read",
@@ -104,6 +109,7 @@ const ROLE_PERMISSIONS: Record<PlatformRole, readonly PlatformPermission[]> = {
   PLATFORM_AI_COST: [
     "platform:overview:read",
     "platform:businesses:read",
+    "platform:approvals:read", // R65 §10 — approval transparency (read-only)
     "platform:subscriptions:read",
     "platform:ai-cost:read",
     "platform:ai-cost:manage",
@@ -121,6 +127,8 @@ const ROLE_PERMISSIONS: Record<PlatformRole, readonly PlatformPermission[]> = {
     "platform:support:read", // ticket context for incident response
     "platform:security:read",
     "platform:security:manage",
+    "platform:approvals:read", // R65 §10 — approval transparency (read-only)
+    "platform:approvals:manage", // R65 §10 — security governance of approval requests (target-op permission still required)
     "platform:audit:read",
     "platform:system:read",
   ],
@@ -129,6 +137,7 @@ const ROLE_PERMISSIONS: Record<PlatformRole, readonly PlatformPermission[]> = {
   PLATFORM_READONLY: [
     "platform:overview:read",
     "platform:businesses:read",
+    "platform:approvals:read", // R65 §10 — approval transparency (read-only)
     "platform:users:read",
     "platform:subscriptions:read",
     "platform:payments:read",

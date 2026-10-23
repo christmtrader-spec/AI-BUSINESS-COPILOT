@@ -75,10 +75,54 @@ export function sessionLastSeenUpdateSeconds(): number {
   return Number.isFinite(n) && n >= 60 && n <= 3600 ? Math.floor(n) : 300;
 }
 
-/* ------------------------------- fixed policies --------------------------- */
+/* ------------------------------ fixed policies --------------------------- */
 
 /** JWT + UserSession expiry MUST agree (§84). Single authority. */
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
+
+/* ---------------------- platform MFA enforcement (R65) -------------------- */
+
+/**
+ * Platform MFA enforcement policy — Prompt 65 §6.2. ONE authority; read
+ * PER REQUEST so a deployment policy change takes effect without a restart
+ * (and tests/probes always observe the live policy).
+ *
+ *   OFF            MFA is never required for platform access (explicit
+ *                  opt-out; documented, audited deployments only).
+ *   SUPER_ADMIN    (DEFAULT — the Prompt 65 target policy) every
+ *                  PLATFORM_SUPER_ADMIN must have an ACTIVE MFA credential
+ *                  before ANY privileged platform response is served. Other
+ *                  operator roles follow the deployment's documented policy.
+ *   ALL_OPERATORS  every active platform operator needs MFA.
+ *
+ * Fail-closed law (§6.2/§10): when the policy requires MFA and the MFA
+ * capability is NOT AVAILABLE (feature off, key missing/invalid — BLOCKED),
+ * privileged access is DENIED, never silently degraded to password-only.
+ * The error code is PLATFORM_MFA_REQUIRED (value-free) — it never reveals
+ * WHY the capability is unavailable and never leaks key state.
+ */
+export type PlatformMfaEnforcement = "OFF" | "SUPER_ADMIN" | "ALL_OPERATORS";
+
+const PLATFORM_MFA_ENFORCEMENT_MODES: readonly PlatformMfaEnforcement[] = [
+  "OFF",
+  "SUPER_ADMIN",
+  "ALL_OPERATORS",
+];
+
+export function platformMfaEnforcement(): PlatformMfaEnforcement {
+  const raw = (process.env.PLATFORM_MFA_ENFORCEMENT ?? "").trim().toUpperCase();
+  return (PLATFORM_MFA_ENFORCEMENT_MODES as readonly string[]).includes(raw)
+    ? (raw as PlatformMfaEnforcement)
+    : "SUPER_ADMIN";
+}
+
+/** Does the given platform role require MFA under the active policy? */
+export function platformRoleRequiresMfa(role: string): boolean {
+  const mode = platformMfaEnforcement();
+  if (mode === "OFF") return false;
+  if (mode === "ALL_OPERATORS") return true;
+  return role === "PLATFORM_SUPER_ADMIN";
+}
 
 /** §58 — recovery code set size. Always 10; never fewer (§108). */
 export const RECOVERY_CODES_COUNT = 10;

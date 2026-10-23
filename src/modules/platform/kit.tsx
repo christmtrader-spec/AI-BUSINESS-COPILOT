@@ -319,6 +319,12 @@ export function usePlatformErrorText() {
           "PLATFORM_REAUTH_FAILED",
           "PLATFORM_LAST_ADMIN_PROTECTED",
           "PLATFORM_INVALID_OPERATION",
+          // Prompt 65 — two-person approval state machine + rate limits
+          "PLATFORM_SELF_APPROVAL_DENIED",
+          "PLATFORM_EXECUTION_FAILED",
+          "PLATFORM_INVALID_STATE",
+          "PLATFORM_NOT_FOUND",
+          "PLATFORM_RATE_LIMITED",
           "PLATFORM_PAYMENT_REVERIFY_REQUIRED",
           "PLATFORM_PRICEBOOK_INVALID",
           "PLATFORM_AI_RATE_INVALID",

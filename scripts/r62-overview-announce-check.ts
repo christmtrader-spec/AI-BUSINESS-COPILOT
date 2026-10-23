@@ -14,6 +14,7 @@
  */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { enrollFixtureMfa, platformMfaLogin, clearFixtureMfa } from "./lib/platform-mfa";
 
 const BASE = "http://localhost:3000";
 const PW = "R62Check!x2026";
@@ -105,7 +106,9 @@ async function main() {
 
   const anon = caller(new Map());
   const A = caller(await login(tenantA.email), bizA.id);
-  const SUPER = caller(await login(opSuperUser.email));
+  // R65 — SUPER_ADMIN MFA enforcement (Prompt 65 §6.2): real-API enrollment.
+  const superMfa = await enrollFixtureMfa(caller(await login(opSuperUser.email)), PW);
+  const SUPER = caller(await platformMfaLogin(opSuperUser.email, PW, superMfa.secret));
   const SUPPORT = caller(await login(opSupportUser.email));
   const BILLING = caller(await login(opBillingUser.email));
   const RO = caller(await login(opRoUser.email));
@@ -271,6 +274,7 @@ async function main() {
   }
   await db.notification.deleteMany({ where: { userId: tenantA.id } });
   await db.platformAuditLog.deleteMany({ where: { id: audit?.id ?? "" } });
+  await clearFixtureMfa(db, createdUserIds);
   await db.platformOperator.deleteMany({ where: { userId: { in: createdUserIds } } });
   await db.businessMember.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
   await db.business.deleteMany({ where: { id: { in: createdBusinessIds } } });
