@@ -2258,6 +2258,8 @@ const en = {
       errGeneric: "Activation failed. Please try again.",
       howTitle: "How platform access works",
       howOffline: "While no operator exists, the platform owner mints a single-use setup key with the offline platform-setup-key CLI.",
+      copyCommandAria: "Copy the mint command to run on the server",
+      copied: "Command copied",
       howMfa: "Super-admin access is fail-closed: two-factor enrollment is required before any console data is shown.",
       howInvite: "After setup, new operators join via single-use invitation links minted by a super admin.",
     },

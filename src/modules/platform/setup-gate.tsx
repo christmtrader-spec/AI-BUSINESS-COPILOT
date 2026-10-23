@@ -36,7 +36,10 @@ import {
   Link2,
   TerminalSquare,
   LockKeyhole,
+  Copy,
+  Check,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -57,6 +60,16 @@ import {
 } from "./kit";
 
 type SetupStatus = { setupRequired: boolean };
+
+/**
+ * The exact offline command that mints a setup key (R70 self-service fix).
+ * Showing the command in the gate is safe: it only works with host/filesystem
+ * access (bun on the server), which is precisely the cold-start trust
+ * boundary — the raw key itself is still minted and displayed ONLY by the
+ * CLI, never by any HTTP route.
+ */
+const SETUP_MINT_COMMAND =
+  "bun --conditions react-server scripts/platform-setup-key.ts mint --ttl-hours 168";
 
 /** Localized, safe mapping of the server's fixed error codes (§86/§137). */
 const SETUP_ERROR_KEYS: Record<string, string> = {
@@ -79,6 +92,40 @@ export function PlatformSetupGate() {
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [done, setDone] = React.useState(false);
+  const [commandCopied, setCommandCopied] = React.useState(false);
+  const copiedTimer = React.useRef<number | null>(null);
+
+  React.useEffect(
+    () => () => {
+      if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
+    },
+    [],
+  );
+
+  /** Clipboard copy with the established textarea fallback (entity-header). */
+  async function copyMintCommand() {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(SETUP_MINT_COMMAND);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = SETUP_MINT_COMMAND;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCommandCopied(true);
+      if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
+      copiedTimer.current = window.setTimeout(() => setCommandCopied(false), 2000);
+      toast.success(t("copied"));
+    } catch {
+      // Clipboard denied — the command stays visible and selectable; never faked.
+    }
+  }
 
   // Live server truth — the window can close at any moment (first claim).
   const status = useQuery({
@@ -274,7 +321,30 @@ export function PlatformSetupGate() {
             <ul className="text-muted-foreground mt-2 space-y-2 text-xs leading-relaxed">
               <li className="flex items-start gap-2">
                 <TerminalSquare className="text-muted-foreground mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                <span>{t("howOffline")}</span>
+                <div className="min-w-0 flex-1 space-y-2">
+                  <span>{t("howOffline")}</span>
+                  <div
+                    className="bg-background/60 border-border/60 flex items-center gap-1 rounded-md border p-1 ps-2"
+                    dir="ltr"
+                  >
+                    <code className="text-muted-foreground min-w-0 flex-1 break-all font-mono text-[11px] leading-relaxed select-all">
+                      {SETUP_MINT_COMMAND}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => void copyMintCommand()}
+                      className="text-muted-foreground hover:text-foreground hover:bg-muted flex size-7 shrink-0 items-center justify-center rounded"
+                      aria-label={t("copyCommandAria")}
+                      title={t("copyCommandAria")}
+                    >
+                      {commandCopied ? (
+                        <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                      ) : (
+                        <Copy className="size-3.5" aria-hidden="true" />
+                      )}
+                    </button>
+                  </div>
+                </div>
               </li>
               <li className="flex items-start gap-2">
                 <LockKeyhole className="text-muted-foreground mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
