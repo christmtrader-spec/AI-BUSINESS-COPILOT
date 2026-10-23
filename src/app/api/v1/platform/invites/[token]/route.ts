@@ -18,6 +18,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { getClientIp } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import {
+  hashInviteToken,
   operatorInvitePreviewDto,
   operatorInviteRedeemSchema,
   redeemOperatorInvite,
@@ -52,7 +53,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
   }
 
   const invite = await db.platformOperatorInvite.findUnique({
-    where: { token },
+    where: { tokenHash: hashInviteToken(token) },
     select: {
       email: true, name: true, role: true, expiresAt: true,
       acceptedAt: true, revokedAt: true,
@@ -99,7 +100,7 @@ export const POST = route(async (req: NextRequest, { params }: RouteParams) => {
     // System-level audit (operatorId null = anonymous-with-token actor;
     // the invite row id is the linkage, NOT the token).
     const inviteRow = await db.platformOperatorInvite.findUnique({
-      where: { token },
+      where: { tokenHash: hashInviteToken(token) },
       select: { id: true, email: true, role: true },
     });
     if (inviteRow) {

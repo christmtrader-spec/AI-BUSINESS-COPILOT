@@ -31,7 +31,7 @@ import "server-only";
  *    operator; it only describes THIS invite (holder already knows the
  *    email — the inviter chose it).
  */
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { passwordSchema } from "@/lib/auth-security";
 import { db } from "@/lib/db";
@@ -61,6 +61,18 @@ export type OperatorInviteRedeemInput = z.infer<typeof operatorInviteRedeemSchem
 
 export function generateInviteToken(): string {
   return randomBytes(32).toString("base64url");
+}
+
+/**
+ * R69 (Prompt 69 §3.4 F1) — raw invitation tokens are NEVER stored.
+ * Only this SHA-256 digest is persisted; the unique lookup happens over the
+ * digest (same law as PlatformSetupKey.keyHash). A database read (backup,
+ * support dump, SQL injection elsewhere) can therefore no longer redeem a
+ * PENDING invite — the raw token exists ONLY in the one-time disclosure
+ * response and the operator's out-of-band handoff.
+ */
+export function hashInviteToken(rawToken: string): string {
+  return createHash("sha256").update(`platform-invite-v1:${rawToken.trim()}`).digest("hex");
 }
 
 export function inviteExpiry(): Date {
@@ -147,7 +159,7 @@ export async function redeemOperatorInvite(
 ): Promise<{ userId: string; email: string; operatorId: string; role: PlatformRole; accountCreated: boolean }> {
   return db.$transaction(async (tx) => {
     const invite = await tx.platformOperatorInvite.findUnique({
-      where: { token },
+      where: { tokenHash: hashInviteToken(token) },
       select: {
         id: true, email: true, name: true, role: true, expiresAt: true,
         acceptedAt: true, revokedAt: true,

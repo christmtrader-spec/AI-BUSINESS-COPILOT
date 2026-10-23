@@ -1479,8 +1479,10 @@ model PlatformOperator {
 /// by an existing operator and fully audited).
 model PlatformOperatorInvite {
   id          String    @id @default(cuid())
-  // Opaque 48-char token; unique lookup by token — never guessable.
-  token       String    @unique
+  // R69 — SHA-256 hex of the opaque 48-char base64url token. The raw token
+  // is NEVER stored (§14): the digest IS the unique lookup, so a database
+  // read cannot redeem a pending invitation. Same law as PlatformSetupKey.
+  tokenHash   String    @unique
   email       String
   name        String
   role        String

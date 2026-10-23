@@ -29,6 +29,31 @@ const bodySchema = z.object({
   password: z.string().min(1).max(200).optional(),
 });
 
+/**
+ * R69 (Prompt 69 §3.6.12) — bounded, whitelisted OUTCOME facts for the audit
+ * row. Only per-kind scalar summaries are recorded (the reconciliation
+ * report's counts + window; never raw payloads, never provider detail) —
+ * the financial truth itself remains the ledger's own ai_cost.reconciled
+ * audit written by reconcileAiCosts. Any kind without an entry simply gets
+ * no summary (no speculative serialization).
+ */
+function executionSummary(kind: string, result: unknown): Record<string, unknown> {
+  if (kind !== "ai-cost.reconcile" || typeof result !== "object" || result === null) return {};
+  const r = result as {
+    updatedCount?: number;
+    eligibleRecords?: number;
+    candidateRecordCount?: number;
+    boundedWindow?: { from?: string; to?: string };
+  };
+  return {
+    updatedCount: typeof r.updatedCount === "number" ? r.updatedCount : null,
+    eligibleRecords: typeof r.eligibleRecords === "number" ? r.eligibleRecords : null,
+    candidateRecordCount: typeof r.candidateRecordCount === "number" ? r.candidateRecordCount : null,
+    windowFrom: typeof r.boundedWindow?.from === "string" ? r.boundedWindow.from : null,
+    windowTo: typeof r.boundedWindow?.to === "string" ? r.boundedWindow.to : null,
+  };
+}
+
 export const POST = route(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const ctx = await getPlatformContext(req);
   const { id } = await params;
@@ -74,7 +99,7 @@ export const POST = route(async (req: NextRequest, { params }: { params: Promise
     entityType: "PlatformApprovalRequest",
     entityId: id,
     reason: dto.reason,
-    after: { kind: dto.kind, status: dto.status },
+    after: { kind: dto.kind, status: dto.status, ...executionSummary(dto.kind, result.result) },
     requestId: requestIdOf(req),
     ip: getClientIp(req),
     userAgent: req.headers.get("user-agent"),

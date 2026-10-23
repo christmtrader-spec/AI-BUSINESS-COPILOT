@@ -173,6 +173,69 @@ export function toErrorResponse(error: unknown, ctx?: RouteContext): NextRespons
   return fail(500, "INTERNAL_ERROR", "Something went wrong. Please try again.");
 }
 
+/**
+ * R69 (Prompt 69 §4/§2.3 F2) — same-origin enforcement for unsafe methods.
+ *
+ * WHY: the deployment's session cookies are SameSite=None+Secure (required
+ * for the embedded third-party preview iframe — see src/lib/auth.ts). A
+ * SameSite=None cookie is attached to EVERY cross-site request, so any
+ * state-changing endpoint that does not verify the Origin can be driven by
+ * an attacker page via a simple cross-site POST (form or no-cors fetch).
+ * JSON-body routes are de-facto protected (a cross-site form cannot set
+ * application/json and a JSON content-type fetch triggers a CORS preflight
+ * that fails — no CORS headers are ever emitted), but BODY-LESS mutations
+ * (cancel/post/finalize/revoke style endpoints) had no such protection.
+ *
+ * LAW (§81 — one choke point): every route wrapped in `route()` now runs
+ * this check BEFORE the handler for POST/PUT/PATCH/DELETE. The 17 legacy
+ * routes that do not use the wrapper call it explicitly (search
+ * "assertSameOrigin" outside this file).
+ *
+ * Policy (browser-CSRF threat model only — non-browser clients are not the
+ * threat and may omit Origin):
+ *   GET/HEAD/OPTIONS            → never checked (safe methods).
+ *   no Origin header            → ALLOW (curl, tests, server-to-server).
+ *   Origin: null                → DENY (sandboxed-iframe/data-URI POSTs).
+ *   Origin host === request host → ALLOW (same-origin browser request).
+ *   otherwise                   → DENY 403 with a value-free error.
+ *   /api/auth/*                 → EXEMPT (NextAuth enforces its own CSRF token).
+ *   /api/webhooks/*             → EXEMPT (authenticated by provider signature,
+ *                                 never by cookies).
+ *
+ * Host comparison uses the Host header (Caddy forwards it verbatim), NOT
+ * the scheme — TLS terminates at the edge and internal URLs are http.
+ */
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const ORIGIN_EXEMPT_PREFIXES = ["/api/auth/", "/api/v1/webhooks/"];
+
+export function assertSameOrigin(req: Request): void {
+  const method = req.method.toUpperCase();
+  if (SAFE_METHODS.has(method)) return;
+
+  let pathname = "";
+  try {
+    pathname = new URL(req.url).pathname;
+  } catch {
+    pathname = "";
+  }
+  if (ORIGIN_EXEMPT_PREFIXES.some((p) => pathname.startsWith(p))) return;
+
+  const origin = req.headers.get("origin");
+  if (origin === null) return; // non-browser client — not the CSRF threat
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    throw new ApiError(403, "ORIGIN_REJECTED", "Cross-site request rejected.");
+  }
+  // Origin "null" parses to host "null" — a legitimate Host can never be
+  // the literal string "null", so the comparison below denies it.
+  const requestHost = req.headers.get("host");
+  if (!requestHost || originHost !== requestHost) {
+    throw new ApiError(403, "ORIGIN_REJECTED", "Cross-site request rejected.");
+  }
+}
+
 /** Wrap a route handler with consistent error mapping + request correlation. */
 export function route<Args extends unknown[]>(
   handler: (...args: Args) => Promise<NextResponse>,
@@ -185,6 +248,7 @@ export function route<Args extends unknown[]>(
       startedAt: Date.now(),
     };
     try {
+      assertSameOrigin(args[0] as Request);
       const response = await handler(...args);
       return withRequestId(response, ctx.requestId);
     } catch (error) {
@@ -252,8 +316,28 @@ export async function parseBody<T>(
   return schema.parse(raw);
 }
 
+/**
+ * Client IP for rate-limit keys and audit metadata.
+ *
+ * R69 (Prompt 69 §4.3) — explicit trusted-proxy policy: this deployment is
+ * single-node behind ONE trusted edge proxy (Caddy, see Caddyfile) whose
+ * `header_up X-Forwarded-For {remote_host}` REPLACES any client-supplied
+ * XFF with the real peer address. The LAST element is therefore the only
+ * value this app may trust (with a longer proxy chain, each trusted hop
+ * appends to the right — the last element is always the most recently
+ * appended trusted observation, while the first remains attacker-writable).
+ * Direct connections to the Node port are localhost-only (single exposed
+ * port), so they cannot smuggle an XFF from outside the host.
+ *
+ * Guarantee: per-IP rate limits (login, invite redemption, setup, exports)
+ * cannot be bypassed by rotating a client-supplied X-Forwarded-For through
+ * the gateway; audit ipHash metadata cannot be poisoned by header injection.
+ */
 export function getClientIp(req: Request): string {
   const fwd = req.headers.get("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0].trim();
+  if (fwd) {
+    const parts = fwd.split(",").map((s) => s.trim()).filter(Boolean);
+    return parts.length > 0 ? parts[parts.length - 1] : "unknown";
+  }
   return req.headers.get("x-real-ip") ?? "unknown";
 }

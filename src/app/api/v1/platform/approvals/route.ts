@@ -59,6 +59,9 @@ export const GET = route(async (req: NextRequest) => {
   return platformOk({
     approvals: rows.map(approvalDto),
     meta: pageMeta(pagination, total),
+    // R69 — the LIVE operation registry (single source of truth §81): the
+    // filter UI derives its kind options from this, never a hardcoded copy.
+    kinds: APPROVAL_KINDS,
   });
 });
 

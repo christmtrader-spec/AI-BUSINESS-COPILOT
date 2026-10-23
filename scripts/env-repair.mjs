@@ -103,6 +103,7 @@ const MIGRATIONS = [
   "20261023100000_r67_platform_operator_invites",
   // R68 — platform setup key (cold-start first-operator bootstrap) table.
   "20261023120000_r68_platform_setup_keys",
+  "20261023140000_r69_invite_token_hash",
 ];
 
 function log(step, msg) {

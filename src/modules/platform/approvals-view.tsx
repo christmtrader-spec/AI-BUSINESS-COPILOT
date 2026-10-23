@@ -66,8 +66,9 @@ import { isPlatformSelf, usePlatformSelf } from "./use-platform-self";
 
 const PAGE_SIZE = 20;
 
-/** The server's operation registry currently registers exactly one kind. */
-const APPROVAL_KIND_FILTERS = ["pricing.activate"] as const;
+/** R69 — kind filter options come from the SERVER registry (the approvals
+ * list response carries `kinds: APPROVAL_KINDS`); the view never hardcodes
+ * authorization data (§5 law — the same source the enforcement chain uses). */
 
 /**
  * Status → badge tone (Prompt 65 §10 honesty law): PENDING amber,
@@ -190,7 +191,7 @@ export function ApprovalsView() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ALL">{t("approvals.filterKindAll")}</SelectItem>
-                  {APPROVAL_KIND_FILTERS.map((k) => (
+                  {(data?.kinds ?? []).map((k) => (
                     <SelectItem key={k} value={k}>
                       <span className="font-mono" dir="ltr">
                         {k}

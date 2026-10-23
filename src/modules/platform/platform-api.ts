@@ -710,7 +710,7 @@ export const platformQueries = {
     ),
   access: () => platformApi<PlatformAccessInfo>("/api/v1/platform/access"),
   approvals: (params: string) =>
-    platformApi<{ approvals: PlatformApproval[]; meta: PageMeta }>(
+    platformApi<{ approvals: PlatformApproval[]; meta: PageMeta; kinds: string[] }>(
       `/api/v1/platform/approvals${params ? `?${params}` : ""}`,
     ),
   system: () => platformApi<PlatformSystem>("/api/v1/platform/system"),

@@ -20,6 +20,7 @@ import { db } from "@/lib/db";
 import { isOperatorManagerRole } from "@/lib/platform/rbac";
 import {
   generateInviteToken,
+  hashInviteToken,
   inviteExpiry,
   OPERATOR_INVITE_TTL_MS,
   operatorInviteDto,
@@ -108,7 +109,8 @@ export const POST = route(async (req: NextRequest) => {
   const created = await db.$transaction(async (tx) => {
     const invite = await tx.platformOperatorInvite.create({
       data: {
-        token,
+        // R69 F1 — the raw token is NEVER persisted; only its digest is.
+        tokenHash: hashInviteToken(token),
         email: body.email,
         name: body.name,
         role: body.role,

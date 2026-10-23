@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { platformError, type PlatformContext } from "./auth";
 import { activatePriceBook } from "@/lib/payments/pricing-service";
+import { reconcileAiCosts } from "@/lib/ai/cost/ledger";
 
 /**
  * Two-person approval service — Prompt 65 (§10, §13, §14).
@@ -78,6 +79,34 @@ export const APPROVAL_OPERATIONS = {
     // PricingService remains the only activation authority, §13).
     execute: async (p: { priceBookId: string }, ctx: PlatformContext) =>
       activatePriceBook(p.priceBookId, { actorId: ctx.userId }),
+  },
+
+  // R69 (Prompt 69 §3.6) — AI-cost reconciliation under dual control.
+  //
+  // BINDING DECISION (documented): the operation is intentionally
+  // PARAMETERLESS — the payload schema accepts only the empty object, so no
+  // client-controlled field exists to bind. The lookback window, record
+  // limit and environment are derived SERVER-SIDE at execution from the
+  // same config authority the direct reconciliation route uses (§81 — one
+  // service path, reconcileAiCosts): period/scope are therefore identical
+  // for requester, approver and executor, and the concrete facts (bounded
+  // window, eligible records, updated count) are written to the audit by
+  // the execute route + the ledger's own ai_cost.reconciled audit. No
+  // client-provided amount can EVER be the financial truth (§3.6.6) — the
+  // ledger recomputes every cost from its own rates at apply time.
+  //
+  // SAFETY (inherited from reconcileAiCosts): every record is re-validated
+  // at apply time (never trusts stale dry-run data, §186); compare-and-update
+  // on costStatus UNKNOWN makes concurrent/replayed executions idempotent
+  // (§187/§74 — a second run updates nothing); KNOWN records are never
+  // rewritten (§44).
+  "ai-cost.reconcile": {
+    permission: "platform:ai-cost:reconcile",
+    payloadSchema: z.object({}),
+    describe: () =>
+      "Apply AI-cost reconciliation over the server-configured lookback window",
+    execute: async (_p: Record<string, never>, ctx: PlatformContext) =>
+      reconcileAiCosts({ dryRun: false, actorId: ctx.userId }),
   },
 } as const satisfies Record<string, ApprovalOperation<never>> | Record<string, ApprovalOperation<any>>;
 
