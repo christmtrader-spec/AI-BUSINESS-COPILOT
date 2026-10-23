@@ -1,0 +1,981 @@
+# PROMPT 69 — AI BUSINESS COPILOT
+
+## Deep Security Audit, Zero-Trust Hardening, Administrative Approval Completion, and Production Readiness
+
+You are continuing the existing AI BUSINESS COPILOT codebase.
+
+Your task is to perform a rigorous, evidence-driven security audit and hardening pass on the existing Enterprise Platform Admin Console and its supporting backend.
+
+This is an incremental engineering task, NOT a greenfield implementation.
+
+The objective is to improve the security, correctness, testability, and production readiness of the existing system without destabilizing working functionality.
+
+Do not optimize for the number of changed files, the amount of code written, or the appearance of progress. Optimize for demonstrable security improvements, correctness, maintainability, and verifiable test results.
+
+---
+
+# 1. MANDATORY PROJECT CONTEXT
+
+The current project archive is:
+
+AI BUSINESS COPILOT - 58.tar
+
+The current codebase already contains substantial implementation work related to:
+
+* Enterprise Platform Admin Console.
+* Dedicated platform administrator entry and authentication flow.
+* Platform MFA enforcement.
+* TOTP enrollment and recovery codes.
+* Session and device management.
+* Platform operator management.
+* Six platform operator roles.
+* Server-side role-based access control.
+* Permission-based access matrix.
+* Platform operator invitations.
+* Offline-generated first-operator setup keys.
+* Platform security center.
+* Platform audit events.
+* Security-related API endpoints.
+* Platform approval requests.
+* Approval payload hashing.
+* Approval expiration and state transitions.
+* Atomic approval execution.
+* A dedicated platform administration interface.
+* Existing tenant authentication and authorization.
+* Existing business, subscription, pricing, payment, and AI-cost functionality.
+
+The codebase has also received changes associated with R66, R67, and R68, including administrative navigation, operator access management, and first-operator setup.
+
+Treat these as existing functionality that must be inspected and preserved.
+
+Do not assume that every item above is implemented correctly merely because it exists in the source code or is described in the Worklog.
+
+Verify actual implementations.
+
+## 1.1 Existing security architecture
+
+Preserve the existing architectural boundaries:
+
+* Tenant authorization and platform administration authorization must remain separate.
+* Platform operator permissions must be enforced on the server.
+* UI visibility must never be treated as an authorization mechanism.
+* `UsageService`, or the established authoritative equivalent, must remain the sole authority for AI usage quotas.
+* `PricingService`, or the established authoritative equivalent, must remain the sole authority for customer pricing.
+* Payment-provider verification must remain authoritative for external payment status.
+* The AI Cost Ledger must remain authoritative for recorded AI costs.
+* Platform administration must not bypass tenant ownership or tenant authorization rules.
+* Financial facts must come from deterministic database queries and calculations, not LLM-generated estimates.
+* Financial calculations must preserve the project's established safe integer or precise decimal representation.
+* Do not introduce PostgreSQL, Redis, or another infrastructure dependency without demonstrating a concrete need and providing a compatible implementation plan.
+* Preserve the existing SQLite and single-node deployment architecture unless the actual codebase establishes otherwise.
+
+Before making changes, inspect the current implementations and identify the authoritative services, permission definitions, database models, migration conventions, and test commands.
+
+---
+
+# 2. OPERATING RULES — NON-NEGOTIABLE
+
+## 2.1 Inspect before modifying
+
+Before writing code:
+
+1. Inspect the repository structure.
+2. Read the latest Worklog entries, especially R65, R66, R67, and R68.
+3. Inspect the current Git branch and working-tree status.
+4. Inspect the existing platform authentication, MFA, RBAC, setup-key, invitation, approval, audit, and session-revocation implementations.
+5. Inspect relevant API routes, database models, migrations, middleware, and shared authorization utilities.
+6. Identify the current test infrastructure and available package-manager commands.
+7. Establish a baseline for the existing security-related tests.
+
+Use the actual repository state as the source of truth.
+
+Do not blindly trust prior implementation reports.
+
+## 2.2 Incremental changes only
+
+* Do not rewrite the platform admin console.
+* Do not replace the existing authentication system.
+* Do not create duplicate RBAC systems.
+* Do not create a second MFA implementation if a working implementation already exists.
+* Do not create parallel pricing, AI usage, payment, or AI-cost authorities.
+* Do not modify unrelated business functionality.
+* Do not remove working functionality merely to simplify implementation.
+* Do not perform broad refactoring unless required to resolve a verified security defect.
+* Reuse existing services, utilities, models, and design conventions.
+* Make the smallest coherent changes that resolve confirmed issues.
+
+## 2.3 Evidence-based findings
+
+For every security finding, identify:
+
+* Severity: Critical, High, Medium, or Low.
+* Affected file or endpoint.
+* The vulnerable code path or missing control.
+* A realistic attack scenario.
+* The security impact.
+* The root cause.
+* The minimal corrective action.
+* The regression test that demonstrates the fix.
+
+Do not report hypothetical vulnerabilities as confirmed findings.
+
+Clearly distinguish:
+
+* Confirmed vulnerability.
+* Potential risk requiring deployment-specific investigation.
+* Existing protection verified in code.
+* Unverified assumption.
+
+## 2.4 Never fabricate test results
+
+Every test result must be classified as one of:
+
+* `EXECUTED — PASSED`
+* `EXECUTED — FAILED`
+* `REPORTED-FROM-WORKLOG — NOT INDEPENDENTLY VERIFIED`
+* `NOT EXECUTED`
+* `BLOCKED`
+
+Never claim that a test, build, browser session, penetration test, or deployment verification succeeded unless it actually ran and produced evidence.
+
+If dependencies are unavailable, explain the blocker and continue with the checks that can be performed safely.
+
+---
+
+# 3. PHASE A — DEEP SECURITY AUDIT
+
+Perform a source-level audit of the complete platform administration security boundary.
+
+At minimum, investigate the following areas.
+
+## 3.1 Authentication and authorization
+
+Inspect every platform API endpoint and server action that can:
+
+* Read privileged platform data.
+* Modify platform configuration.
+* Create, invite, disable, or modify platform operators.
+* Change operator roles or permissions.
+* Read sensitive security information.
+* Revoke sessions.
+* Manage MFA.
+* Manage setup keys.
+* Create, approve, reject, cancel, or execute approval requests.
+* Change pricing.
+* Modify subscriptions or payment-related administrative records.
+* Reconcile AI costs.
+* Export administrative data.
+* Read or modify audit records.
+
+For each sensitive endpoint, verify that authorization occurs server-side before the protected operation.
+
+Check for:
+
+* Missing authentication.
+* Missing platform-operator checks.
+* Missing permission checks.
+* Reliance on frontend navigation or hidden buttons.
+* Inconsistent authorization between equivalent endpoints.
+* Client-controlled role or identity fields.
+* Horizontal privilege escalation.
+* Vertical privilege escalation.
+* IDOR vulnerabilities.
+* Tenant isolation failures.
+* Unprotected exports.
+* Insecure administrative server actions.
+* Permission checks performed after the sensitive operation.
+* Incorrect fallback behavior when authentication or authorization services fail.
+
+Create a route-by-route authorization matrix based on the actual codebase.
+
+Do not merely sample a few routes and claim that the entire platform has been audited.
+
+## 3.2 RBAC integrity
+
+Inspect the existing six platform roles:
+
+* `PLATFORM_SUPER_ADMIN`
+* `PLATFORM_SUPPORT`
+* `PLATFORM_BILLING`
+* `PLATFORM_AI_COST`
+* `PLATFORM_SECURITY`
+* `PLATFORM_READONLY`
+
+Verify the actual role names and permission definitions in the repository before changing anything.
+
+Test whether:
+
+* Each role receives only its intended permissions.
+* Read-only operators cannot perform mutations.
+* Support operators cannot access unrelated billing or security operations.
+* Billing operators cannot grant themselves additional privileges.
+* AI-cost operators cannot modify pricing unless explicitly authorized.
+* Security operators cannot silently change their own role.
+* Operators cannot assign permissions outside their authority.
+* Role changes are authorized by the correct permission.
+* Unknown roles and unknown permissions are denied.
+* Missing permissions result in denial.
+* Authorization failures do not accidentally fall back to a privileged role.
+* Frontend access-matrix information matches the actual server-side permission registry.
+
+Keep one authoritative permission registry.
+
+If permission definitions are duplicated, consolidate them only when necessary and without breaking existing contracts.
+
+## 3.3 Authentication session and MFA security
+
+Inspect the existing NextAuth-based authentication flow and platform MFA implementation.
+
+Verify:
+
+* Platform administrators cannot bypass required MFA through direct API calls.
+* Direct navigation cannot bypass the MFA gate.
+* Expired or invalid sessions are rejected.
+* Session revocation takes effect on subsequent protected requests.
+* Logout-current-device actually revokes or invalidates the relevant session according to the existing session architecture.
+* Logout-all-devices cannot be invoked by an unauthorized operator.
+* Session-management endpoints do not expose session secrets.
+* TOTP verification resists replay.
+* Recovery codes are single-use and stored safely.
+* MFA enrollment cannot be completed by an unauthorized actor.
+* MFA disabling or recovery procedures require appropriate reauthentication and authorization.
+* MFA configuration failures do not silently disable enforcement.
+* Security-sensitive actions cannot rely solely on a stale client-side authentication state.
+* Session and device information is disclosed only to appropriately authorized users.
+
+Preserve existing authentication behavior for ordinary tenants.
+
+Do not impose platform-administrator MFA requirements on tenant users unless the existing product specification explicitly requires it.
+
+## 3.4 Operator invitations and onboarding
+
+Inspect the complete invitation lifecycle:
+
+* Invitation creation.
+* Token generation.
+* Token storage.
+* Token presentation.
+* Invitation redemption.
+* Invitation expiration.
+* Invitation revocation, if supported.
+* Duplicate redemption.
+* Concurrent redemption.
+* Operator creation.
+* Audit logging.
+* Error handling.
+
+Verify that:
+
+* Invitation tokens are generated using cryptographically secure randomness.
+* Raw invitation tokens are not stored unnecessarily.
+* Tokens are not written to ordinary application logs.
+* Tokens are not included in list responses or unrelated DTOs.
+* Expired invitations cannot be redeemed.
+* Revoked or already redeemed invitations cannot be reused.
+* Concurrent requests cannot redeem one invitation more than once.
+* The recipient cannot choose an arbitrary privileged role.
+* Only appropriately authorized operators can create invitations.
+* Invitation acceptance does not bypass the normal authentication and MFA requirements.
+* Error responses do not reveal unnecessary internal information.
+
+The existing invitation flow uses out-of-band link delivery.
+
+Do not introduce a new email provider or fabricate delivery functionality.
+
+If email delivery is not configured, document that limitation and retain a secure out-of-band workflow.
+
+## 3.5 First-operator setup key
+
+Audit the existing offline setup-key mechanism.
+
+Verify:
+
+* Setup keys are generated using cryptographically secure randomness.
+* Only a hash or equivalent non-reversible verifier is persisted.
+* The raw key is never exposed through ordinary API responses or logs.
+* Expiration is enforced server-side.
+* Invalid, expired, revoked, and already-used keys are rejected.
+* Key redemption is atomic under concurrent requests.
+* The setup flow cannot create multiple initial operators.
+* The setup flow becomes unavailable after the initial operator has been established.
+* A race condition cannot reopen bootstrap access.
+* Unauthorized users cannot inspect setup-key hashes or status secrets.
+* Database errors fail safely.
+* Setup-key creation remains an offline administrative operation.
+* The ordinary login flow does not become an alternate bootstrap path.
+* Existing installations with one or more operators cannot accidentally re-enter initial setup.
+
+Verify the setup TTL rules and input validation against the existing implementation.
+
+Do not generate a new live production setup key during tests.
+
+Do not print real setup secrets in logs, test reports, screenshots, or the final response.
+
+## 3.6 Approval framework
+
+Inspect the existing platform approval state machine, payload binding, and execution path.
+
+Verify:
+
+* Only valid state transitions are accepted.
+* An operator cannot approve their own request.
+* Approval identity is derived from authenticated server-side operator identity.
+* Client-provided operator IDs are not trusted.
+* Expired requests cannot execute.
+* Rejected or cancelled requests cannot execute.
+* Repeated requests cannot execute the same operation twice.
+* Concurrent approvals cannot cause duplicate execution.
+* The canonical payload hash binds the approval to the exact requested action and parameters.
+* Payload changes invalidate the original approval.
+* The target action is revalidated immediately before execution.
+* Reauthentication requirements are enforced server-side.
+* Failed execution is recorded accurately.
+* Approval decisions and execution outcomes are audited.
+* The requester cannot alter an approval after it has been approved.
+* Transaction boundaries and uniqueness constraints provide real concurrency safety.
+
+Review the existing 24-hour approval TTL and state machine rather than assuming those settings are correct.
+
+Preserve existing atomic execution guarantees.
+
+### Required enhancement: AI-cost reconciliation approval
+
+The current implementation has a two-person approval framework, but only `pricing.activate` is known to be wired into the execution flow.
+
+Inspect the actual AI-cost reconciliation operation.
+
+If it is a privileged or financially significant mutation that can safely be integrated into the existing framework, wire it into the established approval mechanism.
+
+Requirements:
+
+1. Use the existing approval model and state machine.
+2. Do not introduce a second approval system.
+3. Bind the request to a canonical representation of the exact reconciliation action.
+4. Include relevant period, source, amount, currency, and scope identifiers when these exist in the authoritative domain model.
+5. Derive financial facts from the existing authoritative ledger and reconciliation service.
+6. Do not accept a client-provided amount as the authoritative financial truth.
+7. Revalidate the underlying records before execution.
+8. Prevent duplicate reconciliation.
+9. Use appropriate database transaction boundaries.
+10. Reject requester self-approval.
+11. Enforce the required server-side permissions.
+12. Audit the request, decision, execution, and outcome.
+13. Add tests for successful execution, tampering, self-approval, expiry, replay, and concurrent execution.
+
+Do not invent financial fields or change the AI Cost Ledger schema without first inspecting the existing model.
+
+If AI-cost reconciliation is not implemented, or the existing design does not permit a safe integration, do not fabricate an implementation. Document the exact blocker and provide a minimal integration plan.
+
+## 3.7 Audit logs and security-event handling
+
+Inspect the existing audit and security-event system.
+
+Verify:
+
+* Sensitive administrative actions create appropriate audit records.
+* Audit actor identity comes from the authenticated server context.
+* Audit records contain sufficient action, target, timestamp, and outcome information.
+* Passwords, session secrets, TOTP secrets, recovery codes, setup keys, and raw invitation tokens are never logged.
+* Untrusted strings are sanitized against log injection.
+* Unauthorized users cannot modify or delete audit records through administrative APIs.
+* Audit export endpoints enforce authorization.
+* Pagination and filtering cannot bypass access control.
+* Security-event creation does not become a denial-of-service vector.
+* Failed administrative actions are logged appropriately without exposing secrets.
+* The system distinguishes successful operations from attempted or failed operations.
+
+Do not claim that the audit log is cryptographically immutable unless the implementation actually provides that property.
+
+If tamper resistance is absent, describe the actual protection level and recommend an appropriately scoped enhancement rather than introducing an unsupported distributed logging dependency.
+
+---
+
+# 4. PHASE B — RATE LIMITING AND ABUSE RESISTANCE
+
+The current implementation has been reported to use in-memory rate limiting.
+
+Inspect the actual implementation and identify every security-sensitive route that depends on it.
+
+At minimum, evaluate:
+
+* Login-related platform access.
+* MFA verification.
+* MFA recovery.
+* Invitation redemption.
+* First-operator setup-key redemption.
+* Password reauthentication for sensitive actions.
+* Approval execution.
+* Security-event export.
+* Operator invitation creation.
+
+## Requirements
+
+1. Determine whether rate limits are actually applied to each relevant route.
+2. Verify that a client cannot bypass limits by changing headers or identity fields.
+3. Verify that forwarded IP headers are trusted only under an explicitly configured trusted-proxy policy.
+4. Avoid trusting arbitrary `X-Forwarded-For` values.
+5. Verify that malformed requests cannot bypass the limiter.
+6. Avoid exposing whether a particular operator or account exists through unnecessarily specific rate-limit responses.
+7. Preserve legitimate administrative workflows.
+8. Add tests for boundary conditions, expiry, concurrency, and failure behavior.
+
+### Deployment compatibility
+
+Do not automatically introduce Redis or another external service.
+
+First determine whether the application is intended for a single Node.js instance or a multi-instance deployment.
+
+For the existing single-node architecture:
+
+* A process-local limiter may remain appropriate if its limitations are documented.
+* Ensure sensitive operations have additional controls that do not depend solely on IP-based rate limiting.
+* Fail safely when security-sensitive limiter state cannot be trusted.
+
+If multi-instance deployment is supported or explicitly configured:
+
+* Implement or design a shared limiter only if a compatible storage mechanism already exists or can be added with a justified, documented migration.
+* Do not claim distributed rate limiting when only in-memory state exists.
+* Do not silently degrade to an insecure fallback.
+
+Document the deployment assumptions and actual guarantees.
+
+---
+
+# 5. PHASE C — SECURITY TEST SUITE
+
+Create or extend automated tests using the project's existing test framework.
+
+Do not introduce a new test framework without a clear technical justification.
+
+The test suite must exercise actual application behavior wherever possible, rather than testing only mocked helper functions.
+
+## 5.1 Authorization matrix tests
+
+Test every role against every sensitive permission and endpoint.
+
+Include:
+
+* Allowed operations.
+* Denied operations.
+* Missing permissions.
+* Unknown roles.
+* Unknown permissions.
+* Expired sessions.
+* Revoked sessions.
+* Unauthenticated requests.
+* Tenant users attempting platform actions.
+* Platform users attempting unauthorized tenant actions.
+
+Verify that unauthorized requests fail without producing unintended mutations.
+
+## 5.2 MFA tests
+
+Test:
+
+* Required MFA enforcement.
+* Invalid TOTP.
+* Expired TOTP.
+* Replayed TOTP.
+* Invalid recovery code.
+* Recovery-code reuse.
+* MFA enrollment authorization.
+* MFA enforcement after session changes.
+* Fail-closed behavior when required MFA data is unavailable.
+
+Use isolated test fixtures and deterministic clocks where appropriate.
+
+Do not weaken production MFA requirements to make tests pass.
+
+## 5.3 Invitation and setup-key tests
+
+Test:
+
+* Successful redemption.
+* Invalid token.
+* Expired token.
+* Already-used token.
+* Concurrent redemption.
+* Unauthorized creation.
+* Duplicate requests.
+* Operator-already-exists scenarios.
+* Setup closure after the first operator is established.
+* Database failure during redemption.
+* Sensitive-token redaction.
+
+Verify that the database remains in a valid state after failed and concurrent operations.
+
+## 5.4 Approval tests
+
+Test:
+
+* Request creation.
+* Authorized approval.
+* Unauthorized approval.
+* Requester self-approval.
+* Expired request.
+* Rejected request.
+* Cancelled request.
+* Payload tampering.
+* Duplicate execution.
+* Concurrent execution.
+* Execution failure.
+* Audit-record creation.
+* AI-cost reconciliation approval, if implemented.
+
+Use the actual database and transaction semantics wherever practical.
+
+## 5.5 API abuse and input validation
+
+Test:
+
+* Invalid JSON.
+* Missing required fields.
+* Unexpected fields.
+* Oversized requests.
+* Invalid identifiers.
+* Invalid enums.
+* Malformed pagination parameters.
+* Invalid date ranges.
+* Invalid numeric values.
+* Unauthorized export requests.
+* Rate-limit exhaustion.
+* Unexpected dependency failures.
+
+Do not expose stack traces, credentials, SQL details, or sensitive implementation information to external clients.
+
+## 5.6 Regression tests
+
+Run the relevant existing regression suites.
+
+Preserve previously working functionality, including:
+
+* Tenant authentication.
+* Tenant RBAC.
+* Business data isolation.
+* Subscription operations.
+* Payment verification.
+* Pricing.
+* AI usage quotas.
+* AI-cost ledger.
+* Audit and reporting.
+* Existing platform operator workflows.
+
+If an existing test fails, determine whether the failure is pre-existing or caused by the current changes.
+
+Do not modify tests merely to conceal a regression.
+
+---
+
+# 6. PHASE D — DEPENDENCY, CONFIGURATION, AND SECRETS AUDIT
+
+Inspect the project configuration and security-sensitive environment variables.
+
+Check:
+
+* Missing environment validation.
+* Unsafe production defaults.
+* Weak or predictable secret handling.
+* Accidental exposure of server-only secrets to client bundles.
+* Secrets included in logs.
+* Secrets committed to source control.
+* Debug features enabled in production.
+* Overly permissive CORS or origin policies, if applicable.
+* Unsafe cookie settings.
+* Inadequate session configuration.
+* Missing or inappropriate security headers.
+* Unsafe redirect handling.
+* Insecure URL construction.
+* Vulnerable direct and transitive dependencies, to the extent available tooling can verify them.
+
+Do not print real secret values.
+
+Do not generate replacement production secrets without explicit authorization.
+
+Do not automatically rotate credentials or revoke active production sessions.
+
+If a dependency audit requires internet access and the environment does not have it, mark that check as blocked rather than claiming that dependencies are safe.
+
+Verify whether environment-variable validation exists for required security settings.
+
+Where appropriate, fail fast with a clear, non-secret error when mandatory production configuration is missing.
+
+Do not break local development or established deployment workflows without documenting the required configuration changes.
+
+---
+
+# 7. PHASE E — DUAL CONTROL AND PRIVILEGED ACTIONS
+
+Review the existing platform permission registry and approval architecture.
+
+Classify privileged actions into:
+
+* Routine, low-risk actions.
+* Sensitive actions requiring elevated permission or reauthentication.
+* High-impact actions requiring two-person approval.
+
+Base the classification on the existing domain behavior, business impact, and security requirements.
+
+Do not require two-person approval for every ordinary action.
+
+Consider, where supported by existing functionality:
+
+* Pricing activation.
+* AI-cost reconciliation.
+* Sensitive billing adjustments.
+* High-impact platform configuration changes.
+* Privileged operator role changes.
+* Security-policy changes.
+* Destructive administrative actions.
+
+For every additional action proposed for two-person approval:
+
+1. Identify the exact existing service and API endpoint.
+2. Verify that the action has a meaningful and deterministic execution function.
+3. Verify that the approval framework can bind the exact action and parameters.
+4. Ensure the operation is safe against replay and concurrent execution.
+5. Ensure the requester cannot approve their own request.
+6. Ensure the action can be audited.
+7. Add regression tests.
+
+Only implement actions whose existing business semantics are sufficiently clear.
+
+If a proposed action would require redesigning the domain model, document the recommendation and defer that redesign rather than inventing behavior.
+
+---
+
+# 8. PHASE F — UI AND OPERATOR EXPERIENCE
+
+Inspect the existing administrative interface without redesigning it unnecessarily.
+
+Verify:
+
+* Dedicated platform entry remains available.
+* Ordinary users are not shown privileged controls they cannot access.
+* Direct navigation does not bypass server authorization.
+* MFA enrollment and verification have understandable states.
+* Session revocation gives accurate success and failure feedback.
+* Operator invitation states are clear.
+* Expired or invalid setup keys produce safe, actionable errors.
+* Approval requesters and approvers can distinguish pending, approved, rejected, expired, and executed requests.
+* Destructive actions require suitable confirmation.
+* Loading, empty, error, and permission-denied states are present where needed.
+* The English and Persian interfaces remain functional.
+* RTL layout remains correct.
+* Existing responsive layouts remain intact.
+* Accessibility is preserved for keyboard navigation, focus states, and form labels.
+
+Do not expose sensitive technical details in user-facing errors.
+
+Do not introduce misleading success messages when the underlying operation failed.
+
+Do not redesign colors, branding, navigation, or layout unless a verified usability or security defect requires a targeted change.
+
+---
+
+# 9. PHASE G — DATABASE AND MIGRATION SAFETY
+
+Inspect any schema changes required by this phase.
+
+Before adding a migration:
+
+1. Inspect the existing Prisma schema.
+2. Inspect relevant migrations.
+3. Verify the current migration naming convention.
+4. Identify existing constraints and indexes.
+5. Confirm whether the proposed field or constraint already exists.
+6. Check compatibility with existing SQLite deployments.
+7. Determine whether the change can be applied safely to existing data.
+
+Requirements:
+
+* No duplicate schema objects.
+* No destructive migration without explicit justification.
+* No silent loss of audit or approval history.
+* Appropriate uniqueness constraints for single-use tokens and one-time operations.
+* Transactional behavior for security-sensitive state changes wherever supported.
+* Clear handling of partially completed migrations.
+* Existing data remains compatible.
+
+If a migration is necessary, provide the migration file and explain its compatibility implications.
+
+Do not run a destructive migration against a production database.
+
+Do not modify production data to make tests pass.
+
+---
+
+# 10. PHASE H — INDEPENDENT VERIFICATION
+
+After the code changes, perform the strongest verification available in the current environment.
+
+Use the project's existing commands and tooling.
+
+Inspect `package.json`, lockfiles, test scripts, and relevant configuration before deciding what to run.
+
+Where dependencies are available, run appropriate checks, including:
+
+* TypeScript type checking.
+* Linting.
+* Relevant unit tests.
+* Relevant integration tests.
+* Existing platform security tests.
+* Existing tenant and financial regression tests.
+* Production build, if safe under the project's established build workflow.
+* Migration validation.
+* Relevant static security scans.
+* Dependency audit, if tooling and network access permit.
+
+Do not assume that `npm`, `pnpm`, `yarn`, `bun`, or any other package manager is available.
+
+Determine what is actually installed.
+
+Do not delete `.next`, stop the development server, or overwrite build artifacts if doing so would interfere with an active development workflow.
+
+If a check cannot be run safely, report it as `BLOCKED` or `NOT EXECUTED` and explain why.
+
+### Browser verification
+
+If a usable browser-testing environment exists, verify the administrative workflows end to end.
+
+At minimum, cover:
+
+1. Unauthenticated access.
+2. Ordinary tenant account attempting platform access.
+3. Authorized platform operator login.
+4. Required MFA flow.
+5. Insufficient-permission denial.
+6. Operator invitation and redemption.
+7. Session revocation.
+8. Approval request and approval execution.
+9. First-operator setup behavior in an isolated test database.
+10. Logout and subsequent access denial.
+
+Use test accounts and an isolated database.
+
+Do not use live production credentials.
+
+Do not claim browser verification if the browser tests did not run.
+
+---
+
+# 11. REQUIRED SECURITY ACCEPTANCE CRITERIA
+
+The phase is not complete merely because code was changed.
+
+The following criteria must be addressed:
+
+### Authentication and authorization
+
+* Every inspected privileged endpoint has an explicit, server-enforced authorization path.
+* Unknown roles and permissions fail closed.
+* Tenant users cannot access platform-only actions.
+* Platform authorization does not rely on frontend visibility.
+
+### MFA and sessions
+
+* Required platform MFA cannot be bypassed through direct API access.
+* Session revocation is enforced according to the existing session architecture.
+* Sensitive MFA and session secrets are not exposed.
+
+### Bootstrap and invitations
+
+* Single-use setup and invitation tokens resist replay and concurrent redemption.
+* Raw secrets are not stored or logged unnecessarily.
+* Bootstrap cannot reopen after the first operator is established.
+
+### Approval integrity
+
+* Approval payloads are bound to the exact action.
+* Self-approval is rejected.
+* Expired and previously executed requests cannot execute again.
+* Concurrency cannot produce duplicate execution.
+* AI-cost reconciliation is integrated only if the existing domain implementation supports a safe integration.
+
+### Financial integrity
+
+* Authoritative pricing, payment, quota, and AI-cost services remain authoritative.
+* No LLM-generated value is treated as the source of financial truth.
+* No unsafe floating-point money arithmetic is introduced.
+* No privileged action silently bypasses the established financial services.
+
+### Auditability
+
+* Sensitive administrative operations produce appropriate audit records.
+* Secrets are redacted.
+* Audit exports are authorized.
+
+### Verification
+
+* New security tests are implemented.
+* Relevant tests are executed where the environment permits.
+* Test results are reported truthfully.
+* Unverified or blocked checks are explicitly listed.
+
+A failed criterion must not be concealed by declaring the overall phase complete.
+
+---
+
+# 12. IMPLEMENTATION ORDER
+
+Follow this order:
+
+1. Inspect repository, Worklog, current Git state, and test infrastructure.
+2. Produce a concise baseline report.
+3. Build the route-by-route authorization matrix.
+4. Identify and rank confirmed security findings.
+5. Fix Critical and High findings first.
+6. Fix confirmed Medium findings where the change is appropriately scoped.
+7. Harden setup-key and invitation flows.
+8. Validate and strengthen the existing approval framework.
+9. Integrate AI-cost reconciliation into the existing approval system if safe and supported.
+10. Audit rate limiting and document deployment guarantees.
+11. Complete the security regression tests.
+12. Run the available regression suites.
+13. Review the final diff for unrelated changes and accidental secret exposure.
+14. Update the Worklog with evidence-based results.
+15. Produce the final security report.
+
+Do not proceed by blindly implementing every proposed enhancement before inspecting the code.
+
+If a high-risk issue is discovered, prioritize it over lower-value work.
+
+If the task exceeds the available execution budget, complete the highest-priority security fixes and tests first, then report the remaining work clearly.
+
+---
+
+# 13. CHANGE MANAGEMENT REQUIREMENTS
+
+Before editing, record the starting Git status.
+
+Do not discard existing user changes.
+
+Do not reset the branch or rewrite history.
+
+Do not commit unless the existing project workflow explicitly requires it.
+
+After editing:
+
+* Inspect `git diff`.
+* Inspect changed and newly created files.
+* Check for accidental secret exposure.
+* Check for unrelated formatting changes.
+* Confirm that the implementation remains consistent with existing architectural conventions.
+* Confirm that new tests exercise the actual behavior.
+* Record any schema or environment changes required to deploy the result.
+
+Do not modify the Worklog to claim that a test passed unless the test actually ran and passed.
+
+If the Worklog records an earlier result that you cannot independently reproduce, preserve the distinction between historical reporting and current verification.
+
+---
+
+# 14. WORKLOG UPDATE
+
+Append a new, clearly labeled section to the existing Worklog.
+
+Use the next appropriate revision identifier according to the repository's established naming convention.
+
+Do not assume that the next revision number is available without checking the latest Worklog entry.
+
+The section must include:
+
+* Scope.
+* Baseline findings.
+* Confirmed vulnerabilities.
+* Severity and impact.
+* Changes implemented.
+* Files changed.
+* Database or configuration changes.
+* Tests added.
+* Commands actually executed.
+* Exact pass/fail counts when available.
+* Checks blocked by environment limitations.
+* Known limitations.
+* Remaining risks.
+* Deployment instructions, if needed.
+
+Never describe an unexecuted test as passed.
+
+---
+
+# 15. FINAL RESPONSE FORMAT
+
+When finished, return a concise but technically detailed report in the following format:
+
+## A. Executive Summary
+
+State what was actually improved and whether the platform is safer than before.
+
+## B. Confirmed Findings
+
+For each confirmed issue, provide:
+
+* Severity.
+* Affected file or endpoint.
+* Root cause.
+* Fix applied.
+* Regression test.
+
+If no confirmed issue was found in a specific area, say that the inspected code showed no confirmed issue; do not claim that the entire system is vulnerability-free.
+
+## C. Changes Implemented
+
+List the substantive changes and affected files.
+
+## D. Approval Framework
+
+Explain whether AI-cost reconciliation was safely integrated. If not, state the exact blocker.
+
+## E. Test Results
+
+For every relevant test group, provide:
+
+* Command.
+* Status.
+* Actual result.
+* Important limitations.
+
+Use the mandatory status labels.
+
+## F. Remaining Risks
+
+List unresolved security risks in priority order.
+
+## G. Deployment Requirements
+
+Explain any required environment variables, migrations, operator actions, or deployment configuration changes.
+
+Never include live secrets, setup keys, recovery codes, session tokens, or invitation tokens.
+
+## H. Overall Assessment
+
+Choose one:
+
+* `NOT READY — Critical security issue remains`
+* `NOT READY — High-risk issues remain`
+* `CONDITIONALLY READY — Remaining risks and unverified checks documented`
+* `READY FOR THE NEXT VERIFICATION STAGE`
+
+Do not use the phrase “production-ready” merely because the code compiles or unit tests pass.
+
+---
+
+# FINAL DIRECTIVE
+
+Work on the actual existing AI BUSINESS COPILOT codebase.
+
+Start with inspection, not implementation.
+
+Treat the existing administrative system as valuable production-oriented functionality that must be protected.
+
+Prioritize real security controls, authoritative server-side enforcement, race-condition safety, tenant isolation, financial integrity, and reproducible tests.
+
+Do not rebuild working components.
+
+Do not invent infrastructure.
+
+Do not fabricate test results.
+
+Do not claim security guarantees that the implementation does not provide.
+
+The successful outcome is a demonstrably stronger administrative security boundary, a clearer list of remaining risks, and an auditable record of what was actually verified.
