@@ -6489,3 +6489,24 @@ Stage Summary:
 - Honest limits: (1) rate limiting remains process-local (single-node law; multi-instance needs an ADR-backed shared limiter); (2) dependency CVE audit BLOCKED — no network in this sandbox; (3) audit log is tamper-evident-by-access-control only (no cryptographic chain — documented, no unsupported claims); (4) out-of-band token delivery unchanged (no email provider — documented); (5) invite rehash script must run once after deploying to any environment holding pre-R69 PENDING invites (idempotent, ships in repo); (6) the parameterless ai-cost.reconcile payload means schema-stripping makes any valid-JSON junk semantically identical to {} — the hash binding bites on corruption and on parameterized kinds (documented in the battery).
 - Remaining risks (priority): e2e-smoke user-residue hygiene (sweep gap), no email delivery for invites, in-memory limiter semantics under restart, dependency audit pending network.
 - Verdict: CONDITIONALLY READY — remaining risks and unverified checks documented; no Critical/High findings remain open.
+
+---
+Task ID: R70 (user request — «به این بخش که میرسم کلید setup ندارم تا بهش بدم این رو درست کن تا بتونم وارد پنل ادمین بشم» + screenshot of the setup gate)
+Agent: main (Z.ai Code)
+Task: The owner reached the R68 "Initial platform setup" gate but had NO setup key to paste — fix it so they can actually enter the admin panel.
+
+Work Log:
+- ROOT CAUSE: the setup window was OPEN (operators=0) but ZERO keys existed — the R68 QA battery's final cleanup swept all PlatformSetupKey rows (r68-setup-check cleanup targets 0/0/0), so the previously handed key no longer existed in the DB. The gate asked for a key the owner could not possibly have.
+- IMMEDIATE UNBLOCK: minted a fresh single-use setup key via the sanctioned offline CLI (`bun --conditions react-server scripts/platform-setup-key.ts mint --ttl-hours 168`, unbound) and handed it to the owner in the chat reply with FA activation steps.
+- PERMANENT UX FIX (the dead-end the owner actually hit): the gate's "how access works" box SAID the owner mints a key with the CLI but never showed HOW. Added a self-service command chip to PlatformSetupGate: LTR mono `<code>` with the exact mint command + copy button (clipboard API with the established textarea/execCommand fallback, green Check swap for 2s, sonner toast on success, silent fail — command stays visible/selectable, never faked). Copy info is safe: the command only works with host/filesystem access (bun on the server) — the cold-start trust boundary; the raw key is still displayed ONLY by the CLI, no HTTP minting route added (§61 intact).
+- i18n: setupGate.copyCommandAria + setupGate.copied added EN/FA symmetric (fa: «کپی دستور ساخت کلید برای اجرا روی سرور» / «دستور کپی شد»); audit CLEAN 187 files / 3371 usages / 0 gaps.
+- Import fix caught by tsc: platform module toasts use sonner (toast.success) — gate now imports from "sonner" like operators-view, not @/hooks/use-toast.
+- BROWSER QA (agent-browser, real UI-registered throwaway user r70-setup-qa@test.local): register → #/platform → gate renders with command chip (EN light) → copy click → Check icon + toast (clipboard works in the sandbox iframe) → FA/RTL: chip renders LTR inside the RTL card, zero overflow at 390px mobile → wrong-key test → «این کلید setup معتبر نیست.» (error mapping intact). Screenshots: qa-r70-setup-gate-en-command / qa-r70-setup-gate-fa-command / qa-r70-setup-gate-fa-mobile.
+- HYGIENE: QA user swept FK-safe (business→member→session→user); r68 battery re-run as regression 21/21 GREEN + self-swept.
+- LESSON RECORDED: scripts/r68-setup-check.ts cleanup DELETES ALL pending PlatformSetupKey rows — any key minted for the owner is destroyed by running that battery. Never run it while an owner key is pending; re-mint afterwards if needed.
+
+Stage Summary:
+- NOT COMMITTED YET (setup-gate.tsx + en.ts + fa.ts) — pending commit alongside next work.
+- Owner unblocked: key `R6hrK549KiHQV8IdopcxjMx7_-mctYiuWCQ0q_-bFug` (expires 2026-10-30T14:39Z, single-use, unbound) handed over with steps: sign in → #/platform → paste → activate → MFA enrollment → console.
+- The gate is now self-explanatory: even with no key in hand, the owner sees the exact server command on-screen (copyable) instead of a dead end.
+- Regression: r68 21/21 EXECUTED — PASSED; tsc 0; lint clean; i18n CLEAN; dev.log clean (only the battery's intentional 403s).
