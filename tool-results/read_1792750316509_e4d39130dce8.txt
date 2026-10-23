@@ -1,0 +1,906 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * Platform console API layer — Prompt 28.
+     5→ *
+     6→ * Deliberately separate from the tenant `api()` helper: platform calls
+     7→ * never carry the x-business-id header (businessId is NOT a platform
+     8→ * authorization key, §11) and never get prefetched for tenant users
+     9→ * (§16) — the only call every authenticated user makes is the capability
+    10→ * probe (/self), and only once after sign-in.
+    11→ *
+    12→ * Every mutation body that requires it carries the operator's CURRENT
+    13→ * PASSWORD for reauthentication (§56) — the password lives in memory for
+    14→ * the duration of the request only and is never stored or logged.
+    15→ */
+    16→import { ApiClientError } from "@/lib/api-client";
+    17→
+    18→type Envelope<T> =
+    19→  | { ok: true; data: T }
+    20→  | { ok: false; error: { code: string; message: string; details?: unknown } };
+    21→
+    22→export async function platformApi<T>(
+    23→  path: string,
+    24→  init?: RequestInit,
+    25→): Promise<T> {
+    26→  let res: Response;
+    27→  try {
+    28→    res = await fetch(path, {
+    29→      ...init,
+    30→      headers: { "content-type": "application/json", ...(init?.headers as Record<string, string> | undefined) },
+    31→      credentials: "same-origin",
+    32→    });
+    33→  } catch {
+    34→    throw new ApiClientError("NETWORK_ERROR", "Network error. Please try again.", 0);
+    35→  }
+    36→  let body: unknown;
+    37→  try {
+    38→    body = await res.json();
+    39→  } catch {
+    40→    body = null;
+    41→  }
+    42→  const envelope = body as Envelope<T> | null;
+    43→  if (!res.ok || !envelope || envelope.ok === false) {
+    44→    const err = envelope && envelope.ok === false ? envelope.error : null;
+    45→    throw new ApiClientError(
+    46→      err?.code ?? "HTTP_ERROR",
+    47→      err?.message ?? "Request failed.",
+    48→      res.status,
+    49→      err?.details,
+    50→    );
+    51→  }
+    52→  return envelope.data;
+    53→}
+    54→
+    55→/* --------------------------------- types ---------------------------------- */
+    56→
+    57→export type PlatformSelf = {
+    58→  isOperator: true;
+    59→  operatorId: string;
+    60→  /** R65 (§5.1) — the shell shows the operator identity in the account menu. */
+    61→  email: string;
+    62→  role: string;
+    63→  permissions: string[];
+    64→  /** R65 (§6.2) — the operator's OWN MFA status; drives the identity chip + gate. */
+    65→  mfaEnabled: boolean;
+    66→};
+    67→
+    68→export type PageMeta = {
+    69→  page: number;
+    70→  pageSize: number;
+    71→  total: number;
+    72→  hasNext: boolean;
+    73→  hasPrev: boolean;
+    74→};
+    75→
+    76→export type PlatformOverview = {
+    77→  generatedAt: string;
+    78→  windowDays: number;
+    79→  users: number;
+    80→  businesses: number;
+    81→  activeOperators: number;
+    82→  subscriptions: {
+    83→    byStatus: Record<string, number>;
+    84→    byPlan: Record<string, number>;
+    85→    trialing: number;
+    86→    active: number;
+    87→    canceled: number;
+    88→    expired: number;
+    89→    paused: number;
+    90→    pastDue: number;
+    91→  };
+    92→  payments: { pendingCheckouts: number; reconciliationRequired: number; transactionsTotal: number };
+    93→  ai: {
+    94→    requestsWindow: number;
+    95→    knownRecords: number;
+    96→    unknownRecords: number;
+    97→    costCoverageBps: number | null;
+    98→    openAnomalies: number;
+    99→    knownCostNanoMinorByCurrency: Record<string, string> | null;
+   100→    guardStatus: string | null;
+   101→  };
+   102→  trust: {
+   103→    readinessBlockers: Array<{ key: string; status: string }>;
+   104→    verdict: string;
+   105→  };
+   106→  /** Prompt 62 §7.2 — support-desk counters (server-derived, unresolved set). */
+   107→  support: {
+   108→    open: number;
+   109→    awaitingFirstResponse: number;
+   110→    urgentOpen: number;
+   111→    /** R64 — open unanswered tickets past the 4h first-response SLA. */
+   112→    slaOverdue: number;
+   113→  };
+   114→  /** Prompt 63 — Security Center counters (window = windowDays). */
+   115→  security: { loginsWindow: number; failedLoginsWindow: number; suspendedUsers: number };
+   116→};
+   117→
+   118→export type PlatformBusiness = {
+   119→  id: string;
+   120→  name: string;
+   121→  slug: string;
+   122→  currencyCode: string;
+   123→  locale: string;
+   124→  timezone: string;
+   125→  ownerId: string;
+   126→  ownerEmail: string | null;
+   127→  ownerName: string | null;
+   128→  memberCount: number;
+   129→  createdAt: string;
+   130→  updatedAt: string;
+   131→};
+   132→
+   133→export type PlatformBusinessDetail = {
+   134→  business: PlatformBusiness;
+   135→  subscription: {
+   136→    id: string;
+   137→    status: string;
+   138→    billingPeriod: string;
+   139→    planCode: string;
+   140→    planName: string;
+   141→    cancelAtPeriodEnd: boolean;
+   142→    currentPeriodStart: string | null;
+   143→    currentPeriodEnd: string | null;
+   144→    trialStart: string | null;
+   145→    trialEnd: string | null;
+   146→  } | null;
+   147→  usage: { totalMeteredUnits: number; usageEvents: number };
+   148→  payments: Array<{
+   149→    id: string;
+   150→    provider: string;
+   151→    status: string;
+   152→    amountMinor: number;
+   153→    currency: string;
+   154→    processedAt: string;
+   155→  }>;
+   156→  aiCost: {
+   157→    knownRecords: number;
+   158→    unknownRecords: number;
+   159→    costCoverageBps: number | null;
+   160→    knownCostNanoMinorByCurrency: Record<string, string>;
+   161→  } | null;
+   162→};
+   163→
+   164→export type PlatformUser = {
+   165→  id: string;
+   166→  name: string | null;
+   167→  email: string;
+   168→  locale: string;
+   169→  createdAt: string;
+   170→  updatedAt: string;
+   171→  sessionVersion: number;
+   172→  ownedBusinessCount: number;
+   173→  membershipCount: number;
+   174→  isPlatformOperator: boolean;
+   175→  suspendedAt: string | null;
+   176→};
+   177→
+   178→/* --------------------- Prompt 62 — Support Center (§10) -------------------- */
+   179→
+   180→export type PlatformSupportTicket = {
+   181→  id: string;
+   182→  number: number;
+   183→  reference: string;
+   184→  subject: string;
+   185→  category: string;
+   186→  priority: string;
+   187→  status: string;
+   188→  requesterEmail: string;
+   189→  requesterName: string | null;
+   190→  businessName: string | null;
+   191→  businessId: string | null;
+   192→  assigneeOperatorId: string | null;
+   193→  createdAt: string;
+   194→  updatedAt: string;
+   195→  firstResponseAt: string | null;
+   196→  resolvedAt: string | null;
+   197→  /**
+   198→   * R64 — first-response SLA verdict: met = operator responded; due_soon /
+   199→   * overdue = unanswered open ticket aging past 3h/4h; open = fresh; na =
+   200→   * resolved/closed with no response ever.
+   201→   */
+   202→  sla: "met" | "due_soon" | "overdue" | "open" | "na";
+   203→};
+   204→
+   205→export type PlatformSupportMessage = {
+   206→  id: string;
+   207→  authorKind: string;
+   208→  authorName: string | null;
+   209→  visibility: string;
+   210→  body: string;
+   211→  createdAt: string;
+   212→};
+   213→
+   214→export type PlatformTicketDiagnostics = {
+   215→  subscription: {
+   216→    status: string;
+   217→    planName: string | null;
+   218→    currentPeriodStart: string | null;
+   219→    currentPeriodEnd: string | null;
+   220→    trialEndsAt: string | null;
+   221→  } | null;
+   222→  requester: {
+   223→    totalTickets: number;
+   224→    recentTickets: Array<{ id: string; number: number; subject: string; status: string; createdAt: string }>;
+   225→  };
+   226→  failedDeliveries: Array<{
+   227→    notificationType: string;
+   228→    channel: string;
+   229→    status: string;
+   230→    failureCode: string | null;
+   231→    createdAt: string;
+   232→  }>;
+   233→  securityEvents: Array<{ eventType: string; success: boolean; createdAt: string }> | null;
+   234→  recentTargetedAudit: Array<{ action: string; createdAt: string; operatorRole: string | null }> | null;
+   235→  windows: { diagnosticsLimit: number };
+   236→};
+   237→
+   238→export type PlatformSupportTicketDetail = PlatformSupportTicket & {
+   239→  description: string;
+   240→  resolutionSummary: string | null;
+   241→  closedAt: string | null;
+   242→  assigneeRole: string | null;
+   243→  allowedTransitions: string[];
+   244→  messages: PlatformSupportMessage[];
+   245→};
+   246→
+   247→export type PlatformTicketViewer = {
+   248→  operatorId: string;
+   249→  canAssign: boolean;
+   250→  canUpdate: boolean;
+   251→  canResolve: boolean;
+   252→};
+   253→
+   254→export type PlatformSubscription = {
+   255→  id: string;
+   256→  businessId: string;
+   257→  businessName: string;
+   258→  status: string;
+   259→  billingPeriod: string;
+   260→  planCode: string;
+   261→  planName: string;
+   262→  cancelAtPeriodEnd: boolean;
+   263→  currentPeriodStart: string | null;
+   264→  currentPeriodEnd: string | null;
+   265→  trialStart: string | null;
+   266→  trialEnd: string | null;
+   267→  createdAt: string;
+   268→  updatedAt: string;
+   269→};
+   270→
+   271→export type PlatformPayment = {
+   272→  kind: "checkout_session" | "payment_transaction" | "processed_webhook_event";
+   273→  id: string;
+   274→  checkoutSessionId?: string;
+   275→  businessId: string | null;
+   276→  businessName: string | null;
+   277→  planCode: string | null;
+   278→  provider: string;
+   279→  providerRef?: string | null;
+   280→  status: string;
+   281→  amountMinor: number | null;
+   282→  currency: string | null;
+   283→  reconciliationReason?: string | null;
+   284→  initiatedByEmail?: string | null;
+   285→  processedAt?: string | null;
+   286→  expiresAt?: string | null;
+   287→  createdAt: string;
+   288→};
+   289→
+   290→export type PlatformPriceBook = {
+   291→  id: string;
+   292→  code: string;
+   293→  version: string;
+   294→  currency: string;
+   295→  active: boolean;
+   296→  currentlyEffective: boolean;
+   297→  effectiveFrom: string;
+   298→  effectiveTo: string | null;
+   299→  description: string;
+   300→  prices: Array<{ planCode: string; billingPeriod: string; amountMinor: number; active: boolean }>;
+   301→};
+   302→
+   303→export type PlatformAiCostRate = {
+   304→  id: string;
+   305→  provider: string;
+   306→  model: string;
+   307→  currency: string;
+   308→  version: string;
+   309→  inputRateNanoMinorPer1K: string;
+   310→  outputRateNanoMinorPer1K: string;
+   311→  effectiveFrom: string;
+   312→  effectiveTo: string | null;
+   313→  active: boolean;
+   314→  environment: string;
+   315→  verified: boolean;
+   316→  verifiedAt: string | null;
+   317→  verifiedBy: string | null;
+   318→  hasSourceReference: boolean;
+   319→  createdAt: string;
+   320→};
+   321→
+   322→export type PlatformAiCostRecord = {
+   323→  id: string;
+   324→  businessId: string;
+   325→  requestId: string;
+   326→  planCodeAtUsage: string;
+   327→  provider: string;
+   328→  model: string;
+   329→  currency: string | null;
+   330→  rateVersion: string | null;
+   331→  environment: string | null;
+   332→  inputTokens: number | null;
+   333→  outputTokens: number | null;
+   334→  totalTokens: number | null;
+   335→  tokenStatus: string;
+   336→  costStatus: string;
+   337→  costNanoMinor: string | null;
+   338→  costDisplayMinor: string | null;
+   339→  unknownReason: string | null;
+   340→  createdAt: string;
+   341→};
+   342→
+   343→export type PlatformAiCostAnomaly = {
+   344→  id: string;
+   345→  type: string;
+   346→  severity: string;
+   347→  businessId: string | null;
+   348→  provider: string | null;
+   349→  model: string | null;
+   350→  windowStart: string;
+   351→  windowEnd: string;
+   352→  metric: string;
+   353→  baseline: string | null;
+   354→  currentValue: string | null;
+   355→  status: string;
+   356→  createdAt: string;
+   357→  updatedAt: string;
+   358→};
+   359→
+   360→export type PlatformAuditEntry = {
+   361→  id: string;
+   362→  operatorId: string | null;
+   363→  operatorRole: string | null;
+   364→  operatorEmail: string | null;
+   365→  action: string;
+   366→  entityType: string;
+   367→  entityId: string | null;
+   368→  targetUserId: string | null;
+   369→  targetBusinessId: string | null;
+   370→  reason: string | null;
+   371→  before: unknown;
+   372→  after: unknown;
+   373→  requestId: string | null;
+   374→  ip: string | null;
+   375→  createdAt: string;
+   376→};
+   377→
+   378→/* ---------------- Prompt 63 — Security Center (ورود و خروج) ---------------- */
+   379→
+   380→export type PlatformSecuritySummary = {
+   381→  generatedAt: string;
+   382→  logins24h: number;
+   383→  failedLogins24h: number;
+   384→  rateLimitedLogins24h: number;
+   385→  mfaFailures24h: number;
+   386→  sessionRevocations7d: number;
+   387→  suspendedUsers: number;
+   388→  activeOperators: number;
+   389→  activeSessions: number;
+   390→  /** R64 — failed-login storm buckets (email or hashed-IP) in the last 60 min, threshold ≥5. */
+   391→  failedLoginBursts1h: number;
+   392→  /** R65 (§5.1) — active operator rows whose user has NO MFA enabled. */
+   393→  activeOperatorsWithoutMfa: number;
+   394→  /** R65 (§10) — approval requests currently awaiting a second person. */
+   395→  pendingApprovalRequests: number;
+   396→  eventTypes24h: Record<string, number>;
+   397→};
+   398→
+   399→export type PlatformSecurityEvent = {
+   400→  id: string;
+   401→  eventType: string;
+   402→  success: boolean;
+   403→  reasonCode: string | null;
+   404→  email: string | null;
+   405→  userAgent: string | null;
+   406→  ipHashPrefix: string | null;
+   407→  createdAt: string;
+   408→};
+   409→
+   410→/**
+   411→ * R64 — failed-login burst detail (GET /security/anomalies). The
+   412→ * identity-bearing companion of the COUNT-only summary: emails and the SAME
+   413→ * 12-hex IP prefixes the events feed already shows, grouped over the sliding
+   414→ * window. Server owns window/threshold constants — the client never tunes them.
+   415→ */
+   416→export type PlatformSecurityAnomalies = {
+   417→  generatedAt: string;
+   418→  windowMinutes: number;
+   419→  threshold: number;
+   420→  emailBursts: Array<{ key: string; count: number; lastAt: string }>;
+   421→  ipBursts: Array<{ key: string; count: number; lastAt: string }>;
+   422→  totalBursts: number;
+   423→};
+   424→
+   425→/** R64 — one row of the operator session registry (GET /operators/[id]/sessions). */
+   426→export type PlatformOperatorSession = {
+   427→  id: string;
+   428→  deviceLabel: string | null;
+   429→  createdAt: string;
+   430→  lastSeenAt: string;
+   431→  expiresAt: string;
+   432→  revoked: boolean;
+   433→  revokedAt: string | null;
+   434→  /** Server-computed: not revoked AND not expired. */
+   435→  live: boolean;
+   436→  ipHashPrefix: string | null;
+   437→};
+   438→
+   439→export type PlatformOperatorSessions = {
+   440→  operator: { id: string; email: string | null; name: string | null; role: string; active: boolean };
+   441→  activeCount: number;
+   442→  sessions: PlatformOperatorSession[];
+   443→  truncated: boolean;
+   444→};
+   445→
+   446→export type PlatformOperator = {
+   447→  id: string;
+   448→  userId: string;
+   449→  email: string;
+   450→  name: string | null;
+   451→  role: string;
+   452→  active: boolean;
+   453→  createdAt: string;
+   454→  updatedAt: string;
+   455→};
+   456→
+   457→export type PlatformSystem = {
+   458→  generatedAt: string;
+   459→  components: Array<{ key: string; status: string; detail: string | null }>;
+   460→};
+   461→
+   462→/* ------------ Prompt 65 — two-person approval (§10, R65-UI) ---------------- */
+   463→
+   464→export const APPROVAL_STATUSES = [
+   465→  "PENDING",
+   466→  "APPROVED",
+   467→  "REJECTED",
+   468→  "CANCELLED",
+   469→  "EXPIRED",
+   470→  "EXECUTING",
+   471→  "EXECUTED",
+   472→  "FAILED",
+   473→] as const;
+   474→
+   475→export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
+   476→
+   477→/** Mirrors the server's approvalDto() (src/lib/platform/approvals.ts). */
+   478→export type PlatformApproval = {
+   479→  id: string;
+   480→  kind: string;
+   481→  /** Server-bounded English description (e.g. "Activate price book <id>"). */
+   482→  kindLabel: string;
+   483→  /** e.g. { priceBookId } for pricing.activate. */
+   484→  payload: Record<string, unknown> | null;
+   485→  /** 12-hex correlation prefix of the SHA-256 payload hash. */
+   486→  payloadHashPrefix: string;
+   487→  reason: string;
+   488→  status: ApprovalStatus | string;
+   489→  requester: { id: string; email: string | null; role: string; active: boolean } | null;
+   490→  approver: { id: string; email: string | null; role: string; active: boolean } | null;
+   491→  approvalNote: string | null;
+   492→  rejectionReason: string | null;
+   493→  expiresAt: string;
+   494→  approvedAt: string | null;
+   495→  executedAt: string | null;
+   496→  /** Value-free error code only (sanitized server-side) — never raw text. */
+   497→  executeError: string | null;
+   498→  createdAt: string;
+   499→};
+   500→
+   501→/* --------------------------------- calls ---------------------------------- */
+   502→
+   503→export const platformQueries = {
+   504→  self: () => platformApi<PlatformSelf>("/api/v1/platform/self"),
+   505→  overview: () => platformApi<PlatformOverview>("/api/v1/platform/overview"),
+   506→  businesses: (params: string) =>
+   507→    platformApi<{ businesses: PlatformBusiness[]; page: PageMeta }>(
+   508→      `/api/v1/platform/businesses${params ? `?${params}` : ""}`,
+   509→    ),
+   510→  business: (id: string) =>
+   511→    platformApi<PlatformBusinessDetail>(`/api/v1/platform/businesses/${id}`),
+   512→  users: (params: string) =>
+   513→    platformApi<{ users: PlatformUser[]; page: PageMeta }>(
+   514→      `/api/v1/platform/users${params ? `?${params}` : ""}`,
+   515→    ),
+   516→  supportTickets: (params: string) =>
+   517→    platformApi<{
+   518→      tickets: PlatformSupportTicket[];
+   519→      page: PageMeta;
+   520→      facets: { statuses: string[]; priorities: string[]; categories: string[] };
+   521→    }>(`/api/v1/platform/support/tickets${params ? `?${params}` : ""}`),
+   522→  supportTicket: (id: string) =>
+   523→    platformApi<{
+   524→      ticket: PlatformSupportTicketDetail;
+   525→      diagnostics: PlatformTicketDiagnostics;
+   526→      viewer: PlatformTicketViewer;
+   527→    }>(`/api/v1/platform/support/tickets/${id}`),
+   528→  subscriptions: (params: string) =>
+   529→    platformApi<{ subscriptions: PlatformSubscription[]; page: PageMeta }>(
+   530→      `/api/v1/platform/subscriptions${params ? `?${params}` : ""}`,
+   531→    ),
+   532→  payments: (params: string) =>
+   533→    platformApi<{
+   534→      items: PlatformPayment[];
+   535→      counts: { checkoutSessions: number; transactions: number; webhookEvents: number };
+   536→      page: PageMeta;
+   537→    }>(`/api/v1/platform/payments${params ? `?${params}` : ""}`),
+   538→  pricing: () =>
+   539→    platformApi<{
+   540→      books: PlatformPriceBook[];
+   541→      currencyCoverage: Array<{ currency: string; activeBook: boolean }>;
+   542→    }>("/api/v1/platform/pricing"),
+   543→  aiCostOverview: (windowDays: number) =>
+   544→    platformApi<{
+   545→      health: {
+   546→        windowDays: number;
+   547→        knownCostNanoMinorByCurrency: Record<string, string>;
+   548→        knownRecords: number;
+   549→        unknownRecords: number;
+   550→        costCoverageBps: number;
+   551→        tokenCoverageBps: number;
+   552→        completeTokenUsageEvents: number;
+   553→        aiUsageEvents: number;
+   554→        verifiedRates: number;
+   555→        unverifiedRates: number;
+   556→        openAnomalies: number;
+   557→        guardStatus: string;
+   558→      };
+   559→      breakdown: {
+   560→        byProvider: Array<{ key: string; knownCostNanoMinorByCurrency: Record<string, string>; knownRecords: number; unknownRecords: number; requests: number; tokens: string; coverageBps: number }>;
+   561→        byModel: Array<{ key: string; knownCostNanoMinorByCurrency: Record<string, string>; knownRecords: number; unknownRecords: number; requests: number; tokens: string; coverageBps: number }>;
+   562→        byPlan: Array<{ key: string; knownCostNanoMinorByCurrency: Record<string, string>; knownRecords: number; unknownRecords: number; requests: number; tokens: string; coverageBps: number }>;
+   563→        byBusiness: Array<{ key: string; knownCostNanoMinorByCurrency: Record<string, string>; knownRecords: number; unknownRecords: number; requests: number; tokens: string; coverageBps: number }>;
+   564→      };
+   565→      unknownGroups: {
+   566→        windowDays: number;
+   567→        groups: Array<{ provider: string; model: string; reason: string | null; planCode: string; businessId: string; count: number }>;
+   568→      };
+   569→    }>(`/api/v1/platform/ai-cost/overview?windowDays=${windowDays}`),
+   570→  aiRates: (params: string) =>
+   571→    platformApi<{ rates: PlatformAiCostRate[]; page: PageMeta }>(
+   572→      `/api/v1/platform/ai-cost/rates${params ? `?${params}` : ""}`,
+   573→    ),
+   574→  aiLedger: (params: string) =>
+   575→    platformApi<{ records: PlatformAiCostRecord[]; page: PageMeta }>(
+   576→      `/api/v1/platform/ai-cost/ledger${params ? `?${params}` : ""}`,
+   577→    ),
+   578→  aiEconomics: (planCode: string, billingPeriod: string) =>
+   579→    platformApi<{
+   580→      economics: {
+   581→        planCode: string;
+   582→        billingPeriod: string;
+   583→        status: string;
+   584→        priceMinor: number | null;
+   585→        priceCurrency: string | null;
+   586→        knownCostNanoMinorByCurrency: Record<string, string>;
+   587→        costCurrency: string | null;
+   588→        contributionMinor: number | null;
+   589→        contributionMarginBps: number | null;
+   590→        sampleSize: number;
+   591→        costCoverageBps: number;
+   592→        negativeContribution: boolean;
+   593→        label: string;
+   594→      };
+   595→    }>(`/api/v1/platform/ai-cost/economics?planCode=${planCode}&billingPeriod=${billingPeriod}`),
+   596→  aiAnomalies: (params: string) =>
+   597→    platformApi<{ anomalies: PlatformAiCostAnomaly[]; page: PageMeta }>(
+   598→      `/api/v1/platform/ai-cost/anomalies${params ? `?${params}` : ""}`,
+   599→    ),
+   600→  aiReconcile: (body: { mode: "dry-run" | "apply"; reason: string; confirmation?: string; password?: string }) =>
+   601→    platformApi<{
+   602→      report: {
+   603→        mode: string;
+   604→        candidateRecordCount: number;
+   605→        eligibleRecords: number;
+   606→        rateFound: number;
+   607→        rateMissing: number;
+   608→        tokenComplete: number;
+   609→        tokenIncomplete: number;
+   610→        currencyMismatch: number;
+   611→        conflicts: number;
+   612→        alreadyKnown: number;
+   613→        wouldUpdateCount: number;
+   614→        updatedCount: number;
+   615→        boundedWindow: { from: string; to: string };
+   616→      };
+   617→      requestId: string;
+   618→    }>("/api/v1/platform/ai-cost/reconciliation", {
+   619→      method: "POST",
+   620→      body: JSON.stringify(body),
+   621→    }),
+   622→  audit: (params: string) =>
+   623→    platformApi<{ entries: PlatformAuditEntry[]; page: PageMeta }>(
+   624→      `/api/v1/platform/audit${params ? `?${params}` : ""}`,
+   625→    ),
+   626→  securitySummary: () =>
+   627→    platformApi<PlatformSecuritySummary>("/api/v1/platform/security/summary"),
+   628→  securityEvents: (params: string) =>
+   629→    platformApi<{ events: PlatformSecurityEvent[]; page: PageMeta; facets: { eventTypes: string[] } }>(
+   630→      `/api/v1/platform/security/events${params ? `?${params}` : ""}`,
+   631→    ),
+   632→  securityAnomalies: () =>
+   633→    platformApi<PlatformSecurityAnomalies>("/api/v1/platform/security/anomalies"),
+   634→  operators: (params: string) =>
+   635→    platformApi<{ operators: PlatformOperator[]; page: PageMeta }>(
+   636→      `/api/v1/platform/operators${params ? `?${params}` : ""}`,
+   637→    ),
+   638→  operatorSessions: (operatorId: string) =>
+   639→    platformApi<PlatformOperatorSessions>(`/api/v1/platform/operators/${operatorId}/sessions`),
+   640→  approvals: (params: string) =>
+   641→    platformApi<{ approvals: PlatformApproval[]; meta: PageMeta }>(
+   642→      `/api/v1/platform/approvals${params ? `?${params}` : ""}`,
+   643→    ),
+   644→  system: () => platformApi<PlatformSystem>("/api/v1/platform/system"),
+   645→};
+   646→
+   647→/** Reauth-required mutations — every one audited server-side (§34/§56). */
+   648→export const platformMutations = {
+   649→  pauseSubscription: (businessId: string, body: { reason: string; password: string }) =>
+   650→    platformApi<{ changed: boolean; requestId: string }>(
+   651→      `/api/v1/platform/businesses/${businessId}/subscription/pause`,
+   652→      { method: "POST", body: JSON.stringify(body) },
+   653→    ),
+   654→  resumeSubscription: (businessId: string, body: { reason: string; password: string }) =>
+   655→    platformApi<{ changed: boolean; requestId: string }>(
+   656→      `/api/v1/platform/businesses/${businessId}/subscription/resume`,
+   657→      { method: "POST", body: JSON.stringify(body) },
+   658→    ),
+   659→  changePlan: (businessId: string, body: { planCode: string; reason: string; password: string }) =>
+   660→    platformApi<{ changed: boolean; requestId: string }>(
+   661→      `/api/v1/platform/businesses/${businessId}/subscription/plan`,
+   662→      { method: "POST", body: JSON.stringify(body) },
+   663→    ),
+   664→  trial: (businessId: string, body: { action: "start" | "end"; reason: string; password: string }) =>
+   665→    platformApi<{ changed: boolean; requestId: string }>(
+   666→      `/api/v1/platform/businesses/${businessId}/trial`,
+   667→      { method: "POST", body: JSON.stringify(body) },
+   668→    ),
+   669→  invalidateSessions: (userId: string, body: { reason: string; password: string }) =>
+   670→    platformApi<{ invalidated: boolean; requestId: string }>(
+   671→      `/api/v1/platform/users/${userId}/invalidate-sessions`,
+   672→      { method: "POST", body: JSON.stringify(body) },
+   673→    ),
+   674→  suspendUser: (userId: string, body: { reason: string; password: string }) =>
+   675→    platformApi<{ user: { id: string; suspendedAt: string; sessionVersion: number } }>(
+   676→      `/api/v1/platform/users/${userId}/suspend`,
+   677→      { method: "POST", body: JSON.stringify(body) },
+   678→    ),
+   679→  reactivateUser: (userId: string, body: { reason: string; password: string }) =>
+   680→    platformApi<{ user: { id: string; suspendedAt: null; sessionVersion: number } }>(
+   681→      `/api/v1/platform/users/${userId}/reactivate`,
+   682→      { method: "POST", body: JSON.stringify(body) },
+   683→    ),
+   684→  /** Prompt 62 §18 — explicit-recipient system announcement (server caps 50). */
+   685→  sendAnnouncement: (body: { recipientUserIds: string[]; message: string }) =>
+   686→    platformApi<{ accepted: number; rejected: number }>(
+   687→      `/api/v1/platform/notifications/announcements`,
+   688→      { method: "POST", body: JSON.stringify(body) },
+   689→    ),
+   690→  supportPatchTicket: (
+   691→    id: string,
+   692→    body: { status?: string; priority?: string; assigneeOperatorId?: string | null },
+   693→  ) =>
+   694→    platformApi<{ ticket: Record<string, unknown> }>(
+   695→      `/api/v1/platform/support/tickets/${id}`,
+   696→      { method: "PATCH", body: JSON.stringify(body) },
+   697→    ),
+   698→  supportMessage: (id: string, body: { body: string; visibility: "CUSTOMER" | "INTERNAL" }) =>
+   699→    platformApi<{ message: PlatformSupportMessage }>(
+   700→      `/api/v1/platform/support/tickets/${id}/messages`,
+   701→      { method: "POST", body: JSON.stringify(body) },
+   702→    ),
+   703→  supportResolve: (id: string, body: { resolutionSummary: string }) =>
+   704→    platformApi<{ ticket: { id: string; status: string; resolvedAt: string; resolutionSummary: string } }>(
+   705→      `/api/v1/platform/support/tickets/${id}/resolve`,
+   706→      { method: "POST", body: JSON.stringify(body) },
+   707→    ),
+   708→  reverifyPayment: (sessionId: string, body: { reason: string; password: string }) =>
+   709→    platformApi<{
+   710→      verification: string;
+   711→      session: { id: string; status: string; provider: string; reconciliationReason: string | null };
+   712→      requestId: string;
+   713→    }>(`/api/v1/platform/payments/${sessionId}/reverify`, {
+   714→      method: "POST",
+   715→      body: JSON.stringify(body),
+   716→    }),
+   717→  recordInvestigation: (
+   718→    sessionId: string,
+   719→    body: { reason: string; reviewStatus: string; note?: string; password: string },
+   720→  ) =>
+   721→    platformApi<{ recorded: boolean; requestId: string }>(
+   722→      `/api/v1/platform/payments/${sessionId}/investigation`,
+   723→      { method: "POST", body: JSON.stringify(body) },
+   724→    ),
+   725→  createPriceBook: (body: {
+   726→    code: string;
+   727→    version: string;
+   728→    currency: string;
+   729→    description?: string;
+   730→    effectiveFrom: string;
+   731→    effectiveTo?: string | null;
+   732→    prices: Array<{ planCode: string; billingPeriod: string; amountMinor: number }>;
+   733→    reason: string;
+   734→    password: string;
+   735→  }) =>
+   736→    platformApi<{ priceBook: { id: string; code: string; version: string }; requestId: string }>(
+   737→      "/api/v1/platform/pricing",
+   738→      { method: "POST", body: JSON.stringify(body) },
+   739→    ),
+   740→  activatePriceBook: (id: string, body: { reason: string; password: string }) =>
+   741→    platformApi<{ priceBook: { id: string; active: boolean }; requestId: string }>(
+   742→      `/api/v1/platform/pricing/${id}/activate`,
+   743→      { method: "POST", body: JSON.stringify(body) },
+   744→    ),
+   745→  createAiRate: (body: {
+   746→    provider: string;
+   747→    model: string;
+   748→    currency: string;
+   749→    version: string;
+   750→    inputRateNanoMinorPer1K: string;
+   751→    outputRateNanoMinorPer1K: string;
+   752→    effectiveFrom: string;
+   753→    effectiveTo?: string | null;
+   754→    environment: "TEST" | "PRODUCTION";
+   755→    sourceReference?: string;
+   756→    verifiedBy?: string;
+   757→    reason: string;
+   758→    password: string;
+   759→  }) =>
+   760→    platformApi<{ rate: PlatformAiCostRate; requestId: string }>(
+   761→      "/api/v1/platform/ai-cost/rates",
+   762→      { method: "POST", body: JSON.stringify(body) },
+   763→    ),
+   764→  deactivateAiRate: (id: string, body: { reason: string; password: string }) =>
+   765→    platformApi<{ deactivated: boolean; requestId: string }>(
+   766→      `/api/v1/platform/ai-cost/rates/${id}/deactivate`,
+   767→      { method: "POST", body: JSON.stringify(body) },
+   768→    ),
+   769→  verifyAiRate: (id: string, body: { verifiedBy: string; sourceReference: string; reason: string; password: string }) =>
+   770→    platformApi<{ verified: boolean; requestId: string }>(
+   771→      `/api/v1/platform/ai-cost/rates/${id}/verify`,
+   772→      { method: "POST", body: JSON.stringify(body) },
+   773→    ),
+   774→  acknowledgeAnomaly: (id: string, body: { note?: string }) =>
+   775→    platformApi<{ acknowledged: boolean; requestId: string }>(
+   776→      `/api/v1/platform/ai-cost/anomalies/${id}/acknowledge`,
+   777→      { method: "POST", body: JSON.stringify(body) },
+   778→    ),
+   779→  createOperator: (body: { email: string; role: string; reason: string; password: string }) =>
+   780→    platformApi<{ operator: PlatformOperator; requestId: string }>("/api/v1/platform/operators", {
+   781→      method: "POST",
+   782→      body: JSON.stringify(body),
+   783→    }),
+   784→  updateOperator: (
+   785→    id: string,
+   786→    body: { role?: string; active?: boolean; reason: string; password: string },
+   787→  ) =>
+   788→    platformApi<{ operator: { id: string; role: string; active: boolean }; requestId: string }>(
+   789→      `/api/v1/platform/operators/${id}`,
+   790→      { method: "PATCH", body: JSON.stringify(body) },
+   791→    ),
+   792→  /** R64 — surgical single-session revocation (one device dies, the rest survive). */
+   793→  revokeOperatorSession: (
+   794→    operatorId: string,
+   795→    sessionId: string,
+   796→    body: { reason: string; password: string },
+   797→  ) =>
+   798→    platformApi<{ revoked: boolean; alreadyRevoked: boolean; requestId: string }>(
+   799→      `/api/v1/platform/operators/${operatorId}/sessions/${sessionId}`,
+   800→      { method: "DELETE", body: JSON.stringify(body) },
+   801→    ),
+   802→  /** R65 §10 — second person approves (requester is refused server-side). */
+   803→  approveApproval: (id: string, body: { note?: string }) =>
+   804→    platformApi<{ approval: PlatformApproval; requestId: string }>(
+   805→      `/api/v1/platform/approvals/${id}/approve`,
+   806→      { method: "POST", body: JSON.stringify(body) },
+   807→    ),
+   808→  /** R65 §10 — rejection with a MANDATORY audited reason (3..300). */
+   809→  rejectApproval: (id: string, body: { reason: string }) =>
+   810→    platformApi<{ approval: PlatformApproval; requestId: string }>(
+   811→      `/api/v1/platform/approvals/${id}/reject`,
+   812→      { method: "POST", body: JSON.stringify(body) },
+   813→    ),
+   814→  /** R65 §10 — the REQUESTER withdraws their own still-pending request. */
+   815→  cancelApproval: (id: string) =>
+   816→    platformApi<{ approval: PlatformApproval; requestId: string }>(
+   817→      `/api/v1/platform/approvals/${id}/cancel`,
+   818→      { method: "POST", body: JSON.stringify({}) },
+   819→    ),
+   820→  /** R65 §10/§56 — execute an APPROVED (or retryable FAILED) request; the
+   821→   * server 403s without the current password (assertPlatformReauth). */
+   822→  executeApproval: (id: string, body: { password: string }) =>
+   823→    platformApi<{ approval: PlatformApproval; requestId: string }>(
+   824→      `/api/v1/platform/approvals/${id}/execute`,
+   825→      { method: "POST", body: JSON.stringify(body) },
+   826→    ),
+   827→};
+   828→
+   829→/**
+   830→ * R65 — self-service session/MFA endpoints the console calls for the
+   831→ * operator's OWN account (enrollment from the MFA gate, global sign-out
+   832→ * from the identity menu). Same {ok,data} envelope as platform routes, so
+   833→ * platformApi() works unchanged; errors arrive as ApiClientError with the
+   834→ * documented codes (INVALID_CURRENT_PASSWORD, MFA_REAUTH_REQUIRED,
+   835→ * MFA_ALREADY_ENABLED, MFA_NOT_CONFIGURED, MFA_INVALID_CODE, RATE_LIMITED).
+   836→ */
+   837→export const platformSelfService = {
+   838→  /** Step-up reauthentication (§116) — opens the recent-password window. */
+   839→  reauth: (body: { password: string }) =>
+   840→    platformApi<{ passwordVerified: boolean; mfaVerified: boolean; windowSeconds: number }>(
+   841→      "/api/v1/me/security/reauth",
+   842→      { method: "POST", body: JSON.stringify(body) },
+   843→    ),
+   844→  /** Begin TOTP enrollment — secret/QR returned ONCE (§40). */
+   845→  mfaSetupStart: () =>
+   846→    platformApi<{ otpauthUri: string; manualKey: string; qrDataUri: string }>(
+   847→      "/api/v1/me/security/mfa/setup/start",
+   848→      { method: "POST", body: "{}" },
+   849→    ),
+   850→  /** Verify the first code and enable MFA — recovery codes returned ONCE.
+   851→   * Enabling kills ALL sessions server-side (§363). */
+   852→  mfaSetupConfirm: (body: { code: string; confirmedSaved: true }) =>
+   853→    platformApi<{ enabled: boolean; recoveryCodes: string[]; sessionsInvalidated: boolean }>(
+   854→      "/api/v1/me/security/mfa/setup/confirm",
+   855→      { method: "POST", body: JSON.stringify(body) },
+   856→    ),
+   857→  /** Sign out every OTHER device (§80) — current session survives; the shell
+   858→   * then signs out the current device client-side (best-effort law). */
+   859→  revokeAllSessions: (body: { password: string; confirmation: "SIGN OUT ALL" }) =>
+   860→    platformApi<{ revokedCount: number; currentSessionKept: boolean }>(
+   861→      "/api/v1/me/security/sessions/revoke-all",
+   862→      { method: "POST", body: JSON.stringify(body) },
+   863→    ),
+   864→};
+   865→
+   866→/**
+   867→ * R64 — raw CSV export for the security events feed. Unlike platformApi()
+   868→ * (JSON envelope only), a SUCCESSFUL export responds with CSV TEXT plus
+   869→ * x-export-truncated / x-export-rows headers, so it needs its own reader.
+   870→ * Errors still arrive as the standard JSON error envelope → ApiClientError,
+   871→ * so every existing error surface (usePlatformErrorText) just works.
+   872→ */
+   873→export async function exportSecurityEventsCsv(
+   874→  params: string,
+   875→): Promise<{ csv: string; truncated: boolean; rows: number }> {
+   876→  let res: Response;
+   877→  try {
+   878→    res = await fetch(`/api/v1/platform/security/events/export${params ? `?${params}` : ""}`, {
+   879→      credentials: "same-origin",
+   880→    });
+   881→  } catch {
+   882→    throw new ApiClientError("NETWORK_ERROR", "Network error. Please try again.", 0);
+   883→  }
+   884→  if (!res.ok) {
+   885→    let err: { code: string; message: string; details?: unknown } | null = null;
+   886→    try {
+   887→      const body = (await res.json()) as Envelope<unknown> | null;
+   888→      err = body && body.ok === false ? body.error : null;
+   889→    } catch {
+   890→      err = null; // non-JSON failure body — fall through to the generic error
+   891→    }
+   892→    throw new ApiClientError(
+   893→      err?.code ?? "HTTP_ERROR",
+   894→      err?.message ?? "Request failed.",
+   895→      res.status,
+   896→      err?.details,
+   897→    );
+   898→  }
+   899→  const csv = await res.text();
+   900→  return {
+   901→    csv,
+   902→    truncated: res.headers.get("x-export-truncated") === "true",
+   903→    rows: Number(res.headers.get("x-export-rows") ?? "0"),
+   904→  };
+   905→}
+   906→

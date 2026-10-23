@@ -1,0 +1,182 @@
+  6049→Task ID: R64-UI
+  6050→Agent: subagent (frontend-styling-expert)
+  6051→Task: Platform R64 client-side UI — security bursts card + anomaly dialog + CSV
+  6052→export, operator session registry w/ surgical revocation, support SLA badges,
+  6053→overview SLA counter, EN/FA i18n (backend by main agent; zero backend edits).
+  6054→
+  6055→Work Log:
+  6056→- Read worklog (R62/R63-P conventions) + platform-api.ts / security-view.tsx /
+  6057→  operators-view.tsx / support-view.tsx / overview-view.tsx / kit.tsx /
+  6058→  platform-shell.tsx / users-view.tsx (invalidate-sessions gating) /
+  6059→  use-platform-self.ts / @/lib/csv / i18n platform.* BEFORE writing anything;
+  6060→  read-only recon of the new backend routes to mirror contracts verbatim.
+  6061→- platform-api.ts (append-only): PlatformSecuritySummary.failedLoginBursts1h;
+  6062→  PlatformOverview.support.slaOverdue; PlatformSupportTicket.sla union;
+  6063→  NEW PlatformSecurityAnomalies / PlatformOperatorSession(s) types;
+  6064→  platformQueries.securityAnomalies + operatorSessions;
+  6065→  platformMutations.revokeOperatorSession (DELETE sessions/[sessionId]);
+  6066→  NEW exportSecurityEventsCsv(params) — raw fetch credentials:"same-origin",
+  6067→  reads CSV text + x-export-truncated/x-export-rows headers, JSON error
+  6068→  envelope → ApiClientError on !ok so usePlatformErrorText just works.
+  6069→- security-view.tsx: (1) summary card #2 "failed login bursts (60 min)"
+  6070→  directly after failedLogins24h — <button> (existing onClick renderer) with
+  6071→  aria-label, border-destructive/40 + TriangleAlert danger accent when >0,
+  6072→  opens anomalies dialog; skeleton count 8→9. (2) amber burst banner ABOVE the
+  6073→  events list (icon + interpolated text — color never sole carrier) with
+  6074→  "View burst details" button. (3) AnomaliesDialog (useQuery enabled on open):
+  6075→  "By email" (mono dir=ltr) / "By IP prefix" (ip#<prefix> mono dir=ltr)
+  6076→  groups, count Badges (formatCount), lastAt formatDateTime, honest "none"
+  6077→  line per empty group, threshold/window caption built from the SERVER's own
+  6078→  values (client never restates constants); pf-sec-anom-* testids throughout.
+  6079→  (4) Export CSV button next to Reset in the filter card: query-string builder
+  6080→  EXTRACTED into shared buildFilterParams() so the events useQuery key and the
+  6081→  export always describe the same on-screen filters (one builder, two
+  6082→  consumers); downloadCsv(`security-events-<stamp>.csv`) via @/lib/csv,
+  6083→  success toast with row count, honest 5000-cap truncation warning, error
+  6084→  toast via usePlatformErrorText, Loader2+disabled while exporting.
+  6085→- operators-view.tsx: per-row "Sessions" affordance (History icon, consistent
+  6086→  with row actions) → OperatorSessionsDialog (operatorSessions query,
+  6087→  live-first defensive re-sort): deviceLabel (or "Unknown device"), live→
+  6088→  emerald "Live" / revoked→muted "Revoked" / expired(not revoked && !live)→
+  6089→  outline "Expired", createdAt+lastSeenAt formatted, ip#<prefix> mono dir=ltr,
+  6090→  activeCount + truncated note in dialog header, pf-op-sess-* testids.
+  6091→  Revoke button on LIVE sessions ONLY when usePlatformSelf grants
+  6092→  platform:security:manage (mirror of users-view's permission gating, hide
+  6093→  not disable) → RevokeSessionDialog: reason 3..300 with live {n}/300 counter
+  6094→  + required current-password (server assertPlatformReauth demands it — same
+  6095→  rules as every ReauthDialog), alreadyRevoked → toast.info, success toast +
+  6096→  invalidate/refetch sessions query.
+  6097→- support-view.tsx: SlaBadge next to status badge in BOTH desktop table cell
+  6098→  and mobile card (flex-wrap group, wrap-safe at 390px): overdue→destructive,
+  6099→  due_soon→amber, met→quiet emerald outline + Check icon; open/na render
+  6100→  nothing; unknown/undefined verdict (stale cache) renders nothing. pf-sla-*
+  6101→  testids.
+  6102→- overview-view.tsx: 4th support counter "SLA overdue" card (formatCount,
+  6103→  tabular-nums, ?? 0 stale-cache guard) with border-destructive/40 +
+  6104→  text-destructive accent when >0 via a new per-card danger flag.
+  6105→- i18n en.ts + fa.ts, symmetric key-by-key (surgical anchors, no reordering):
+  6106→  platform.security +15 (bursts card/banner/dialog groups/none/lastAt/
+  6107→  threshold caption, export button + success/truncated toasts; fa uses
+  6108→  ۶۰/آستانه/دست‌کم, «خوشه‌های ورود ناموفق»), platform.operators +16 (sessions
+  6109→  dialog, live/revoked/expired, revoke flow; «نشست‌ها»، «ابطال»),
+  6110→  platform.support.sla ×3 (fa: «SLA نقض شده/نزدیک به سقف SLA/SLA رعایت شد»),
+  6111→  platform.overview.slaOverdue ×1.
+  6112→- VERIFY (static only, per brief): bunx tsc --noEmit → 0 errors; bun run lint
+  6113→  → clean; bun scripts/i18n-audit.ts → CLEAN (182 files / 3160 usages /
+  6114→  Missing-at-usage 0 / parity gaps 0). Dev server NOT run; build NOT run; no
+  6115→  test batteries (main agent owns them). Zero files under src/app/api/** or
+  6116→  src/lib/** touched by this task.
+  6117→
+  6118→Stage Summary:
+  6119→- R64 UI surface complete: Security Center now answers "is something attacking
+  6120→  us right now" (bursts card + banner + drill-down dialog naming the emails /
+  6121→  hashed-IP prefixes — identities the feed already exposes, same permission)
+  6122→  and ships an audited, filter-mirroring CSV export; Operators view gained the
+  6123→  session registry with surgical single-device revocation (password reauth +
+  6124→  audited, alreadyRevoked handled honestly); Support Center surfaces the
+  6125→  first-response SLA verdict per ticket; Overview carries the SLA-overdue
+  6126→  counter with a danger accent.
+  6127→- Honest deviations (documented): (1) overview support counters are three
+  6128→  separate cards in this codebase, so the "4th row" shipped as a 4th sibling
+  6129→  card — same grid, same danger-accent treatment; no "Open Support Center"
+  6130→  button exists there, so nothing to keep unchanged. (2) sessions activeCount
+  6131→  renders in the dialog header description (title keeps {email}) — read as
+  6132→  "shown in dialog title" satisfied at the header level. (3) revoke dialog
+  6133→  password is REQUIRED (server assertPlatformReauth 403s without it), matching
+  6134→  the users-view reauth pattern rather than an optional field. (4) export cap
+  6135→  5000 mirrored as a client constant for the truncation copy only — the
+  6136→  server's header remains the source of truth.
+  6137→- i18n symmetry re-verified programmatically (FA-MISSING/EN-MISSING = 0).
+  6138→---
+  6139→Task ID: R64 (Prompt 64 — «ادامه ساخت فوق حرفه‌ای … پیشنهاد همه موارد … تست دقیق و عمیق … تمام پروژه رو اسکن کن و باگها رو شناسایی و درست کن»)
+  6140→Agent: main (Z.ai Code) + subagent R64-UI (frontend-styling-expert)
+  6141→Task: Next-tier proposals with deep testing; full-project scan; identify and fix all bugs; fix any errors surfaced.
+  6142→
+  6143→Work Log:
+  6144→- BASELINE: git clean (R63-P committed at 6f7d5e7), tsc 0, lint clean, dev READY. worklog tail + platform recon confirmed the Prompt-62/63 console (40 routes, 12 sections) as the enhancement base — no second panel built.
+  6145→- SCAN PHASE (bugs found & fixed BEFORE new features):
+  6146→  - ENV WIPE (7th documented occurrence): .env reduced to DATABASE_URL-only → env-repair ALL GREEN (29→30 migrations, seeds, fixtures, integrity ok, fk 0).
+  6147→  - MIGRATION DRIFT: prompt63_ai_cost_record_business_cascade existed in repo but unapplied (29 vs 30). Live DB already carried the exact DDL (ON DELETE CASCADE FK verified byte-for-byte) — reconciled DATA-SAFELY via `prisma migrate resolve --applied` (never migrate dev). migrate status now "up to date".
+  6148→  - SECURITY GAP (P1, product): getPlatformContext NEVER checked the per-device session registry — tenant routes 401'd revoked devices (assertFreshSession) while platform routes kept accepting the JWT. A session revoked per-device (Operators-view revoke / self-service sign-out) stayed FULLY usable against all 40+ platform routes. FIX: registry gate added to the platform auth chain (session → version → REGISTRY → operator-active → permission), SESSION_REVOKED rethrown honestly by /self probe. Proven live: revoked jar → /me 401 SESSION_REVOKED (before: /self still 200; after: 401).
+  6149→  - STATIC-SCAN PRECISION: prompt28 mutation regex matched `operators/[id]` as a substring, flagging the read-only sessions GET. Refined to `operators/[id]/route|sessions/[sessionId]/route` — the new DELETE stays in the sensitive set (it has reauth+audit+rateLimit), the GET is correctly out. Coverage strengthened, not weakened.
+  6150→  - CSV BOM: res.text() strips the BOM per fetch spec — battery asserts raw bytes (EF BB BF) instead. Product was always correct.
+  6151→- R64 FEATURES (backend by main, UI by R64-UI subagent):
+  6152→  - SECURITY-EVENT CSV EXPORT: GET /api/v1/platform/security/events/export — same allowlisted filters as the feed (shared parser module security-filters.ts — one parser, two consumers §81), 5/min per-operator rate limit, hard cap 5000 rows (+1 probe row detects truncation without a count query), RFC-4180 CSV w/ BOM via src/lib/csv toCsv, x-export-rows/x-export-truncated headers, AUDITED (platform.security.events_exported with filters+rows), 12-hex IP prefixes only (no raw IP exists anywhere in the path).
+  6153→  - FAILED-LOGIN BURST ANOMALIES: NEW security-anomalies.ts (60-min window, threshold ≥5, bounded groupBy 200/axis, email axis via userId→email lookup, IP axis full-hash keyed → 12-hex prefix out) + GET /security/anomalies (identity-bearing companion; every identity already visible in the feed under the SAME permission) + summary.failedLoginBursts1h (COUNT-only law preserved in the summary).
+  6154→  - OPERATOR SESSION LISTING + SURGICAL REVOKE: GET /operators/[id]/sessions (operators:read; live-first DTO w/ deviceLabel, ipHashPrefix, live/revoked) + DELETE /operators/[id]/sessions/[sessionId] (security:manage + canInvalidateSessions + reason-mandatory + reauth §56 + 10/15min + transactional audit platform.operator_session_revoked + SecurityEvent auth.session.revoked; §126 no-existence-oracle 404s; §210 idempotent alreadyRevoked).
+  6155→  - FIRST-RESPONSE SLA: SUPPORT_FIRST_RESPONSE_SLA_HOURS=4 / DUE_SOON=3 + firstResponseSlaOf() in support.ts (one authority: met/due_soon/overdue/open/na) → ticketListItemDto.sla + overview.support.slaOverdue (4th support metric). Terminal-without-response = na (not graded) — honest.
+  6156→- UI (R64-UI subagent): bursts summary card (#9, danger accent, opens dialog), amber burst banner + details dialog (email/IP groups, mono dir=ltr, server threshold/window caption), Export CSV honoring on-screen filters via shared buildFilterParams() (downloadCsv + row-count toast + honest 5000-cap truncation warning), Operators sessions dialog (Live/Revoked/Expired badges, revoke confirm w/ reason counter + required reauth password, permission-gated by platform:security:manage exactly like users-view), support SLA badges (overdue danger / due_soon amber / met quiet emerald; open/na silent), overview 4th support card w/ danger accent. i18n +15/+16/+3/+1 keys SYMMETRIC en/fa (proper Persian + Persian digits ۲۴/۶۰). tsc 0 · lint clean · i18n-audit CLEAN 182/3160/0.
+  6157→- TESTS: NEW scripts/r64-security-ops-check.ts — 69/69 GREEN live: auth matrix (19 checks across 4 new endpoints × anon/tenant/BILLING/SUPPORT/READONLY/SECURITY/SUPER), CSV content laws (raw-byte BOM, CRLF, exact 8 columns, filters honored, unknown eventType 422, no raw IP, prefix ≤12 hex, headers), audit row assertions, burst engine (email=6, ip=5, below-threshold absent, summary==anomalies), operator sessions (DTO contract, revoke → jar dies 401 SESSION_REVOKED, idempotent re-delete, foreign 404s, short reason 422, transactional audit + SecurityEvent), SLA verdicts (open/overdue/due_soon/met/na + overview counter == DB truth ≥1), export rate limit (5 ok then 429), zero residue. Defensive pre-sweep for crashed-run fixtures.
+  6158→- FULL REGRESSION (all EXECUTED on the fixed chain): e2e-smoke 90/90 · prompt28 86/86 · r62-support 68/68 · r62-overview-announce 21/21 · r63-audit 15/15 · r63-security-center 43/43 · r64-security-ops 69/69 · i18n CLEAN · tsc 0 · lint clean. BUILD: NOT EXECUTED (standing sandbox law).
+  6159→- BROWSER QA (agent-browser, real QA operator via sanctioned CLI): Security Center renders bursts card "Failed login bursts (60 min): 2" live; banner + dialog show email bucket (6) + IP bucket; Export CSV DOWNLOADED a real file (18 rows, header exact, hashed prefixes) to /home/z/Downloads; Operators sessions dialog (Live badge, Chrome on Linux, ip#prefix) + revoke form (1/300 counter, disabled-until-valid) + WRONG-PASSWORD reauth live error "Reauthentication failed"; support row shows "Open SLA overdue" badge; overview "SLA overdue: 1" card; fa/RTL «خوشه‌های ورود ناموفق (۶۰ دقیقه)», «SLA نقض شده», dir=rtl; mobile 390×844 zero overflow on security+support; screenshots qa-r64-*.png ×7.
+  6160→- INCIDENTS: dev server killed 4× by sandbox (ensure-dev restarts); two battery crashes during development were BATTERY bugs (body double-read, res.text() BOM spec) — product untouched; crashed battery runs left fixture residue (incl. 10 stale operators w/ 2 active SUPER_ADMINs — swept FK-safe to operators=0; pre-sweep added to the battery for self-healing).
+  6161→- STATE RESTORED: QA operator + visual fixtures removed (ops=0, zero r64 residue), locale back EN/LTR, viewport 1440×900, dev log clean.
+  6162→
+  6163→Stage Summary:
+  6164→- The admin panel's security layer is now genuinely multi-layer: the per-device registry gate closes a real platform-wide auth gap (found by live probing, fixed with one §81 single-path addition), and four new operator capabilities (audited CSV export, burst anomaly detection, session visibility + surgical revoke, SLA law) ship behind deny-by-default RBAC with rate limits and audit trails.
+  6165→- Honest limits: burst threshold/window are fixed server constants (not tunable — documented law); export truncation at 5000 was header-verified, not exercised with 5001 rows; anomaly identity exposure is aggregation of already-visible feed data, not a new visibility surface; SLA is wall-clock (no business-hours calendar); rate limits remain in-memory per-instance (documented sandbox law).
+  6166→- Next candidates: burst threshold/window per-operator config; scheduled SLA breach notifications; operator-session analytics (last-seen heat); two-person approval for high-risk financial actions (from R62 candidates).
+  6167→
+  6168→---
+  6169→Task ID: R65-A (Prompt 65 Phase A/B — repository reconnaissance + risk assessment)
+  6170→Agent: main (Z.ai Code)
+  6171→Task: PROMPT 65 — Enterprise Platform Admin Console: zero-trust security, MFA enforcement, privileged access control, dual approval, operational governance. Phase A recon + Phase B risk register.
+  6172→
+  6173→Work Log:
+  6174→- BASELINE: git clean @9a11b31 (R64 committed). tsc 0 errors. Dev READY.
+  6175→- ENV WIPE (8th documented occurrence): .env reduced to DATABASE_URL-only → env-repair restored baseline (NEXTAUTH_SECRET, NEXTAUTH_URL, APP_BASE_URL, BILLING_*, MFA_ENABLED=true, MFA_ENCRYPTION_KEY, AUTH_EMAIL_VERIFICATION_MODE=OPTIONAL).
+  6176→- MIGRATION DRIFT (recurred): 20261022080000_prompt63_ai_cost_record_business_cascade falsely pending after sandbox db revert (env-repair MIGRATIONS array had only 29 entries). Live DB verified to carry the EXACT DDL (AiCostRecord: ON DELETE CASCADE FK + requestId — byte-level check via sqlite_master). Reconciled DATA-SAFELY via `prisma migrate resolve --applied`. ROOT-CAUSE FIX: 30th migration added to scripts/env-repair.mjs MIGRATIONS array (maintenance law now covers it).
+  6177→- RECON INVENTORY (verified in source, not assumed):
+  6178→  * Auth: NextAuth credentials + JWT w/ per-device sid; sessionVersion = global kill switch; UserSession registry = per-device revoke (R64 gate now in platform chain too). Login MFA flow COMPLETE: authorize() throws MFA_REQUIRED → /auth/mfa/challenge (re-verifies password, hash-only challenge, sessionVersion-bound, TTL 300s, dual rate limit) → /auth/mfa/complete (TOTP ±1 step w/ replay protection via lastUsedTotpStep, or atomic single-use recovery code; 5-attempt budget) → one-time assertion consumed in authorize(). MFA service: otpauth TOTP, AES-256-GCM secret-box, fail-closed decrypt, 10 Crockford recovery codes SHA-256-hashed, capability state AVAILABLE/DISABLED/BLOCKED. Enrollment routes exist: /me/security/mfa/setup/start|confirm, disable, recovery-codes/regenerate.
+  6179→  * Platform auth chain (getPlatformContext): session → user → sessionVersion → per-device registry → PlatformOperator → active → permissions. Server-side, deny-by-default, no client inputs. Reauth (§56) = current-password bcrypt on high-risk mutations.
+  6180→  * Platform RBAC: 6 roles (SUPER_ADMIN/SUPPORT/BILLING/AI_COST/SECURITY/READONLY), 24 explicit permissions, NO wildcards, super-admin = all explicitly registered, specialists least-privilege, last-super-admin protection transactional in operators PATCH.
+  6181→  * Console: 12 sections, 40 routes, permission-gated sidebar (hide-not-disable), /self probe normalizes auth failures, EN/FA + RTL/LTR + dark/light + responsive.
+  6182→  * Rate limits: in-memory per-instance (documented law); login 10/5min per email+ip; dedicated MFA limiters; sensitive platform mutations 10/15min.
+  6183→  * Audit: PlatformAuditLog + SecurityEvent services; reason-mandatory mutations; sanitized payloads.
+  6184→  * Batteries: e2e-smoke 90 (tenant-only), prompt28 86, r62-support 68, r62-overview-announce 21, r63-audit 15, r63-security-center 43, r64-security-ops 69. Fixtures create operators DIRECTLY via db.platformOperator.create; login = password-only POST /api/auth/callback/credentials.
+  6185→- RISK REGISTER (Phase B):
+  6186→  * P0-1 (§6.2): NO MFA enforcement in platform chain — a super-admin with a password-only session has full privileged access; MFA is optional feature, not policy. FAIL-CLOSED absent.
+  6187→  * P1-2 (§7.1): Platform shell has NO logout control and NO operator identity display (header = sidebar trigger + section title + locale/theme only).
+  6188→  * P1-3 (§10): Dual approval ABSENT — highest-risk financial config op (pricing activate) executes on a single operator's action (reauth+reason, but one person).
+  6189→  * P2-4 (§5.1): /self DTO lacks email + mfaEnabled → shell cannot show identity or security status.
+  6190→  * P2-5 (§11): Operator MFA coverage invisible to security operators (no count of active operators without MFA).
+  6191→  * P3-6 (§6): No platform-branded sign-in presentation (plain AuthView reuse); env-repair migration drift (FIXED this round).
+  6192→- SANDBOX LAWS honored: BUILD not executed; no live payment; no bulk comms; rate limits documented as per-instance.
+  6193→
+  6194→Stage Summary:
+  6195→- The console's architecture is sound and verified; the missing tier is POLICY ENFORCEMENT (MFA), SESSION EXIT UX (logout/identity), and DUAL CONTROL (approvals) — exactly PROMPT 65 §6/§7/§10. Phase C plan: (C1) platform MFA enforcement gate w/ fail-closed policy + enrollment path + battery MFA helper; (C2) shell identity + logout menu + /self DTO additions; (C3) dual-approval framework (Prisma model, state machine, pricing.activate first wired op, 5 routes, audit); (C4) security summary operator-MFA-coverage; then R65-UI subagent for gate screen/enrollment/shell menu/approvals view/i18n, new r65 battery, full regression, browser QA.
+  6196→
+  6197→---
+  6198→Task ID: R65 (Prompt 65 — Enterprise Platform Admin Console: zero-trust MFA enforcement + two-person approval + operator identity/logout + operational governance)
+  6199→Agent: main (Z.ai Code)
+  6200→Task: Inspect, enhance, secure, and thoroughly test the existing platform console per PROMPT 65 §1-§21 — without rewriting, without a second panel, with honest evidence classification.
+  6201→
+  6202→Work Log:
+  6203→- PHASE A/B (recon + risk register) — see R65-A entry above. Baseline: git clean @9a11b31; env wipe #8 repaired; migration drift #30 reconciled + env-repair MIGRATIONS patched (root-cause); tsc 0; lint clean.
+  6204→- C1 MFA ENFORCEMENT (§6.2, P0-1 FIX): platformMfaEnforcement() + platformRoleRequiresMfa() in src/lib/auth/config.ts (ONE authority; env PLATFORM_MFA_ENFORCEMENT = OFF|SUPER_ADMIN|ALL_OPERATORS, default SUPER_ADMIN per the Prompt-65 target policy). getPlatformContext now enforces: policy-required roles need MFA capability AVAILABLE + an ACTIVE credential — else 403 PLATFORM_MFA_REQUIRED (value-free fail-closed; capability state never disclosed). Per-request check = disabling MFA revokes privileged access on the very next call. /self now returns email + mfaEnabled (own-status only) and passes PLATFORM_MFA_REQUIRED through for the UI gate; tenants without an operator row still get the generic 403 (no oracle).
+  6205→- C3 TWO-PERSON APPROVAL (§10, P1-3 FIX): new PlatformApprovalRequest model + migration 20261023070000_prompt65_platform_approval_requests (31 applied / 0 pending; env-repair MIGRATIONS extended again). src/lib/platform/approvals.ts = the single service: operation registry (deny-by-default; pricing.activate first wired op — the SAME PricingService activation the direct route uses, §81/§13), canonical-JSON payloadHash binding, immutability (no edit API), lazy expiry sweep (24h TTL bounds approval AND execution), guarded state machine PENDING→APPROVED|REJECTED|CANCELLED|EXPIRED + APPROVED|FAILED→EXECUTING (atomic status-conditional claim = concurrent-execution law) → EXECUTED|FAILED (value-free errorCode only; retryable while unexpired), server-side requester≠approver (PLATFORM_SELF_APPROVAL_DENIED), reauth-required execution (§56), permissions: approvals:read (ALL roles incl. READONLY) + approvals:manage (SUPER_ADMIN/BILLING/SECURITY) with approve/execute/create ALSO requiring the operation's own permission (pricing:manage) — enforced in the SERVICE (§81) after the battery caught the route-level gap. 6 routes: list/create/detail/approve/reject/cancel/execute; every transition audited (platform.approval.created/approved/rejected/cancelled/executed/execution_failed). Execute returns 409 PLATFORM_EXECUTION_FAILED on failure — never a fake 200.
+  6206→- C4 SECURITY SUMMARY (§11, P2-5): securitySummary += activeOperatorsWithoutMfa (policy-scoped COUNT-only) + pendingApprovalRequests.
+  6207→- RBAC: catalog +2 permissions (approvals:read/manage); manage → SUPER_ADMIN(via all)/BILLING/SECURITY; read → all six roles; READONLY/SUPPORT remain mutation-free (proven by battery B5/B8).
+  6208→- AUTH-ROUTE HARDENING (§15): /api/auth/[...nextauth] POST wrapper forwards ctx untouched and converts next-auth v4's getBody() SyntaxError (JSON content-type + non-JSON body → unhandled 500 w/ stack) into a clean 400 INVALID_REQUEST. Live-verified: form login works, JSON abuse → 400, zero stack leaks. (Root cause found via dev.log during MFA probe debugging — probe-transport bug, not product, but the 500 was real for any attacker-crafted request.)
+  6209→- TEST INFRA: scripts/lib/platform-mfa.ts — ONE shared helper (real-API enrollment reauth→start→confirm; platformMfaLogin 3-step MFA login with anti-bypass session-cookie assertion; TOTP via the SAME otpauth lib as the server; §45 replay-law handling: default next-step code + boundary-crossing sleeps documented). 6 batteries updated (super fixtures enroll via the REAL API flow, then MFA-login; FK-safe clearFixtureMfa sweeps + defensive pre-sweep): prompt28 87/87 (+1 new check), r62-support 68/68, r62-overview-announce 21/21, r63-audit 15/15, r63-security-center 43/43, r64-security-ops 69/69 — ALL GREEN on the enforced chain.
+  6210→- NEW BATTERY scripts/r65-zero-trust-check.ts — 51 checks: §0 policy unit laws (default SUPER_ADMIN, ALL_OPERATORS/OFF/invalid-value mappings); §A enforcement matrix (super without MFA → 403 PLATFORM_MFA_REQUIRED on /self + /overview + /operators; readonly unaffected; tenant 403 unchanged; real-API enrollment unlocks; password-only attempt issues NO session + MFA_REQUIRED redirect; replayed TOTP rejected; recovery code works EXACTLY once; invalid code generic; MFA disable via §65 contract (password+TOTP+typed confirmation) revokes privileged access again — full fail-closed loop); §B approvals (auth matrix, unknown-kind 422, payload 422, self-approval 403, manage-without-target 403, happy path → price book ACTUALLY activated, double-approve/double-execute 409, reject/cancel flows, expired sweep, concurrent execute = one 200 + one 409, audit rows); §C summary consistency (== DB truth). Pre-sweep + zero-residue cleanup.
+  6211→- BATTERY-CAUGHT PRODUCT GAPS (fixed): (1) POST /approvals had NO permission gate — READONLY could mint requests (P0-class gap caught by B5/B8; fixed in the service, §81); (2) approve/reject lacked the lazy expiry sweep (expired PENDING could be approved — B24/B25); (3) execute surfaced FAILED as 200 (B16/B26; now 409 + failure audit preserved).
+  6212→- UI (implemented in-session after the Task-tool infra failure; conventions per R64): platform-root.tsx (MfaGateScreen branch + AuthView variant="platform"), NEW mfa-gate.tsx (amber fail-closed gate; enrollment dialog: reauth → QR img + manual key → InputOTP confirm → recovery codes shown EXACTLY ONCE behind saved-checkbox → Finish → honest session-ended state → signOutWithRevoke; BLOCKED state for MFA_NOT_CONFIGURED — never fake green), platform-shell.tsx (+222 lines: IdentityMenu — mono email dir=ltr + role badge + honest MFA chip (amber when off), Sign out this device (signOutWithRevoke), Sign out all devices (revoke-all {password, confirmation:"SIGN OUT ALL"} then signOut — best-effort law, failure toasted honestly), approvals nav entry under Security group), NEW approvals-view.tsx (filters status×8/kind, desktop table + mobile cards, status badge vocabulary, detail dialog with payload/hash/requester/approver blocks + state-machine actions — Approve(note)/Reject(reason-required)/Cancel(requester)/Execute(password-required, expiry note, PLATFORM_EXECUTION_FAILED destructive inline alert), PaginationBar), security-view.tsx (+2 cards: Operators without MFA danger-accented, Pending approvals clickable → approvals), auth-view.tsx (variant prop, presentation-only), use-platform-self.ts (PlatformSelfResult union + isPlatformSelf guard; PLATFORM_MFA_REQUIRED → "mfa-required" sentinel), platform-api.ts (PlatformApproval types mirroring the server DTO, platformSelfService, approvals queries/mutations), store (+approvals section). i18n en/fa SYMMETRIC (mfaGate.*, identity.*, approvals.*, sections.approvals, security +2) — i18n-audit CLEAN 184 files / 3260 usages / parity 0.
+  6213→- BROWSER QA (agent-browser, real operator): MFA gate renders for a super without MFA ("Two-factor authentication required", amber, fail-closed copy); full enrollment flow through the REAL UI (reauth → QR → manual key → 6-digit confirm → 10 recovery codes shown once + saved-checkbox → Finish → "Session ended — enabling MFA signed out ALL devices" → sign-in again); MFA login UI (challenge + verify + recovery-code option); console renders with MFA session; IdentityMenu shows email + Super Admin + "MFA on" (EN+FA: منوی حساب, خروج از این دستگاه/همه دستگاهها); Approvals section: honest empty state → populated row (EUR_STANDARD activation) → detail dialog with "You requested this — another operator must approve it" + requester-only Cancel; Security cards render; FA/RTL dir=rtl verified on shell + approvals; mobile 390×844 zero overflow; sign-out-this-device returns to the login screen. Screenshots: qa-r65-gate.png, qa-r65-enrolled.png, qa-r65-console.png, qa-r65-approvals.png, qa-r65-approvals-row.png, qa-r65-security.png, qa-r65-fa.png, qa-r65-fa-mobile.png, qa-r65-signedout.png.
+  6214→- QA-CAUGHT UI BUG (fixed): ApprovalsView read data.page.* but the server returns data.meta.* → section crash on reload; fixed view + client type (meta: PageMeta).
+  6215→- FULL REGRESSION (final state): e2e-smoke 90/90 · prompt28 87/87 · r62-support 68/68 · r62-overview-announce 21/21 · r63-audit 15/15 · r63-security-center 43/43 · r64-security-ops 69/69 · r65-zero-trust 51/51 (twice, stable) · tsc 0 · lint clean · i18n CLEAN. BUILD: NOT EXECUTED (standing sandbox law — dev server owns .next).
+  6216→- STATE RESTORED: QA operator + QA approval row removed; all battery fixture residue swept FK-safe (operators=0, r65 users=0, biz=0); browser closed; dev server READY; /api/health ok (31 applied / 0 pending).
+  6217→
+  6218→Stage Summary:
+  6219→- The platform console now enforces the Prompt-65 zero-trust policy server-side: platform SUPER_ADMIN access is MFA-gated per request with fail-closed semantics (disabled/blocked capability = denied, never degraded), the highest-risk financial configuration change (price-book activation) is under two-person control with an atomic exactly-once executor, and the operator shell finally has identity, honest security status, and secure session-exit paths. Every control is proven by the 51-check live battery + 8-suite regression (444 checks total) and real browser QA.
+  6220→- Honest limits (reported, not claimed): ALL_OPERATORS/OFF enforcement modes are unit-verified only (sandbox runs SUPER_ADMIN; flipping the dev server's env mid-session is not possible — same code path, different constant); MFA capability BLOCKED state is unit-verified (fail-closed branch identical to the unenrolled branch); approvals identity resolution is the operator ROW (a second session of the same operator cannot approve their own request — documented human-identity limitation, §10.1); rate limits remain in-memory per-instance (documented sandbox law); BUILD not executed in sandbox; pricing.activate is the only wired approval kind (registry deny-by-default — more kinds are mechanical additions); recovery-code display is the existing §60 flow reused unchanged.
+  6221→- Next candidates: wire ai-cost.reconcile as the second approval kind; per-role MFA enforcement UI in Operators view (enrollment status column + nudge); scheduled SLA/MFA-coverage notifications; burst threshold/window configuration.
+  6222→
+  6223→---
+  6224→Task ID: R66 (user request — «بخش ورود ادمین در لندینگ پیج وجود ندارد در این بخش هم اظافه کن عکس داده شده»)
+  6225→Agent: main (Z.ai Code)
+  6226→Task: Add the missing platform-admin login section to the landing page (default sign-in screen), matching the referenced screenshot's design language.
+  6227→
+  6228→Work Log:
+
+[showing lines 6049-6228 of 6242; use offset=6229 with limit to continue reading]
