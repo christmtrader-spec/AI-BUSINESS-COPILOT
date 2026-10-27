@@ -38,6 +38,10 @@ model User {
   suspendedAt           DateTime?
   suspensionReason      String?
   suspendedByOperatorId String? // plain ref (audit law) — outlives operators
+  // R108 — server-persisted getting-started checklist dismissal (§406 law:
+  // UI state that must survive devices lives on the server, never
+  // localStorage). NULL = visible; non-null = dismissed. Reversible.
+  checklistDismissedAt  DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -363,6 +367,11 @@ model Business {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   supplierBills SupplierBill[]
+  // Prompt 25 §47/§98 — onboarding "Skip" persistence: NULL = checklist
+  // visible; non-null = the owner dismissed the guided flow. Idempotent,
+  // reversible, never touches onboardingCompletedAt (skipping is not
+  // completing — §91). Server-persisted so it survives devices (§406 law).
+  onboardingDismissedAt DateTime?
 
   @@index([ownerId])
 }
@@ -677,6 +686,15 @@ model Sale {
   paidMinor     Int       @default(0)
   status        String    @default("UNPAID")
   issueDate     DateTime  @default(now())
+  // R81 — stated payment terms on invoices (receivables overdue lane).
+  // Date-only semantics: parsed from "YYYY-MM-DD" with the Prompt-35 §84
+  // UTC-midnoon rule so the calendar day is identical in every display
+  // timezone — the same law SupplierBill/Expense.dueDate already follows.
+  // Honesty law (src/lib/reports-insights.ts): null dueDate = no terms
+  // stated → the invoice stays AGING-framed ("open N days"), never
+  // "overdue"; a stated due day STRICTLY BEFORE today's business-timezone
+  // day on an open invoice is OVERDUE via the shared isPastDueDay gate.
+  dueDate       DateTime?
   note          String?
   deletedAt     DateTime?
   createdAt     DateTime  @default(now())
@@ -696,6 +714,7 @@ model Sale {
   @@index([businessId, deletedAt, createdAt])
   @@index([businessId, status])
   @@index([customerId])
+  @@index([businessId, dueDate])
 }
 
 model SaleItem {
@@ -1257,6 +1276,47 @@ model PlanPrice {
 // - Timestamps are ALWAYS server-generated — the browser is never the time
 //   authority (§Prompt25: server-authoritative conversion events).
 // ---------------------------------------------------------------------------
+
+model AnalyticsEvent {
+  id        String   @id @default(cuid())
+  // One of ANALYTICS_EVENTS — the registry in src/lib/analytics.ts is the
+  // single place event names exist (§101); no FK by design (§104: the
+  // funnel must survive user/business deletion for aggregate reads).
+  name      String
+  userId    String?
+  businessId String?
+  // Safe property model (§103) — bounded allowlisted funnel dimensions,
+  // one column each; anything else is dropped by the sanitizer.
+  planCode      String?
+  billingPeriod String?
+  currency      String?
+  page          String?
+  source        String?
+  locale        String?
+  // Idempotency: server lifecycle events are once-ever per subject (unique);
+  // client events dedupe per session per UTC day (§54) so React re-renders
+  // cannot spam the funnel.
+  dedupeKey String?  @unique
+  createdAt DateTime @default(now())
+
+  @@index([name, createdAt])
+  @@index([businessId, createdAt])
+}
+
+// Prompt 25 §27-§29 — minimal contact-sales capture (deliberately NOT a
+// CRM §28): four fields + locale. Stored ONLY to reply; generic success
+// response never confirms storage (§29); honeypot submissions store nothing.
+model ContactLead {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  company   String?
+  message   String
+  locale    String   @default("en")
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
 
 model CommercialEvent {
   id                  String   @id @default(cuid())

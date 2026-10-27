@@ -47,3 +47,35 @@ export type LegalDocument = {
   legalReviewRequired: boolean;
   locales: Record<LegalLocale, { title: string; description: string; sections: LegalSection[] }>;
 };
+
+// ---------------------------------------------------------------------------
+// NEW-SHAPE CONTENT MODEL (recovery) — the paired-locale model consumed by
+// the surviving LegalView (src/modules/legal/legal-view.tsx) and the public
+// content registry (src/content/legal/index.ts). Distinct names so the OLD
+// server-side registry/pages (LegalDocument + LegalSection above) keep
+// compiling untouched: two eras, one file, no collisions.
+// ---------------------------------------------------------------------------
+
+/** A locale-paired text node — BOTH locales verified non-empty. */
+export type LocalizedText = { en: string; fa: string };
+
+/** One document section of the new shape (heading + paragraphs/bullets). */
+export type LocalizedLegalSection = {
+  /** Stable anchor id (TOC + deep links). Never translated. */
+  id: string;
+  heading: LocalizedText;
+  paragraphs?: LocalizedText[];
+  bullets?: LocalizedText[];
+};
+
+/**
+ * The public-facing content document: everything the LegalView renders,
+ * already paired per locale. Version/effective dates live in
+ * src/config/legal.ts (§6 — the operator-updatable source), never here.
+ */
+export type LegalDocumentContent = {
+  key: string;
+  title: LocalizedText;
+  intro: LocalizedText[];
+  sections: LocalizedLegalSection[];
+};

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
@@ -528,7 +528,17 @@ export function AuthView({ variant = "default" }: { variant?: "default" | "platf
   };
   const { status } = useSession();
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  // Prompt 25/27 — legal & pricing pages flip the STORE authMode before
+  // navigating here, so the card opens on the intended mode (never a
+  // second click). One-shot adoption: local state stays authoritative for
+  // in-card toggles afterwards.
+  const storeAuthMode = useAppStore((s) => s.authMode);
+  const [mode, setMode] = useState<"signin" | "signup">(storeAuthMode);
+  const adoptedRef = React.useRef(storeAuthMode);
+  if (adoptedRef.current !== storeAuthMode) {
+    adoptedRef.current = storeAuthMode;
+    setMode(storeAuthMode);
+  }
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

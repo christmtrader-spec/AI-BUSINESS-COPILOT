@@ -13,6 +13,9 @@ import { VerifyEmailView } from "@/modules/settings/verify-email-view";
 import { SecurityCenterView } from "@/modules/settings/security-view";
 import { OnboardingView, type CreatedBusiness } from "@/modules/onboarding/onboarding-view";
 import { JoinInviteView } from "@/modules/settings/join-invite-view";
+// Prompt 25/27 — public marketing + legal surfaces (anonymous-accessible).
+import { PricingView } from "@/modules/pricing/pricing-view";
+import { LegalView } from "@/modules/legal/legal-view";
 import { AppShell, useMembershipsQuery } from "./app-shell";
 import { PlatformRoot } from "@/modules/platform/platform-root";
 
@@ -170,6 +173,17 @@ export function AppRoot() {
   // account-scoped, never session-scoped).
   if (view.kind === "platform-join") {
     return <PlatformJoinView token={view.token} />;
+  }
+
+  // Prompt 25/27 — public pricing + legal documents: reachable signed-out
+  // (the marketing surface a visitor lands on) AND signed-in (the footer
+  // links). Both render OUTSIDE the membership-gated shell on purpose —
+  // they describe the PRODUCT, not the user's workspace.
+  if (view.kind === "pricing") {
+    return <PricingView />;
+  }
+  if (view.kind === "legal") {
+    return <LegalView doc={view.doc} />;
   }
 
   if (!authenticated) {

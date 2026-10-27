@@ -1,0 +1,206 @@
+scripts/prompt34-unit.ts(221,5): error TS2345: Argument of type '{ id: string; number: number; customerId: string; customerName: string; issueDate: Date; subtotalMinor: number; discountMinor: number; taxRateBp: number; taxMinor: number; totalMinor: number; paidMinor: number; status: string; note: null; createdAt: Date; }' is not assignable to parameter of type 'SaleRecordRow'.
+  Property 'dueDate' is missing in type '{ id: string; number: number; customerId: string; customerName: string; issueDate: Date; subtotalMinor: number; discountMinor: number; taxRateBp: number; taxMinor: number; totalMinor: number; paidMinor: number; status: string; note: null; createdAt: Date; }' but required in type 'SaleRecordRow'.
+scripts/prompt34-unit.ts(250,31): error TS2345: Argument of type '{ id: string; number: number; customerId: null; customerName: null; issueDate: Date; subtotalMinor: number; discountMinor: number; taxRateBp: number; taxMinor: number; totalMinor: number; paidMinor: number; status: string; note: null; createdAt: Date; }' is not assignable to parameter of type 'SaleRecordRow'.
+  Property 'dueDate' is missing in type '{ id: string; number: number; customerId: null; customerName: null; issueDate: Date; subtotalMinor: number; discountMinor: number; taxRateBp: number; taxMinor: number; totalMinor: number; paidMinor: number; status: string; note: null; createdAt: Date; }' but required in type 'SaleRecordRow'.
+scripts/r100-deeplink-unit.ts(46,10): error TS2305: Module '"../src/modules/copilot/copilot-view"' has no exported member 'pickPerfActionChips'.
+scripts/r100-deeplink-unit.ts(180,88): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(180,162): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(181,109): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(181,183): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(182,77): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(184,75): error TS2353: Object literal may only specify known properties, and 'perfDirection' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(184,127): error TS2353: Object literal may only specify known properties, and 'perfDirection' does not exist in type 'Partial<AppView>'.
+scripts/r102-stock-unit.ts(50,10): error TS2305: Module '"../src/modules/copilot/copilot-view"' has no exported member 'pickStockActionChips'.
+scripts/r111-guard-mirror-check.ts(38,10): error TS2305: Module '"./lib/platform-mfa"' has no exported member 'loginCredentials'.
+scripts/r112-guard-grace-check.ts(32,10): error TS2305: Module '"./lib/platform-mfa"' has no exported member 'loginCredentials'.
+scripts/r113-guard-analytics-check.ts(47,10): error TS2305: Module '"./lib/platform-mfa"' has no exported member 'loginCredentials'.
+scripts/r115-dashboard-trend-check.ts(25,10): error TS2305: Module '"./lib/platform-mfa"' has no exported member 'loginCredentials'.
+scripts/r116-trend-surface-check.ts(24,10): error TS2305: Module '"./lib/platform-mfa"' has no exported member 'loginCredentials'.
+scripts/r128-transport-reliability-check.ts(23,3): error TS2305: Module '"../src/lib/copilot-sessions"' has no exported member 'transportReliability'.
+scripts/r128-transport-reliability-check.ts(104,71): error TS2353: Object literal may only specify known properties, and 'healed' does not exist in type 'Partial<StoredCopilotMessage>'.
+scripts/r128-transport-reliability-check.ts(126,62): error TS2353: Object literal may only specify known properties, and 'healed' does not exist in type 'Partial<StoredCopilotMessage>'.
+scripts/r128-transport-reliability-check.ts(176,48): error TS2353: Object literal may only specify known properties, and 'healed' does not exist in type 'Partial<StoredCopilotMessage>'.
+scripts/r81-sale-terms-unit.ts(231,33): error TS2339: Property 'issueDate' does not exist on type '{ customerId: string | null | undefined; dueDate: Date | null | undefined; note: string | null | undefined; }'.
+scripts/r81-sale-terms-unit.ts(235,11): error TS2339: Property 'issueDate' does not exist on type '{ customerId: string | null | undefined; dueDate: Date | null | undefined; note: string | null | undefined; }'.
+scripts/r81-sale-terms-unit.ts(235,46): error TS2339: Property 'issueDate' does not exist on type '{ customerId: string | null | undefined; dueDate: Date | null | undefined; note: string | null | undefined; }'.
+scripts/r81-sale-terms-unit.ts(236,18): error TS2339: Property 'issueDate' does not exist on type '{ customerId: string | null | undefined; dueDate: Date | null | undefined; note: string | null | undefined; }'.
+scripts/r81-sale-terms-unit.ts(238,50): error TS2339: Property 'issueDate' does not exist on type '{ customerId: string | null | undefined; dueDate: Date | null | undefined; note: string | null | undefined; }'.
+scripts/r85-bill-list-pastdue-unit.ts(159,14): error TS2339: Property 'pastDue' does not exist on type 'SupplierBillListItemDto'.
+scripts/r85-bill-list-pastdue-unit.ts(159,30): error TS2339: Property 'pastDueDays' does not exist on type 'SupplierBillListItemDto'.
+scripts/r85-bill-list-pastdue-unit.ts(160,52): error TS2554: Expected 1 arguments, but got 2.
+scripts/r85-bill-list-pastdue-unit.ts(161,15): error TS2339: Property 'pastDue' does not exist on type 'SupplierBillListItemDto'.
+scripts/r85-bill-list-pastdue-unit.ts(161,32): error TS2339: Property 'pastDueDays' does not exist on type 'SupplierBillListItemDto'.
+scripts/r85-bill-list-pastdue-unit.ts(164,39): error TS2339: Property 'pastDue' does not exist on type 'SupplierBillListItemDto'.
+scripts/r85-bill-list-pastdue-unit.ts(170,45): error TS2339: Property 'pastDue' does not exist on type '{ q?: string | undefined; supplierId?: string | undefined; purchaseOrderId?: string | undefined; status?: "DRAFT" | "CANCELLED" | "POSTED" | undefined; billDateFrom?: string | undefined; ... 4 more ...; pageSize?: number | undefined; }'.
+scripts/r85-bill-list-pastdue-unit.ts(171,59): error TS2339: Property 'pastDue' does not exist on type '{ q?: string | undefined; supplierId?: string | undefined; purchaseOrderId?: string | undefined; status?: "DRAFT" | "CANCELLED" | "POSTED" | undefined; billDateFrom?: string | undefined; ... 4 more ...; pageSize?: number | undefined; }'.
+scripts/r85-bill-list-pastdue-unit.ts(172,62): error TS2339: Property 'pastDue' does not exist on type '{ q?: string | undefined; supplierId?: string | undefined; purchaseOrderId?: string | undefined; status?: "DRAFT" | "CANCELLED" | "POSTED" | undefined; billDateFrom?: string | undefined; ... 4 more ...; pageSize?: number | undefined; }'.
+scripts/r86-supplier-breach-unit.ts(50,72): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(51,75): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(52,78): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(53,88): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(55,62): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(56,72): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(57,74): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(58,71): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(59,72): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(62,29): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(67,29): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(70,80): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(73,41): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(74,41): error TS2353: Object literal may only specify known properties, and 'supplierId' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(76,40): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(80,50): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(81,118): error TS2339: Property 'pastDue' does not exist on type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(82,50): error TS2353: Object literal may only specify known properties, and 'pastDue' does not exist in type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(83,115): error TS2339: Property 'pastDue' does not exist on type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(83,137): error TS2339: Property 'supplierId' does not exist on type '{ kind: "supplier-bills"; }'.
+scripts/r86-supplier-breach-unit.ts(208,3): error TS2554: Expected 4-9 arguments, but got 10.
+scripts/r86-supplier-breach-unit.ts(210,46): error TS2339: Property 'pastDueBillCount' does not exist on type 'SupplierDetail'.
+scripts/r86-supplier-breach-unit.ts(211,45): error TS2339: Property 'pastDueBillsOutstandingMinor' does not exist on type 'SupplierDetail'.
+scripts/r86-supplier-breach-unit.ts(212,78): error TS2339: Property 'pastDue' does not exist on type 'SupplierRecentBill'.
+scripts/r86-supplier-breach-unit.ts(212,131): error TS2339: Property 'pastDueDays' does not exist on type 'SupplierRecentBill'.
+scripts/r86-supplier-breach-unit.ts(213,76): error TS2339: Property 'pastDue' does not exist on type 'SupplierRecentBill'.
+scripts/r86-supplier-breach-unit.ts(213,130): error TS2339: Property 'pastDueDays' does not exist on type 'SupplierRecentBill'.
+scripts/r86-supplier-breach-unit.ts(216,58): error TS2339: Property 'pastDueBillCount' does not exist on type 'SupplierDetail'.
+scripts/r86-supplier-breach-unit.ts(217,57): error TS2339: Property 'pastDueBillsOutstandingMinor' does not exist on type 'SupplierDetail'.
+scripts/r87-sale-overdue-unit.ts(47,90): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(48,93): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(50,80): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(51,90): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(52,92): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(53,89): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(54,97): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(58,56): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(63,56): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(67,96): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(68,94): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(70,50): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(71,68): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(72,50): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(73,53): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(76,60): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(77,56): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(81,78): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(82,56): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(90,40): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(96,40): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(103,58): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r87-sale-overdue-unit.ts(109,52): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(50,38): error TS2353: Object literal may only specify known properties, and 'customerId' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(55,38): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(68,56): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(73,56): error TS2353: Object literal may only specify known properties, and 'customerId' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(85,50): error TS2353: Object literal may only specify known properties, and 'customerId' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(87,49): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(92,67): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(97,67): error TS2353: Object literal may only specify known properties, and 'customerId' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(101,50): error TS2353: Object literal may only specify known properties, and 'customerId' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(102,50): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(103,53): error TS2353: Object literal may only specify known properties, and 'customerId' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(106,60): error TS2353: Object literal may only specify known properties, and 'customerId' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(107,38): error TS2353: Object literal may only specify known properties, and 'customerId' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(111,78): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(112,56): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(116,60): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(117,38): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(125,40): error TS2353: Object literal may only specify known properties, and 'customerId' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(131,40): error TS2353: Object literal may only specify known properties, and 'customerId' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(138,40): error TS2353: Object literal may only specify known properties, and 'customerId' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(145,40): error TS2353: Object literal may only specify known properties, and 'overdue' does not exist in type '{ kind: "module"; module: string; param?: string | undefined; }'.
+scripts/r88-customer-overdue-unit.ts(164,3): error TS2353: Object literal may only specify known properties, and 'dueDate' does not exist in type 'CustomerSaleRow'.
+scripts/r88-customer-overdue-unit.ts(173,44): error TS2554: Expected 1 arguments, but got 2.
+scripts/r88-customer-overdue-unit.ts(174,12): error TS2339: Property 'overdue' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(175,12): error TS2339: Property 'overdueDays' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(176,12): error TS2339: Property 'dueDate' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(178,72): error TS2554: Expected 1 arguments, but got 2.
+scripts/r88-customer-overdue-unit.ts(178,80): error TS2339: Property 'overdue' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(179,72): error TS2554: Expected 1 arguments, but got 2.
+scripts/r88-customer-overdue-unit.ts(179,80): error TS2339: Property 'overdueDays' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(180,30): error TS2353: Object literal may only specify known properties, and 'dueDate' does not exist in type 'Partial<CustomerSaleRow>'.
+scripts/r88-customer-overdue-unit.ts(180,49): error TS2554: Expected 1 arguments, but got 2.
+scripts/r88-customer-overdue-unit.ts(180,57): error TS2339: Property 'overdue' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(181,30): error TS2353: Object literal may only specify known properties, and 'dueDate' does not exist in type 'Partial<CustomerSaleRow>'.
+scripts/r88-customer-overdue-unit.ts(181,50): error TS2554: Expected 1 arguments, but got 2.
+scripts/r88-customer-overdue-unit.ts(181,58): error TS2339: Property 'overdueDays' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(182,30): error TS2353: Object literal may only specify known properties, and 'dueDate' does not exist in type 'Partial<CustomerSaleRow>'.
+scripts/r88-customer-overdue-unit.ts(182,50): error TS2554: Expected 1 arguments, but got 2.
+scripts/r88-customer-overdue-unit.ts(182,58): error TS2339: Property 'overdue' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(183,30): error TS2353: Object literal may only specify known properties, and 'dueDate' does not exist in type 'Partial<CustomerSaleRow>'.
+scripts/r88-customer-overdue-unit.ts(183,49): error TS2554: Expected 1 arguments, but got 2.
+scripts/r88-customer-overdue-unit.ts(183,57): error TS2339: Property 'overdue' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(184,30): error TS2353: Object literal may only specify known properties, and 'dueDate' does not exist in type 'Partial<CustomerSaleRow>'.
+scripts/r88-customer-overdue-unit.ts(184,49): error TS2554: Expected 1 arguments, but got 2.
+scripts/r88-customer-overdue-unit.ts(184,57): error TS2339: Property 'dueDate' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(186,30): error TS2353: Object literal may only specify known properties, and 'dueDate' does not exist in type 'Partial<CustomerSaleRow>'.
+scripts/r88-customer-overdue-unit.ts(186,54): error TS2554: Expected 1 arguments, but got 2.
+scripts/r88-customer-overdue-unit.ts(186,62): error TS2339: Property 'overdue' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(190,14): error TS2339: Property 'overdue' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(191,14): error TS2339: Property 'overdueDays' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(192,14): error TS2339: Property 'dueDate' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(205,29): error TS2353: Object literal may only specify known properties, and 'dueDate' does not exist in type 'Partial<CustomerSaleRow>'.
+scripts/r88-customer-overdue-unit.ts(205,51): error TS2554: Expected 1 arguments, but got 2.
+scripts/r88-customer-overdue-unit.ts(205,93): error TS2339: Property 'overdue' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(210,29): error TS2353: Object literal may only specify known properties, and 'dueDate' does not exist in type 'Partial<CustomerSaleRow>'.
+scripts/r88-customer-overdue-unit.ts(210,51): error TS2554: Expected 1 arguments, but got 2.
+scripts/r88-customer-overdue-unit.ts(210,93): error TS2339: Property 'overdue' does not exist on type 'CustomerRecentSale'.
+scripts/r88-customer-overdue-unit.ts(235,17): error TS2339: Property 'overdueSaleCount' does not exist on type 'CustomerDetail'.
+scripts/r88-customer-overdue-unit.ts(236,17): error TS2339: Property 'overdueSalesOutstandingMinor' does not exist on type 'CustomerDetail'.
+scripts/r88-customer-overdue-unit.ts(249,3): error TS2554: Expected 4-9 arguments, but got 11.
+scripts/r88-customer-overdue-unit.ts(252,9): error TS2339: Property 'overdueSaleCount' does not exist on type 'CustomerDetail'.
+scripts/r88-customer-overdue-unit.ts(253,9): error TS2339: Property 'overdueSalesOutstandingMinor' does not exist on type 'CustomerDetail'.
+scripts/r88-customer-overdue-unit.ts(255,36): error TS2339: Property 'overdue' does not exist on type 'CustomerRecentSale'.
+scripts/r89-aging-rollup-unit.ts(41,3): error TS2305: Module '"../src/lib/aging-details"' has no exported member 'AGING_DETAIL_ROLLUP_MAX_GROUPS'.
+scripts/r89-aging-rollup-unit.ts(42,3): error TS2305: Module '"../src/lib/aging-details"' has no exported member 'rollupAccumulate'.
+scripts/r89-aging-rollup-unit.ts(43,3): error TS2305: Module '"../src/lib/aging-details"' has no exported member 'rollupRank'.
+scripts/r89-aging-rollup-unit.ts(44,8): error TS2305: Module '"../src/lib/aging-details"' has no exported member 'AgingRollupAccumulator'.
+scripts/r90-sale-draft-unit.ts(49,3): error TS2305: Module '"../src/lib/money"' has no exported member 'OPEN_SALE_STATUSES'.
+scripts/r90-sale-draft-unit.ts(50,3): error TS2305: Module '"../src/lib/money"' has no exported member 'OPEN_SALE_STATUS_FILTER'.
+scripts/r90-sale-draft-unit.ts(51,3): error TS2305: Module '"../src/lib/money"' has no exported member 'ISSUED_SALE_STATUSES'.
+scripts/r90-sale-draft-unit.ts(52,3): error TS2305: Module '"../src/lib/money"' has no exported member 'SALE_STATUSES'.
+scripts/r90-sale-draft-unit.ts(54,3): error TS2305: Module '"../src/lib/money"' has no exported member 'issuedIssueDate'.
+scripts/r90-sale-draft-unit.ts(155,13): error TS2339: Property 'draft' does not exist on type '{ customerId: string | null; items: { productId: string | null; name: string; unit: string | null; qty: number; unitPriceMinor: number; }[]; discountMinor: number; note: string | null; issueDate: Date | null; dueDate: Date | null; }'.
+scripts/r90-sale-draft-unit.ts(159,13): error TS2339: Property 'draft' does not exist on type '{ customerId: string | null; items: { productId: string | null; name: string; unit: string | null; qty: number; unitPriceMinor: number; }[]; discountMinor: number; note: string | null; issueDate: Date | null; dueDate: Date | null; }'.
+scripts/r90-sale-draft-unit.ts(163,13): error TS2339: Property 'draft' does not exist on type '{ customerId: string | null; items: { productId: string | null; name: string; unit: string | null; qty: number; unitPriceMinor: number; }[]; discountMinor: number; note: string | null; issueDate: Date | null; dueDate: Date | null; }'.
+scripts/r90-sale-draft-unit.ts(179,33): error TS2339: Property 'issue' does not exist on type '{ customerId: string | null | undefined; dueDate: Date | null | undefined; note: string | null | undefined; }'.
+scripts/r90-sale-draft-unit.ts(180,46): error TS2339: Property 'issue' does not exist on type '{ customerId: string | null | undefined; dueDate: Date | null | undefined; note: string | null | undefined; }'.
+scripts/r90-sale-draft-unit.ts(181,46): error TS2339: Property 'issue' does not exist on type '{ customerId: string | null | undefined; dueDate: Date | null | undefined; note: string | null | undefined; }'.
+scripts/r90-sale-draft-unit.ts(238,7): error TS2322: Type 'null' is not assignable to type 'Date'.
+scripts/r90-sale-draft-unit.ts(283,5): error TS2554: Expected 1 arguments, but got 2.
+scripts/r90-sale-draft-unit.ts(287,15): error TS2339: Property 'overdue' does not exist on type 'CustomerRecentSale'.
+scripts/r93-aging-groups-unit.ts(43,10): error TS2305: Module '"../src/lib/aging-details"' has no exported member 'rollupAccumulate'.
+scripts/r93-aging-groups-unit.ts(43,28): error TS2305: Module '"../src/lib/aging-details"' has no exported member 'rollupRank'.
+scripts/r94-party-rank-unit.ts(44,3): error TS2305: Module '"../src/lib/aging-details"' has no exported member 'rollupAccumulate'.
+scripts/r94-party-rank-unit.ts(45,3): error TS2305: Module '"../src/lib/aging-details"' has no exported member 'rollupRank'.
+scripts/r94-party-rank-unit.ts(46,8): error TS2305: Module '"../src/lib/aging-details"' has no exported member 'AgingRollupAccumulator'.
+scripts/r94-party-rank-unit.ts(48,10): error TS2305: Module '"../src/lib/party-aging"' has no exported member 'partyRankFromBookRows'.
+scripts/r94-party-rank-unit.ts(48,38): error TS2305: Module '"../src/lib/party-aging"' has no exported member 'PartyRankBookRow'.
+scripts/r95-book-leaders-unit.ts(49,3): error TS2305: Module '"../src/lib/aging-details"' has no exported member 'rollupAccumulate'.
+scripts/r95-book-leaders-unit.ts(50,3): error TS2305: Module '"../src/lib/aging-details"' has no exported member 'rollupRank'.
+scripts/r95-book-leaders-unit.ts(51,8): error TS2305: Module '"../src/lib/aging-details"' has no exported member 'AgingRollupAccumulator'.
+scripts/r95-book-leaders-unit.ts(54,3): error TS2305: Module '"../src/lib/party-aging"' has no exported member 'bookLeadersFromBookRows'.
+scripts/r95-book-leaders-unit.ts(55,3): error TS2305: Module '"../src/lib/party-aging"' has no exported member 'partyRankFromBookRows'.
+scripts/r95-book-leaders-unit.ts(56,8): error TS2305: Module '"../src/lib/party-aging"' has no exported member 'PartyRankBookRow'.
+scripts/r99-share-unit.ts(30,10): error TS2724: '"../src/lib/inventory-valuation-report"' has no exported member named 'computeInventoryTopValueProducts'. Did you mean 'computeInventoryTotals'?
+src/app/api/v1/sales/[id]/route.ts(41,7): error TS2345: Argument of type '{ id: string; number: number; customerId: string | null; customerName: string | null; issueDate: Date; subtotalMinor: number; discountMinor: number; taxRateBp: number; taxMinor: number; ... 4 more ...; createdAt: Date; }' is not assignable to parameter of type 'SaleRecordRow'.
+  Property 'dueDate' is missing in type '{ id: string; number: number; customerId: string | null; customerName: string | null; issueDate: Date; subtotalMinor: number; discountMinor: number; taxRateBp: number; taxMinor: number; ... 4 more ...; createdAt: Date; }' but required in type 'SaleRecordRow'.
+src/content/legal/index.ts(8,15): error TS2305: Module '"./types"' has no exported member 'LegalDocumentContent'.
+src/content/legal/index.ts(9,10): error TS2305: Module '"./privacy"' has no exported member 'privacyContent'.
+src/content/legal/index.ts(10,10): error TS2305: Module '"./terms"' has no exported member 'termsContent'.
+src/content/legal/index.ts(11,10): error TS2305: Module '"./ai-data-use"' has no exported member 'aiDataUseContent'.
+src/content/legal/index.ts(14,29): error TS2305: Module '"./types"' has no exported member 'LegalDocumentContent'.
+src/content/legal/index.ts(14,51): error TS2305: Module '"./types"' has no exported member 'LocalizedText'.
+src/content/legal/trust.ts(15,15): error TS2305: Module '"./types"' has no exported member 'LegalDocumentContent'.
+src/lib/payments/public-pricing.ts(25,24): error TS2305: Module '"@/lib/billing/catalog"' has no exported member 'configuredTrialDays'.
+src/lib/schemas.ts(118,12): error TS2448: Block-scoped variable 'dueDateStringSchema' used before its declaration.
+src/lib/schemas.ts(118,12): error TS2454: Variable 'dueDateStringSchema' is used before being assigned.
+src/modules/legal/legal-view.tsx(28,28): error TS2305: Module '"@/store/app-store"' has no exported member 'LegalDocKey'.
+src/modules/legal/legal-view.tsx(50,39): error TS2366: Function lacks ending return statement and return type does not include 'undefined'.
+src/modules/legal/legal-view.tsx(84,44): error TS2339: Property 'setAuthMode' does not exist on type 'AppState'.
+src/modules/legal/legal-view.tsx(114,18): error TS2322: Type '"pricing"' is not assignable to type '"join" | "audit" | "entity" | "crm" | "dashboard" | "settings:business" | "settings:members" | "settings:billing" | "settings:security" | "settings:data" | "notifications" | ... 28 more ... | "verify-email"'.
+src/modules/legal/legal-view.tsx(116,18): error TS2322: Type '"legal"' is not assignable to type '"join" | "audit" | "entity" | "crm" | "dashboard" | "settings:business" | "settings:members" | "settings:billing" | "settings:security" | "settings:data" | "notifications" | ... 28 more ... | "verify-email"'.
+src/modules/pricing/pricing-view.tsx(110,44): error TS2339: Property 'setAuthMode' does not exist on type 'AppState'.
+src/modules/pricing/pricing-view.tsx(496,130): error TS2322: Type '"legal"' is not assignable to type '"join" | "audit" | "entity" | "crm" | "dashboard" | "settings:business" | "settings:members" | "settings:billing" | "settings:security" | "settings:data" | "notifications" | ... 28 more ... | "verify-email"'.
+src/modules/pricing/pricing-view.tsx(499,130): error TS2322: Type '"legal"' is not assignable to type '"join" | "audit" | "entity" | "crm" | "dashboard" | "settings:business" | "settings:members" | "settings:billing" | "settings:security" | "settings:data" | "notifications" | ... 28 more ... | "verify-email"'.
+src/modules/pricing/pricing-view.tsx(502,130): error TS2322: Type '"legal"' is not assignable to type '"join" | "audit" | "entity" | "crm" | "dashboard" | "settings:business" | "settings:members" | "settings:billing" | "settings:security" | "settings:data" | "notifications" | ... 28 more ... | "verify-email"'.
+src/modules/pricing/pricing-view.tsx(505,130): error TS2322: Type '"legal"' is not assignable to type '"join" | "audit" | "entity" | "crm" | "dashboard" | "settings:business" | "settings:members" | "settings:billing" | "settings:security" | "settings:data" | "notifications" | ... 28 more ... | "verify-email"'.
+src/modules/pricing/pricing-view.tsx(534,44): error TS2339: Property 'setAuthMode' does not exist on type 'AppState'.

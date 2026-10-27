@@ -9,6 +9,7 @@ import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { formatInvoiceNumber } from "@/lib/finance";
+import { localDayIndex } from "@/lib/aging";
 import { mapSaleDetail } from "@/lib/entities";
 
 export const dynamic = "force-dynamic";
@@ -44,6 +45,7 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         customerId: sale.customerId,
         customerName: sale.customer?.name ?? null,
         issueDate: sale.issueDate,
+        dueDate: sale.dueDate,
         subtotalMinor: sale.subtotalMinor,
         discountMinor: sale.discountMinor,
         taxRateBp: sale.taxRateBp,
@@ -63,6 +65,10 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
         paidAt: p.paidAt,
         actorName: p.actor?.name ?? p.actor?.email ?? null,
       })),
+      // R81 stated-terms day math: the business timezone (A07) governs the
+      // overdue gate; today's index comes from the SERVER clock (never the
+      // browser — the same server-authority law as every other date gate).
+      { timeZone: ctx.business.timezone, todayIdx: localDayIndex(new Date(), ctx.business.timezone) },
     ),
   );
 });

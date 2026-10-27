@@ -464,6 +464,9 @@ export type SaleDetail = {
     customerId: string | null;
     customerName: string | null;
     issueDate: string;
+    // R81 — stated payment terms (§84 date-only ISO instant) or null when
+    // no terms were stated (honest AGING framing, never "overdue").
+    dueDate: string | null;
     subtotalMinor: number;
     discountMinor: number;
     // Prompt 52 §F3 — VAT snapshot on the issued invoice (0 for legacy rows).
@@ -473,6 +476,10 @@ export type SaleDetail = {
     paidMinor: number;
     balanceMinor: number;
     status: PaymentStatusToken;
+    // R81 — stated-terms honesty gate: true ONLY when terms were stated,
+    // the balance is open, and the due day is strictly before today's
+    // business-timezone day. Legacy contexts degrade to false.
+    overdue: boolean;
     note: string | null;
     createdAt: string;
   };

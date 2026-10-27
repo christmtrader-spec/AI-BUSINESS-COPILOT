@@ -42,6 +42,19 @@ export const LEGAL_DOCS: Record<LegalDocKey, LegalDocMeta> = {
 /** The legal documents that are REQUIRED for public production (§86). */
 export const REQUIRED_LEGAL_DOCS: readonly LegalDocKey[] = ["privacy", "terms", "ai-data-use"];
 
+/** The closed doc-key vocabulary as a value — one source for guards. */
+export const LEGAL_DOC_KEYS: readonly LegalDocKey[] = [
+  "privacy",
+  "terms",
+  "ai-data-use",
+  "trust",
+];
+
+/** Runtime guard: only closed-vocabulary doc keys ever become view state. */
+export function isLegalDocKey(value: string): value is LegalDocKey {
+  return (LEGAL_DOC_KEYS as readonly string[]).includes(value);
+}
+
 function envOrNull(name: string): string | null {
   const raw = process.env[name];
   if (typeof raw !== "string") return null;

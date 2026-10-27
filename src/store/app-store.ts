@@ -18,6 +18,12 @@ import {
   AGING_BUCKET_KEYS,
   type AgingBucketKey,
 } from "@/lib/aging";
+import type { LegalDocKey } from "@/config/legal";
+import { isLegalDocKey } from "@/config/legal";
+
+// Re-exported for view modules (legal/pricing render doc switches from the
+// store's closed vocabulary — one import site for the whole app).
+export type { LegalDocKey };
 
 /**
  * Global client state (Zustand). Server data lives in TanStack Query;
@@ -147,6 +153,13 @@ export type AppView =
   | { kind: "profile" }
   | { kind: "onboarding" }
   | { kind: "join"; token: string }
+  /** Prompt 25/27 — public pricing page (#/pricing, anonymous-accessible).
+   * The marketing surface: plan directory, availability, legal links. */
+  | { kind: "pricing" }
+  /** Prompt 27 — public legal documents (#/legal/<doc>, anonymous-
+   * accessible). `doc` is the CLOSED config/legal vocabulary — unknown
+   * docs NEVER become state (pricing fallback, §58 parity). */
+  | { kind: "legal"; doc: LegalDocKey }
   /** R67 — platform operator invite redemption (#/platform-join/<token>).
    * Anonymous-with-token (§161 pattern): the OPAQUE token IS the
    * authorization; renders OUTSIDE the auth gate like verify-email. */
@@ -294,6 +307,11 @@ export function viewKeyOf(view: AppView): string {
       ? `aging-details:${view.side}:${view.partyId ?? ""}:${view.bucket ?? ""}:${view.pastDue ? 1 : 0}`
       : view.kind === "join"
       ? `join:${view.token}`
+      // Prompt 27 — legal docs remount per document (TOC + scroll reset).
+      : view.kind === "legal"
+      ? `legal:${view.doc}`
+      : view.kind === "pricing"
+      ? "pricing"
       // R67 — token is part of the identity (each link remounts cleanly).
       : view.kind === "platform-join"
       ? `platform-join:${view.token}`
@@ -518,6 +536,11 @@ export function viewToHash(view: AppView): string | null {
     }
     case "join":
       return `#/join/${view.token}`;
+    // Prompt 27 — canonical legal/pricing hashes (anonymous deep links).
+    case "pricing":
+      return "#/pricing";
+    case "legal":
+      return `#/legal/${view.doc}`;
     // R67 — platform operator invite redemption deep link.
     case "platform-join":
       return `#/platform-join/${view.token}`;
@@ -582,6 +605,15 @@ export function hashToView(hash: string): AppView {
     if (token.length > 0 && token.length <= 128) return { kind: "platform-join", token };
   }
   if (path === "forgot-password") return { kind: "forgot-password" };
+  // Prompt 25/27 — public marketing + legal deep links (anonymous).
+  if (path === "pricing") return { kind: "pricing" };
+  if (path.startsWith("legal/")) {
+    const doc = path.slice("legal/".length);
+    // CLOSED vocabulary — unknown docs NEVER become state (pricing
+    // fallback, the same safe-fallback law as every other deep link §58).
+    if (isLegalDocKey(doc)) return { kind: "legal", doc };
+    return { kind: "pricing" };
+  }
   if (path.startsWith("verify-email/")) {
     const token = path.slice("verify-email/".length);
     // Opaque verification token: bounded length; the server validates the rest.
@@ -835,6 +867,14 @@ type AppState = {
   view: AppView;
   commandOpen: boolean;
   /**
+   * Prompt 25/27 — auth surface the join/sign-in card should show. The
+   * legal & pricing pages flip this BEFORE navigating to the dashboard so
+   * the auth card opens on the intended mode (never a second click).
+   * Never persisted — the default is the calm "signin".
+   */
+  authMode: "signin" | "signup";
+  setAuthMode: (mode: "signin" | "signup") => void;
+  /**
    * Prompt 52 §F2 — cross-view quick-action intents ("New invoice" on the
    * dashboard opens the create dialog inside the target module). The `seq`
    * makes every fire unique so the same action can fire twice in a row.
@@ -859,6 +899,8 @@ export const useAppStore = create<AppState>()(
       view: { kind: "dashboard" },
       commandOpen: false,
       quickIntent: null,
+      authMode: "signin",
+      setAuthMode: (authMode) => set({ authMode }),
       setLocale: (locale) => set({ locale }),
       setActiveBusiness: (activeBusinessId) => set({ activeBusinessId }),
       navigate: (view, opts) => {

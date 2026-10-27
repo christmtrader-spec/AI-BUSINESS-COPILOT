@@ -6,12 +6,12 @@
 
 import type { LegalDocKey } from "@/config/legal";
 import type { LegalDocumentContent } from "./types";
-import { privacyContent } from "./privacy";
-import { termsContent } from "./terms";
-import { aiDataUseContent } from "./ai-data-use";
+import { privacyContent } from "./privacy-content";
+import { termsContent } from "./terms-content";
+import { aiDataUseContent } from "./ai-data-use-content";
 import { trustContent } from "./trust";
 
-export type { LegalSection, LegalDocumentContent, LocalizedText } from "./types";
+export type { LegalDocumentContent, LocalizedText, LocalizedLegalSection } from "./types";
 
 export const LEGAL_CONTENT: Record<LegalDocKey, LegalDocumentContent> = {
   privacy: privacyContent,

@@ -268,3 +268,16 @@ export const ENTITLED_STATUSES = ["TRIALING", "ACTIVE", "PAST_DUE", "CANCELED"] 
 export function selfServicePlanCodes(): PlanCode[] {
   return PLANS.filter((p) => p.isPublic && p.code !== "ENTERPRISE").map((p) => p.code);
 }
+
+/**
+ * Prompt 25 — the trial length the PUBLIC pricing surface advertises.
+ * Delegates to THE trial-config authority (billing/trial-config.ts — the
+ * one place trial policy is read from the environment): when trials are
+ * disabled or misconfigured this returns null and the pricing page
+ * honestly renders "no trial" instead of inventing a number.
+ */
+import { getTrialConfig } from "./trial-config";
+
+export function configuredTrialDays(): number | null {
+  return getTrialConfig().trialDays;
+}

@@ -95,6 +95,18 @@ export function localDayKey(d: Date, timeZone: string): string {
   return `${parts.y}-${mm}-${dd}`;
 }
 
+/**
+ * R81/R83 — the ONE write-side ordering gate for stated payment terms.
+ * True only when the due DAY is strictly BEFORE the issue DAY in the
+ * business timezone (A07 day math — §84 midnoon instants make the calendar
+ * day identical everywhere, so comparing day indexes is the honest gate).
+ * Same day (due == issue) is NEVER "before" — net-N terms issued today are
+ * legitimately due today.
+ */
+export function dueBeforeIssue(due: Date, issue: Date, timeZone: string): boolean {
+  return localDayIndex(due, timeZone) < localDayIndex(issue, timeZone);
+}
+
 function safeDayParts(
   d: Date,
   timeZone: string,

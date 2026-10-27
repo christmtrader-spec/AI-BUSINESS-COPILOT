@@ -107,19 +107,13 @@ export const saleItemInputSchema = z.object({
   unitPriceMinor: z.number().int().min(0).max(9_000_000_000),
 });
 
-export const saleCreateSchema = z.object({
-  customerId: z.string().trim().max(64).nullish().transform((v) => v || null),
-  items: z.array(saleItemInputSchema).min(1, "At least one line item is required").max(50),
-  discountMinor: z.number().int().min(0).max(9_000_000_000).default(0),
-  note: z.string().trim().max(1000).nullish().transform((v) => v || null),
-  issueDate: z.string().datetime().nullish().transform((v) => (v ? new Date(v) : null)),
-});
-
-// Payables aging (§2 row 15): supplier-bill terms. dueDate is DATE-ONLY
+// Payables aging (§2 row 15) + R81 receivables terms: dueDate is DATE-ONLY
 // ("YYYY-MM-DD") — interpreted with the sanctioned Prompt-35 §84 rule
 // (UTC midnoon) so the calendar day is identical in every display timezone.
 // Garbage calendar dates (2026-02-31) are rejected, not silently nulled.
-const dueDateStringSchema = z
+// SHARED authority: sales, expenses and supplier bills parse terms through
+// this one schema — one law for both sides of the book.
+export const dueDateStringSchema = z
   .string()
   .trim()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.")
@@ -137,6 +131,17 @@ const dueDateStringSchema = z
   )
   .transform((v) => new Date(`${v}T12:00:00.000Z`))
   .refine((d) => !Number.isNaN(d.getTime()), "Invalid calendar date.");
+
+export const saleCreateSchema = z.object({
+  customerId: z.string().trim().max(64).nullish().transform((v) => v || null),
+  items: z.array(saleItemInputSchema).min(1, "At least one line item is required").max(50),
+  discountMinor: z.number().int().min(0).max(9_000_000_000).default(0),
+  note: z.string().trim().max(1000).nullish().transform((v) => v || null),
+  issueDate: z.string().datetime().nullish().transform((v) => (v ? new Date(v) : null)),
+  // R81 — stated payment terms. Absent/null → null (no terms stated — the
+  // honest AGING framing); "YYYY-MM-DD" → §84 UTC-midnoon instant.
+  dueDate: dueDateStringSchema.nullish().transform((v) => (v == null ? null : v)),
+});
 
 export const expenseCreateSchema = z.object({
   supplierId: z.string().trim().max(64).nullish().transform((v) => v || null),
@@ -171,6 +176,16 @@ export const expenseUpdateSchema = z.object({
   // (explicit clear), "YYYY-MM-DD" → UTC-midnoon Date (§84).
   dueDate: dueDateStringSchema.nullish().transform((v) => (v === undefined ? undefined : v)),
   reference: z.string().trim().max(80).nullish().transform(threeStateText),
+  note: z.string().trim().max(1000).nullish().transform(threeStateText),
+});
+
+/** PATCH semantics — absent = untouched, null = clear (see threeStateText). */
+export const saleUpdateSchema = z.object({
+  customerId: z.string().trim().max(64).nullish().transform(threeStateText),
+  // R83 — PATCH three-state law for stated terms: absent → undefined
+  // (untouched — NOT null, which would clear), null → null (explicit clear
+  // back to the honest AGING framing), "YYYY-MM-DD" → §84 midnoon instant.
+  dueDate: dueDateStringSchema.nullish().transform((v) => (v === undefined ? undefined : v)),
   note: z.string().trim().max(1000).nullish().transform(threeStateText),
 });
 
@@ -219,6 +234,35 @@ export const copilotAskSchema = z.object({
       "requestId must be a UUID.",
     )
     .optional(),
+});
+
+// R126 — stream stop/resume. The stop beacon and the resume poll address
+// the Prompt 21 requestId (the answer's logical identity): the client
+// generates one UUID per logical question, so stop/resume can never be
+// tricked into touching another user's stream (ownership is re-checked
+// server-side against the buffer's embedded businessId+userId).
+export const copilotStopSchema = z.object({
+  requestId: z
+    .string()
+    .trim()
+    .regex(
+      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+      "requestId must be a UUID.",
+    ),
+});
+
+export const copilotResumeSchema = z.object({
+  requestId: z
+    .string()
+    .trim()
+    .regex(
+      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+      "requestId must be a UUID.",
+    ),
+  // Index of the first delta the client has NOT seen (0-based). The buffer
+  // is capped at 64KB per answer, so a sane client index is bounded; the
+  // store clamps/serves what exists and reports overflow honestly.
+  fromIndex: z.number().int().min(0).max(100_000),
 });
 
 // ---------------------------------------------------------------------------
