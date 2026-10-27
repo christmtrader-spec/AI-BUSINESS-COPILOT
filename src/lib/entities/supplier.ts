@@ -101,6 +101,10 @@ export function mapSupplierDetail(
   // Prompt 49 (§17) — canonical payables-aging overview for THIS supplier
   // (Expense authority only — a SupplierBill is never a second balance).
   payablesAging: SupplierDetail["payablesAging"] = undefined,
+  // R86 — the payables BREACH summary, forwarded VERBATIM from the service
+  // count (the mapper does no day math — one authority). Absent → the
+  // honest zeros, so every pre-R86 caller stays valid.
+  pastDueBreach: { count: number; outstandingMinor: number } = { count: 0, outstandingMinor: 0 },
 ): SupplierDetail {
   return {
     supplier: {
@@ -120,6 +124,8 @@ export function mapSupplierDetail(
     recentGoodsReturns,
     recentSupplierBills,
     payablesAging,
+    pastDueBillCount: pastDueBreach.count,
+    pastDueBillsOutstandingMinor: pastDueBreach.outstandingMinor,
   };
 }
 

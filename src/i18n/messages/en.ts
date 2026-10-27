@@ -1288,6 +1288,8 @@ const en = {
       noDueDate: "No due date",
       pastDueBadge: "Past due",
       unassignedParty: "No party recorded",
+      groupsPageScope: "Party sub-groups fold this page only — the party board above ranks every open item in scope.",
+      groupSummary: "{count} documents · {total} outstanding · oldest {days} days",
       viewStatement: "Open statement",
       viewSource: "Open source document",
       export: "Export CSV",
@@ -1859,6 +1861,7 @@ const en = {
     title: "AI Copilot",
     subtitle: "Ask anything about your business — answers are computed from your real records.",
     readOnly: "Read-only — cannot change records",
+    resuming: "Connection lost — restoring the answer…",
     windowLabel: "Data window",
     window_7: "7 days",
     window_30: "30 days",
@@ -4971,6 +4974,8 @@ const en = {
     unknownSupplier: "Unknown supplier",
     date: "Date",
     dueDate: "Due date",
+    draftNoIssueDate: "Not issued yet — draft",
+
     reference: "Bill reference",
     // Payment
     method: "Method",

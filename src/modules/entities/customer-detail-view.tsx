@@ -209,7 +209,8 @@ export function CustomerDetailView({
           id: s.id,
           icon: ShoppingCart,
           primary: `INV-${String(s.number).padStart(4, "0")}`,
-          secondary: fmtDate(business, s.issueDate),
+          // R90 — a draft has no issue day yet: honest absence, no fake date.
+          secondary: s.issueDate ? fmtDate(business, s.issueDate) : t("draftNoIssueDate"),
           trailing: fmtMoney(business, s.totalMinor),
           badge: <FinanceStatusBadge status={s.status} />,
         }))}

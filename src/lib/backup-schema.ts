@@ -135,8 +135,10 @@ export const saleRowSchema = z.object({
   discountMinor: moneyInt,
   totalMinor: moneyInt,
   paidMinor: moneyInt,
-  status: z.enum(["UNPAID", "PARTIAL", "PAID"]),
-  issueDate: isoDate,
+  // R90 — DRAFT joins the lifecycle: a draft round-trips with a NULL issue
+  // day and ZERO payments (draft money is a lie — rejected below).
+  status: z.enum(["DRAFT", "UNPAID", "PARTIAL", "PAID"]),
+  issueDate: isoDate.nullable(),
   note: nullableText(1000),
   deletedAt: isoDate,
   items: z.array(saleItemRowSchema).max(200),
@@ -147,9 +149,16 @@ export const saleRowSchema = z.object({
   .refine((s) => s.paidMinor <= s.totalMinor, {
     message: "paidMinor cannot exceed totalMinor (no overpayment)",
   })
-  .refine((s) => s.status === statusOf(s.totalMinor, s.paidMinor), {
-    message: "status must match statusOf(totalMinor, paidMinor)",
-  });
+  // R90 — the DRAFT money law: pre-issuance = no issue day + no payments.
+  .refine((s) => s.status !== "DRAFT" || (s.issueDate === null && s.paidMinor === 0), {
+    message: "a DRAFT is pre-issuance money: null issueDate and zero paidMinor",
+  })
+  .refine(
+    (s) => s.status === "DRAFT" || (s.issueDate !== null && s.status === statusOf(s.totalMinor, s.paidMinor)),
+    {
+      message: "status must match statusOf(totalMinor, paidMinor)",
+    },
+  );
 
 export const expenseRowSchema = z.object({
   id: z.string().min(1).max(64),

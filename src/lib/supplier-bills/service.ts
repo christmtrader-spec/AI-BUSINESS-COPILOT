@@ -59,6 +59,7 @@ import {
   type SupplierBillPayableDto,
   type SupplierBillPaymentDto,
 } from "./dto";
+import { billRowPastDueState } from "./pastdue";
 
 type Tx = Prisma.TransactionClient;
 const withWriteTx = withWriteTransaction;
@@ -1462,6 +1463,9 @@ export async function listRecentBillsForSupplier(input: {
   businessId: string;
   supplierId: string;
   take: number;
+  /** R86 — business timezone + today's index drive the breach state. */
+  timeZone?: string;
+  todayIdx?: number;
 }): Promise<
   Array<{
     id: string;
@@ -1476,6 +1480,9 @@ export async function listRecentBillsForSupplier(input: {
     decimalPrecisionAtBill: number;
     payableStatus: string | null;
     paidMinor: number | null;
+    // R86 — precomputed breach state (honest silence when absent).
+    pastDue: boolean;
+    pastDueDays: number | null;
   }>
 > {
   const rows = await db.supplierBill.findMany({
@@ -1493,23 +1500,44 @@ export async function listRecentBillsForSupplier(input: {
       totalMinor: true,
       currencySymbolAtBill: true,
       decimalPrecisionAtBill: true,
-      expense: { select: { status: true, paidMinor: true } },
+      expense: { select: { status: true, paidMinor: true, amountMinor: true } },
     },
   });
-  return rows.map((row) => ({
-    id: row.id,
-    reference: row.reference,
-    supplierInvoiceReference: row.supplierInvoiceReference,
-    purchaseOrderReferenceAtBill: row.purchaseOrderReferenceAtBill,
-    status: parseDbStatus(row.status),
-    billDate: row.billDate.toISOString(),
-    dueDate: row.dueDate ? row.dueDate.toISOString() : null,
-    totalMinor: row.totalMinor,
-    currencySymbolAtBill: row.currencySymbolAtBill,
-    decimalPrecisionAtBill: row.decimalPrecisionAtBill,
-    payableStatus: row.expense?.status ?? null,
-    paidMinor: row.expense?.paidMinor ?? null,
-  }));
+  return rows.map((row) => {
+    // R86 — the breach state is computed HERE (the ONE day-math authority,
+    // lib/pastdue) and forwarded verbatim; without a timezone context the
+    // honest default is silence (never a fabricated breach).
+    const state =
+      input.timeZone && input.todayIdx !== undefined
+        ? billRowPastDueState(
+            {
+              status: row.status,
+              dueDate: row.dueDate,
+              expense: row.expense
+                ? { amountMinor: row.expense.amountMinor, paidMinor: row.expense.paidMinor }
+                : null,
+            },
+            input.todayIdx,
+            input.timeZone,
+          )
+        : { pastDue: false, pastDueDays: null };
+    return {
+      id: row.id,
+      reference: row.reference,
+      supplierInvoiceReference: row.supplierInvoiceReference,
+      purchaseOrderReferenceAtBill: row.purchaseOrderReferenceAtBill,
+      status: parseDbStatus(row.status),
+      billDate: row.billDate.toISOString(),
+      dueDate: row.dueDate ? row.dueDate.toISOString() : null,
+      totalMinor: row.totalMinor,
+      currencySymbolAtBill: row.currencySymbolAtBill,
+      decimalPrecisionAtBill: row.decimalPrecisionAtBill,
+      payableStatus: row.expense?.status ?? null,
+      paidMinor: row.expense?.paidMinor ?? null,
+      pastDue: state.pastDue,
+      pastDueDays: state.pastDueDays,
+    };
+  });
 }
 
 /**

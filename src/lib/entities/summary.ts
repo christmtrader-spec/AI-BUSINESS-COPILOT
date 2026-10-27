@@ -19,7 +19,9 @@ import type {
  * defensive type-guard, not a second status definition (§73).
  */
 export function toStatusToken(status: string): PaymentStatusToken {
-  return status === "PAID" || status === "PARTIAL" ? status : "UNPAID";
+  // R90 — DRAFT passes through (the sale lifecycle owns it); every other
+  // unknown falls to UNPAID (defensive, unchanged).
+  return status === "DRAFT" || status === "PAID" || status === "PARTIAL" ? status : "UNPAID";
 }
 
 /**

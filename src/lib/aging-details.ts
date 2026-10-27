@@ -668,3 +668,108 @@ export async function collectAgingDetailRows(req: AgingDetailRequest): Promise<A
 }
 
 export { AgingDetailValidationError };
+
+// ---------------------------------------------------------------------------
+// R89/R93/R94/R95 — the PARTY ROLLUP (the board behind the detail rows).
+//
+// A streaming fold over the SAME filtered detail rows the list shows: the
+// board ≡ rows reconciliation law (§ the folded sum equals the filtered
+// total for an untruncated board). Pure functions, no day math — the rows
+// arrive with their ageDays already computed by the shared aging engine.
+// ---------------------------------------------------------------------------
+
+/** Production default for the party board cap (the envCap convention). */
+export const AGING_DETAIL_ROLLUP_MAX_GROUPS = 12;
+
+/** One folded party group — the accumulator value shape. */
+export type AgingRollupGroup = {
+  partyId: string | null;
+  partyName: string | null;
+  count: number;
+  outstandingMinor: number;
+  /** MAX age across the party's folded rows (the "oldest item" honesty). */
+  oldestDays: number;
+};
+
+/** Streaming accumulator: partyId-keyed ("" = the honest unassigned group). */
+export type AgingRollupAccumulator = Map<string, AgingRollupGroup>;
+
+/** The row shape the fold consumes (subset of the detail item). */
+export type AgingRollupFoldItem = {
+  partyId: string | null;
+  partyName: string | null;
+  outstandingMinor: number;
+  ageDays: number;
+};
+
+/**
+ * Fold ONE row into the accumulator — ONLY when the caller's filter matched
+ * it (a filtered-out row never enters the board, test 1a). Unassigned
+ * parties (null id) are their OWN honest group keyed "" — never merged
+ * into a fabricated party (test 1c). Mutates the SAME map (streaming fold).
+ */
+export function rollupAccumulate(
+  acc: AgingRollupAccumulator,
+  item: AgingRollupFoldItem,
+  matched: boolean,
+): void {
+  if (!matched) return;
+  const key = item.partyId ?? "";
+  const existing = acc.get(key);
+  if (!existing) {
+    acc.set(key, {
+      partyId: item.partyId,
+      partyName: item.partyName,
+      count: 1,
+      outstandingMinor: item.outstandingMinor,
+      oldestDays: item.ageDays,
+    });
+    return;
+  }
+  existing.count += 1;
+  existing.outstandingMinor += item.outstandingMinor;
+  existing.oldestDays = Math.max(existing.oldestDays, item.ageDays);
+}
+
+/** The ranked board: groups + untrimmed count + honest truncation flag. */
+export type AgingRollup = {
+  groups: AgingRollupGroup[];
+  /** EVERY distinct party in scope — the untrimmed count (test 2b/2f). */
+  groupCount: number;
+  groupsTruncated: boolean;
+};
+
+/**
+ * Rank the folded board: outstanding DESC; ties break name-then-id
+ * (deterministic across pages/refreshes, test 2d); the unassigned group
+ * ranks by its own outstanding like any other (it lands last only when it
+ * IS the smallest — honesty, not a special case). The cap keeps the TOP of
+ * the ranking; groupCount stays untrimmed; the flag is honest (2e-2h).
+ */
+export function rollupRank(
+  acc: AgingRollupAccumulator,
+  maxGroups: number = AGING_DETAIL_ROLLUP_MAX_GROUPS,
+): AgingRollup {
+  const all = Array.from(acc.values());
+  if (all.length === 0) {
+    return { groups: [], groupCount: 0, groupsTruncated: false };
+  }
+  const ranked = all.sort((a, b) => {
+    if (b.outstandingMinor !== a.outstandingMinor) {
+      return b.outstandingMinor - a.outstandingMinor;
+    }
+    const an = a.partyName ?? "";
+    const bn = b.partyName ?? "";
+    if (an !== bn) return an < bn ? -1 : 1;
+    const aid = a.partyId ?? "";
+    const bid = b.partyId ?? "";
+    if (aid !== bid) return aid < bid ? -1 : 1;
+    return 0;
+  });
+  const cap = Math.max(1, Math.floor(maxGroups));
+  return {
+    groups: ranked.slice(0, cap),
+    groupCount: all.length,
+    groupsTruncated: all.length > cap,
+  };
+}

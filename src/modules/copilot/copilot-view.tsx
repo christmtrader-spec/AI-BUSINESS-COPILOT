@@ -18,6 +18,7 @@ import {
   Check,
   ChevronDown,
   Copy,
+  Loader2,
   Download,
   HandCoins,
   History,
@@ -51,6 +52,7 @@ import {
   titleFromQuestion,
   type CopilotSession,
 } from "@/lib/copilot-sessions";
+import type { StreamResumeSnapshot } from "@/lib/ai/stream-resume";
 import {
   fetchServerSessions,
   mergeWithServer,
@@ -114,6 +116,8 @@ type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   failed?: boolean;
+  /** R127 — restored through the stream-resume healing path (R126). */
+  healed?: boolean;
   /** Dataset provenance for this answer (first SSE event) — rendered as
    *  citation chips under the bubble so every figure is traceable. */
   meta?: CopilotMeta;
@@ -447,6 +451,12 @@ export function CopilotView({
   const [atBottom, setAtBottom] = useState(true);
   const lastQuestionRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // R126 — the logical operation id of the answer in flight (Prompt 21
+  // idempotency key): the stop beacon and any resume polling address it.
+  const activeRequestIdRef = useRef<string | null>(null);
+  // R126 — amber "restoring" pill while the resume poll loop heals a
+  // mid-answer connection cut.
+  const [resumingId, setResumingId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -785,6 +795,17 @@ export function CopilotView({
       // server transcript (Phase 07 cross-device persistence).
       let answerText = "";
       let answerMeta: CopilotMeta | undefined;
+      // R126 — the logical operation id (client-generated UUID): the stop
+      // beacon and the resume poll address THIS answer, never a new one.
+      const requestId =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+      activeRequestIdRef.current = requestId;
+      // R126 — how many deltas the LIVE stream delivered (the resume
+      // fromIndex): the server buffers every delta from 0, so the client
+      // counts its own seen deltas and asks for the unseen suffix.
+      let seenDeltas = 0;
 
       try {
         const res = await fetch("/api/v1/copilot/stream", {
@@ -801,6 +822,7 @@ export function CopilotView({
               .slice(-6)
               .map((m) => ({ role: m.role, content: m.content })),
             days,
+            requestId,
           }),
           signal: controller.signal,
         });
@@ -867,6 +889,7 @@ export function CopilotView({
               } else if (typeof payload.delta === "string" && payload.delta.length > 0) {
                 const delta = payload.delta;
                 answerText += delta;
+                seenDeltas += 1;
                 patchAssistant(assistantId, (m) => ({
                   ...m,
                   content: m.content + delta,
@@ -927,6 +950,114 @@ export function CopilotView({
             content: localizedError(error.code),
             failed: true,
           }));
+        } else if (answerText.length > 0) {
+          // R126 — MID-ANSWER NETWORK CUT with deltas already delivered:
+          // the server kept consuming the provider into the bounded resume
+          // buffer (stream break law ③). Poll POST /copilot/stream/resume
+          // and apply exactly the unseen suffix. Bounded patience — the
+          // R126 law: ≤ 40 polls × 400ms (~16s window), tolerating 3
+          // transport errors; beyond that the honest pre-R126 partial
+          // handling takes over (the buffer TTL is 120s, so a cut within
+          // the window heals; an answer still generating after the window
+          // finalizes as a partial — never a fake completion).
+          setResumingId(assistantId);
+          let fromIndex = seenDeltas;
+          let transportErrors = 0;
+          let healedDone = false;
+          let stoppedRemotely = false;
+          let terminalCode: string | null = null;
+          try {
+            for (let poll = 0; poll < 40; poll += 1) {
+              await new Promise((r) => setTimeout(r, 400));
+              let snap: StreamResumeSnapshot | null = null;
+              try {
+                const res = await fetch("/api/v1/copilot/stream/resume", {
+                  method: "POST",
+                  credentials: "same-origin",
+                  headers: {
+                    "content-type": "application/json",
+                    "x-business-id": business.id,
+                  },
+                  body: JSON.stringify({ requestId, fromIndex }),
+                });
+                if (!res.ok) throw new Error(`resume-${res.status}`);
+                snap = (await res.json()) as StreamResumeSnapshot;
+              } catch {
+                transportErrors += 1;
+                if (transportErrors >= 3) break;
+                continue;
+              }
+              // Overflow = a middle gap the buffer dropped — a replay from
+              // this fromIndex would stitch a lie into the answer; finalize
+              // with the live partial instead (never fabricate continuity).
+              if (snap.overflow) break;
+              if (snap.deltas.length > 0) {
+                const joined = snap.deltas.join("");
+                fromIndex = snap.nextIndex;
+                answerText += joined;
+                patchAssistant(assistantId, (m) => ({
+                  ...m,
+                  content: m.content + joined,
+                }));
+              }
+              if (snap.error) {
+                terminalCode = snap.error.code ?? "INTERNAL_ERROR";
+                break;
+              }
+              if (snap.done) {
+                healedDone = true;
+                break;
+              }
+              if (snap.stopped) {
+                stoppedRemotely = true;
+                break;
+              }
+            }
+          } finally {
+            setResumingId((cur) => (cur === assistantId ? null : cur));
+          }
+          if (healedDone) {
+            // Mirror-ONCE: the FULL healed answer enters the transcript.
+            // The healed marker itself stays DEVICE-LOCAL (R128 law C): it
+            // marks THIS device's transport healing, so the server
+            // transcript deliberately strips it — a server-restored copy on
+            // another device must never count as healed there.
+            patchAssistant(assistantId, (m) => ({ ...m, healed: true }));
+            syncAppend(
+              activeSessionIdRef.current,
+              {
+                role: "assistant",
+                content: answerText,
+                ...(answerMeta ? { meta: answerMeta } : {}),
+              },
+              titleFromQuestion(lastQuestionRef.current ?? ""),
+            );
+          } else {
+            // Gave up / overflow / remote stop / terminal error — finalize
+            // the partial honestly: no fabricated continuity, a warning
+            // suffix unless the answer was user-stopped (same law as the
+            // Stop path below), and the partial mirrored once.
+            const suffix = stoppedRemotely
+              ? null
+              : terminalCode
+                ? localizedError(terminalCode)
+                : localizedError("NETWORK_ERROR");
+            if (suffix) {
+              patchAssistant(assistantId, (m) => ({
+                ...m,
+                content: `${m.content}\n\n⚠ ${suffix}`,
+              }));
+            }
+            syncAppend(
+              activeSessionIdRef.current,
+              {
+                role: "assistant",
+                content: answerText,
+                ...(answerMeta ? { meta: answerMeta } : {}),
+              },
+              titleFromQuestion(lastQuestionRef.current ?? ""),
+            );
+          }
         } else {
           patchAssistant(assistantId, (m) => ({
             ...m,
@@ -936,6 +1067,7 @@ export function CopilotView({
         }
       } finally {
         abortRef.current = null;
+        activeRequestIdRef.current = null;
         setActiveStreamId((cur) => (cur === assistantId ? null : cur));
       }
     },
@@ -954,6 +1086,30 @@ export function CopilotView({
   };
 
   const handleStop = () => {
+    // R126 — stop the MODEL, not just the socket: fire the stop beacon
+    // FIRST (keepalive, best-effort — the fetch below may kill the page's
+    // pending requests), THEN abort. Without the beacon an abort after
+    // deltas is indistinguishable from a network cut and the server would
+    // keep generating (break law ③) — burning tokens the user cancelled.
+    const rid = activeRequestIdRef.current;
+    if (rid) {
+      try {
+        void fetch("/api/v1/copilot/stream/stop", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "content-type": "application/json",
+            "x-business-id": business.id,
+          },
+          body: JSON.stringify({ requestId: rid }),
+          keepalive: true,
+        }).catch(() => {
+          /* best-effort beacon — the abort below still ends the stream */
+        });
+      } catch {
+        /* same — never let the beacon block the stop */
+      }
+    }
     abortRef.current?.abort();
   };
 
@@ -1513,6 +1669,16 @@ export function CopilotView({
                       </div>
                       {!m.failed && m.meta ? (
                         <CitationStrip meta={m.meta} locale={business.locale} />
+                      ) : null}
+                      {resumingId === m.id ? (
+                        <div
+                          className="inline-flex w-fit items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-400"
+                          role="status"
+                          aria-live="polite"
+                        >
+                          <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                          <span>{t("resuming")}</span>
+                        </div>
                       ) : null}
                     </div>
                   </div>

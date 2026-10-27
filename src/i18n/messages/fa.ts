@@ -1290,6 +1290,8 @@ const fa: Messages = {
       noDueDate: "بدون سررسید",
       pastDueBadge: "سررسید گذشته",
       unassignedParty: "بدون طرف حساب",
+      groupsPageScope: "زیرگروه‌های طرف حساب فقط همین صفحه را پوشش می‌دهند — برد طرف‌حساب‌ها در بالا، همه اقلام بازِ دامنه را رتبه‌بندی می‌کند.",
+      groupSummary: "{count} سند · {total} مانده · قدیمی‌ترین {days} روز",
       viewStatement: "صورت‌حساب طرف حساب",
       viewSource: "سند مبدأ",
       export: "خروجی CSV",
@@ -1856,6 +1858,7 @@ const fa: Messages = {
     title: "دستیار هوشمند",
     subtitle: "هر چه درباره کسب‌وکارتان می‌خواهید بپرسید — پاسخ‌ها از روی داده‌های واقعی شما محاسبه می‌شوند.",
     readOnly: "فقط‌خواندنی — ثبت تغییر نمی‌کند",
+    resuming: "اتصال قطع شد — در حال بازیابی پاسخ…",
     windowLabel: "بازه داده‌ها",
     window_7: "۷ روز",
     window_30: "۳۰ روز",
@@ -4968,6 +4971,8 @@ const fa: Messages = {
     unknownSupplier: "تأمین‌کننده نامشخص",
     date: "تاریخ",
     dueDate: "تاریخ سررسید",
+    draftNoIssueDate: "هنوز صادر نشده — پیش‌نویس",
+
     reference: "شماره سند",
     // Payment
     method: "روش پرداخت",

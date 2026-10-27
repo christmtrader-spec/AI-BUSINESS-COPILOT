@@ -14,7 +14,10 @@ export type SaleRecordRow = {
   number: number;
   customerId: string | null;
   customerName: string | null;
-  issueDate: Date;
+  // R90 — DRAFT rows are pre-issuance: the issue day is honestly ABSENT
+  // (null) until the invoice is issued. Every issued-money path narrows via
+  // issuedIssueDate (fail loudly on a leaked draft).
+  issueDate: Date | null;
   // R81 — stated payment terms (date-only §84 midnoon instant). Null = no
   // terms stated → the DTO honestly stays AGING-framed, never "overdue".
   dueDate: Date | null;
@@ -93,6 +96,10 @@ export function mapSaleDetail(
   // terms or no day-math context → overdue:false (AGING framing).
   const balance = balanceOf(record.totalMinor, record.paidMinor);
   const overdue =
+    // R90 — a DRAFT is pre-issuance money: NEVER overdue, even when a
+    // legacy-looking past due day rides the row (the state trusts the
+    // lifecycle, never the columns).
+    record.status !== "DRAFT" &&
     balance > 0 &&
     record.dueDate !== null &&
     dayMath !== undefined &&
@@ -103,7 +110,8 @@ export function mapSaleDetail(
       number: record.number,
       customerId: record.customerId,
       customerName: record.customerName,
-      issueDate: record.issueDate.toISOString(),
+      // R90 — a draft's issue day is honestly absent (null passthrough).
+      issueDate: record.issueDate ? record.issueDate.toISOString() : null,
       // Date-only semantics: the §84 midnoon instant renders the same
       // calendar day in every display timezone.
       dueDate: record.dueDate ? record.dueDate.toISOString() : null,

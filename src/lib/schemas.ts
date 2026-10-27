@@ -84,10 +84,11 @@ export function listParams(url: URL) {
   return { q, page, pageSize };
 }
 
-/** Parse an optional status filter for transactions. */
-export function statusParam(url: URL): "UNPAID" | "PARTIAL" | "PAID" | null {
+/** Parse an optional status filter for transactions. R90 — DRAFT joins the
+ * closed tokens (the sale lifecycle filter); case-insensitive (upper law). */
+export function statusParam(url: URL): "UNPAID" | "PARTIAL" | "PAID" | "DRAFT" | null {
   const raw = (url.searchParams.get("status") ?? "").trim().toUpperCase();
-  if (raw === "UNPAID" || raw === "PARTIAL" || raw === "PAID") return raw;
+  if (raw === "UNPAID" || raw === "PARTIAL" || raw === "PAID" || raw === "DRAFT") return raw;
   return null;
 }
 
@@ -141,6 +142,10 @@ export const saleCreateSchema = z.object({
   // R81 — stated payment terms. Absent/null → null (no terms stated — the
   // honest AGING framing); "YYYY-MM-DD" → §84 UTC-midnoon instant.
   dueDate: dueDateStringSchema.nullish().transform((v) => (v == null ? null : v)),
+  // R90 — the draft flag: a CLOSED boolean token. Absent/null → false (the
+  // historical issued law); "yes"/"1"/other truthy strings are REJECTED,
+  // never coerced — a draft is created on purpose, never by accident.
+  draft: z.boolean().nullish().transform((v) => v === true),
 });
 
 export const expenseCreateSchema = z.object({
@@ -186,6 +191,17 @@ export const saleUpdateSchema = z.object({
   // (untouched — NOT null, which would clear), null → null (explicit clear
   // back to the honest AGING framing), "YYYY-MM-DD" → §84 midnoon instant.
   dueDate: dueDateStringSchema.nullish().transform((v) => (v === undefined ? undefined : v)),
+  // R83 — issue date move: absent → undefined (untouched); a real ISO
+  // instant → Date; null is NOT a clear (the column is NOT NULL — a null
+  // payload degrades to untouched instead of crashing the update).
+  issueDate: z
+    .string()
+    .datetime()
+    .nullish()
+    .transform((v) => (v ? new Date(v) : undefined)),
+  // R90 — the ISSUE flag (PATCH): flips a draft to an issued invoice on the
+  // server's clock. Closed boolean token — absent/null → false, "1" rejected.
+  issue: z.boolean().nullish().transform((v) => v === true),
   note: z.string().trim().max(1000).nullish().transform(threeStateText),
 });
 

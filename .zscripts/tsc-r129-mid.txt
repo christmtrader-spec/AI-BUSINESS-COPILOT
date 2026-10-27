@@ -1,0 +1,16 @@
+src/modules/balances/aging-details-view.tsx(528,25): error TS17002: Expected corresponding JSX closing tag for 'Table'.
+src/modules/balances/aging-details-view.tsx(529,23): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/modules/balances/aging-details-view.tsx(530,21): error TS17002: Expected corresponding JSX closing tag for 'div'.
+src/modules/balances/aging-details-view.tsx(531,19): error TS17015: Expected corresponding closing tag for JSX fragment.
+src/modules/balances/aging-details-view.tsx(531,24): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/modules/balances/aging-details-view.tsx(532,17): error TS17015: Expected corresponding closing tag for JSX fragment.
+src/modules/balances/aging-details-view.tsx(532,20): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/modules/balances/aging-details-view.tsx(626,15): error TS1003: Identifier expected.
+src/modules/balances/aging-details-view.tsx(628,9): error TS1128: Declaration or statement expected.
+src/modules/balances/aging-details-view.tsx(628,11): error TS1109: Expression expected.
+src/modules/balances/aging-details-view.tsx(629,7): error TS1109: Expression expected.
+src/modules/balances/aging-details-view.tsx(629,9): error TS1128: Declaration or statement expected.
+src/modules/balances/aging-details-view.tsx(629,15): error TS1128: Declaration or statement expected.
+src/modules/balances/aging-details-view.tsx(630,5): error TS1128: Declaration or statement expected.
+src/modules/balances/aging-details-view.tsx(631,3): error TS1109: Expression expected.
+src/modules/balances/aging-details-view.tsx(632,1): error TS1128: Declaration or statement expected.

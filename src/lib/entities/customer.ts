@@ -4,6 +4,8 @@
  */
 
 import { balanceOf, toMethodToken, toStatusToken } from "./summary";
+import { isPastDueDay } from "@/lib/reports-insights";
+import { localDayIndex } from "@/lib/aging";
 
 /** Closed stage tokens (Prompt 35 §6) — duplicated here ONLY as a literal
  * tuple so the mapper never depends on client-importable modules. */
@@ -31,11 +33,18 @@ export type CustomerRecordRow = {
 export type CustomerSaleRow = {
   id: string;
   number: number;
-  issueDate: Date;
+  // R90 — DRAFT rows arrive with a null issue day (honest absence).
+  issueDate: Date | null;
+  // R88 — stated terms ride the row so the 360 can speak the SAME overdue
+  // law as the sales list (undefined = legacy row shape = termless).
+  dueDate?: Date | null;
   totalMinor: number;
   paidMinor: number;
   status: string;
 };
+
+/** R88 — day-math context (business timezone + today's index). */
+export type CustomerDayMathContext = { timeZone: string; todayIdx: number };
 
 export type CustomerPaymentRecordRow = {
   id: string;
@@ -45,16 +54,41 @@ export type CustomerPaymentRecordRow = {
   note: string | null;
 };
 
-export function mapRecentSales(rows: CustomerSaleRow[]): CustomerRecentSale[] {
-  return rows.map((row) => ({
-    id: row.id,
-    number: row.number,
-    issueDate: row.issueDate.toISOString(),
-    totalMinor: row.totalMinor,
-    paidMinor: row.paidMinor,
-    balanceMinor: balanceOf(row.totalMinor, row.paidMinor),
-    status: toStatusToken(row.status),
-  }));
+export function mapRecentSales(
+  rows: CustomerSaleRow[],
+  dayMath?: CustomerDayMathContext,
+): CustomerRecentSale[] {
+  return rows.map((row) => {
+    // R88 — the breach law, shared gate (reports-insights isPastDueDay):
+    // stated terms + open balance + due day STRICTLY before today's
+    // business day. The floor law: due TODAY is never overdue; past-due
+    // days floor at 1. No ctx / no terms / settled → honest silence —
+    // never a fabricated flag (the legacy no-ctx caller stays valid).
+    const dueDate = row.dueDate ?? null;
+    const balance = balanceOf(row.totalMinor, row.paidMinor);
+    const overdue =
+      // R90 — a DRAFT is pre-issuance money: never overdue on the 360.
+      row.status !== "DRAFT" &&
+      balance > 0 &&
+      dueDate !== null &&
+      dayMath !== undefined &&
+      isPastDueDay(dueDate, dayMath.todayIdx, dayMath.timeZone);
+    return {
+      id: row.id,
+      number: row.number,
+      // R90 — a draft's issue day is honestly absent (null passthrough).
+      issueDate: row.issueDate ? row.issueDate.toISOString() : null,
+      dueDate: dueDate ? dueDate.toISOString() : null,
+      totalMinor: row.totalMinor,
+      paidMinor: row.paidMinor,
+      balanceMinor: balance,
+      status: toStatusToken(row.status),
+      overdue,
+      overdueDays: overdue
+        ? Math.max(1, dayMath!.todayIdx - localDayIndex(dueDate!, dayMath!.timeZone))
+        : null,
+    };
+  });
 }
 
 export function mapRecentPayments(
@@ -131,6 +165,13 @@ export function mapCustomerDetail(
   // Prompt 49 (§17) — canonical receivables-aging overview for THIS customer
   // (computed by the caller from the canonical aging engine; bounded scan).
   receivablesAging: CustomerDetail["receivablesAging"] = undefined,
+  // R88 — the customer's receivables BREACH strip, forwarded VERBATIM from
+  // the service count. ABSENT when not supplied (the legacy-caller honest
+  // absence law — never a fabricated zero where no scan ran).
+  overdueStrip?: { count: number; outstandingMinor: number },
+  // R88 — day-math ctx passed to mapRecentSales so the 360 rows speak the
+  // SAME overdue law (legacy callers omit it → honest silence per row).
+  dayMath?: CustomerDayMathContext,
 ): CustomerDetail {
   return {
     customer: {
@@ -143,12 +184,20 @@ export function mapCustomerDetail(
       createdAt: record.createdAt.toISOString(),
     },
     summary,
-    recentSales: mapRecentSales(recentSales),
+    recentSales: mapRecentSales(recentSales, dayMath),
     recentPayments: mapRecentPayments(recentPayments),
     recentGoodsDispatches,
     recentSalesOrders,
     recentSalesQuotations,
     receivablesAging,
+    // R88 — the strip facts ride additively ONLY when a caller supplied
+    // them; legacy callers see honest absence (undefined), never zeros.
+    ...(overdueStrip
+      ? {
+          overdueSaleCount: overdueStrip.count,
+          overdueSalesOutstandingMinor: overdueStrip.outstandingMinor,
+        }
+      : {}),
     // §44 — present but EMPTY for legacy callers; the detail route always
     // supplies the real bounded section.
     crm: crm ?? {

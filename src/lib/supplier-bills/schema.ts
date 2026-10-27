@@ -170,7 +170,11 @@ export const supplierBillLineUpdateSchema = z
   })
   .strict();
 
-/** List filters (§15) — bounded pagination; date windows are calendar dates. */
+/** List filters (§15) — bounded pagination; date windows are calendar dates.
+ * R85 — the deep-linkable breach lane: `pastDue` accepts ONLY the exact
+ * tokens "1"/"true" (the same closed-token law as the #/supplier-bills
+ * hash) — "0"/"yes"/garbage are rejected AT THE BOUNDARY, never coerced.
+ * The route composes it with planPastDueBillFilter for the count + where. */
 export const supplierBillListQuerySchema = z
   .object({
     q: z.string().trim().max(80).optional(),
@@ -185,5 +189,10 @@ export const supplierBillListQuerySchema = z
     dueDateTo: calendarDate.optional(),
     page: z.coerce.number().int().min(1).max(10_000).optional(),
     pageSize: z.coerce.number().int().min(1).max(100).optional(),
+    pastDue: z
+      .string()
+      .refine((v) => v === "1" || v === "true", "pastDue accepts only 1 or true.")
+      .transform((v) => true)
+      .optional(),
   })
   .strict();

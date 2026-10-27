@@ -52,6 +52,11 @@ export type SupplierBillListItemDto = {
     outstandingMinor: number;
     status: string;
   } | null;
+  // R85 — the breach lane state, PRECOMPUTED by the service (the mapper is
+  // structurally incapable of day math — one authority, lib/pastdue).
+  // Honest silence: no breach → false/null, never a fabricated number.
+  pastDue: boolean;
+  pastDueDays: number | null;
   createdAt: string;
 };
 
@@ -161,7 +166,11 @@ export function mapSupplierBillListItem(row: {
     paidMinor: number;
     status: string;
   } | null;
-}): SupplierBillListItemDto {
+},
+  // R85 — the precomputed breach state (billRowPastDueState output): the
+  // ONLY day-math authority. Absent → honest silence (false/null).
+  state?: { pastDue: boolean; pastDueDays: number | null },
+): SupplierBillListItemDto {
   const status = parseSupplierBillStatus(row.status);
   const paidMinor = row.expense?.paidMinor ?? 0;
   return {
@@ -191,6 +200,11 @@ export function mapSupplierBillListItem(row: {
           status: row.expense.status,
         }
       : null,
+    // R85 — breach state arrives PRECOMPUTED (optional second arg); a row
+    // with breached dates but no precomputed state stays SILENT — the mapper
+    // is structurally incapable of day math (one authority law).
+    pastDue: state?.pastDue ?? false,
+    pastDueDays: state?.pastDueDays ?? null,
     createdAt: row.createdAt.toISOString(),
   };
 }

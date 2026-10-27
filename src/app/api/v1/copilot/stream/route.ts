@@ -22,6 +22,19 @@
  *   the charge stands (user abort included — partial content was delivered);
  * - provider-reported token usage is recorded when the transport exposes it.
  *
+ * R126 — STREAM RESUME (post-delta healing):
+ * Every delta is mirrored into the bounded stream-resume buffer
+ * (src/lib/ai/stream-resume.ts) from delta 0, so a client whose connection
+ * died MID-ANSWER can re-attach via POST /copilot/stream/resume and pick up
+ * exactly the deltas it has not seen. The break law is ordered:
+ *   ① stop beacon landed (POST /copilot/stream/stop) → break — Stop stops
+ *      the MODEL, not just the socket;
+ *   ② client abort with ZERO deltas produced → break — a fetch that died
+ *      before the first delta is indistinguishable from a dead request;
+ *      the reservation is released in `finally` (§45 unchanged);
+ *   ③ client abort WITH deltas (network cut) → KEEP GENERATING into the
+ *      buffer (the charge already stands) and stop writing the dead socket.
+ *
  * Audit is written when the stream closes (completed / aborted / failed
  * status recorded).
  */
@@ -40,6 +53,7 @@ import {
 import { attributeAiCost } from "@/lib/ai/cost/ledger";
 import { assertAiCostGuard } from "@/lib/ai/cost/governance";
 import { buildCopilotGrounding } from "@/lib/ai/snapshot";
+import { streamResumeStore } from "@/lib/ai/stream-resume-store";
 import { AiUnavailableError, getAI, type AiMessage } from "@/lib/ai/provider";
 
 export const dynamic = "force-dynamic";
@@ -120,6 +134,12 @@ export const POST = route(async (req: NextRequest) => {
   let producedAnyDelta = false;
   let providerUsage: import("@/lib/billing").AiProviderUsage | null = null;
   let providerModel: string | null = null;
+  // R126 — the resume buffer owner (authz is re-checked inside the core).
+  const resumeOwner = { businessId, userId: actorId };
+  // KEEP-ORIGINAL: a live entry with the same requestId is NEVER forked —
+  // a client retry with the same Prompt 21 idempotency key attaches to the
+  // SAME answer. register() returns false in that case and that is fine.
+  streamResumeStore.register(requestId, resumeOwner);
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -132,21 +152,41 @@ export const POST = route(async (req: NextRequest) => {
           providerUsage = usage;
           providerModel = model;
         })) {
-          if (abortSignal.aborted) {
+          // R126 ① — stop beacon landed → break at the next delta boundary.
+          if (streamResumeStore.isStopped(requestId, resumeOwner)) {
+            status = "aborted";
+            break;
+          }
+          // R126 ② — client abort with ZERO deltas → plain break (dead
+          // request); `finally` releases the reservation (§45 unchanged).
+          if (abortSignal.aborted && !producedAnyDelta) {
             status = "aborted";
             break;
           }
           producedAnyDelta = true;
           answerChars += delta.length;
-          send({ delta });
+          // Mirror into the resume buffer BEFORE the socket write — the
+          // buffer must hold EVERY delta from 0 so a resume replays exactly
+          // the unseen suffix (client counts its own seen deltas).
+          streamResumeStore.appendDelta(requestId, delta);
+          // R126 ③ — abort WITH deltas (network cut) → the client is gone
+          // but the answer continues: consume the provider into the buffer,
+          // never touch the dead socket again.
+          if (!abortSignal.aborted) {
+            send({ delta });
+          }
         }
-        if (status === "completed") send({ done: true });
+        if (status === "completed") {
+          streamResumeStore.finish(requestId);
+          if (!abortSignal.aborted) send({ done: true });
+        }
       } catch (error) {
         if (abortSignal.aborted) {
           status = "aborted";
         } else if (error instanceof AiUnavailableError) {
           console.error("[copilot/stream] AI unavailable:", error.message);
           status = "failed";
+          streamResumeStore.fail(requestId, { code: "AI_UNAVAILABLE" });
           try {
             send({ error: { code: "AI_UNAVAILABLE", message: "The AI service is temporarily unavailable." } });
           } catch {
@@ -155,6 +195,7 @@ export const POST = route(async (req: NextRequest) => {
         } else {
           console.error("[copilot/stream] failed:", error);
           status = "failed";
+          streamResumeStore.fail(requestId, { code: "INTERNAL_ERROR" });
           try {
             send({ error: { code: "INTERNAL_ERROR", message: "Something went wrong. Please try again." } });
           } catch {
@@ -162,6 +203,11 @@ export const POST = route(async (req: NextRequest) => {
           }
         }
       } finally {
+        // R126 — an abort with zero deltas has nothing to resume: drop the
+        // empty entry instead of letting it idle out its TTL.
+        if (status === "aborted" && !producedAnyDelta) {
+          streamResumeStore.drop(requestId);
+        }
         try {
           controller.close();
         } catch {

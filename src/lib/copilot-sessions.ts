@@ -17,6 +17,12 @@ export type StoredCopilotMessage = {
   role: "user" | "assistant";
   content: string;
   failed?: boolean;
+  /** R127 — set ONLY when an answer was restored through the stream-resume
+   *  healing path (R126): the client's own stream was cut mid-answer and the
+   *  bounded server buffer completed it. A server-transcript restore (other
+   *  device / reload) never carries the marker — it must not inflate the
+   *  transport-reliability numerator (R128 law C). */
+  healed?: boolean;
   /** Citation provenance (server-computed) — kept so restored answers
    *  still show WHERE their numbers came from. */
   meta?: unknown;
@@ -90,7 +96,7 @@ function sanitizeSession(raw: unknown): CopilotSession | null {
         typeof (m as StoredCopilotMessage).content === "string",
     )
     .slice(-MAX_MESSAGES_PER_SESSION)
-    .map((m) => ({ id: m.id, role: m.role, content: m.content, ...(m.failed ? { failed: true } : {}), ...(m.meta ? { meta: m.meta } : {}) }));
+    .map((m) => ({ id: m.id, role: m.role, content: m.content, ...(m.failed ? { failed: true } : {}), ...(m.healed === true ? { healed: true } : {}), ...(m.meta ? { meta: m.meta } : {}) }));
   const createdAt = typeof s.createdAt === "number" ? s.createdAt : Date.now();
   const updatedAt = typeof s.updatedAt === "number" ? s.updatedAt : createdAt;
   const title = typeof s.title === "string" ? s.title.slice(0, 80) : "";
@@ -154,6 +160,47 @@ export function saveCopilotState(businessId: string, state: StoredCopilotState):
     // Quota exceeded / storage unavailable — transcripts are best-effort UX,
     // never critical data. Silently skip.
   }
+}
+
+/**
+ * R128 — device-local transport-reliability fact (PURE — no DOM, no IO,
+ * inputs never mutated, fresh result object every call).
+ *
+ * The insights panel's quiet line is built from this fraction:
+ *   answered = healthy assistant answers (role=assistant · not failed ·
+ *              non-empty content) — user messages, failed answers and
+ *              empty/whitespace-only answers sit OUTSIDE the fraction.
+ *   healed   = the subset whose answer came through the R126 stream-resume
+ *              healing path (the R127 `healed` marker). A server-restored
+ *              answer inflates the denominator only (law C).
+ *
+ * Defensive by design (law F): null sessions, missing/undefined message
+ * arrays and malformed messages never crash — the sanitizer guarantees
+ * shape on load, but the core must not assume it.
+ */
+export type TransportReliability = {
+  /** Healthy assistant answers (the denominator). */
+  answered: number;
+  /** Answers recovered via stream-resume healing (the numerator). */
+  healed: number;
+};
+
+export function transportReliability(sessions: CopilotSession[]): TransportReliability {
+  let answered = 0;
+  let healed = 0;
+  const list = Array.isArray(sessions) ? sessions : [];
+  for (const s of list) {
+    if (!s || typeof s !== "object" || !Array.isArray(s.messages)) continue;
+    for (const m of s.messages) {
+      if (!m || typeof m !== "object") continue;
+      if (m.role !== "assistant") continue;
+      if (m.failed === true) continue;
+      if (typeof m.content !== "string" || m.content.trim().length === 0) continue;
+      answered += 1;
+      if (m.healed === true) healed += 1;
+    }
+  }
+  return { answered, healed };
 }
 
 /** Remove ALL stored transcripts for a business (used by "clear history"). */

@@ -11,7 +11,8 @@ import type { EntityType } from "@/lib/entity-routes";
 import type { AgingBucketKey } from "@/lib/aging";
 
 /** Closed status token (mirrors lib/money statusOf output). */
-export type PaymentStatusToken = "UNPAID" | "PARTIAL" | "PAID";
+/** R90 — DRAFT joins the sale lifecycle tokens (pre-issuance money). */
+export type PaymentStatusToken = "UNPAID" | "PARTIAL" | "PAID" | "DRAFT";
 
 /** Closed tenant payment method token (never gateway/provider data). */
 export type PaymentMethodToken = "CASH" | "BANK_TRANSFER" | "CARD" | "OTHER";
@@ -47,11 +48,18 @@ export type CustomerSummary = {
 export type CustomerRecentSale = {
   id: string;
   number: number;
-  issueDate: string;
+  // R90 — null = DRAFT (pre-issuance): the issue day is honestly absent.
+  issueDate: string | null;
+  // R88 — stated terms + the shared overdue law on the Customer 360:
+  // dueDate null = termless (honest AGING framing); overdue true ONLY for
+  // open balances past the strictly-before gate; days floor at 1.
+  dueDate: string | null;
   totalMinor: number;
   paidMinor: number;
   balanceMinor: number;
   status: PaymentStatusToken;
+  overdue: boolean;
+  overdueDays: number | null;
 };
 
 export type RecentPaymentRow = {
@@ -115,6 +123,12 @@ export type CustomerDetail = {
    * (separate tables). Additive optional field.
    */
   receivablesAging?: PartyAgingSummary;
+  // R88 — the customer's receivables BREACH strip, forwarded verbatim from
+  // the service count (the mapper does no day math — one authority).
+  // HONEST ABSENCE: undefined for legacy callers (no scan ran), never a
+  // fabricated zero.
+  overdueSaleCount?: number;
+  overdueSalesOutstandingMinor?: number;
 };
 
 /**
@@ -221,6 +235,11 @@ export type SupplierDetail = {
    * never a second balance). Additive optional field.
    */
   payablesAging?: PartyAgingSummary;
+  // R86 — the supplier's payables BREACH summary, forwarded verbatim from
+  // the service count (the mapper does no day math — one authority).
+  // Defaults to the honest zeros (an old caller without the arg stays valid).
+  pastDueBillCount: number;
+  pastDueBillsOutstandingMinor: number;
 };
 
 /** Prompt 48 (§8) — bounded supplier-bill row for Supplier 360. */
@@ -238,6 +257,10 @@ export type SupplierRecentBill = {
   /** Live linked-Expense payment state (null for DRAFT/CANCELLED §10). */
   payableStatus: string | null;
   paidMinor: number | null;
+  // R86 — precomputed breach state for the row (honest silence when not
+  // breached: pastDue false + pastDueDays null — never a fabricated day).
+  pastDue: boolean;
+  pastDueDays: number | null;
 };
 
 /** Prompt 43 (§100) — bounded goods-return row for Supplier 360. */
@@ -463,7 +486,8 @@ export type SaleDetail = {
     number: number;
     customerId: string | null;
     customerName: string | null;
-    issueDate: string;
+    // R90 — null = DRAFT (pre-issuance): the issue day is honestly absent.
+    issueDate: string | null;
     // R81 — stated payment terms (§84 date-only ISO instant) or null when
     // no terms were stated (honest AGING framing, never "overdue").
     dueDate: string | null;

@@ -125,6 +125,38 @@ export function statusOf(totalMinor: number, paidMinor: number): PaymentStatus {
   return "PARTIAL";
 }
 
+// ---------------------------------------------------------------------------
+// R90 — the SALE lifecycle vocabulary. DRAFT is PRE-ISSUANCE money: it is
+// NOT a payment state (statusOf can never produce it — 1.8) and it carries
+// no terms and no payments. The closed sets below are the ONE authority
+// every filter, badge and merge law reads.
+// ---------------------------------------------------------------------------
+
+/** The full sale lifecycle: the draft + everything the money math owns. */
+export const SALE_STATUSES = ["DRAFT", "UNPAID", "PARTIAL", "PAID"] as const;
+
+/** Open balances only — the receivables population (never DRAFT, never PAID). */
+export const OPEN_SALE_STATUSES = ["UNPAID", "PARTIAL"] as const;
+
+/** Issued invoices only — the population statusOf owns (DRAFT excluded). */
+export const ISSUED_SALE_STATUSES = ["UNPAID", "PARTIAL", "PAID"] as const;
+
+/** Prisma where fragment for the open-balance population. */
+export const OPEN_SALE_STATUS_FILTER = { in: ["UNPAID", "PARTIAL"] } as const;
+
+/**
+ * R90 — narrow a sale row to ISSUED. A leaked DRAFT reaching a money path
+ * (aging, statements, merging) is a programming error: fail LOUDLY instead
+ * of silently reading a draft as a zero-balance invoice (1.9). Issued rows
+ * pass through verbatim (1.10).
+ */
+export function issuedIssueDate<T extends { issueDate: Date | null }>(row: T): T & { issueDate: Date } {
+  if (row.issueDate === null) {
+    throw new Error("DRAFT sale leaked into an issued-money path (no issue date)");
+  }
+  return row as T & { issueDate: Date };
+}
+
 /**
  * Prompt 52 §F3 — VAT engine.
  *

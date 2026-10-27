@@ -130,7 +130,8 @@ export function SaleDetailView({
         />
         <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
           <CalendarDays className="size-3.5" aria-hidden="true" />
-          {fmtDate(business, s.issueDate)}
+          {/* R90 — a draft has no issue day yet: honest absence, no fake date. */}
+          {s.issueDate ? fmtDate(business, s.issueDate) : t("draftNoIssueDate")}
         </p>
       </div>
 

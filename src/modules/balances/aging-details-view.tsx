@@ -50,6 +50,10 @@ import {
 import { EmptyState } from "@/components/shared/primitives";
 import { Ltr } from "@/components/shared/data-table";
 import { StatCard, fmtDate, fmtMoney } from "../finance-shared/finance-kit";
+// R93 — the presentation twin of the R89 board: ONE pure grouping function
+// (client-safe by construction — the module has zero imports), so the table
+// sub-groups can never disagree with the party board's order.
+import { groupAgingItemsByParty } from "@/lib/aging-groups";
 import { navigateToEntity } from "../entities/entity-route";
 import { EntityHeader } from "../entities/entity-header";
 import { useAppStore } from "@/store/app-store";
@@ -144,6 +148,10 @@ export function AgingDetailsView({
 
   const notFound = isError && error instanceof ApiClientError && error.status === 404;
   const items = data?.items ?? [];
+  // R93 — per-party sub-grouping of THIS page (presentation-only: it never
+  // enters the hash and never touches the export). Disabled when a single
+  // party is already filtered (grouping one party is noise).
+  const partyGroups = partyId ? null : groupAgingItemsByParty(items);
   const summary = data?.summary ?? null;
 
   // ---- CSV export (§14) — complete scope or a controlled rejection --------
@@ -245,6 +253,93 @@ export function AgingDetailsView({
     }
     return <span className="text-muted-foreground text-xs">{t("notPastDue")}</span>;
   };
+
+  // R93 — ONE row renderer shared by the flat and the grouped table paths
+  // (identical DOM either way — grouping only inserts party header rows).
+  const renderRow = (item: AgingDetailItemDto) => (
+                      <TableRow key={`${item.sourceType}:${item.sourceId}`}>
+                        <TableCell className="font-mono text-xs" dir="auto">
+                          <Ltr>{item.reference}</Ltr>
+                          {item.supplierBillReference ? (
+                            <span className="text-muted-foreground block text-[10px]" dir="auto">
+                              {item.supplierBillReference}
+                            </span>
+                          ) : null}
+                        </TableCell>
+                        {!partyId ? (
+                          <TableCell>
+                            {item.partyId ? (
+                              <button
+                                type="button"
+                                className="max-w-40 truncate text-sm underline-offset-2 hover:underline"
+                                onClick={() =>
+                                  navigateToEntity(
+                                    item.sourceType === "SALE" ? "customer" : "supplier",
+                                    item.partyId!,
+                                  )
+                                }
+                                title={item.partyName ?? undefined}
+                              >
+                                {item.partyName}
+                              </button>
+                            ) : (
+                              <span className="text-muted-foreground text-sm">{t("unassignedParty")}</span>
+                            )}
+                          </TableCell>
+                        ) : null}
+                        <TableCell className="whitespace-nowrap text-sm">
+                          {fmtDate(business, item.documentDate)}
+                        </TableCell>
+                        {side === "payables" ? (
+                          <TableCell className="whitespace-nowrap">
+                            {item.dueDate ? (
+                              <span className="text-muted-foreground text-sm tabular-nums">
+                                {fmtDate(business, item.dueDate)}
+                              </span>
+                            ) : null}
+                            <span className="block">{dueLabel(item)}</span>
+                          </TableCell>
+                        ) : null}
+                        <TableCell className="whitespace-nowrap text-sm tabular-nums">
+                          {side === "receivables" ? (
+                            <span title={t("invoiceAge")}>
+                              {t("invoiceAgeDays", { days: item.ageDays })}
+                            </span>
+                          ) : (
+                            t("invoiceAgeDays", { days: item.ageDays })
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-[11px] font-medium">
+                            {t(BUCKET_LABEL_KEYS[item.bucket])}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-end tabular-nums">
+                          <Ltr>{fmtMoney(business, item.totalMinor)}</Ltr>
+                        </TableCell>
+                        <TableCell className="text-end tabular-nums">
+                          <Ltr>{fmtMoney(business, item.paidMinor)}</Ltr>
+                        </TableCell>
+                        <TableCell className="text-end font-medium tabular-nums">
+                          <Ltr className="text-amber-700 dark:text-amber-400">
+                            {fmtMoney(business, item.outstandingMinor)}
+                          </Ltr>
+                        </TableCell>
+                        <TableCell className="text-end">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8"
+                            onClick={() => openSource(item)}
+                            aria-label={`${t("viewSource")}: ${item.reference}`}
+                          >
+                            <ExternalLink className="size-4" aria-hidden="true" />
+                            <span className="sr-only">{t("viewSource")}</span>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+  );
 
   return (
     <div className="flex flex-col gap-6" data-view="aging-details">
@@ -396,6 +491,14 @@ export function AgingDetailsView({
             <EmptyState icon={Receipt} title={t("empty")} description={t("subtitle")} />
           ) : (
             <>
+              {/* R93 — the honest page-scope note: the sub-groups fold THIS
+                  page only (bounded scan law); the party board is the
+                  cross-page authority. */}
+              {partyGroups && partyGroups.length > 1 ? (
+                <p className="text-muted-foreground text-xs" data-testid="aging-detail-group-scope">
+                  {t("groupsPageScope")}
+                </p>
+              ) : null}
               {/* Desktop table */}
               <div className="hidden md:block" aria-busy={isFetching}>
                 <Table>
@@ -415,90 +518,27 @@ export function AgingDetailsView({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {items.map((item) => (
-                      <TableRow key={`${item.sourceType}:${item.sourceId}`}>
-                        <TableCell className="font-mono text-xs" dir="auto">
-                          <Ltr>{item.reference}</Ltr>
-                          {item.supplierBillReference ? (
-                            <span className="text-muted-foreground block text-[10px]" dir="auto">
-                              {item.supplierBillReference}
-                            </span>
-                          ) : null}
-                        </TableCell>
-                        {!partyId ? (
-                          <TableCell>
-                            {item.partyId ? (
-                              <button
-                                type="button"
-                                className="max-w-40 truncate text-sm underline-offset-2 hover:underline"
-                                onClick={() =>
-                                  navigateToEntity(
-                                    item.sourceType === "SALE" ? "customer" : "supplier",
-                                    item.partyId!,
-                                  )
-                                }
-                                title={item.partyName ?? undefined}
-                              >
-                                {item.partyName}
-                              </button>
-                            ) : (
-                              <span className="text-muted-foreground text-sm">{t("unassignedParty")}</span>
-                            )}
-                          </TableCell>
-                        ) : null}
-                        <TableCell className="whitespace-nowrap text-sm">
-                          {fmtDate(business, item.documentDate)}
-                        </TableCell>
-                        {side === "payables" ? (
-                          <TableCell className="whitespace-nowrap">
-                            {item.dueDate ? (
-                              <span className="text-muted-foreground text-sm tabular-nums">
-                                {fmtDate(business, item.dueDate)}
-                              </span>
-                            ) : null}
-                            <span className="block">{dueLabel(item)}</span>
-                          </TableCell>
-                        ) : null}
-                        <TableCell className="whitespace-nowrap text-sm tabular-nums">
-                          {side === "receivables" ? (
-                            <span title={t("invoiceAge")}>
-                              {t("invoiceAgeDays", { days: item.ageDays })}
-                            </span>
-                          ) : (
-                            t("invoiceAgeDays", { days: item.ageDays })
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-[11px] font-medium">
-                            {t(BUCKET_LABEL_KEYS[item.bucket])}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-end tabular-nums">
-                          <Ltr>{fmtMoney(business, item.totalMinor)}</Ltr>
-                        </TableCell>
-                        <TableCell className="text-end tabular-nums">
-                          <Ltr>{fmtMoney(business, item.paidMinor)}</Ltr>
-                        </TableCell>
-                        <TableCell className="text-end font-medium tabular-nums">
-                          <Ltr className="text-amber-700 dark:text-amber-400">
-                            {fmtMoney(business, item.outstandingMinor)}
-                          </Ltr>
-                        </TableCell>
-                        <TableCell className="text-end">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-8"
-                            onClick={() => openSource(item)}
-                            aria-label={`${t("viewSource")}: ${item.reference}`}
-                          >
-                            <ExternalLink className="size-4" aria-hidden="true" />
-                            <span className="sr-only">{t("viewSource")}</span>
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {partyGroups
+                      ? partyGroups.flatMap((group) => [
+                          <TableRow key={`group:${group.partyId ?? "unassigned"}`} className="bg-muted/50">
+                            <TableCell colSpan={side === "payables" ? 10 : 9} className="py-1.5">
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
+                                <span className="font-medium" dir="auto">
+                                  {group.partyName ?? t("unassignedParty")}
+                                </span>
+                                <span className="text-muted-foreground tabular-nums">
+                                  {t("groupSummary", {
+                                    count: group.count,
+                                    total: fmtMoney(business, group.outstandingMinor),
+                                    days: group.oldestDays,
+                                  })}
+                                </span>
+                              </div>
+                            </TableCell>
+                          </TableRow>,
+                          ...group.items.map(renderRow),
+                        ])
+                      : items.map(renderRow)}
                   </TableBody>
                 </Table>
               </div>

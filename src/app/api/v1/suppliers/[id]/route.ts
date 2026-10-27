@@ -18,6 +18,7 @@ import { mapPurePurchaseOrderDomainError } from "@/lib/purchase-orders/service";
 import { listRecentReceiptsForSupplier } from "@/lib/inventory/goods-receipt/service";
 import { listRecentReturnsForSupplier } from "@/lib/inventory/goods-return/service";
 import { listRecentBillsForSupplier } from "@/lib/supplier-bills/service";
+import { localDayIndex } from "@/lib/aging";
 import { buildSupplierAgingSummary } from "@/lib/party-aging";
 import {
   computeSupplierSummary,
@@ -118,7 +119,14 @@ export const GET = route(async (req: NextRequest, { params }: RouteParams) => {
     // Prompt 48 (§8) — bounded supplier-bill history (≤10, snapshot identity).
     // READ-ONLY document rows; the per-bill payable state comes from the
     // LIVE linked Expense — this section never adds a payable movement.
-    listRecentBillsForSupplier({ businessId: ctx.businessId, supplierId: id, take: 10 }),
+    // R86 — the business timezone governs the per-row breach state.
+    listRecentBillsForSupplier({
+      businessId: ctx.businessId,
+      supplierId: id,
+      take: 10,
+      timeZone: ctx.business.timezone || "UTC",
+      todayIdx: localDayIndex(new Date(), ctx.business.timezone || "UTC"),
+    }),
     // Prompt 49 (§17) — canonical payables-aging overview for this exact
     // supplier (Expense authority only; bounded scan, business timezone).
     buildSupplierAgingSummary(ctx.businessId, id, ctx.business.timezone || "UTC"),

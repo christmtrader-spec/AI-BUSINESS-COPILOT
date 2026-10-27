@@ -131,9 +131,11 @@ export type AppView =
    * Prompt 48 — Supplier bill views: the LIST at #/supplier-bills and a
    * DETAIL deep link at #/supplier-bills/<id>. The id is validated with
    * the same safe-ID rules as every document deep link — malformed ids
-   * NEVER become state (dashboard fallback).
+   * NEVER become state (dashboard fallback). R86 — the list carries the
+   * DEEP-LINKABLE breach filter (?pastDue=1, ?supplier=<safeId>): the
+   * payables breach lane is a shareable URL, never just in-view state.
    */
-  | { kind: "supplier-bills" }
+  | { kind: "supplier-bills"; pastDue?: boolean; supplierId?: string }
   | { kind: "supplier-bill"; id: string }
   /**
    * Prompt 49 (§7/§11/§16) — DETAILED AGING drill-down: the open source
@@ -166,7 +168,13 @@ export type AppView =
   | { kind: "platform-join"; token: string }
   | { kind: "forgot-password" }
   | { kind: "reset-password"; token: string }
-  | { kind: "module"; module: string; /** optional sub-resource (e.g. reports ?month=YYYY-MM) */ param?: string }
+  | { kind: "module"; module: string; /** optional sub-resource (e.g. reports ?month=YYYY-MM) */ param?: string;
+      /** R87 — sales-only deep-linkable overdue worklist (?overdue=1).
+       * Other modules NEVER grow the token (closed sub-state vocabulary). */
+      overdue?: boolean;
+      /** R88 — sales-only customer-scoped worklist (?customer=<safeId>) —
+       * the Customer-360 drill landing. Charset-safe ids only. */
+      customerId?: string }
   /** Prompt 28 — internal platform console (separate workspace, §15). */
   | { kind: "platform"; section: PlatformSection }
   /** Prompt 30 §250 — email verification landing (token from the email link). */
@@ -243,7 +251,11 @@ export function isKnownModule(value: string): value is KnownModule {
 /** Stable identity of a view (for equality checks / keys). */
 export function viewKeyOf(view: AppView): string {
   return view.kind === "module"
-    ? `module:${view.module}`
+    ? view.module === "sales"
+      // R87/R88 — the sales worklist sub-state is part of the identity:
+      // flipping the lane (or switching customer) re-enters the store.
+      ? `module:sales:${view.param ?? ""}:${view.overdue ? 1 : 0}:${view.customerId ?? ""}`
+      : `module:${view.module}`
     // Prompt 35 — the tab is part of the key so tab switches remount the
     // inner CRM view deterministically.
     : view.kind === "crm"
@@ -298,7 +310,9 @@ export function viewKeyOf(view: AppView): string {
       ? `sales-quotation:${view.id}`
     // Prompt 48 — supplier-bill views: list + per-id detail keys (§36 parity).
     : view.kind === "supplier-bills"
-      ? "supplier-bills"
+      // R86 — the breach filter is part of the view identity: toggling the
+      // lane (or switching supplier) remounts with its own cursor/scroll.
+      ? `supplier-bills:${view.pastDue ? 1 : 0}:${view.supplierId ?? ""}`
     : view.kind === "supplier-bill"
       ? `supplier-bill:${view.id}`
     // Prompt 49 — aging-details remounts on ANY filter change so each
@@ -337,6 +351,16 @@ export function viewKeyOf(view: AppView): string {
 export function sameView(a: AppView, b: AppView): boolean {
   if (viewKeyOf(a) !== viewKeyOf(b)) return false;
   if (a.kind === "module" && b.kind === "module") {
+    // R87/R88 — the sales worklist sub-state is structural (sameView): a
+    // hash change that only flips overdue/customer re-enters the store
+    // WITHOUT remounting the module boundary shell.
+    if (a.module === "sales" && b.module === "sales") {
+      return (
+        (a.param ?? null) === (b.param ?? null) &&
+        (a.overdue ?? false) === (b.overdue ?? false) &&
+        (a.customerId ?? null) === (b.customerId ?? null)
+      );
+    }
     return (a.param ?? null) === (b.param ?? null);
   }
   // Prompt 34 — entity views compare entity + id (viewKey already carries
@@ -492,9 +516,16 @@ export function viewToHash(view: AppView): string | null {
       // Prompt 47 — only charset-safe ids ever become a hash.
       if (!isValidEntityId(view.id)) return null;
       return `#/sales-quotations/${view.id}`;
-    case "supplier-bills":
-      // Prompt 48 — canonical list hash.
-      return "#/supplier-bills";
+    case "supplier-bills": {
+      // R86 — canonical serializable breach lane: pastDue first, supplier
+      // second (byte-identical round-trip; only charset-safe ids serialize).
+      const params: string[] = [];
+      if (view.pastDue) params.push("pastDue=1");
+      if (view.supplierId && isValidEntityId(view.supplierId)) {
+        params.push(`supplier=${encodeURIComponent(view.supplierId)}`);
+      }
+      return params.length ? `#/supplier-bills?${params.join("&")}` : "#/supplier-bills";
+    }
     case "supplier-bill":
       // Prompt 48 — only charset-safe ids ever become a hash.
       if (!isValidEntityId(view.id)) return null;
@@ -530,7 +561,27 @@ export function viewToHash(view: AppView): string | null {
         return "#/reports?reorder=1";
       }
       if (view.param && /^\d{4}-\d{2}$/.test(view.param)) {
+        // R87/R88 — canonical sales order: month → overdue → customer.
+        if (view.module === "sales") {
+          const parts: string[] = [`month=${view.param}`];
+          if (view.overdue) parts.push("overdue=1");
+          if (view.customerId && isValidEntityId(view.customerId)) {
+            parts.push(`customer=${encodeURIComponent(view.customerId)}`);
+          }
+          return `#/sales?${parts.join("&")}`;
+        }
         return `#/${view.module}?month=${view.param}`;
+      }
+      if (view.module === "sales") {
+        // R87/R88 — canonical order overdue → customer; an unsafe id
+        // serializes NO fragment (never a fake destination) but a safe
+        // overdue flag still rides.
+        const parts: string[] = [];
+        if (view.overdue) parts.push("overdue=1");
+        if (view.customerId && isValidEntityId(view.customerId)) {
+          parts.push(`customer=${encodeURIComponent(view.customerId)}`);
+        }
+        return parts.length ? `#/sales?${parts.join("&")}` : "#/sales";
       }
       return `#/${view.module}`;
     }
@@ -784,7 +835,17 @@ export function hashToView(hash: string): AppView {
     return { kind: "sales-quotation", id };
   }
   // Prompt 48 — supplier-bill list + detail deep links (#/supplier-bills/<id>).
-  if (path === "supplier-bills") return { kind: "supplier-bills" };
+  // R86 — the list deep link carries the breach filter: ?pastDue=1 (only
+  // the exact tokens 1/true — "yes"/"0"/empty DROP, never coerce) and
+  // ?supplier=<safeId> (path-traversal/script-y ids NEVER become state).
+  if (path === "supplier-bills") {
+    const pastDueRaw = (query.get("pastDue") ?? "").trim();
+    const supplierRaw = (query.get("supplier") ?? "").trim();
+    const pastDue = pastDueRaw === "1" || pastDueRaw === "true" ? true : undefined;
+    const supplierId =
+      supplierRaw && isValidEntityId(supplierRaw) ? supplierRaw : undefined;
+    return { kind: "supplier-bills", pastDue, supplierId };
+  }
   if (path.startsWith("supplier-bills/")) {
     const rawId = path.slice("supplier-bills/".length);
     let id = rawId;
@@ -811,6 +872,20 @@ export function hashToView(hash: string): AppView {
     // ?inventory=1 opens the detailed inventory valuation sub-view.
     const month = query.get("month");
     if (month && /^\d{4}-\d{2}$/.test(month)) {
+      // R87/R88 — the sales worklist composes with the month drill-down:
+      // month → overdue → customer (canonical order both ways).
+      if (path === "sales") {
+        const overdueRaw = (query.get("overdue") ?? "").trim();
+        const customerRaw = (query.get("customer") ?? "").trim();
+        return {
+          kind: "module",
+          module: path,
+          param: month,
+          overdue: overdueRaw === "1" || overdueRaw === "true" ? true : undefined,
+          customerId:
+            customerRaw && isValidEntityId(customerRaw) ? customerRaw : undefined,
+        };
+      }
       return { kind: "module", module: path, param: month };
     }
     if (path === "reports" && query.get("inventory") === "1") {
@@ -820,6 +895,21 @@ export function hashToView(hash: string): AppView {
     // sub-view. Closed token, never arbitrary state.
     if (path === "reports" && query.get("reorder") === "1") {
       return { kind: "module", module: path, param: "reorder" };
+    }
+    // R87/R88 — the SALES-ONLY worklist deep link (?overdue=1,
+    // ?customer=<safeId>). The closed-token law drops garbage — "0"/"yes"/
+    // script-y/traversal ids NEVER become state; other modules ignore the
+    // params entirely (the sub-state vocabulary never grows sideways).
+    if (path === "sales") {
+      const overdueRaw = (query.get("overdue") ?? "").trim();
+      const customerRaw = (query.get("customer") ?? "").trim();
+      return {
+        kind: "module",
+        module: path,
+        overdue: overdueRaw === "1" || overdueRaw === "true" ? true : undefined,
+        customerId:
+          customerRaw && isValidEntityId(customerRaw) ? customerRaw : undefined,
+      };
     }
     return { kind: "module", module: path };
   }
