@@ -2177,8 +2177,11 @@ const en = {
   },
   // R115 — the dashboard trend chip (honest baseline law: the chip exists
   // ONLY when an honest percentage exists; noBaseline = the muted fallback).
+  // R131 BUGFIX — the restored template doubled {range} (the chip passes
+  // ONE value; both slots rendered it → "03-15 → 04-13 vs previous 03-15
+  // → 04-13"). Single slot: the PREVIOUS window's range.
   trend: {
-    vsPrev: "{range} vs previous {range}",
+    vsPrev: "vs previous {range}",
     new: "New",
     noBaseline: "Not enough history for a comparison yet",
   },

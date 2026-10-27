@@ -39,6 +39,9 @@ import {
   Trophy,
 } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
+// R116 — the ONE trend chip shared with the dashboard perf tiles: the
+// visual language cannot drift between surfaces (one component, one law).
+import { TrendChip } from "@/components/shared/trend-chip";
 // R99/R102 — the ONE share law (the throne's % rides the same helper as the
 // dashboard tile and the copilot chips — never a second math).
 import { stockSharePercent } from "@/lib/stock-facts";
@@ -153,6 +156,24 @@ type Summary = {
   // when the plan is not entitled; `advancedAvailable` is always present.
   advancedAvailable: boolean;
   advanced?: AdvancedInsights;
+  // R115/R116 — the additive previous-window comparison block (the SAME
+  // server truth the dashboard chips read). OPTIONAL: older cached summary
+  // responses honestly omit it — the chips never render, never a fabricated
+  // comparison.
+  trend?: {
+    revenuePrevMinor: number;
+    expensesPrevMinor: number;
+    collectedPrevMinor: number;
+    paidOutPrevMinor: number;
+    netCashPrevMinor: number;
+    revenueChangePct: number | null;
+    expensesChangePct: number | null;
+    collectedChangePct: number | null;
+    netCashChangePct: number | null;
+    salesCountPrev: number;
+    expensesCountPrev: number;
+    previousRange: { from: string; to: string };
+  };
 };
 
 /** Mirrors src/lib/reports-advanced.ts (server-computed, deterministic). */
@@ -616,6 +637,19 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
           value: fmt(data.kpis.revenueMinor),
           hint: t("kpiRevenueHint", { count: fmtCount(uiLocale, data.kpis.salesCount) }),
           tone: "text-emerald-700 dark:text-emerald-400",
+          // R116 — the SAME TrendChip the dashboard perf tiles ride (one
+          // visual language, one honesty law). riseIsGood follows the
+          // METRIC: more revenue/collected/net-cash is good, more expenses
+          // is NOT — the arrow never lies alone.
+          trend: data.trend
+            ? {
+                pct: data.trend.revenueChangePct,
+                prev: data.trend.revenuePrevMinor,
+                cur: data.kpis.revenueMinor,
+                riseIsGood: true,
+                previousRange: data.trend.previousRange,
+              }
+            : null,
         },
         {
           icon: Coins,
@@ -623,6 +657,15 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
           value: fmt(data.kpis.collectedMinor),
           hint: t("kpiAvgSale", { value: fmt(data.kpis.avgSaleMinor) }),
           tone: "text-teal-700 dark:text-teal-300",
+          trend: data.trend
+            ? {
+                pct: data.trend.collectedChangePct,
+                prev: data.trend.collectedPrevMinor,
+                cur: data.kpis.collectedMinor,
+                riseIsGood: true,
+                previousRange: data.trend.previousRange,
+              }
+            : null,
         },
         {
           icon: ArrowUpRight,
@@ -630,6 +673,15 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
           value: fmt(data.kpis.expensesMinor),
           hint: t("kpiExpensesHint", { count: fmtCount(uiLocale, data.kpis.expensesCount) }),
           tone: "text-rose-700 dark:text-rose-400",
+          trend: data.trend
+            ? {
+                pct: data.trend.expensesChangePct,
+                prev: data.trend.expensesPrevMinor,
+                cur: data.kpis.expensesMinor,
+                riseIsGood: false,
+                previousRange: data.trend.previousRange,
+              }
+            : null,
         },
         {
           icon: data.kpis.netCashMinor >= 0 ? TrendingUp : ArrowDownRight,
@@ -640,6 +692,15 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
             data.kpis.netCashMinor >= 0
               ? "text-emerald-700 dark:text-emerald-400"
               : "text-rose-700 dark:text-rose-400",
+          trend: data.trend
+            ? {
+                pct: data.trend.netCashChangePct,
+                prev: data.trend.netCashPrevMinor,
+                cur: data.kpis.netCashMinor,
+                riseIsGood: true,
+                previousRange: data.trend.previousRange,
+              }
+            : null,
         },
       ]
     : [];
@@ -745,12 +806,23 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                     <p className="text-muted-foreground truncate text-xs font-medium tracking-wide uppercase">
                       {kpi.label}
                     </p>
-                    <p
-                      className={`mt-0.5 truncate text-xl font-semibold tabular-nums ${kpi.tone}`}
-                      dir="ltr"
-                    >
-                      {kpi.value}
-                    </p>
+                    <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+                      <p
+                        className={`min-w-0 truncate text-xl font-semibold tabular-nums ${kpi.tone}`}
+                        dir="ltr"
+                      >
+                        {kpi.value}
+                      </p>
+                      {kpi.trend ? (
+                        <TrendChip
+                          pct={kpi.trend.pct}
+                          prev={kpi.trend.prev}
+                          cur={kpi.trend.cur}
+                          riseIsGood={kpi.trend.riseIsGood}
+                          previousRange={kpi.trend.previousRange}
+                        />
+                      ) : null}
+                    </div>
                     <p className="text-muted-foreground mt-0.5 truncate text-xs">{kpi.hint}</p>
                   </div>
                 </CardContent>

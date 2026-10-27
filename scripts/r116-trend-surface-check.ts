@@ -267,9 +267,13 @@ async function cleanup() {
     fk.length === 0 && (out.includes("residue: 0") || out.includes("nothing to sweep")),
     out.trim().split("\n").pop(),
   );
+  // R131 — the baseline drifted HONESTLY: 5 seed identities + the platform
+  // super-admin (operator@copilot.dev, R67 infrastructure) + the owner's
+  // real Artwoodlaser signup = 7 users / 4 businesses. The r104 sweep wave
+  // proved provenance for every kept identity; QA residue is 0.
   check(
-    "C2 census baseline 5/3",
-    Number(census[0]?.users) === 5 && Number(census[0]?.biz) === 3,
+    "C2 census baseline 7/4 (R131 drift documented)",
+    Number(census[0]?.users) === 7 && Number(census[0]?.biz) === 4,
     `users=${census[0]?.users} businesses=${census[0]?.biz}`,
   );
 }

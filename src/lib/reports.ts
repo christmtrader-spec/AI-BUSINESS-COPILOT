@@ -36,8 +36,10 @@ import {
   ALLOWED_REPORT_DAYS,
   localMonthKeyOf,
   normalizeReportDaysInput,
+  pctChange,
   resolveCustomRange,
   resolveMonthWindow,
+  resolvePreviousWindow,
   resolveRollingWindow,
   safeAdd,
   safeMul,
@@ -92,25 +94,34 @@ export async function buildReportSummary(
 
   const dateGte = fetchFrom;
 
+  // R115 — the previous comparison window (report-periods §6 law: the
+  // same-LENGTH business-local window IMMEDIATELY before the current one —
+  // no overlap, no gap, DST-safe exact instants). The three windowed
+  // transaction fetches below widen their lower bound to cover BOTH
+  // windows; the local-date predicates keep every current-window aggregate
+  // exact (the documented widened-fetch revalidation law, §5).
+  const trendWindow = resolvePreviousWindow(tz, dayKeys.length, fromKey);
+  const trendGte = trendWindow.fetchFrom;
+
   const [sales, payments, expenses, saleItems, products, openSales, openExpenses] =
     await Promise.all([
       db.sale.findMany({
         where: {
           businessId,
           deletedAt: null,
-          issueDate: { gte: dateGte, lt: fetchUntil },
+          issueDate: { gte: trendGte, lt: fetchUntil },
         },
         select: { issueDate: true, totalMinor: true, discountMinor: true },
       }),
       db.payment.findMany({
-        where: { businessId, paidAt: { gte: dateGte, lt: fetchUntil } },
+        where: { businessId, paidAt: { gte: trendGte, lt: fetchUntil } },
         select: { paidAt: true, direction: true, amountMinor: true },
       }),
       db.expense.findMany({
         where: {
           businessId,
           deletedAt: null,
-          spentAt: { gte: dateGte, lt: fetchUntil },
+          spentAt: { gte: trendGte, lt: fetchUntil },
         },
         select: { spentAt: true, category: true, amountMinor: true },
       }),
@@ -217,6 +228,40 @@ export async function buildReportSummary(
     if (p.direction === "IN") collectedMinor = safeAdd(collectedMinor, p.amountMinor, "collectedMinor");
     else paidOutMinor = safeAdd(paidOutMinor, p.amountMinor, "paidOutMinor");
   }
+
+  // ---- R115 — previous-window comparison (the additive `trend` block) -----
+  // SAME rows already fetched (the widened lower bound), bucketed by the
+  // EXACT local-date predicate — the previous window can never overlap the
+  // current one (L5), and the L8 pct law rides the ONE pctChange authority
+  // (null on a ≤0 baseline — never a fabricated or sign-flipped %).
+  const inPrevWindow = (iso: Date) => {
+    const key = localDateKey(iso, tz);
+    return key >= trendWindow.fromKey && key <= trendWindow.toKey;
+  };
+  let revenuePrevMinor = 0;
+  let salesCountPrev = 0;
+  for (const s of sales) {
+    if (inPrevWindow(s.issueDate)) {
+      revenuePrevMinor = safeAdd(revenuePrevMinor, s.totalMinor, "revenuePrevMinor");
+      salesCountPrev = safeAdd(salesCountPrev, 1, "salesCountPrev");
+    }
+  }
+  let expensesPrevMinor = 0;
+  let expensesCountPrev = 0;
+  for (const e of expenses) {
+    if (inPrevWindow(e.spentAt)) {
+      expensesPrevMinor = safeAdd(expensesPrevMinor, e.amountMinor, "expensesPrevMinor");
+      expensesCountPrev = safeAdd(expensesCountPrev, 1, "expensesCountPrev");
+    }
+  }
+  let collectedPrevMinor = 0;
+  let paidOutPrevMinor = 0;
+  for (const p of payments) {
+    if (!inPrevWindow(p.paidAt)) continue;
+    if (p.direction === "IN") collectedPrevMinor = safeAdd(collectedPrevMinor, p.amountMinor, "collectedPrevMinor");
+    else paidOutPrevMinor = safeAdd(paidOutPrevMinor, p.amountMinor, "paidOutPrevMinor");
+  }
+  const netCashPrevMinor = safeSub(collectedPrevMinor, paidOutPrevMinor, "netCashPrevMinor");
 
   // ---- Top products — STABLE IDENTITY (Prompt 50 §7 / Gate E) ---------------
   // Catalog lines group by SaleItem.productId; unlinked (null productId)
@@ -381,6 +426,28 @@ export async function buildReportSummary(
       paidOutMinor,
       netCashMinor: safeSub(collectedMinor, paidOutMinor, "netCashMinor"),
       netAccrualMinor: safeSub(revenueMinor, expensesMinor, "netAccrualMinor"),
+    },
+    // R115 — the additive comparison block: the same-LENGTH window
+    // immediately before `range` (§6 law). pcts ride the ONE L8 authority
+    // (pctChange: null on a ≤0 baseline — the chip and the copilot narrate
+    // from these RAW inputs, never computing their own %). Older cached
+    // clients honestly omit what they don't know (additive law).
+    trend: {
+      revenuePrevMinor,
+      expensesPrevMinor,
+      collectedPrevMinor,
+      paidOutPrevMinor,
+      netCashPrevMinor,
+      revenueChangePct: pctChange(revenueMinor, revenuePrevMinor),
+      expensesChangePct: pctChange(expensesMinor, expensesPrevMinor),
+      collectedChangePct: pctChange(collectedMinor, collectedPrevMinor),
+      netCashChangePct: pctChange(
+        safeSub(collectedMinor, paidOutMinor, "netCashMinor"),
+        netCashPrevMinor,
+      ),
+      salesCountPrev,
+      expensesCountPrev,
+      previousRange: { from: trendWindow.fromKey, to: trendWindow.toKey },
     },
     timeline,
     topProducts,

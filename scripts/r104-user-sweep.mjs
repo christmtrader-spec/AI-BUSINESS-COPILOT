@@ -23,7 +23,18 @@ import { PrismaClient } from "@prisma/client";
 const db = new PrismaClient();
 const DRY = process.argv.includes("--dry");
 
-/** Residue email patterns (QA fixtures only — never baseline identities). */
+/**
+ * Residue email patterns (QA fixtures only — never baseline identities).
+ *
+ * R131 SWEEP WAVE — the r119–r130 battery generations accumulated without
+ * their patterns being registered here (the revert catastrophe lost the
+ * R71–R128 worklog). Added: the prompt-battery check domains (p19/p22/p23/
+ * p24/p25), the @check.local UI-trial domain, and @t.local (dbg probes).
+ * NEVER swept (verified 2026-09-28/09-21 provenance): @copilot.dev (seed +
+ * the PlatformOperator super-admin), @outsider.dev (seed viewer), @t.dev
+ * (rep16007 — KEEP below), @gmail.com (the owner's real Artwoodlaser
+ * signup).
+ */
 const EMAIL_PATTERNS = [
   "%@example.com", // origin-gate probes origintest1/2
   "%@t.dev", // repro-origin2 / repro-xfh / curl-ok / direct-ok / flow-login / rep16007-EXCLUDED below / smoke owners / invite probes
@@ -32,6 +43,13 @@ const EMAIL_PATTERNS = [
   "%r104-probe-2@test.local",
   "%r104-browser-qa@test.local",
   "%@p17check.local", // prompt18 synthetic fixtures
+  "%@p19check.local", // prompt19 isolation fixtures (R131 sweep wave)
+  "%@p22check.local", // prompt22 fixtures (R131 sweep wave)
+  "%@p23check.local", // prompt23 fixtures (R131 sweep wave)
+  "%@p24check.local", // prompt24 fixtures (R131 sweep wave)
+  "%@p25check.local", // prompt25 fixtures (R131 sweep wave)
+  "%@check.local", // prompt25 UI-trial / flow fixtures (p25ui-/p25flow- stamps)
+  "%@t.local", // dbg<stamp> debug probes (R131 sweep wave)
   "r106-qa@test.local", // R106 checklist browser QA
   "r107-qa@test.local", // R107 MFA manual QA session
   "r107-mfa@test.local", // R107 MFA E2E fixture
@@ -51,9 +69,9 @@ const EMAIL_PATTERNS = [
 /** Baseline identities that must NEVER be swept even if they match a pattern. */
 const KEEP_EMAILS = new Set(["rep16007@t.dev"]);
 
-const SWEEP_BUSINESS_NAMES = ["R104 QA Studio", "R106 QA Ventures", "R107 QA Ventures", "R108 QA Ventures", "R110 QA Ventures", "R111 QA Ventures", "R112 QA Ventures", "R113 QA Ventures"];
+const SWEEP_BUSINESS_NAMES = ["R104 QA Studio", "R106 QA Ventures", "R107 QA Ventures", "R108 QA Ventures", "R110 QA Ventures", "R111 QA Ventures", "R112 QA Ventures", "R113 QA Ventures", "P23 Real Provider Shop", "P25 UI Trial Shop", "Trial Flow Shop"];
 /** R114 — stamped QA business names match by PREFIX ("R114 QA Ventures mvmv1g18"). */
-const SWEEP_BUSINESS_PREFIXES = ["R114 QA Ventures", "R115 QA Ventures", "R116 QA Ventures", "R117 QA Ventures", "R118 QA Ventures"];
+const SWEEP_BUSINESS_PREFIXES = ["R114 QA Ventures", "R115 QA Ventures", "R116 QA Ventures", "R117 QA Ventures", "R118 QA Ventures", "P19 Isolation Co "];
 
 async function tableList() {
   const tables = await db.$queryRawUnsafe(
@@ -72,6 +90,12 @@ function quote(v) {
 }
 
 async function main() {
+  // R131 — enforce FKs on THIS connection: the declared ON DELETE CASCADE
+  // rules then fire during parent deletes (the prior orphaned AiCostRecord
+  // proved enforcement was off — a Business died while its cost record
+  // lived, and the child-pass never targeted it because it wasn't in the
+  // sweep set).
+  await db.$executeRawUnsafe(`PRAGMA foreign_keys = ON`);
   const sweepUsers = await db.$queryRawUnsafe(
     `SELECT id, email FROM User WHERE (${EMAIL_PATTERNS.map((p) => `email LIKE ${quote(p)}`).join(" OR ")})`,
   );
@@ -92,7 +116,15 @@ async function main() {
   console.log(`sweep businesses (${sweepBiz.length}):`);
   for (const b of sweepBiz) console.log(`  - ${b.name}`);
 
-  if (targets.length === 0 && sweepBiz.length === 0) {
+  // R131 — pre-existing orphans (dead parent FKs) must NOT be skipped by the
+  // "nothing to sweep" early return: they are exactly what the FK proof
+  // fails on. Count them first; only a fully clean book exits early.
+  const testOrphans = await db.$queryRawUnsafe(
+    `SELECT COUNT(*) AS n FROM AiCostRecord WHERE environment = 'TEST' AND businessId IS NOT NULL AND businessId NOT IN (SELECT id FROM Business)`,
+  );
+  const orphanCount = Number(testOrphans[0].n);
+
+  if (targets.length === 0 && sweepBiz.length === 0 && orphanCount === 0) {
     console.log("nothing to sweep.");
     process.exit(0);
   }
@@ -139,10 +171,26 @@ async function main() {
     console.log(`deleted ${total} rows across ${pass} pass(es).`);
   }
 
+  // R131 — orphan repair (GUARDED): a pre-existing orphan whose parent was
+  // already gone is invisible to the sweep-set passes above. Repair ONLY
+  // rows that are provably QA (AiCostRecord.environment = 'TEST') and fail
+  // LOUD on anything else — a production cost orphan must never be silently
+  // destroyed by a hygiene script.
+  if (!DRY) {
+    const repaired = await db.$executeRawUnsafe(
+      `DELETE FROM AiCostRecord WHERE environment = 'TEST' AND businessId IS NOT NULL AND businessId NOT IN (SELECT id FROM Business)`,
+    );
+    if (repaired > 0) console.log(`orphan repair: deleted ${repaired} TEST-environment AiCostRecord row(s) with dead business FK`);
+  }
+
   // ── Safety proofs ──
   const fkViolations = await db.$queryRawUnsafe(`PRAGMA foreign_key_check`);
   if (fkViolations.length > 0) {
-    console.error(`FK CHECK FAILED: ${JSON.stringify(fkViolations.slice(0, 10))}`);
+    // R131 — String-safe rendering: PRAGMA rows carry BigInt counts that
+    // crash JSON.stringify and would MASK the actual violation report.
+    const render = (v) =>
+      JSON.stringify(v, (_, x) => (typeof x === "bigint" ? x.toString() : x));
+    console.error(`FK CHECK FAILED: ${render(fkViolations.slice(0, 10))}`);
     process.exit(1);
   }
   const census = await db.$queryRawUnsafe(

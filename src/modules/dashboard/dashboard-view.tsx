@@ -34,6 +34,9 @@ import {
 } from "@/components/ui/chart";
 import { PageHeader } from "@/components/shared/primitives";
 import { Skeleton } from "@/components/ui/skeleton";
+// R116 — the ONE trend chip shared with the Reports KPI strip: the visual
+// language cannot drift between surfaces (one component, one honesty law).
+import { TrendChip } from "@/components/shared/trend-chip";
 import { OnboardingTour } from "@/modules/shell/onboarding-tour";
 import { useSession } from "next-auth/react";
 import { fmtCount, fmtMoney } from "../finance-shared/finance-kit";
@@ -66,6 +69,25 @@ type ReportsSummary = {
       name: string;
       estimatedValueMinor: number;
     }>;
+  };
+  // R115/R116 — the additive previous-window comparison block (server
+  // truth: the same-LENGTH window immediately before `range`, L8-honest
+  // pcts). OPTIONAL on the view type: older cached summary responses
+  // honestly omit it — the trend chips simply never render, never a
+  // fabricated comparison.
+  trend?: {
+    revenuePrevMinor: number;
+    expensesPrevMinor: number;
+    collectedPrevMinor: number;
+    paidOutPrevMinor: number;
+    netCashPrevMinor: number;
+    revenueChangePct: number | null;
+    expensesChangePct: number | null;
+    collectedChangePct: number | null;
+    netCashChangePct: number | null;
+    salesCountPrev: number;
+    expensesCountPrev: number;
+    previousRange: { from: string; to: string };
   };
 };
 
@@ -467,9 +489,51 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
               </div>
               <div className="grid grid-cols-2 gap-3 lg:col-span-2 lg:grid-cols-2">
                 {[
-                  { label: t("perfRevenue"), value: summary.kpis.revenueMinor, cls: "gradient-pos" },
-                  { label: t("perfCollected"), value: summary.kpis.collectedMinor, cls: "gradient-pos" },
-                  { label: t("perfExpenses"), value: summary.kpis.expensesMinor, cls: "gradient-neg" },
+                  {
+                    label: t("perfRevenue"),
+                    value: summary.kpis.revenueMinor,
+                    cls: "gradient-pos",
+                    // R115 — the chip rides the server's RAW prev total + L8
+                    // pct; riseIsGood follows the METRIC's meaning (more
+                    // revenue is good, more expenses is NOT).
+                    trend: summary.trend
+                      ? {
+                          pct: summary.trend.revenueChangePct,
+                          prev: summary.trend.revenuePrevMinor,
+                          cur: summary.kpis.revenueMinor,
+                          riseIsGood: true,
+                          previousRange: summary.trend.previousRange,
+                        }
+                      : null,
+                  },
+                  {
+                    label: t("perfCollected"),
+                    value: summary.kpis.collectedMinor,
+                    cls: "gradient-pos",
+                    trend: summary.trend
+                      ? {
+                          pct: summary.trend.collectedChangePct,
+                          prev: summary.trend.collectedPrevMinor,
+                          cur: summary.kpis.collectedMinor,
+                          riseIsGood: true,
+                          previousRange: summary.trend.previousRange,
+                        }
+                      : null,
+                  },
+                  {
+                    label: t("perfExpenses"),
+                    value: summary.kpis.expensesMinor,
+                    cls: "gradient-neg",
+                    trend: summary.trend
+                      ? {
+                          pct: summary.trend.expensesChangePct,
+                          prev: summary.trend.expensesPrevMinor,
+                          cur: summary.kpis.expensesMinor,
+                          riseIsGood: false,
+                          previousRange: summary.trend.previousRange,
+                        }
+                      : null,
+                  },
                   {
                     label: t("perfNetCash"),
                     value: summary.kpis.netCashMinor,
@@ -477,13 +541,33 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
                       summary.kpis.netCashMinor >= 0
                         ? "gradient-pos"
                         : "gradient-neg",
+                    trend: summary.trend
+                      ? {
+                          pct: summary.trend.netCashChangePct,
+                          prev: summary.trend.netCashPrevMinor,
+                          cur: summary.kpis.netCashMinor,
+                          riseIsGood: true,
+                          previousRange: summary.trend.previousRange,
+                        }
+                      : null,
                   },
                 ].map((stat) => (
                   <div key={stat.label} className="rounded-lg border p-3">
                     <p className="text-muted-foreground text-xs font-medium uppercase">{stat.label}</p>
-                    <p className={`mt-1 truncate text-base font-semibold tabular-nums ${stat.cls}`} dir="ltr">
-                      {fmt(stat.value)}
-                    </p>
+                    <div className="mt-1 flex min-w-0 items-center gap-1.5">
+                      <p className={`min-w-0 truncate text-base font-semibold tabular-nums ${stat.cls}`} dir="ltr">
+                        {fmt(stat.value)}
+                      </p>
+                      {stat.trend ? (
+                        <TrendChip
+                          pct={stat.trend.pct}
+                          prev={stat.trend.prev}
+                          cur={stat.trend.cur}
+                          riseIsGood={stat.trend.riseIsGood}
+                          previousRange={stat.trend.previousRange}
+                        />
+                      ) : null}
+                    </div>
                   </div>
                 ))}
               </div>
