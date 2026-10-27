@@ -1,1 +1,2 @@
 {"ts":"2026-10-27T06:04:25.970Z","kind":"guard-start","msg":"guard started pid=14842 (water=2450MB, consecutive=3, interval=30s, grace=4x+300MB)","pid":14842,"waterMb":2450,"consecutive":3,"intervalMs":30000,"graceSamples":4,"graceHeadroomMb":300}
+{"ts":"2026-10-27T06:05:00.928Z","kind":"spawn-ok","msg":"spawn(down-selfheal) OK after ~2s pid=14985","spawnWhy":"down-selfheal","pid":14985}
