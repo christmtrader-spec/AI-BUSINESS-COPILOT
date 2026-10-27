@@ -1,6 +1,9 @@
 "use client";
 
 import { api } from "@/lib/api-client";
+// R96 — ONE extractor for both routes' leaders facts (client-safe by
+// construction — the module has zero imports, the r93 law).
+import { topLeaderOfFact, type BookLeaderView, type LeadersFactInput } from "@/lib/leader-view";
 
 /**
  * Shared fetch + transform for the balances views (receivables / payables).
@@ -33,6 +36,9 @@ export type BalancesData = {
   openCount: number;
   items: BalanceItem[];
   byParty: { name: string; balanceMinor: number }[];
+  /** R96 — rank 1 of the book-leaders fact, extracted by the ONE shared
+   *  extractor (null when the fact is silent — never a fabricated leader). */
+  topLeader: BookLeaderView | null;
 };
 
 export function fetchBalancesData(kind: "receivables" | "payables"): Promise<BalancesData> {
@@ -51,10 +57,14 @@ export function fetchBalancesData(kind: "receivables" | "payables"): Promise<Bal
         status: string;
       }[];
       byCustomer: { name: string; balanceMinor: number }[];
+      // R96 — the debtors leaders fact (server-ranked, verbatim head).
+      leaders: LeadersFactInput;
     }>("/api/v1/receivables").then((raw) => ({
       totalOutstandingMinor: raw.totalOutstandingMinor,
       openCount: raw.openCount,
       byParty: raw.byCustomer,
+    // R96 — BOTH routes map their leaders fact through the ONE extractor.
+    topLeader: topLeaderOfFact(raw.leaders),
       items: raw.items.map<BalanceItem>((s) => ({
         id: s.id,
         label1: `INV-${String(s.number).padStart(4, "0")}`,
@@ -85,10 +95,14 @@ export function fetchBalancesData(kind: "receivables" | "payables"): Promise<Bal
       status: string;
     }[];
     bySupplier: { name: string; balanceMinor: number }[];
+    // R96 — the creditors leaders fact (server-ranked, verbatim head).
+    leaders: LeadersFactInput;
   }>("/api/v1/payables").then((raw) => ({
     totalOutstandingMinor: raw.totalOutstandingMinor,
     openCount: raw.openCount,
     byParty: raw.bySupplier,
+    // R96 — BOTH routes map their leaders fact through the ONE extractor.
+    topLeader: topLeaderOfFact(raw.leaders),
     items: raw.items.map<BalanceItem>((e) => ({
       id: e.id,
       label1: e.category,

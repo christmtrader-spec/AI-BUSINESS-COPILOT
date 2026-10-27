@@ -55,7 +55,7 @@ export type BookLeaderView = {
  * figures; never re-ranks.
  */
 export function topLeaderOfFact(
-  fact: LeadersFactInput,
+  fact: LeadersFactInput | null | undefined,
 ): BookLeaderView | null {
   const first = fact?.leaders?.[0];
   if (!first) return null;

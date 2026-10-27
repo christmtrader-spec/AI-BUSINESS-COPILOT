@@ -11,6 +11,8 @@ import { ok, route } from "@/lib/api-helpers";
 import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { db } from "@/lib/db";
 import { localDayIndex } from "@/lib/aging";
+// R96 — the book-leaders fact over the SAME open payables rows (one fold).
+import { rollupAccumulate, rollupRank, type AgingRollupAccumulator } from "@/lib/aging-details";
 
 export const dynamic = "force-dynamic";
 
@@ -66,10 +68,34 @@ export const GET = route(async (_req: NextRequest) => {
     .sort((a, b) => b.balanceMinor - a.balanceMinor)
     .slice(0, 8);
 
+  // R96 — the CREDITORS leaders fact: the shared fold over every open row.
+  const creditorAcc: AgingRollupAccumulator = new Map();
+  for (const e of expenses) {
+    const balanceMinor = e.amountMinor - e.paidMinor;
+    if (balanceMinor <= 0) continue;
+    rollupAccumulate(
+      creditorAcc,
+      { partyId: e.supplierId, partyName: e.supplier?.name ?? null, outstandingMinor: balanceMinor, ageDays: 0 },
+      true,
+    );
+  }
+  const creditorBoard = rollupRank(creditorAcc, Number.MAX_SAFE_INTEGER);
+  const leaders = {
+    leaders: creditorBoard.groups.slice(0, 3).map((g, i) => ({
+      rank: i + 1,
+      partyId: g.partyId,
+      partyName: g.partyName,
+      outstandingMinor: g.outstandingMinor,
+      count: g.count,
+    })),
+    partyCount: creditorBoard.groupCount,
+  };
+
   return ok({
     totalOutstandingMinor,
     openCount: expenses.length,
     items,
     bySupplier,
+    leaders,
   });
 });
