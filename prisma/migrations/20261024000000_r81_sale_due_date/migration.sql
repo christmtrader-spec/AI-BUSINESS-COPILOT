@@ -1,0 +1,17 @@
+-- R81 — stated payment terms on invoices (receivables overdue lane).
+--
+-- Sale gains an OPTIONAL dueDate with date-only semantics: the application
+-- parses "YYYY-MM-DD" with the Prompt-35 §84 UTC-midnoon rule (12:00 UTC)
+-- so the calendar day is identical in every display timezone — the same
+-- law SupplierBill/Expense.dueDate already follows.
+--
+-- Honesty law (documented in src/lib/reports-insights.ts):
+--   - Null dueDate = no terms stated → the invoice stays AGING-framed
+--     ("open N days"), never "overdue".
+--   - A stated due day STRICTLY BEFORE today's business-timezone day on an
+--     open invoice (balance > 0) is OVERDUE via the shared isPastDueDay
+--     gate — one authority for both sides of the book.
+--
+-- Nullable ADD COLUMN: no table rebuild, no data backfill (every legacy
+-- invoice honestly has no stated terms), no default.
+ALTER TABLE "Sale" ADD COLUMN "dueDate" DATETIME;
