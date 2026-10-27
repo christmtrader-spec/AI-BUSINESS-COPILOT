@@ -27,6 +27,12 @@
  */
 import { db } from "@/lib/db";
 import {
+  computeInventoryTopValueProducts,
+  rowCostState,
+  rowStockState,
+  type InventoryValuationRow,
+} from "@/lib/inventory-valuation-report";
+import {
   ALLOWED_REPORT_DAYS,
   localMonthKeyOf,
   normalizeReportDaysInput,
@@ -137,6 +143,10 @@ export async function buildReportSummary(
           stockQty: true,
           lowStockAt: true,
           costPriceMinor: true,
+          // R102/W3 — the FULL InventoryProductInput shape: the throne row
+          // builder consumes the same population as the Prompt 51 report
+          // (inactive products can still hold stock — never filtered here).
+          isActive: true,
         },
       }),
       db.sale.aggregate({
@@ -304,6 +314,24 @@ export async function buildReportSummary(
   const expensesByCategoryOther = { category: "__other__", totalMinor: otherMinor };
 
   // ---- Inventory health ------------------------------------------------------
+  // R102 — the valuation ROWS are built ONCE here (the same population law
+  // as Prompt 51: businessId + deletedAt: null INCLUDING inactive), every
+  // row through the SAME state classifiers the detailed report uses, so the
+  // summary's inventory total and its throne can never disagree with the
+  // valuation report (Gate D reconciliation — one authority, no drift).
+  const inventoryRows: InventoryValuationRow[] = products.map((p) => ({
+    id: p.id,
+    name: p.name,
+    sku: p.sku,
+    unit: p.unit,
+    stockQty: p.stockQty,
+    lowStockAt: p.lowStockAt,
+    costPriceMinor: p.costPriceMinor,
+    isActive: p.isActive,
+    estimatedValueMinor: safeMul(p.stockQty, p.costPriceMinor, "inventory value"),
+    stockState: rowStockState(p.stockQty, p.lowStockAt),
+    costState: rowCostState(p.costPriceMinor),
+  }));
   let inventoryValueMinor = 0;
   const lowStockItems: Array<{
     id: string;
@@ -312,10 +340,10 @@ export async function buildReportSummary(
     stockQty: number;
     lowStockAt: number;
   }> = [];
-  for (const p of products) {
+  for (const p of inventoryRows) {
     // Operational current-cost estimate — quantity × current cost price
     // (NOT an accounting valuation; Gate N wording preserved).
-    inventoryValueMinor = safeAdd(inventoryValueMinor, safeMul(p.stockQty, p.costPriceMinor, "inventory value"), "inventory total");
+    inventoryValueMinor = safeAdd(inventoryValueMinor, p.estimatedValueMinor, "inventory total");
     if (p.stockQty <= p.lowStockAt) {
       lowStockItems.push({
         id: p.id,
@@ -327,6 +355,10 @@ export async function buildReportSummary(
     }
   }
   lowStockItems.sort((a, b) => a.stockQty - b.stockQty);
+  // R99/R102 — the value podium: EXACTLY the VALUE_DESC order's head via the
+  // ONE extractor (re-sorts through sortInventoryRows internally — the throne
+  // can never disagree with the detailed report's own ranking).
+  const inventoryTopValueProducts = computeInventoryTopValueProducts(inventoryRows, 2);
 
   return {
     // `days` stays the ROLLING preset (7/30/90) for backward compatibility;
@@ -370,6 +402,9 @@ export async function buildReportSummary(
       productCount: products.length,
       lowStockCount: lowStockItems.length,
       lowStockItems: lowStockItems.slice(0, 6),
+      // R99/R102 — the additive throne field (older cached clients stay
+      // honest — the view type carries it OPTIONAL).
+      topValueProducts: inventoryTopValueProducts,
     },
   };
 }

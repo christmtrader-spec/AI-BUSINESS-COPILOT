@@ -17,6 +17,7 @@
  * Permission: copilot:use (same gate as asking — VIEWER excluded).
  */
 import { NextRequest } from "next/server";
+import { Prisma } from "@prisma/client";
 import { ApiError, ok, parseBody, route } from "@/lib/api-helpers";
 import { getAuthContext, requirePermission } from "@/lib/tenant";
 import { db } from "@/lib/db";
@@ -83,14 +84,43 @@ export const POST = route(async (req: NextRequest, { params }: RouteParams) => {
       if (sessionCount >= SESSION_CAP) {
         return { skipped: true };
       }
-      await tx.chatSession.create({
-        data: {
-          id: sessionKey.data,
-          businessId: ctx.businessId,
-          userId: ctx.userId,
-          title: input.title?.slice(0, 80) ?? "",
-        },
-      });
+      try {
+        await tx.chatSession.create({
+          data: {
+            id: sessionKey.data,
+            businessId: ctx.businessId,
+            userId: ctx.userId,
+            title: input.title?.slice(0, 80) ?? "",
+          },
+        });
+      } catch (err) {
+        // R130 — the id is globally unique (PK) while the lookup above is
+        // ownership-scoped, so a row with the same id under ANOTHER owner
+        // (or a concurrent same-owner create) reaches the create and dies
+        // on P2002. Before this guard that surfaced as an opaque 500 —
+        // breaking the documented "identity-based and idempotent" law.
+        // Race (same owner triple won the create between findFirst and
+        // create): re-check scoped — visible now → fall through to the
+        // append; still foreign → the key is unusable, 409 (client mints
+        // a fresh id; never leaks the foreign row's existence or owner).
+        if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") {
+          throw err;
+        }
+        const raced = await tx.chatSession.findFirst({
+          where: { id: sessionKey.data, businessId: ctx.businessId, userId: ctx.userId },
+          select: { id: true, _count: { select: { messages: true } } },
+        });
+        if (!raced) {
+          throw new ApiError(
+            409,
+            "SESSION_ID_CONFLICT",
+            "Session id is already taken. Generate a new one.",
+          );
+        }
+        if (raced._count.messages >= MESSAGES_CAP) {
+          return { skipped: true };
+        }
+      }
     } else if (existing._count.messages >= MESSAGES_CAP) {
       return { skipped: true };
     }

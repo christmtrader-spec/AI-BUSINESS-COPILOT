@@ -18,12 +18,14 @@ import {
   Check,
   ChevronDown,
   Copy,
+  Crown,
   Loader2,
   Download,
   HandCoins,
   History,
   ListTree,
   Lock,
+  Medal,
   MessageSquareText,
   Package,
   Pencil,
@@ -100,6 +102,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { BusinessSummary } from "../shell/types";
+import { useAppStore } from "@/store/app-store";
+// R102/R103 — the chip tooltips carry the EXACT business money (the
+// R99 FORMATTING law: formatted INSIDE the component, never a raw template).
+import { fmtMoney } from "../finance-shared/finance-kit";
 
 /**
  * AI Copilot — Phase 05/06. Read-only Q&A over deterministic, server-computed
@@ -149,6 +155,9 @@ type CopilotMeta = {
   topProduct?: { name: string; qty: number; revenueMinor: number } | null;
   topExpenseCategory?: { category: string; totalMinor: number } | null;
   topStockProduct?: { id: string; name: string; valueMinor: number } | null;
+  // R103 — the podium's rank 2 (additive optional — old persisted metas
+  // honestly omit it; the pickers never fabricate it).
+  topStockRunnerUp?: { id: string; name: string; valueMinor: number } | null;
 };
 
 const WINDOWS = [7, 30, 90] as const;
@@ -248,7 +257,17 @@ function MarkdownLite({ text, streaming }: { text: string; streaming?: boolean }
  * many records the answer is built from. Counts come from the server
  * (deterministic), never from the model.
  */
-function CitationStrip({ meta, locale }: { meta: CopilotMeta; locale: string }) {
+function CitationStrip({
+  meta,
+  locale,
+  business,
+}: {
+  meta: CopilotMeta;
+  locale: string;
+  // R102/W12 — the stock action chips' tooltips need the EXACT business
+  // money (fmtMoney) — formatted INSIDE the component, never a raw template.
+  business: BusinessSummary;
+}) {
   const t = useTranslations("copilot");
   const c = meta.counts;
   const chips: { key: string; icon: typeof ReceiptText; label: string; title?: string }[] = [
@@ -326,6 +345,75 @@ function CitationStrip({ meta, locale }: { meta: CopilotMeta; locale: string }) 
       {generatedLabel ? (
         <span className="text-muted-foreground/70 text-[11px]">· {generatedLabel}</span>
       ) : null}
+    </div>
+  );
+}
+
+// ---- Stock action chips (R102/R103 — the throne deep-links) -----------------
+
+/**
+ * The podium chips under a grounded answer: Crown = rank 1, Medal = rank 2
+ * of CURRENT stock value. Each chip gates on ITS OWN proven fact + value > 0
+ * (pickStockActionChips — the deterministic rank1→rank2 order); the tooltip
+ * formats the EXACT money inside this component (fmtMoney — never a raw ICU
+ * template). Both chips land the SAME closed token: reports?inventory=1
+ * (the Prompt 51 detailed valuation sub-view). Absent facts → renders null.
+ */
+function StockActionChips({
+  meta,
+  business,
+}: {
+  meta: CopilotMeta;
+  business: BusinessSummary;
+}) {
+  const t = useTranslations("copilot");
+  const navigate = useAppStore((s) => s.navigate);
+  const chips = pickStockActionChips(meta);
+  if (chips.length === 0) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5 ps-1" data-testid="copilot-stock-chips">
+      {chips.map((chip) => {
+        const crown = chip.key === "actionTopStock";
+        const fact = crown ? meta.topStockProduct : meta.topStockRunnerUp;
+        if (!fact) return null;
+        const tooltip = crown
+          ? t("actionTopStockTitle", {
+              name: fact.name,
+              money: fmtMoney(business, fact.valueMinor),
+            })
+          : t("actionTopStockRunnerUpTitle", {
+              name: fact.name,
+              money: fmtMoney(business, fact.valueMinor),
+            });
+        return (
+          <button
+            key={chip.key}
+            type="button"
+            onClick={() => navigate({ kind: "module", module: "reports", param: "inventory" })}
+            title={tooltip}
+            aria-label={tooltip}
+            data-testid={crown ? "copilot-action-topstock" : "copilot-action-topstock-runnerup"}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none transition-colors",
+              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600",
+              crown
+                ? "border-sky-600/30 bg-sky-600/5 text-sky-800 dark:text-sky-300 hover:bg-sky-600/10"
+                : "border-sky-600/20 bg-sky-600/[0.03] text-sky-700 dark:text-sky-400 hover:bg-sky-600/10",
+            )}
+          >
+            {crown ? (
+              <Crown className="size-3 shrink-0" aria-hidden="true" />
+            ) : (
+              <Medal className="size-3 shrink-0" aria-hidden="true" />
+            )}
+            {t(chip.key)}
+            <ChevronDown
+              className="size-3 shrink-0 opacity-60 rtl:-scale-x-100"
+              aria-hidden="true"
+            />
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -470,20 +558,28 @@ export function pickPerfActionChips(meta: CopilotMeta | null | undefined): PerfA
   return chips;
 }
 
-export type StockActionChip = { key: "actionTopStock" };
+export type StockActionChip = { key: "actionTopStock" | "actionTopStockRunnerUp" };
 
 /**
- * R102 — the EIGHTH chip family's gate: the stock chip exists ONLY when the
- * top-stock fact is proven AND its value is strictly positive (an all-zero
- * book renders no chip about nothing; negative is not a value). Old
- * persisted metas without the field stay honest ([]); null/undefined meta
- * → []. (Battery: scripts/r102-stock-unit.ts §3.)
+ * R102/R103 — the stock chip family's gates (the NINTH chip). Laws
+ * (batteries: scripts/r102-stock-unit.ts §3, scripts/r103-tile-unit.ts [2]):
+ * - TWO chips, deterministic order rank1 (Crown) → rank2 (Medal);
+ * - each chip gates on ITS OWN proof + value strictly > 0 — an all-zero
+ *   book renders no chip about nothing, a throne of one renders only the
+ *   Crown chip, and rank1's zero never blocks rank2's positive fact;
+ * - old persisted metas without the fields stay honest ([]);
+ * - null/undefined meta → [].
  */
 export function pickStockActionChips(meta: CopilotMeta | null | undefined): StockActionChip[] {
   if (!meta || typeof meta !== "object") return [];
-  const fact = meta.topStockProduct;
-  if (!fact || typeof fact.valueMinor !== "number" || !(fact.valueMinor > 0)) return [];
-  return [{ key: "actionTopStock" }];
+  const chips: StockActionChip[] = [];
+  if (meta.topStockProduct && meta.topStockProduct.valueMinor > 0) {
+    chips.push({ key: "actionTopStock" });
+  }
+  if (meta.topStockRunnerUp && meta.topStockRunnerUp.valueMinor > 0) {
+    chips.push({ key: "actionTopStockRunnerUp" });
+  }
+  return chips;
 }
 
 // ---- View -------------------------------------------------------------------
@@ -1745,7 +1841,10 @@ export function CopilotView({
                       ) : null}
                       </div>
                       {!m.failed && m.meta ? (
-                        <CitationStrip meta={m.meta} locale={business.locale} />
+                        <CitationStrip meta={m.meta} locale={business.locale} business={business} />
+                      ) : null}
+                      {!m.failed && m.meta ? (
+                        <StockActionChips meta={m.meta} business={business} />
                       ) : null}
                       {resumingId === m.id ? (
                         <div

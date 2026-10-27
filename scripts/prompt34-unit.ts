@@ -201,7 +201,7 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
   // Prompt 41 added the read-only `recentPurchaseOrders` section (≤10, bounded).
   // Prompt 42 (§121) added `recentGoodsReceipts`; Prompt 43 (§100) appends `recentGoodsReturns`.
   // Prompt 48 (§8) appends `recentSupplierBills` (bounded read-only bill history).
-  eq(Object.keys(supp), ["supplier", "summary", "recentExpenses", "recentPayments", "recentPurchaseOrders", "recentGoodsReceipts", "recentGoodsReturns", "recentSupplierBills", "payablesAging"], "v14 SupplierDetail top-level keys (P48 §8 recentSupplierBills + P49 §17 payablesAging)");
+  eq(Object.keys(supp), ["supplier", "summary", "recentExpenses", "recentPayments", "recentPurchaseOrders", "recentGoodsReceipts", "recentGoodsReturns", "recentSupplierBills", "payablesAging", "pastDueBillCount", "pastDueBillsOutstandingMinor"], "v14 SupplierDetail top-level keys (P48 §8 bills + P49 §17 aging + R86 breach summary)");
 
   const prod = mapProductDetail(
     { id: "pr1", name: "Widget", sku: "W1", unit: "pcs", salePriceMinor: 500, costPriceMinor: 300, stockQty: 9, lowStockAt: 5, isActive: true, createdAt: base, updatedAt: base },
@@ -218,7 +218,7 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
   eq(Object.keys(prod.product), ["id", "name", "sku", "unit", "salePriceMinor", "costPriceMinor", "isActive", "createdAt", "updatedAt"], "v14 product sub-object keys");
 
   const sale = mapSaleDetail(
-    { id: "sa1", number: 1, customerId: "c1", customerName: "Alice", issueDate: base, subtotalMinor: 10, discountMinor: 0, taxRateBp: 0, taxMinor: 0, totalMinor: 10, paidMinor: 0, status: "UNPAID", note: null, createdAt: base },
+    { id: "sa1", number: 1, customerId: "c1", customerName: "Alice", issueDate: base, dueDate: null, subtotalMinor: 10, discountMinor: 0, taxRateBp: 0, taxMinor: 0, totalMinor: 10, paidMinor: 0, status: "UNPAID", note: null, createdAt: base },
     [{ id: "i1", productId: "pr1", name: "Widget", unit: "pcs", qty: 2, unitPriceMinor: 5, lineTotalMinor: 10 }],
     [],
   );
@@ -247,7 +247,7 @@ eq(balanceOf(3, 1), 2, "v12 integer arithmetic only");
     collectKeys(mapCustomerDetail({ id: "x", name: "n", phone: null, email: null, address: null, note: null, createdAt: base }, compute360Summary([]), [], [])),
     collectKeys(mapSupplierDetail({ id: "x", name: "n", phone: null, email: null, address: null, note: null, createdAt: base }, computeSupplierSummary([]), [], [])),
     collectKeys(mapProductDetail({ id: "x", name: "n", sku: null, unit: null, salePriceMinor: 1, costPriceMinor: 1, stockQty: 0, lowStockAt: 0, isActive: true, createdAt: base, updatedAt: base }, [], [], 10)),
-    collectKeys(mapSaleDetail({ id: "x", number: 1, customerId: null, customerName: null, issueDate: base, subtotalMinor: 0, discountMinor: 0, taxRateBp: 0, taxMinor: 0, totalMinor: 0, paidMinor: 0, status: "UNPAID", note: null, createdAt: base }, [], [])),
+    collectKeys(mapSaleDetail({ id: "x", number: 1, customerId: null, customerName: null, issueDate: base, dueDate: null, subtotalMinor: 0, discountMinor: 0, taxRateBp: 0, taxMinor: 0, totalMinor: 0, paidMinor: 0, status: "UNPAID", note: null, createdAt: base }, [], [])),
     collectKeys(mapExpenseDetail({ id: "x", category: "c", amountMinor: 1, paidMinor: 0, status: "UNPAID", spentAt: base, dueDate: null, reference: null, note: null, supplierId: null, supplierName: null, createdAt: base }, [])),
     collectKeys(mapPaymentDetail({ id: "x", direction: "IN", amountMinor: 1, method: "CASH", note: null, paidAt: base, createdAt: base }, null, null)),
   ].flat();

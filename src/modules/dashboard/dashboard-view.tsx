@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   Sparkles,
   TrendingUp,
+  Trophy,
   Users,
   Wallet,
 } from "lucide-react";
@@ -32,9 +33,13 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 import { PageHeader } from "@/components/shared/primitives";
+import { Skeleton } from "@/components/ui/skeleton";
 import { OnboardingTour } from "@/modules/shell/onboarding-tour";
 import { useSession } from "next-auth/react";
 import { fmtCount, fmtMoney } from "../finance-shared/finance-kit";
+// R103 — the ONE share law (the tile's % rides the same helper as the
+// reports summary card and the copilot chips — never a second math).
+import { stockSharePercent } from "@/lib/stock-facts";
 import type { BusinessListItem, BusinessSummary } from "../shell/types";
 
 type ReportsSummary = {
@@ -51,8 +56,82 @@ type ReportsSummary = {
   inventory: {
     lowStockCount: number;
     lowStockItems: Array<{ id: string; name: string; stockQty: number; unit: string | null }>;
+    // R103 — the ADDITIVE fields: older cached responses honestly omit
+    // them (the tile's skeleton gates on exactly `valueMinor === undefined`,
+    // never on summary absence — the rest of the dashboard keeps working).
+    valueMinor?: number;
+    productCount?: number;
+    topValueProducts?: Array<{
+      productId: string;
+      name: string;
+      estimatedValueMinor: number;
+    }>;
   };
 };
+
+/**
+ * R103 — the At-a-glance quad's throne citation: the CURRENT stock-value
+ * leader (rank 1) as a focusable deep-link into the detailed valuation
+ * (?inventory=1 — the SAME closed token the copilot chips land). Laws
+ * (battery: scripts/r103-tile-unit.ts D5–D11):
+ * - gate is `value > 0` on the head AND an honest share basis — an absent/
+ *   zero fact renders NEVER (honest silence, never a fabricated leader);
+ * - the share rides the ONE helper (stockSharePercent) against the SAME
+ *   response's own inventory total;
+ * - the tooltip is formatted INSIDE the component (the R99 law) with the
+ *   business's EXACT money; the compact % rides UI-locale digits (R94).
+ */
+function InventoryLeaderCitation({
+  summary,
+  membership,
+}: {
+  summary: ReportsSummary;
+  membership: BusinessListItem;
+}) {
+  const t = useTranslations("dashboard");
+  const uiLocale = useLocale();
+  const navigate = useAppStore((s) => s.navigate);
+  const head = summary.inventory.topValueProducts?.[0];
+  if (!head || !(head.estimatedValueMinor > 0)) return null;
+  const share = stockSharePercent(
+    head.estimatedValueMinor,
+    summary.inventory.valueMinor!,
+  );
+  if (share === null) return null;
+  const tooltip = t("statInventoryLeaderTooltip", {
+    name: head.name,
+    money: fmtMoney(membership.business, head.estimatedValueMinor),
+  });
+  return (
+    <button
+      type="button"
+      data-testid="leader-inventory"
+      title={tooltip}
+      aria-label={tooltip}
+      onClick={() => navigate({ kind: "module", module: "reports", param: "inventory" })}
+      className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 mt-1 flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-start text-[11px] text-sky-700 transition-colors hover:bg-sky-600/10 dark:text-sky-400"
+    >
+      <Trophy className="size-3 shrink-0" aria-hidden="true" />
+      <span className="min-w-0 truncate" dir="auto">
+        {head.name}
+      </span>
+      <span
+        className="ms-auto inline-flex min-w-0 items-center gap-1"
+        aria-hidden="true"
+      >
+        <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-sky-600/15">
+          <span
+            className="h-1 rounded-full bg-sky-500/60"
+            style={{ width: `${share}%` }}
+          />
+        </span>
+      </span>
+      <span className="shrink-0 tabular-nums">
+        {t("statLeaderShareShort", { percent: fmtCount(uiLocale, share) })}
+      </span>
+    </button>
+  );
+}
 
 function MiniMoneyTooltip({
   active,
@@ -424,7 +503,7 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
             <CardTitle className="text-base">{t("atAGlance")}</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-lg border p-3">
                 <p className="text-muted-foreground text-xs font-medium uppercase">{t("statReceivable")}</p>
                 <p className="mt-1 text-lg font-semibold tabular-nums text-amber-700 dark:text-amber-400" dir="ltr">
@@ -445,6 +524,28 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
                   {payStats?.total ?? 0}
                 </p>
                 <p className="text-muted-foreground text-xs">{t("statPaymentsHint")}</p>
+              </div>
+              {/* R103 — the inventory tile: the sky cell of the balanced quad.
+                  The money skeleton gates on the ADDITIVE field (older cached
+                  summaries stay honest — D3/D4); zero stock is a REAL fact and
+                  renders the honest zero (no >0 gate on the money). */}
+              <div className="rounded-lg border border-sky-600/25 bg-sky-600/[0.03] p-3" data-testid="stat-inventory-tile">
+                <p className="text-muted-foreground text-xs font-medium uppercase">{t("statInventory")}</p>
+                {summary === undefined || summary.inventory.valueMinor === undefined ? (
+                  <Skeleton className="mt-2 h-7 w-24 rounded-md bg-sky-500/60" aria-hidden="true" />
+                ) : (
+                  <p className="mt-1 text-lg font-semibold tabular-nums text-sky-700 dark:text-sky-400" dir="ltr">
+                    {fmtMoney(membership.business, summary.inventory.valueMinor)}
+                  </p>
+                )}
+                {summary ? (
+                  <p className="text-muted-foreground text-xs">
+                    {t("statInventoryHint", { count: fmtCount(uiLocale, summary.inventory.productCount ?? 0) })}
+                  </p>
+                ) : null}
+                {summary ? (
+                  <InventoryLeaderCitation summary={summary} membership={membership} />
+                ) : null}
               </div>
             </div>
             <p className="text-muted-foreground mt-3 text-xs">{t("metricsNote")}</p>

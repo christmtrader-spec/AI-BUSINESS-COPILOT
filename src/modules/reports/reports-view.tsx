@@ -36,8 +36,12 @@ import {
   PackagePlus,
   ReceiptText,
   TrendingUp,
+  Trophy,
 } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
+// R99/R102 — the ONE share law (the throne's % rides the same helper as the
+// dashboard tile and the copilot chips — never a second math).
+import { stockSharePercent } from "@/lib/stock-facts";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 import { toast } from "@/hooks/use-toast";
@@ -135,6 +139,14 @@ type Summary = {
       unit: string | null;
       stockQty: number;
       lowStockAt: number;
+    }>;
+    // R99/R102 — the additive throne field. OPTIONAL on the view type: older
+    // cached summary responses honestly omit it (the card simply never
+    // renders — never a fabricated leader).
+    topValueProducts?: Array<{
+      productId: string;
+      name: string;
+      estimatedValueMinor: number;
     }>;
   };
   // Prompt 20 — ADVANCED_REPORTS entitlement: the server OMITS `advanced`
@@ -277,6 +289,81 @@ function MoneyTooltip({
         </p>
       ))}
     </div>
+  );
+}
+
+/**
+ * R99/R102 — the summary's value-podium citation: the CURRENT stock-value
+ * leader (rank 1) as a focusable deep-link row into the detailed valuation
+ * (?inventory=1). Laws (battery: scripts/r102-stock-unit.ts W13–W23):
+ * - gate is `value > 0` — an absent/zero/negative fact renders NEVER
+ *   (honest silence, never a fabricated leader);
+ * - the share rides the ONE helper (stockSharePercent) against the SAME
+ *   response's own inventory total (same basis by construction);
+ * - the money is exact LTR (dir="ltr" tabular-nums), the tooltip is
+ *   formatted INSIDE this component (never a raw ICU template);
+ * - the share bar is decorative (aria-hidden) and hides below sm (the
+ *   mobile law); the chevron is RTL-mirrored with the hover nudge.
+ */
+function InventoryThroneCard({
+  data,
+  business,
+}: {
+  data: Summary;
+  business: BusinessSummary;
+}) {
+  const t = useTranslations("reports");
+  const uiLocale = useLocale();
+  const navigate = useAppStore((s) => s.navigate);
+  const fmt = (minor: number) => fmtMoney(business, minor);
+  const head = data.inventory.topValueProducts?.[0];
+  if (!head || !(head.estimatedValueMinor > 0)) return null;
+  const share = stockSharePercent(
+    head.estimatedValueMinor,
+    data.inventory.valueMinor,
+  );
+  const tooltip = t("invSummaryThroneTooltip", {
+    name: head.name,
+    money: fmt(head.estimatedValueMinor),
+  });
+  return (
+    <button
+      type="button"
+      className="group focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 flex w-full items-center gap-2 rounded-lg border border-sky-600/25 bg-sky-600/[0.04] px-3 py-2 text-start transition-colors hover:border-sky-600/45 hover:bg-sky-600/10"
+      data-testid="inv-summary-throne"
+      onClick={() => navigate({ kind: "module", module: "reports", param: "inventory" })}
+      title={tooltip}
+      aria-label={tooltip}
+    >
+      <Trophy
+        className="size-3.5 shrink-0 text-sky-600 dark:text-sky-400"
+        aria-hidden="true"
+      />
+      <span className="text-xs font-medium text-sky-800 dark:text-sky-300">
+        {t("invSummaryThrone")}
+      </span>
+      <span className="hidden min-w-0 flex-1 items-center sm:flex" aria-hidden="true">
+        <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-sky-600/15">
+          <span
+            className="h-1 rounded-full bg-sky-600/60 transition-[width]"
+            style={{ width: `${share ?? 0}%` }}
+          />
+        </span>
+      </span>
+      {/* W19 — the money is exact LTR: `dir="ltr">` adjacent to the value. */}
+      <span className="text-xs font-semibold text-sky-700 tabular-nums dark:text-sky-400" dir="ltr">
+        {fmt(head.estimatedValueMinor)}
+      </span>
+      {share !== null ? (
+        <span className="text-muted-foreground shrink-0 text-[11px] tabular-nums">
+          {t("invSummaryThroneShareShort", { percent: fmtCount(uiLocale, share) })}
+        </span>
+      ) : null}
+      <ChevronRight
+        className="size-3.5 shrink-0 text-sky-600/70 transition-transform group-hover:translate-x-0.5 rtl:-scale-x-100 rtl:group-hover:-translate-x-0.5"
+        aria-hidden="true"
+      />
+    </button>
   );
 }
 
@@ -1227,6 +1314,9 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                       <p className="text-muted-foreground text-xs">{t("lowStockHint")}</p>
                     </div>
                   </div>
+                  {/* R99/R102 — the value-podium citation (the CURRENT stock
+                      leader deep-links into the detailed valuation). */}
+                  <InventoryThroneCard data={data} business={business} />
                   {data.inventory.lowStockItems.length > 0 ? (
                     <ul className="space-y-1.5">
                       {data.inventory.lowStockItems.map((item) => (

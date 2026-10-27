@@ -534,9 +534,13 @@ export function AuthView({ variant = "default" }: { variant?: "default" | "platf
   // in-card toggles afterwards.
   const storeAuthMode = useAppStore((s) => s.authMode);
   const [mode, setMode] = useState<"signin" | "signup">(storeAuthMode);
-  const adoptedRef = React.useRef(storeAuthMode);
-  if (adoptedRef.current !== storeAuthMode) {
-    adoptedRef.current = storeAuthMode;
+  // R130 — lint-hardened adoption: the previous store value lives in STATE
+  // (React's sanctioned "adjust state when a prop changes" pattern), never
+  // in a ref written during render (react-hooks/refs). Same one-shot law:
+  // once adopted, in-card toggles keep local authority.
+  const [adoptedStoreMode, setAdoptedStoreMode] = useState(storeAuthMode);
+  if (adoptedStoreMode !== storeAuthMode) {
+    setAdoptedStoreMode(storeAuthMode);
     setMode(storeAuthMode);
   }
   const [name, setName] = useState("");

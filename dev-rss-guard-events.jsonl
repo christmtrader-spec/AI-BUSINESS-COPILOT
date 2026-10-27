@@ -1,2 +1,41 @@
 {"ts":"2026-10-27T06:04:25.970Z","kind":"guard-start","msg":"guard started pid=14842 (water=2450MB, consecutive=3, interval=30s, grace=4x+300MB)","pid":14842,"waterMb":2450,"consecutive":3,"intervalMs":30000,"graceSamples":4,"graceHeadroomMb":300}
 {"ts":"2026-10-27T06:05:00.928Z","kind":"spawn-ok","msg":"spawn(down-selfheal) OK after ~2s pid=14985","spawnWhy":"down-selfheal","pid":14985}
+{"ts":"2026-10-27T06:19:16.546Z","kind":"spawn-ok","msg":"spawn(down-selfheal) OK after ~8s pid=15816","spawnWhy":"down-selfheal","pid":15816}
+{"ts":"2026-10-27T06:23:01.706Z","kind":"spawn-ok","msg":"spawn(down-selfheal) OK after ~5s pid=16377","spawnWhy":"down-selfheal","pid":16377}
+{"ts":"2026-10-27T06:25:01.864Z","kind":"high-rss","msg":"high rss: 2515MB (streak 1/3) pid=16970","rssMb":2515,"streak":"1/3","pid":"16970","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T06:27:02.065Z","kind":"high-rss","msg":"high rss: 2453MB (streak 1/3) pid=17672","rssMb":2453,"streak":"1/3","pid":"17672","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T06:27:32.128Z","kind":"high-rss","msg":"high rss: 2711MB (streak 2/3) pid=17672","rssMb":2711,"streak":"2/3","pid":"17672","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T06:31:02.438Z","kind":"high-rss","msg":"high rss: 2543MB (streak 1/3) pid=18328","rssMb":2543,"streak":"1/3","pid":"18328","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T06:32:06.602Z","kind":"spawn-ok","msg":"spawn(down-selfheal) OK after ~2s pid=19082","spawnWhy":"down-selfheal","pid":19082}
+{"ts":"2026-10-27T06:40:12.505Z","kind":"spawn-ok","msg":"spawn(down-selfheal) OK after ~2s pid=19873","spawnWhy":"down-selfheal","pid":19873}
+{"ts":"2026-10-27T06:41:49.207Z","kind":"spawn-ok","msg":"spawn(down-selfheal) OK after ~3s pid=20226","spawnWhy":"down-selfheal","pid":20226}
+{"ts":"2026-10-27T06:46:00.373Z","kind":"spawn-ok","msg":"spawn(down-selfheal) OK after ~15s pid=20813","spawnWhy":"down-selfheal","pid":20813}
+{"ts":"2026-10-27T06:51:35.663Z","kind":"spawn-ok","msg":"spawn(down-selfheal) OK after ~2s pid=21672","spawnWhy":"down-selfheal","pid":21672}
+{"ts":"2026-10-27T06:55:05.915Z","kind":"high-rss","msg":"high rss: 2522MB (streak 1/3) pid=21804","rssMb":2522,"streak":"1/3","pid":"21804","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T06:55:35.951Z","kind":"high-rss","msg":"high rss: 2503MB (streak 2/3) pid=21804","rssMb":2503,"streak":"2/3","pid":"21804","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T06:56:06.024Z","kind":"high-rss","msg":"high rss: 2492MB (streak 3/3) pid=21804","rssMb":2492,"streak":"3/3","pid":"21804","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T06:56:06.025Z","kind":"recycle-start","msg":"RECYCLE start: next-server pid=21804 rss=2492MB sustained ≥3 samples over 2450MB","rssMb":2492,"pid":"21804","consecutive":3,"waterMb":2450}
+{"ts":"2026-10-27T06:56:36.657Z","kind":"spawn-ok","msg":"spawn(recycle) OK after ~11s pid=22924","spawnWhy":"recycle","pid":22924}
+{"ts":"2026-10-27T06:56:36.657Z","kind":"recycle-done","msg":"RECYCLE done: old rss=2492MB reclaimed","rssMb":2492}
+{"ts":"2026-10-27T07:06:37.560Z","kind":"high-rss","msg":"high rss: 2489MB (streak 1/3) pid=22951","rssMb":2489,"streak":"1/3","pid":"22951","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T07:07:07.632Z","kind":"recovered","msg":"rss recovered: 2436MB (streak reset)","rssMb":2436}
+{"ts":"2026-10-27T07:09:07.828Z","kind":"high-rss","msg":"high rss: 2610MB (streak 1/3) pid=22951","rssMb":2610,"streak":"1/3","pid":"22951","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T07:09:37.867Z","kind":"recovered","msg":"rss recovered: 2419MB (streak reset)","rssMb":2419}
+{"ts":"2026-10-27T07:12:08.108Z","kind":"high-rss","msg":"high rss: 2470MB (streak 1/3) pid=22951","rssMb":2470,"streak":"1/3","pid":"22951","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T07:12:38.156Z","kind":"high-rss","msg":"high rss: 2472MB (streak 2/3) pid=22951","rssMb":2472,"streak":"2/3","pid":"22951","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T07:13:08.215Z","kind":"high-rss","msg":"high rss: 2473MB (streak 3/3) pid=22951","rssMb":2473,"streak":"3/3","pid":"22951","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T07:13:08.215Z","kind":"recycle-start","msg":"RECYCLE start: next-server pid=22951 rss=2473MB sustained ≥3 samples over 2450MB","rssMb":2473,"pid":"22951","consecutive":3,"waterMb":2450}
+{"ts":"2026-10-27T07:13:41.519Z","kind":"spawn-ok","msg":"spawn(recycle) OK after ~12s pid=24609","spawnWhy":"recycle","pid":24609}
+{"ts":"2026-10-27T07:13:41.519Z","kind":"recycle-done","msg":"RECYCLE done: old rss=2473MB reclaimed","rssMb":2473}
+{"ts":"2026-10-27T07:14:45.653Z","kind":"spawn-ok","msg":"spawn(down-selfheal) OK after ~2s pid=24948","spawnWhy":"down-selfheal","pid":24948}
+{"ts":"2026-10-27T07:16:20.319Z","kind":"spawn-ok","msg":"spawn(down-selfheal) OK after ~2s pid=25295","spawnWhy":"down-selfheal","pid":25295}
+{"ts":"2026-10-27T07:18:25.747Z","kind":"spawn-ok","msg":"spawn(down-selfheal) OK after ~3s pid=25596","spawnWhy":"down-selfheal","pid":25596}
+{"ts":"2026-10-27T07:20:31.736Z","kind":"spawn-ok","msg":"spawn(down-selfheal) OK after ~3s pid=25981","spawnWhy":"down-selfheal","pid":25981}
+{"ts":"2026-10-27T07:23:32.064Z","kind":"high-rss","msg":"high rss: 2564MB (streak 1/3) pid=26137","rssMb":2564,"streak":"1/3","pid":"26137","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T07:24:02.114Z","kind":"recovered","msg":"rss recovered: 2346MB (streak reset)","rssMb":2346}
+{"ts":"2026-10-27T07:25:32.240Z","kind":"high-rss","msg":"high rss: 2487MB (streak 1/3) pid=26137","rssMb":2487,"streak":"1/3","pid":"26137","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T07:26:02.310Z","kind":"high-rss","msg":"high rss: 2503MB (streak 2/3) pid=26137","rssMb":2503,"streak":"2/3","pid":"26137","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T07:26:32.355Z","kind":"high-rss","msg":"high rss: 2500MB (streak 3/3) pid=26137","rssMb":2500,"streak":"3/3","pid":"26137","waterMb":2450,"effWaterMb":2450,"graceActive":false}
+{"ts":"2026-10-27T07:26:32.356Z","kind":"recycle-start","msg":"RECYCLE start: next-server pid=26137 rss=2500MB sustained ≥3 samples over 2450MB","rssMb":2500,"pid":"26137","consecutive":3,"waterMb":2450}
+{"ts":"2026-10-27T07:27:05.647Z","kind":"spawn-ok","msg":"spawn(recycle) OK after ~12s pid=27061","spawnWhy":"recycle","pid":27061}
+{"ts":"2026-10-27T07:27:05.647Z","kind":"recycle-done","msg":"RECYCLE done: old rss=2500MB reclaimed","rssMb":2500}

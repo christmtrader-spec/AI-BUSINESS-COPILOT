@@ -26,10 +26,12 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
   Download,
   Info,
+  Link2,
   Loader2,
   PackageSearch,
   RotateCcw,
@@ -151,6 +153,8 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
   const [sort, setSort] = useState<Sort>("VALUE_DESC");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  // R103 — the copy-deep-link inline feedback (2s icon+label swap).
+  const [linkCopied, setLinkCopied] = useState(false);
 
   // Debounced search — 300 ms after the last keystroke.
   useEffect(() => {
@@ -251,6 +255,38 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
 
   const fmt = (minor: number) => fmtMoney(business, minor);
   const count = (n: number) => fmtCount(uiLocale, n);
+
+  // R103/P1 — the CANONICAL constructed URL (NEVER the raw href): the panel
+  // also mounts INLINE under the summary sub-view, where window.location.href
+  // would copy a summary URL — a lie. The constructed form always lands the
+  // closed token this panel owns (#/reports?inventory=1).
+  const copyLink = async () => {
+    const url = window.location.origin + window.location.pathname + "#/reports?inventory=1";
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        // Clipboard API denied/unavailable — the established textarea
+        // fallback (same law as the setup-gate command chip). Silent fail
+        // → the catch toasts; the URL stays real either way.
+        const ta = document.createElement("textarea");
+        ta.value = url;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        const okFallback = document.execCommand("copy");
+        ta.remove();
+        if (!okFallback) throw new Error("copy rejected");
+      }
+      setLinkCopied(true);
+      window.setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      // P3 — clipboard denial is the environment speaking: toast destructive.
+      toast({ title: t("invValCopyFailed"), variant: "destructive" });
+    }
+  };
 
   const columns = [
     {
@@ -368,21 +404,40 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
             </CardTitle>
             <CardDescription className="mt-1">{t("invValDesc")}</CardDescription>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-9 gap-1.5"
-            onClick={() => exportCsv.mutate()}
-            disabled={exportCsv.isPending || isLoading || Boolean(error)}
-            title={t("invValExport")}
-          >
-            {exportCsv.isPending ? (
-              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-            ) : (
-              <Download className="size-4" aria-hidden="true" />
-            )}
-            <span aria-hidden="true">{exportCsv.isPending ? t("invValExporting") : t("invValExport")}</span>
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 gap-1.5"
+              onClick={() => void copyLink()}
+              disabled={isLoading || Boolean(error)}
+              title={t("invValCopyLink")}
+              aria-label={t("invValCopyLink")}
+              data-testid="inv-val-copy-link"
+            >
+              {linkCopied ? (
+                <Check className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+              ) : (
+                <Link2 className="size-4" aria-hidden="true" />
+              )}
+              <span aria-hidden="true">{linkCopied ? t("invValCopiedToast") : t("invValCopyLink")}</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 gap-1.5"
+              onClick={() => exportCsv.mutate()}
+              disabled={exportCsv.isPending || isLoading || Boolean(error)}
+              title={t("invValExport")}
+            >
+              {exportCsv.isPending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Download className="size-4" aria-hidden="true" />
+              )}
+              <span aria-hidden="true">{exportCsv.isPending ? t("invValExporting") : t("invValExport")}</span>
+            </Button>
+          </div>
         </div>
 
         {/* §8.6 — the valuation-basis disclosure: always visible, never an
