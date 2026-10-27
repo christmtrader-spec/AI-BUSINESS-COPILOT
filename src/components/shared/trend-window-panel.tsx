@@ -2,10 +2,11 @@
 
 import { useId, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { ChevronDown, GitCompareArrows } from "lucide-react";
+import { ArrowUpRight, ChevronDown, GitCompareArrows } from "lucide-react";
 import { toPersianDigits } from "@/lib/jalali";
 import { fmtCount } from "@/modules/finance-shared/finance-kit";
 import { trendDeltaCls } from "@/components/shared/trend-chip";
+import { useAppStore } from "@/store/app-store";
 
 /**
  * R132 — THE WINDOW COMPARISON PANEL.
@@ -31,6 +32,13 @@ import { trendDeltaCls } from "@/components/shared/trend-chip";
  * a11y law: the trigger is a real button (aria-expanded + aria-controls),
  * the panel is a labelled region, Escape collapses, focus-visible ring on
  * the trigger — the keyboard reaches everything the pointer does.
+ *
+ * R134 — the two window labels in the header are REAL deep-link buttons:
+ * each opens Reports with THAT window pre-selected as the custom range
+ * (#/reports?from=&to= — the store parser's both-or-nothing ISO law).
+ * One affordance, two destinations — the current label opens the window
+ * you are looking at, the previous label opens the one you are comparing
+ * against. Same visual family on both surfaces (ONE component law).
  */
 
 export type TrendWindowBlock = {
@@ -72,8 +80,17 @@ export function TrendWindowPanel({
   const panelId = useId();
   const fa = uiLocale === "fa";
   const loc = (n: number | string) => (fa ? toPersianDigits(String(n)) : String(n));
+  const navigate = useAppStore((s) => s.navigate);
   const rangeLabel = (r: { from: string; to: string }) =>
     loc(`${r.from.slice(5)} → ${r.to.slice(5)}`);
+  // R134 — one deep-link law: each header window opens Reports with THAT
+  // window pre-selected (push navigation — Back returns to this surface).
+  const openInReports = (r: { from: string; to: string }) =>
+    navigate({ kind: "module", module: "reports", rangeFrom: r.from, rangeTo: r.to });
+  // Shared affordance classes — the deep-link look cannot drift between
+  // the two labels (one class law, like every other hue source here).
+  const rangeLinkCls =
+    "inline-flex items-center gap-0.5 rounded px-1 py-0.5 -mx-1 transition-colors motion-reduce:transition-none hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background";
 
   const rows = [
     {
@@ -144,11 +161,31 @@ export function TrendWindowPanel({
             aria-label={t("panelLabel")}
             className="bg-card/60 mt-3 rounded-xl border p-4"
           >
-            {/* Window header: current ← → previous, exact date keys */}
+            {/* Window header: current ← → previous, exact date keys. BOTH
+                labels are deep links into Reports (R134) — the current one
+                carries the stronger tone (it is the window in view). */}
             <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium" dir="ltr">
-              <span className="text-foreground/80">{rangeLabel(range)}</span>
+              <button
+                type="button"
+                onClick={() => openInReports(range)}
+                title={t("openCurrentInReports")}
+                aria-label={t("openCurrentInReports")}
+                className={`${rangeLinkCls} text-foreground/80 hover:text-foreground`}
+              >
+                {rangeLabel(range)}
+                <ArrowUpRight className="size-3 opacity-40" aria-hidden="true" />
+              </button>
               <span aria-hidden="true" className="border-foreground/30 border-x h-3" />
-              <span>{rangeLabel(trend.previousRange)}</span>
+              <button
+                type="button"
+                onClick={() => openInReports(trend.previousRange)}
+                title={t("openPreviousInReports")}
+                aria-label={t("openPreviousInReports")}
+                className={`${rangeLinkCls} hover:text-foreground`}
+              >
+                {rangeLabel(trend.previousRange)}
+                <ArrowUpRight className="size-3 opacity-40" aria-hidden="true" />
+              </button>
               <span className="ms-auto">{t("currentVsPrevious")}</span>
             </div>
 

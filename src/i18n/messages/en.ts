@@ -53,7 +53,12 @@ const en = {
         navigate: "Go to",
         preferences: "Preferences",
         session: "Session",
+        // R133 — the ⌘K quick AI-usage command lives here.
+        account: "Account",
       },
+      // R133 — the palette command label (reuse-tested: distinct from the
+      // dialog title so both can evolve independently).
+      usageItem: "AI usage — this period",
       theme: {
         light: "Light theme",
         dark: "Dark theme",
@@ -1751,6 +1756,8 @@ const en = {
       metric_AI_TOKENS: "AI tokens (reported)",
       unavailable: "Usage is temporarily unavailable.",
       serverAuthoritative: "Usage is counted server-side on every AI request and cannot be changed from this device.",
+      // R133 — the ⌘K quick dialog footer (deep link to the full view).
+      quickOpenSubscription: "Open subscription details",
     },
     advancedReports: "Advanced insights",
     advancedLocked: "Advanced insights (growth & revenue concentration) are part of Starter and higher plans.",
@@ -2197,6 +2204,10 @@ const en = {
     metricNetCash: "Net cash",
     salesCountChip: "Sales: {cur} now vs {prev} before",
     expensesCountChip: "Expenses: {cur} now vs {prev} before",
+    // R134 — the header window labels are deep links into Reports with
+    // THAT window pre-selected (both-or-nothing ?from=&to= store law).
+    openCurrentInReports: "Open the current window in Reports",
+    openPreviousInReports: "Open the previous window in Reports",
   },
 
   legal: {

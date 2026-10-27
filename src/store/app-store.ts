@@ -182,7 +182,14 @@ export type AppView =
        * a perf param cannot exist by parser law and never serialize. */
       perfFrom?: string;
       perfTo?: string;
-      perfDirection?: "IN" | "OUT" }
+      perfDirection?: "IN" | "OUT";
+      /** R134 — the reports custom-range deep link (#/reports?from=&to=)
+       * rides the SAME both-or-nothing ISO law as the perf window; mutually
+       * exclusive with every other reports sub-view by parse precedence
+       * (month → inventory → reorder → perf → range). Orphan/malformed
+       * fields never serialize and never ride another module. */
+      rangeFrom?: string;
+      rangeTo?: string; }
   /** Prompt 28 — internal platform console (separate workspace, §15). */
   | { kind: "platform"; section: PlatformSection }
   /** Prompt 30 §250 — email verification landing (token from the email link). */
@@ -377,7 +384,11 @@ export function sameView(a: AppView, b: AppView): boolean {
         (a.param ?? null) === (b.param ?? null) &&
         (a.perfFrom ?? null) === (b.perfFrom ?? null) &&
         (a.perfTo ?? null) === (b.perfTo ?? null) &&
-        (a.perfDirection ?? null) === (b.perfDirection ?? null)
+        (a.perfDirection ?? null) === (b.perfDirection ?? null) &&
+        // R134 — a DIFFERENT custom range re-enters the store without
+        // remounting the shell (the range effect applies it in place).
+        (a.rangeFrom ?? null) === (b.rangeFrom ?? null) &&
+        (a.rangeTo ?? null) === (b.rangeTo ?? null)
       );
     }
     return (a.param ?? null) === (b.param ?? null);
@@ -627,6 +638,23 @@ export function viewToHash(view: AppView): string | null {
           parts.push(`customer=${encodeURIComponent(view.customerId)}`);
         }
         return parts.length ? `#/sales?${parts.join("&")}` : "#/sales";
+      }
+      // R134 — the reports custom range serializes canonically
+      // (#/reports?from=&to=) — BOTH or nothing (never one lying boundary),
+      // ISO + non-inverted (the exact perf-window validation); orphan range
+      // fields NEVER serialize and the fragment never rides another module.
+      if (view.module === "reports") {
+        const iso = /^\d{4}-\d{2}-\d{2}$/;
+        if (
+          typeof view.rangeFrom === "string" &&
+          typeof view.rangeTo === "string" &&
+          iso.test(view.rangeFrom) &&
+          iso.test(view.rangeTo) &&
+          new Date(`${view.rangeFrom}T00:00:00Z`).getTime() <=
+            new Date(`${view.rangeTo}T00:00:00Z`).getTime()
+        ) {
+          return `#/reports?from=${view.rangeFrom}&to=${view.rangeTo}`;
+        }
       }
       return `#/${view.module}`;
     }
@@ -984,6 +1012,24 @@ export function hashToView(hash: string): AppView {
         customerId:
           customerRaw && isValidEntityId(customerRaw) ? customerRaw : undefined,
       };
+    }
+    // R134 — the reports custom-range deep link (?from=&to=): BOTH or
+    // nothing, ISO keys, never inverted — the exact validation family of
+    // the perf window. Every malformed piece drops WHOLESALE (bare reports,
+    // never a half-open range); it is mutually exclusive with the other
+    // reports sub-views by parse precedence (they returned above; a perf
+    // URL consumes from/to as ITS window and never leaks range state).
+    if (path === "reports") {
+      const from = query.get("from") ?? "";
+      const to = query.get("to") ?? "";
+      const iso = /^\d{4}-\d{2}-\d{2}$/;
+      if (iso.test(from) && iso.test(to)) {
+        const f = new Date(`${from}T00:00:00Z`).getTime();
+        const t = new Date(`${to}T00:00:00Z`).getTime();
+        if (!Number.isNaN(f) && !Number.isNaN(t) && f <= t) {
+          return { kind: "module", module: path, rangeFrom: from, rangeTo: to };
+        }
+      }
     }
     return { kind: "module", module: path };
   }

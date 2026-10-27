@@ -104,6 +104,12 @@ const MIGRATIONS = [
   // R68 — platform setup key (cold-start first-operator bootstrap) table.
   "20261023120000_r68_platform_setup_keys",
   "20261023140000_r69_invite_token_hash",
+  // R134 — the four migrations the 2026-10-27 revert left falsely pending
+  // (live DDL byte-verified before resolve; same maintenance law as above).
+  "20261024000000_r81_sale_due_date",
+  "20261024021716_r90_sale_draft_lifecycle",
+  "20261024094500_r89_history_reconciliation",
+  "20261025021500_r108_checklist_dismissal",
 ];
 
 function log(step, msg) {

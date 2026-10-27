@@ -36,6 +36,7 @@ import {
   Wallet,
   Warehouse,
   FileSignature,
+  Gauge,
   type LucideIcon,
 } from "lucide-react";
 import { LOCALES, localeLabel } from "@/i18n/config";
@@ -43,6 +44,9 @@ import { useAppStore, type AppView } from "@/store/app-store";
 import { asRole, can, type Role } from "@/lib/rbac";
 import { ApiClientError } from "@/lib/api-client";
 import { fmtCount } from "../finance-shared/finance-kit";
+// R133 — the ⌘K quick AI-usage dialog (read-only; the palette never
+// executes mutations — this only INSPECTS server-counted usage, §1/§52).
+import { UsageQuickDialog } from "@/modules/billing/usage-quick-dialog";
 import {
   SEARCH_DEBOUNCE_MS,
   SEARCH_Q_MIN,
@@ -147,6 +151,9 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
   // Controlled palette input + debounced mirror (§12.6, 200–300 ms).
   const [inputValue, setInputValue] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  // R133 — the quick usage dialog opens FROM the palette (the palette
+  // closes first; the dialog is a sibling, never nested in cmdk).
+  const [usageOpen, setUsageOpen] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -365,6 +372,27 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
           ))}
         </CommandGroup>
         <CommandSeparator />
+        {/* R133 — Account group: the ⌘K path to the quick AI-usage view.
+            Gated by settings:read — the exact permission the usage API
+            itself requires (viewer roles see no dead command). */}
+        {can(role, "settings:read") ? (
+          <>
+            <CommandGroup heading={tCommon("palette.groups.account")}>
+              <CommandItem
+                value={tCommon("palette.usageItem")}
+                onSelect={() => {
+                  setOpen(false);
+                  setUsageOpen(true);
+                }}
+                data-testid="palette-usage-item"
+              >
+                <Gauge className="text-muted-foreground" aria-hidden="true" />
+                <span>{tCommon("palette.usageItem")}</span>
+              </CommandItem>
+            </CommandGroup>
+            <CommandSeparator />
+          </>
+        ) : null}
         <CommandGroup heading={tCommon("palette.groups.session")}>
           <CommandItem
             value={tCommon("signOut")}
@@ -389,6 +417,15 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
         <kbd className="bg-muted rounded border px-1 font-sans">K</kbd>
         <span className="ms-2">{tCommon("palette.hint")}</span>
       </div>
+      {/* R133 — rendered OUTSIDE the CommandDialog (never nested in cmdk). */}
+      <UsageQuickDialog
+        open={usageOpen}
+        onOpenChange={setUsageOpen}
+        onOpenSubscription={() => {
+          setUsageOpen(false);
+          go({ kind: "settings:billing" });
+        }}
+      />
     </CommandDialog>
   );
 }

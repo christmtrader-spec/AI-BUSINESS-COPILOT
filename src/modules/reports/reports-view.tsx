@@ -405,6 +405,26 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
   // from/to on /reports/summary).
   const [jalaliRange, setJalaliRange] = useState<JalaliRange | null>(null);
 
+  // R134 — the custom-range deep link (#/reports?from=&to=, the trend
+  // panel's window buttons) PRE-SELECTS that window on arrival AND on
+  // structural re-entry (a hash change that only flips the range re-enters
+  // the store without remounting — sameView law). Absent fields NEVER
+  // clobber local state: once the user edits the range in place, their
+  // choice wins until a NEW deep link explicitly names another window.
+  // Implemented with React's sanctioned previous-value-STATE pattern
+  // (adjust state during render, guarded by the last-applied deep range —
+  // the same lint-clean shape the R130 auth-view adoption shipped).
+  const deepRangeFrom =
+    view.kind === "module" && view.module === "reports" ? (view.rangeFrom ?? null) : null;
+  const deepRangeTo =
+    view.kind === "module" && view.module === "reports" ? (view.rangeTo ?? null) : null;
+  const deepRange = deepRangeFrom && deepRangeTo ? { from: deepRangeFrom, to: deepRangeTo } : null;
+  const [appliedDeepRange, setAppliedDeepRange] = useState<JalaliRange | null>(null);
+  if (deepRange && (appliedDeepRange?.from !== deepRange.from || appliedDeepRange?.to !== deepRange.to)) {
+    setAppliedDeepRange(deepRange);
+    setJalaliRange(deepRange);
+  }
+
   // Month drill-down state lives in the URL (store view param) — deep-linkable
   // via #/reports?month=YYYY-MM and sync'd with browser back/forward. The
   // dialog is a DERIVED view of the store: row clicks navigate({param}),

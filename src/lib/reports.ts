@@ -438,6 +438,10 @@ export async function buildReportSummary(
       collectedPrevMinor,
       paidOutPrevMinor,
       netCashPrevMinor,
+      // R134 — the accrual twin (revenue − expenses of the PREVIOUS window),
+      // so the CSV's previous_window section mirrors the kpi section
+      // column-for-column (the accountant diff law).
+      netAccrualPrevMinor: safeSub(revenuePrevMinor, expensesPrevMinor, "netAccrualPrevMinor"),
       revenueChangePct: pctChange(revenueMinor, revenuePrevMinor),
       expensesChangePct: pctChange(expensesMinor, expensesPrevMinor),
       collectedChangePct: pctChange(collectedMinor, collectedPrevMinor),

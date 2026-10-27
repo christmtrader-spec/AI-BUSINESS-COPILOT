@@ -10,6 +10,13 @@
  * only converted to a decimal string at serialization time (toFixed at
  * the business precision) — never float arithmetic.
  *
+ * R134 — a `previous_window` section rides along when the summary carries
+ * its trend block (always, on the SAME buildReportSummary call — zero new
+ * queries): the comparison window's exact range + its own KPI set, so an
+ * accountant can diff both windows from the file alone. The section is
+ * additive at the END of the document (older parsers that stop at the
+ * known sections keep reading the same bytes they always did).
+ *
  * Permission: data:read (all roles — mirrors the Reports view).
  * Billing (§34): CSV_EXPORT entitlement — server-side reject when false;
  * UI hiding alone is never the enforcement.
@@ -138,6 +145,22 @@ export const GET = route(async (req: NextRequest) => {
   lines.push(csvRow(["inventory", "active_products", summary.inventory.productCount]));
   lines.push(csvRow(["inventory", "low_stock_items", summary.inventory.lowStockCount]));
 
+  // R134 — previous-window comparison (the additive `trend` block, ONE
+  // source of truth: the same buildReportSummary aggregates the panel and
+  // the chips narrate). Field names mirror the kpi section exactly so a
+  // spreadsheet diff of the two windows is a column-by-column operation.
+  lines.push("");
+  lines.push(csvRow(["previous_window", "from", summary.trend.previousRange.from]));
+  lines.push(csvRow(["previous_window", "to", summary.trend.previousRange.to]));
+  lines.push(csvRow(["previous_window", `revenue_issued_${B}`, money(summary.trend.revenuePrevMinor)]));
+  lines.push(csvRow(["previous_window", "sales_count", summary.trend.salesCountPrev]));
+  lines.push(csvRow(["previous_window", `cash_collected_${B}`, money(summary.trend.collectedPrevMinor)]));
+  lines.push(csvRow(["previous_window", `expenses_${B}`, money(summary.trend.expensesPrevMinor)]));
+  lines.push(csvRow(["previous_window", "expenses_count", summary.trend.expensesCountPrev]));
+  lines.push(csvRow(["previous_window", `paid_out_${B}`, money(summary.trend.paidOutPrevMinor)]));
+  lines.push(csvRow(["previous_window", `net_cash_${B}`, money(summary.trend.netCashPrevMinor)]));
+  lines.push(csvRow(["previous_window", `net_accrual_${B}`, money(summary.trend.netAccrualPrevMinor)]));
+
   const csv = `\uFEFF${lines.join("\r\n")}\r\n`; // BOM so Excel opens UTF-8 cleanly
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const filename = `report-${business.slug || "business"}-${days}d-${stamp}.csv`;
@@ -148,7 +171,7 @@ export const GET = route(async (req: NextRequest) => {
     action: "data.export",
     entityType: "ReportCSV",
     entityId: null,
-    after: { format: "csv", days },
+    after: { format: "csv", days, previousWindow: true },
     ip: req.headers.get("x-forwarded-for"),
     userAgent: req.headers.get("user-agent"),
   });
