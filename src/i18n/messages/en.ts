@@ -1074,6 +1074,23 @@ const en = {
       printPreviewTitle: "Print preview",
       printPreviewDesc: "Review the exact document before printing — this is precisely what the printer will receive.",
       printNow: "Print now",
+    
+      // R81/R83 — stated payment terms editor (the terms dialog on the sale
+      // detail): §84 date-only law labels + the draft ISSUE action.
+      editTermsTitle: "Invoice terms",
+      editTermsDesc: "State the payment terms and note for this invoice. Due dates use calendar days — the same day in every timezone.",
+      dueDate: "Due date",
+      dueDateHint: "Leave empty to keep the invoice AGING-framed (no stated terms).",
+      issueDateLabel: "Issue date",
+      issueDateHint: "When this invoice was issued (locks the numbering day).",
+      issueDateIssueHint: "Issuing sets this to today on the server.",
+      issueDateLocked: "The issue day of an issued invoice can still be corrected here.",
+      issueTitle: "Issue this draft",
+      issueDesc: "Issuing turns this draft into a real invoice: it gets today's issue day, joins the receivables and can receive payments.",
+      issueConfirm: "Issue invoice",
+      noteLabel: "Note",
+      notePlaceholder: "e.g. Net-30, paid by bank transfer…",
+      termsSavedToast: "Invoice terms saved",
     },
     expenses: {
       title: "Expenses",
@@ -1876,6 +1893,10 @@ const en = {
     sectionInventory: "Stock value and low-stock items",
     sectionRecentPayments: "The most recent payments",
     suggestionsLabel: "Try asking",
+    actionPerfProducts: "Product performance",
+    actionPerfExpenses: "Expense breakdown",
+    actionPerfCashflow: "Cash flow",
+    actionTopStock: "Most valuable stock",
     suggestion1: "Who owes me money?",
     suggestion2: "How did sales do in the last 30 days?",
     suggestion3: "Where is my money going?",
@@ -2011,6 +2032,15 @@ const en = {
       sourceNote:
         "Entitlements are the server-enforced plan definitions — exactly what the app applies to your business.",
       subtitle: "Compare plans side by side",
+      // R129 recovery — the group headings the comparison renders from the
+      // server-derived entitlement groups (public-pricing ENTITLEMENT_GROUPS).
+      groups: {
+        business: "Business operations",
+        team: "Team",
+        ai: "AI copilot",
+        reporting: "Reporting",
+        exports: "Exports",
+      },
     },
     features: {
       CUSTOMERS_MAX: "Customers",
@@ -2101,12 +2131,53 @@ const en = {
     },
     faq: {
       title: "Frequently asked questions",
+      // Content source: docs/marketing/pricing-faq.md (Prompt 25 §111-§115).
+      // Every answer stays technically accurate — when a capability does not
+      // exist, the FAQ does not imply it.
+      q1: "What is AI Business Copilot?",
+      a1: "A business management workspace for sales, expenses, payments, inventory and customers — with an AI copilot that answers questions from your recorded business data. Answers are computed from what you actually recorded; the AI never invents numbers.",
+      q2: "Who is it for?",
+      a2: "Small and growing businesses that want their books and operations in one place. Every workspace role is enforced on the server, so members only ever see what their role allows.",
+      q3: "What is included?",
+      a3: "Invoices and payments, expenses, customers and suppliers, products and inventory, purchase orders and goods receipts, reports, and the AI copilot. The comparison table lists the exact entitlements per plan.",
+      q4: "How do plans differ?",
+      a4: "Only in the server-enforced limits: how many customers, products, team members and businesses you can have, and how much AI usage is included. The comparison table shows the real entitlements — nothing is promised that the app does not enforce.",
+      q5: "How does AI usage work?",
+      a5: "Each accepted question is metered against your plan's monthly allowance. Answers are computed from your recorded data with the figures injected server-side, so a number in an answer is a number from your books.",
+      q6: "What happens when a limit is reached?",
+      a6: "Creating another record is refused with a clear message until you upgrade or free up space. Your existing records are never deleted and nothing is silently dropped.",
+      q7: "Is there a free plan?",
+      a7: "Yes — the Free plan has real limits (listed in the comparison table) and no time limit. It is not a trial: it stays free for as long as you use it within those limits.",
+      q8: "Is there a trial?",
+      a8: "Yes — when trials are enabled you can start a trial of a paid plan from the pricing page. The trial length and plan are shown on the card before you start, and the trial state is enforced server-side.",
+      q9: "How does cancellation work?",
+      a9: "You can cancel from billing at any time. Your data stays readable, and the paid period simply finishes — the workspace keeps working on the Free plan afterwards. Refunds are not offered.",
+      q10: "Which currencies are supported?",
+      a10: "The currency selector lists exactly the currencies with an active price book. Prices are set per currency — there is no automatic currency conversion anywhere.",
+      q11: "How is payment handled?",
+      a11: "Checkout runs server-side with a frozen price snapshot, and every payment is verified on the server before a plan becomes active. Availability depends on your currency and the configured payment provider.",
     },
     nav: {
       signIn: "Sign in",
     },
   },
+  // R115 — the dashboard trend chip (honest baseline law: the chip exists
+  // ONLY when an honest percentage exists; noBaseline = the muted fallback).
+  trend: {
+    vsPrev: "{range} vs previous {range}",
+    new: "New",
+    noBaseline: "Not enough history for a comparison yet",
+  },
+
   legal: {
+    // R129 recovery — document titles for <title>/SEO (the doc key vocabulary
+    // is closed: privacy | terms | ai-data-use | trust — BUGFIX #24 law).
+    seo: {
+      privacy: "Privacy Policy",
+      terms: "Terms of Service",
+      aiDataUse: "AI Data Use",
+      trust: "Trust & Transparency",
+    },
     contact: {
       emailLabel: "Email",
       fallback: "Legal questions: contact our support team.",

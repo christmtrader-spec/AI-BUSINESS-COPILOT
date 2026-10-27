@@ -143,6 +143,12 @@ type CopilotMeta = {
   rangeTo: string;
   sections: string[];
   counts?: CopilotMetaCounts;
+  // R98+ — PROVEN answer facts (server-computed, never model-invented).
+  // Optional + tolerant: old persisted metas simply lack them (the pickers
+  // must stay honest about that — additive law).
+  topProduct?: { name: string; qty: number; revenueMinor: number } | null;
+  topExpenseCategory?: { category: string; totalMinor: number } | null;
+  topStockProduct?: { id: string; name: string; valueMinor: number } | null;
 };
 
 const WINDOWS = [7, 30, 90] as const;
@@ -407,6 +413,77 @@ function pickFollowUps(
   const rotated = [...pool.slice(rotate), ...pool.slice(0, rotate)];
   const picked = rotated.slice(0, lead ? 2 : 3);
   return lead ? [lead, ...picked] : picked;
+}
+
+// ---- Action chips (deterministic deep-links from PROVEN facts) ---------------
+
+/**
+ * A persisted meta range is usable as a deep-link window ONLY when BOTH
+ * boundaries are strict `YYYY-MM-DD` calendar days and the range is not
+ * inverted — a half or lying window is dropped WHOLESALE (never one lying
+ * boundary — r100 law [1o]/[1n]/[3h]).
+ */
+function metaWindowOrNull(meta: CopilotMeta): { from: string; to: string } | { from: null; to: null } {
+  const iso = /^\d{4}-\d{2}-\d{2}$/;
+  if (!iso.test(meta.rangeFrom ?? "") || !iso.test(meta.rangeTo ?? "")) {
+    return { from: null, to: null };
+  }
+  const from = new Date(`${meta.rangeFrom}T00:00:00Z`);
+  const to = new Date(`${meta.rangeTo}T00:00:00Z`);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from.getTime() > to.getTime()) {
+    return { from: null, to: null };
+  }
+  return { from: meta.rangeFrom, to: meta.rangeTo };
+}
+
+export type PerfActionChip = {
+  key: "actionPerfProducts" | "actionPerfExpenses" | "actionPerfCashflow";
+  param: "perf-sales" | "perf-expenses" | "perf-cashflow";
+  from: string | null;
+  to: string | null;
+};
+
+/**
+ * R100 — the performance action chips: one chip per PROVEN fact, in the
+ * deterministic order products → expenses → cashflow. Laws (battery-pinned
+ * in scripts/r100-deeplink-unit.ts):
+ * - a chip exists only when its fact is proven (topProduct / topExpense
+ *  Category present; cashflow requires recentPayments > 0 — an empty cash
+ *   lane renders no cashflow chip);
+ * - old persisted metas without `counts` lose ONLY the cashflow chip;
+ * - the chip window is the meta's OWN range keys (one authority) — a
+ *   malformed or inverted range drops the WINDOW but never the chip;
+ * - no proven fact → honest silence; null/undefined meta → [].
+ */
+export function pickPerfActionChips(meta: CopilotMeta | null | undefined): PerfActionChip[] {
+  if (!meta || typeof meta !== "object") return [];
+  const chips: PerfActionChip[] = [];
+  if (meta.topProduct) {
+    chips.push({ key: "actionPerfProducts", param: "perf-sales", ...(metaWindowOrNull(meta)) });
+  }
+  if (meta.topExpenseCategory) {
+    chips.push({ key: "actionPerfExpenses", param: "perf-expenses", ...(metaWindowOrNull(meta)) });
+  }
+  if ((meta.counts?.recentPayments ?? 0) > 0) {
+    chips.push({ key: "actionPerfCashflow", param: "perf-cashflow", ...(metaWindowOrNull(meta)) });
+  }
+  return chips;
+}
+
+export type StockActionChip = { key: "actionTopStock" };
+
+/**
+ * R102 — the EIGHTH chip family's gate: the stock chip exists ONLY when the
+ * top-stock fact is proven AND its value is strictly positive (an all-zero
+ * book renders no chip about nothing; negative is not a value). Old
+ * persisted metas without the field stay honest ([]); null/undefined meta
+ * → []. (Battery: scripts/r102-stock-unit.ts §3.)
+ */
+export function pickStockActionChips(meta: CopilotMeta | null | undefined): StockActionChip[] {
+  if (!meta || typeof meta !== "object") return [];
+  const fact = meta.topStockProduct;
+  if (!fact || typeof fact.valueMinor !== "number" || !(fact.valueMinor > 0)) return [];
+  return [{ key: "actionTopStock" }];
 }
 
 // ---- View -------------------------------------------------------------------

@@ -401,7 +401,45 @@ export type InventoryValuationReport = {
   scan: { complete: true; cap: number };
   pagination: { page: number; pageSize: number; totalCount: number; totalPages: number; hasMore: boolean };
   rows: InventoryValuationRow[];
+  /** R99 — the value podium: EXACTLY the VALUE_DESC order's head (one
+   *  authority — the extractor re-sorts through sortInventoryRows so the
+   *  throne can never disagree with the table's own ranking). */
+  topValueProducts: InventoryTopValueProduct[];
 };
+
+/** R99 — the podium seat shape (EXACTLY these three keys, this order). */
+export type InventoryTopValueProduct = {
+  productId: string;
+  name: string;
+  estimatedValueMinor: number;
+};
+
+/**
+ * R99 — crown the top-`take` products by ESTIMATED VALUE through the ONE
+ * authority (sortInventoryRows "VALUE_DESC" — the table's own ranking, so
+ * the throne and the table can never disagree; identical values break to
+ * the SMALLER id). Laws (battery: scripts/r99-share-unit.ts):
+ * - take defaults to 2; take ≤ 0 / NaN / Infinity → [] (deterministic
+ *   silence, never a partial read); fractional takes floor;
+ * - the shape carries EXACTLY {productId, name, estimatedValueMinor};
+ * - an all-non-positive book still crowns the max HONESTLY (values ride
+ *   verbatim — the UI's share gate is the client's 0<x<=100 law, not the
+ *   extractor's business);
+ * - input order never matters (re-sorted internally), inputs unmutated.
+ */
+export function computeInventoryTopValueProducts(
+  rows: InventoryValuationRow[],
+  take: number = 2,
+): InventoryTopValueProduct[] {
+  const capped = Number.isFinite(take) ? Math.floor(take) : 0;
+  if (capped <= 0) return [];
+  const ranked = sortInventoryRows(rows, "VALUE_DESC");
+  return ranked.slice(0, capped).map((r) => ({
+    productId: r.id,
+    name: r.name,
+    estimatedValueMinor: r.estimatedValueMinor,
+  }));
+}
 
 /** JSON report — complete aggregates + one deterministic page of rows. */
 export async function buildInventoryValuationReport(
@@ -434,6 +472,7 @@ export async function buildInventoryValuationReport(
       hasMore: page * pageSize < totalCount,
     },
     rows: matching.slice(start, start + pageSize),
+    topValueProducts: computeInventoryTopValueProducts(matching, 2),
   };
 }
 

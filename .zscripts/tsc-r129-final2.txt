@@ -1,0 +1,16 @@
+scripts/prompt34-unit.ts(221,5): error TS2345: Argument of type '{ id: string; number: number; customerId: string; customerName: string; issueDate: Date; subtotalMinor: number; discountMinor: number; taxRateBp: number; taxMinor: number; totalMinor: number; paidMinor: number; status: string; note: null; createdAt: Date; }' is not assignable to parameter of type 'SaleRecordRow'.
+  Property 'dueDate' is missing in type '{ id: string; number: number; customerId: string; customerName: string; issueDate: Date; subtotalMinor: number; discountMinor: number; taxRateBp: number; taxMinor: number; totalMinor: number; paidMinor: number; status: string; note: null; createdAt: Date; }' but required in type 'SaleRecordRow'.
+scripts/prompt34-unit.ts(250,31): error TS2345: Argument of type '{ id: string; number: number; customerId: null; customerName: null; issueDate: Date; subtotalMinor: number; discountMinor: number; taxRateBp: number; taxMinor: number; totalMinor: number; paidMinor: number; status: string; note: null; createdAt: Date; }' is not assignable to parameter of type 'SaleRecordRow'.
+  Property 'dueDate' is missing in type '{ id: string; number: number; customerId: null; customerName: null; issueDate: Date; subtotalMinor: number; discountMinor: number; taxRateBp: number; taxMinor: number; totalMinor: number; paidMinor: number; status: string; note: null; createdAt: Date; }' but required in type 'SaleRecordRow'.
+scripts/r100-deeplink-unit.ts(180,88): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(180,162): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(181,109): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(181,183): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(182,77): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(184,75): error TS2353: Object literal may only specify known properties, and 'perfDirection' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(184,127): error TS2353: Object literal may only specify known properties, and 'perfDirection' does not exist in type 'Partial<AppView>'.
+scripts/r111-guard-mirror-check.ts(168,22): error TS2345: Argument of type 'JarFetch' is not assignable to parameter of type 'Map<string, string>'.
+scripts/r111-guard-mirror-check.ts(173,22): error TS2345: Argument of type 'JarFetch' is not assignable to parameter of type 'Map<string, string>'.
+scripts/r112-guard-grace-check.ts(147,22): error TS2345: Argument of type 'JarFetch' is not assignable to parameter of type 'Map<string, string>'.
+scripts/r112-guard-grace-check.ts(152,22): error TS2345: Argument of type 'JarFetch' is not assignable to parameter of type 'Map<string, string>'.
+scripts/r113-guard-analytics-check.ts(95,3): error TS2322: Type 'JarFetch' is not assignable to type 'Map<string, string>'.

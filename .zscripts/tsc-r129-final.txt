@@ -1,0 +1,19 @@
+scripts/prompt34-unit.ts(221,5): error TS2345: Argument of type '{ id: string; number: number; customerId: string; customerName: string; issueDate: Date; subtotalMinor: number; discountMinor: number; taxRateBp: number; taxMinor: number; totalMinor: number; paidMinor: number; status: string; note: null; createdAt: Date; }' is not assignable to parameter of type 'SaleRecordRow'.
+  Property 'dueDate' is missing in type '{ id: string; number: number; customerId: string; customerName: string; issueDate: Date; subtotalMinor: number; discountMinor: number; taxRateBp: number; taxMinor: number; totalMinor: number; paidMinor: number; status: string; note: null; createdAt: Date; }' but required in type 'SaleRecordRow'.
+scripts/prompt34-unit.ts(250,31): error TS2345: Argument of type '{ id: string; number: number; customerId: null; customerName: null; issueDate: Date; subtotalMinor: number; discountMinor: number; taxRateBp: number; taxMinor: number; totalMinor: number; paidMinor: number; status: string; note: null; createdAt: Date; }' is not assignable to parameter of type 'SaleRecordRow'.
+  Property 'dueDate' is missing in type '{ id: string; number: number; customerId: null; customerName: null; issueDate: Date; subtotalMinor: number; discountMinor: number; taxRateBp: number; taxMinor: number; totalMinor: number; paidMinor: number; status: string; note: null; createdAt: Date; }' but required in type 'SaleRecordRow'.
+scripts/r100-deeplink-unit.ts(46,10): error TS2305: Module '"../src/modules/copilot/copilot-view"' has no exported member 'pickPerfActionChips'.
+scripts/r100-deeplink-unit.ts(180,88): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(180,162): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(181,109): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(181,183): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(182,77): error TS2353: Object literal may only specify known properties, and 'perfFrom' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(184,75): error TS2353: Object literal may only specify known properties, and 'perfDirection' does not exist in type 'Partial<AppView>'.
+scripts/r100-deeplink-unit.ts(184,127): error TS2353: Object literal may only specify known properties, and 'perfDirection' does not exist in type 'Partial<AppView>'.
+scripts/r102-stock-unit.ts(50,10): error TS2305: Module '"../src/modules/copilot/copilot-view"' has no exported member 'pickStockActionChips'.
+scripts/r111-guard-mirror-check.ts(38,10): error TS2305: Module '"./lib/platform-mfa"' has no exported member 'loginCredentials'.
+scripts/r112-guard-grace-check.ts(32,10): error TS2305: Module '"./lib/platform-mfa"' has no exported member 'loginCredentials'.
+scripts/r113-guard-analytics-check.ts(47,10): error TS2305: Module '"./lib/platform-mfa"' has no exported member 'loginCredentials'.
+scripts/r115-dashboard-trend-check.ts(25,10): error TS2305: Module '"./lib/platform-mfa"' has no exported member 'loginCredentials'.
+scripts/r116-trend-surface-check.ts(24,10): error TS2305: Module '"./lib/platform-mfa"' has no exported member 'loginCredentials'.
+scripts/r99-share-unit.ts(30,10): error TS2724: '"../src/lib/inventory-valuation-report"' has no exported member named 'computeInventoryTopValueProducts'. Did you mean 'computeInventoryTotals'?

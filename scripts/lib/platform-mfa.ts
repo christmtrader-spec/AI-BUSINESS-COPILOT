@@ -184,6 +184,46 @@ export async function platformMfaLogin(
   return jar;
 }
 
+/* ----------------------------- plain login -------------------------------- */
+
+/** Structural jar-fetch (each battery defines its own — same shape). */
+type JarFetch = (path: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * Plain credentials login for a fixture WITHOUT MFA (batteries create their
+ * users directly with a passwordHash — no enrollment): CSRF → credentials
+ * callback → the session cookie lands in the caller's own jar via its
+ * set-cookie handling. Returns the SAME jar so callers can wrap it with
+ * callerOf(jar) in a single expression. Throws when no session cookie was
+ * issued — a login must never silently pretend to be authenticated.
+ * (MFA-enrolled fixtures use platformMfaLogin above instead.)
+ */
+export async function loginCredentials(
+  f: JarFetch,
+  jar: Map<string, string>,
+  email: string,
+  password: string,
+): Promise<Map<string, string>> {
+  const csrfRes = await f("/api/auth/csrf");
+  if (!csrfRes.ok) throw new Error(`csrf failed: ${csrfRes.status}`);
+  const { csrfToken } = (await csrfRes.json()) as { csrfToken: string };
+  const attempt = await f("/api/auth/callback/credentials", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ csrfToken, email, password }).toString(),
+  });
+  // NextAuth answers a successful credentials callback with a redirect and
+  // issues the session cookie into the jar; anything without that cookie is
+  // a failed login (bad credentials / disabled user) — fail loudly.
+  const hasSession = [...jar.keys()].some(
+    (k) => k.includes("authjs.session-token") || k.includes("next-auth.session-token"),
+  );
+  if (!hasSession) {
+    throw new Error(`credentials login failed for ${email}: status=${attempt.status}`);
+  }
+  return jar;
+}
+
 /* --------------------------------- sweep ---------------------------------- */
 
 /** FK-safe fixture sweep for idempotent re-runs (self-healing batteries). */

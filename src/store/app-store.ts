@@ -174,7 +174,15 @@ export type AppView =
       overdue?: boolean;
       /** R88 — sales-only customer-scoped worklist (?customer=<safeId>) —
        * the Customer-360 drill landing. Charset-safe ids only. */
-      customerId?: string }
+      customerId?: string;
+      /** R100 — the reports performance sub-view (?perf=<closed token>)
+       * rides AS the param ("perf-<token>") plus its optional ordered
+       * window and the cashflow-only direction. The window is BOTH or
+       * nothing (never one lying boundary); orphan window fields WITHOUT
+       * a perf param cannot exist by parser law and never serialize. */
+      perfFrom?: string;
+      perfTo?: string;
+      perfDirection?: "IN" | "OUT" }
   /** Prompt 28 — internal platform console (separate workspace, §15). */
   | { kind: "platform"; section: PlatformSection }
   /** Prompt 30 §250 — email verification landing (token from the email link). */
@@ -359,6 +367,17 @@ export function sameView(a: AppView, b: AppView): boolean {
         (a.param ?? null) === (b.param ?? null) &&
         (a.overdue ?? false) === (b.overdue ?? false) &&
         (a.customerId ?? null) === (b.customerId ?? null)
+      );
+    }
+    // R100 — the reports perf sub-state is structural too: the SAME perf
+    // param with a DIFFERENT window/direction re-enters the store (a second
+    // chip opens a NEW answer window instead of remounting the shell).
+    if (a.module === "reports" && b.module === "reports") {
+      return (
+        (a.param ?? null) === (b.param ?? null) &&
+        (a.perfFrom ?? null) === (b.perfFrom ?? null) &&
+        (a.perfTo ?? null) === (b.perfTo ?? null) &&
+        (a.perfDirection ?? null) === (b.perfDirection ?? null)
       );
     }
     return (a.param ?? null) === (b.param ?? null);
@@ -559,6 +578,32 @@ export function viewToHash(view: AppView): string | null {
       }
       if (view.module === "reports" && view.param === "reorder") {
         return "#/reports?reorder=1";
+      }
+      // R100 — the perf sub-view serializes canonically: perf → from → to
+      // → direction. Orphan window/direction fields (no perf param) NEVER
+      // serialize; the window rides only as a complete ordered pair and the
+      // direction only on cashflow (defensive re-check on the way out too
+      // — state can only ever come from the parser).
+      if (view.module === "reports" && typeof view.param === "string" && view.param.startsWith("perf-")) {
+        const token = view.param.slice("perf-".length);
+        if (token === "sales" || token === "expenses" || token === "cashflow") {
+          const parts: string[] = [`perf=${token}`];
+          const iso = /^\d{4}-\d{2}-\d{2}$/;
+          if (
+            typeof view.perfFrom === "string" &&
+            typeof view.perfTo === "string" &&
+            iso.test(view.perfFrom) &&
+            iso.test(view.perfTo) &&
+            new Date(`${view.perfFrom}T00:00:00Z`).getTime() <= new Date(`${view.perfTo}T00:00:00Z`).getTime()
+          ) {
+            parts.push(`from=${view.perfFrom}`, `to=${view.perfTo}`);
+          }
+          if (token === "cashflow" && (view.perfDirection === "IN" || view.perfDirection === "OUT")) {
+            parts.push(`direction=${view.perfDirection}`);
+          }
+          return `#/reports?${parts.join("&")}`;
+        }
+        return "#/reports";
       }
       if (view.param && /^\d{4}-\d{2}$/.test(view.param)) {
         // R87/R88 — canonical sales order: month → overdue → customer.
@@ -895,6 +940,35 @@ export function hashToView(hash: string): AppView {
     // sub-view. Closed token, never arbitrary state.
     if (path === "reports" && query.get("reorder") === "1") {
       return { kind: "module", module: path, param: "reorder" };
+    }
+    // R100 — the performance sub-view: ?perf=<sales|expenses|cashflow>
+    // (CLOSED vocabulary, case-strict) with an OPTIONAL ordered window
+    // (?from=&to= — BOTH or nothing, ISO dates, never inverted) and the
+    // CASHFLOW-ONLY direction (?direction=IN|OUT). Every malformed piece is
+    // DROPPED, never faked: an unknown token is not a sub-view at all, a
+    // half/inverted/malformed window is dropped wholesale, and a garbage
+    // direction drops only the direction (the window survives).
+    if (path === "reports" && query.has("perf")) {
+      const perf = (query.get("perf") ?? "").trim();
+      if (perf === "sales" || perf === "expenses" || perf === "cashflow") {
+        const from = query.get("from") ?? "";
+        const to = query.get("to") ?? "";
+        const iso = /^\d{4}-\d{2}-\d{2}$/;
+        let window: { perfFrom: string; perfTo: string } | Record<string, never> = {};
+        if (iso.test(from) && iso.test(to)) {
+          const f = new Date(`${from}T00:00:00Z`).getTime();
+          const t = new Date(`${to}T00:00:00Z`).getTime();
+          if (!Number.isNaN(f) && !Number.isNaN(t) && f <= t) window = { perfFrom: from, perfTo: to };
+        }
+        const dirRaw = (query.get("direction") ?? "").trim();
+        const direction: { perfDirection?: "IN" | "OUT" } =
+          perf === "cashflow" && (dirRaw === "IN" || dirRaw === "OUT")
+            ? { perfDirection: dirRaw as "IN" | "OUT" }
+            : {};
+        return { kind: "module", module: path, param: `perf-${perf}`, ...window, ...direction };
+      }
+      // Unknown / case-mismatched token → plain reports (never a fake sub-view).
+      return { kind: "module", module: path };
     }
     // R87/R88 — the SALES-ONLY worklist deep link (?overdue=1,
     // ?customer=<safeId>). The closed-token law drops garbage — "0"/"yes"/
