@@ -14,6 +14,9 @@
  *        - Open-by-design exceptions, each explicitly reviewed:
  *            /api/health, /api/ready        → 2xx liveness, no data
  *            /api/public/**                 → 2xx marketing data
+ *            /api/v1/public/**              → Prompt 25 marketing trio
+ *              (pricing/contact/analytics; re-reviewed R132 — 422 on empty
+ *              bodies is validation, 2xx stays SECRET_KEYS-inspected)
  *            /api/auth/[...nextauth]        → NextAuth's own (2xx/3xx/4xx)
  *            /api/                          → the root info route (2xx/4xx)
  *            /api/v1/auth/**                → open-or-token endpoints: never
@@ -37,7 +40,13 @@
 import { readdirSync, statSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const BASE = "http://localhost:3000";
+// R132 — battery-on-prod protocol (R130 law): heavy full-surface sweeps run
+// against the pre-compiled standalone server (--base http://localhost:3100),
+// never cold-compiling ~45 route graphs on the 4GB dev box.
+const BASE = (() => {
+  const i = process.argv.indexOf("--base");
+  return i > 0 ? process.argv[i + 1] : "http://localhost:3000";
+})();
 const SRC = join(process.cwd(), "src", "app", "api");
 const TZ = "Asia/Tehran";
 
@@ -219,6 +228,15 @@ function expectFor(url: string, method: string): { kind: string; allowed: number
   if (url === "/api" || url === "/api/")
     return { kind: "ROOT-INFO", allowed: [200, 204, 301, 302, 307, 308, 400, 404, 405] };
   if (url.startsWith("/api/public")) return { kind: "PUBLIC-MARKETING", allowed: [200, 204, 422] };
+  // Prompt 25 (§27/§54/§125) — the v1 marketing trio, RE-REVIEWED open-by-design
+  // (R132): GET public pricing (no DB ids/credentials by §116/§125), POST
+  // contact capture (honeypot + 5/15min IP limit), POST analytics beacon
+  // (strict client-event allowlist + UTC-day dedupe). An unauthenticated
+  // empty body answers 422 (validation, never data); 429 is the honest
+  // rate-limit answer; any 2xx remains under the universal SECRET_KEYS
+  // body-inspection below.
+  if (url.startsWith("/api/v1/public"))
+    return { kind: "V1-PUBLIC-MARKETING", allowed: [200, 204, 400, 422, 429] };
   if (url.startsWith("/api/auth")) return { kind: "NEXTAUTH", allowed: [200, 302, 400, 401, 404, 405] };
   // Prompt 23 §18/§19: the provider's BROWSER redirect return — the destination
   // is always internal, the redirect is uniform (no session id echoed — no

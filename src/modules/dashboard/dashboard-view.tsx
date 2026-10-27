@@ -37,6 +37,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 // R116 — the ONE trend chip shared with the Reports KPI strip: the visual
 // language cannot drift between surfaces (one component, one honesty law).
 import { TrendChip } from "@/components/shared/trend-chip";
+// R132 — the window-comparison drill-down: the chips say "what", this panel
+// says "how much, side by side" (same data the surface already fetched).
+import { TrendWindowPanel } from "@/components/shared/trend-window-panel";
 import { OnboardingTour } from "@/modules/shell/onboarding-tour";
 import { useSession } from "next-auth/react";
 import { fmtCount, fmtMoney } from "../finance-shared/finance-kit";
@@ -576,6 +579,26 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
               <Coins className="size-3.5" aria-hidden="true" />
               {t("metricsNote")}
             </p>
+            {/* R132 — the window comparison panel rides the SAME summary
+                fetch: rendered only when the server sent the additive
+                trend block (older cached summaries honestly omit it). */}
+            {summary.trend && summary.range ? (
+              <TrendWindowPanel
+                trend={summary.trend}
+                kpis={
+                  {
+                    revenueMinor: summary.kpis.revenueMinor,
+                    expensesMinor: summary.kpis.expensesMinor,
+                    collectedMinor: summary.kpis.collectedMinor,
+                    netCashMinor: summary.kpis.netCashMinor,
+                    salesCount: summary.kpis.salesCount,
+                    expensesCount: summary.kpis.expensesCount,
+                  }
+                }
+                range={summary.range}
+                fmt={fmt}
+              />
+            ) : null}
           </CardContent>
         </Card>
       ) : null}

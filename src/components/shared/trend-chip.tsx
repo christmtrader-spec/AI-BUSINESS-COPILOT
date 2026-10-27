@@ -22,6 +22,21 @@ import { fmtCount } from "@/modules/finance-shared/finance-kit";
  *                                 good for revenue/collected/net cash, bad
  *                                 for expenses — the arrow never lies alone).
  */
+/**
+ * R132 — the ONE delta-hue law, extracted so the TrendWindowPanel badges
+ * and the TrendChip arrows can never drift: hue follows the METRIC's
+ * meaning (riseIsGood), pct=0 is neutral, and the muted token class covers
+ * the honest null/"New" states.
+ */
+export function trendDeltaCls(pct: number | null, riseIsGood: boolean): string {
+  if (pct === null || pct === 0)
+    return "border-border/60 bg-muted/50 text-muted-foreground";
+  const good = (pct > 0) === riseIsGood;
+  return good
+    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+    : "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-400";
+}
+
 export function TrendChip({
   pct,
   prev,
@@ -63,16 +78,10 @@ export function TrendChip({
     );
   }
   const rise = pct > 0;
-  const good = pct === 0 ? null : rise === riseIsGood;
-  const hueCls =
-    good === null
-      ? "border-border/60 bg-muted/50 text-muted-foreground"
-      : good
-        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-        : "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-400";
+  const hueCls = trendDeltaCls(pct, riseIsGood);
   return (
     <span
-      className={`inline-flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none tabular-nums ${hueCls}`}
+      className={`inline-flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none tabular-nums transition-colors motion-reduce:transition-none ${hueCls}`}
       title={vsTitle}
     >
       {rise ? (

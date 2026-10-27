@@ -2178,6 +2178,19 @@ const fa: Messages = {
     vsPrev: "نسبت به {range} قبل",
     new: "جدید",
     noBaseline: "هنوز سابقهٔ کافی برای مقایسه نیست",
+    // R132 — پنل مقایسهٔ پنجره‌ها (کارت عملکرد داشبورد و نوار KPI گزارش‌ها
+    // یک کامپوننت مشترک دارند؛ کلیدهای زیر واژگانِ بستهٔ همان است).
+    compareTrigger: "مقایسه با پنجرهٔ قبل",
+    panelLabel: "مقایسهٔ پنجرهٔ جاری با پنجرهٔ قبل، معیار به معیار",
+    currentVsPrevious: "جاری در برابر قبل",
+    currentWindow: "پنجرهٔ جاری",
+    previousWindow: "پنجرهٔ قبل",
+    metricRevenue: "درآمد",
+    metricCollected: "وجه دریافتی",
+    metricExpenses: "هزینه‌ها",
+    metricNetCash: "خالص نقدی",
+    salesCountChip: "فروش: {cur} در برابر {prev} قبل",
+    expensesCountChip: "هزینه: {cur} در برابر {prev} قبل",
   },
 
   legal: {

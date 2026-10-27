@@ -2184,6 +2184,19 @@ const en = {
     vsPrev: "vs previous {range}",
     new: "New",
     noBaseline: "Not enough history for a comparison yet",
+    // R132 — the window-comparison panel (dashboard perf card + Reports
+    // KPI strip share ONE component; keys are its closed vocabulary).
+    compareTrigger: "Compare with previous window",
+    panelLabel: "Current window compared with the previous window, metric by metric",
+    currentVsPrevious: "current vs previous",
+    currentWindow: "Current window",
+    previousWindow: "Previous window",
+    metricRevenue: "Revenue",
+    metricCollected: "Collected",
+    metricExpenses: "Expenses",
+    metricNetCash: "Net cash",
+    salesCountChip: "Sales: {cur} now vs {prev} before",
+    expensesCountChip: "Expenses: {cur} now vs {prev} before",
   },
 
   legal: {

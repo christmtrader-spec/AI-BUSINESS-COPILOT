@@ -42,6 +42,9 @@ import { api, ApiClientError } from "@/lib/api-client";
 // R116 — the ONE trend chip shared with the dashboard perf tiles: the
 // visual language cannot drift between surfaces (one component, one law).
 import { TrendChip } from "@/components/shared/trend-chip";
+// R132 — the window-comparison drill-down panel (same ONE-component law:
+// the dashboard perf card and this strip share the exact same panel).
+import { TrendWindowPanel } from "@/components/shared/trend-window-panel";
 // R99/R102 — the ONE share law (the throne's % rides the same helper as the
 // dashboard tile and the copilot chips — never a second math).
 import { stockSharePercent } from "@/lib/stock-facts";
@@ -829,6 +832,18 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
               </Card>
             ))}
           </div>
+
+          {/* R132 — the window comparison drill-down: side-by-side bars for
+              the SAME four metrics the chips summarize. Rides the summary
+              ALREADY fetched — rendered only when the server sent the
+              additive trend block (never a fabricated comparison). */}
+          {data.trend ? (
+            <Card className="py-4">
+              <CardContent className="px-4">
+                <TrendWindowPanel trend={data.trend} kpis={data.kpis} range={data.range} fmt={fmt} />
+              </CardContent>
+            </Card>
+          ) : null}
 
           {/* Prompt 20 — advanced insights: rendered ONLY from what the
               server entitled (§26). Locked teaser otherwise. */}

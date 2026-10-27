@@ -65,13 +65,14 @@ const EMAIL_PATTERNS = [
   "r117-trend-%@test.local", // reserved: R117 battery fixtures
   "r118-qa@test.local", // R118 browser QA (suggestion icons + trend empty-state persona)
   "r118-suggest-%@test.local", // reserved: R118 battery fixtures
+  "r131-qa-%@test.local", // R131 browser-QA trend persona (r131-qa-seed.mjs claims self-cleaning via THIS pattern — it was missing, census drifted 7/4→11/5, R132 fix)
 ];
 /** Baseline identities that must NEVER be swept even if they match a pattern. */
 const KEEP_EMAILS = new Set(["rep16007@t.dev"]);
 
 const SWEEP_BUSINESS_NAMES = ["R104 QA Studio", "R106 QA Ventures", "R107 QA Ventures", "R108 QA Ventures", "R110 QA Ventures", "R111 QA Ventures", "R112 QA Ventures", "R113 QA Ventures", "P23 Real Provider Shop", "P25 UI Trial Shop", "Trial Flow Shop"];
 /** R114 — stamped QA business names match by PREFIX ("R114 QA Ventures mvmv1g18"). */
-const SWEEP_BUSINESS_PREFIXES = ["R114 QA Ventures", "R115 QA Ventures", "R116 QA Ventures", "R117 QA Ventures", "R118 QA Ventures", "P19 Isolation Co "];
+const SWEEP_BUSINESS_PREFIXES = ["R114 QA Ventures", "R115 QA Ventures", "R116 QA Ventures", "R117 QA Ventures", "R118 QA Ventures", "R131 QA Ventures", "P19 Isolation Co "];
 
 async function tableList() {
   const tables = await db.$queryRawUnsafe(
