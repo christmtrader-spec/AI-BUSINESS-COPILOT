@@ -51,11 +51,15 @@ const en = {
       hint: "to open anywhere",
       groups: {
         navigate: "Go to",
+        // R135 — the recent-destinations group (MRU, device-local).
+        recent: "Recent",
         preferences: "Preferences",
         session: "Session",
         // R133 — the ⌘K quick AI-usage command lives here.
         account: "Account",
       },
+      // R135 — the quiet destructive row that empties the recent list.
+      clearRecent: "Clear recent destinations",
       // R133 — the palette command label (reuse-tested: distinct from the
       // dialog title so both can evolve independently).
       usageItem: "AI usage — this period",
@@ -1758,6 +1762,14 @@ const en = {
       serverAuthoritative: "Usage is counted server-side on every AI request and cannot be changed from this device.",
       // R133 — the ⌘K quick dialog footer (deep link to the full view).
       quickOpenSubscription: "Open subscription details",
+      // R135 — the 14-day AI-usage sparkline (server-counted series).
+      seriesTitle: "Last 14 days",
+      seriesTotal: "{count} requests in this window",
+      seriesBusiest: "Busiest day {date} ({count})",
+      seriesEmpty: "No AI usage in this window yet — ask the Copilot something and the day's bar appears here.",
+      seriesBarLabel: "{date}: {count} requests",
+      seriesToday: "Today",
+      seriesUnavailable: "The daily series is temporarily unavailable.",
     },
     advancedReports: "Advanced insights",
     advancedLocked: "Advanced insights (growth & revenue concentration) are part of Starter and higher plans.",

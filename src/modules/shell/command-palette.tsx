@@ -5,6 +5,9 @@ import { useTranslations } from "next-intl";
 import { signOutWithRevoke } from "@/lib/sign-out-with-revoke";
 import { useTheme } from "next-themes";
 import {
+  Bell,
+  ClipboardList,
+  Eraser,
   FileText,
   AlertTriangle,
   ArrowUpRight,
@@ -12,9 +15,12 @@ import {
   Bot,
   Check,
   CreditCard,
+  FolderSync,
   HandCoins,
+  KanbanSquare,
   Languages,
   LayoutDashboard,
+  LifeBuoy,
   Loader2,
   LogOut,
   Moon,
@@ -40,7 +46,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { LOCALES, localeLabel } from "@/i18n/config";
-import { useAppStore, type AppView } from "@/store/app-store";
+import {
+  useAppStore,
+  viewKeyOf,
+  type AppView,
+} from "@/store/app-store";
 import { asRole, can, type Role } from "@/lib/rbac";
 import { ApiClientError } from "@/lib/api-client";
 import { fmtCount } from "../finance-shared/finance-kit";
@@ -76,6 +86,7 @@ type PaletteNavKey =
   | "salesOrders"
   | "salesQuotations"
   | "supplierBills"
+  | "purchaseOrders"
   | "products"
   | "inventory"
   | "sales"
@@ -88,7 +99,12 @@ type PaletteNavKey =
   | "audit"
   | "teamMembers"
   | "settings"
+  | "billing"
   | "security"
+  | "dataPortability"
+  | "notifications"
+  | "support"
+  | "crm"
   | "profile";
 
 type PaletteItem = {
@@ -128,6 +144,29 @@ const NAV_ITEMS: PaletteItem[] = [
   { view: { kind: "settings:security" }, labelKey: "security", icon: ShieldCheck },
   { view: { kind: "profile" }, labelKey: "profile", icon: UserRound },
 ];
+
+/**
+ * R135 — destinations the RECENT group can label beyond NAV_ITEMS: the
+ * sidebar-only vocabulary (billing/data/support/crm/purchase-orders/
+ * notifications) so a recent destination is never a dead row. The labels
+ * reuse the EXISTING nav.* i18n keys — zero new label vocabulary.
+ */
+const RECENT_EXTRA: PaletteItem[] = [
+  { view: { kind: "crm", tab: "pipeline" }, labelKey: "crm", icon: KanbanSquare },
+  { view: { kind: "purchase-orders" }, labelKey: "purchaseOrders", icon: ClipboardList },
+  { view: { kind: "settings:billing" }, labelKey: "billing", icon: CreditCard },
+  { view: { kind: "settings:data" }, labelKey: "dataPortability", icon: FolderSync },
+  { view: { kind: "notifications" }, labelKey: "notifications", icon: Bell },
+  { view: { kind: "support" }, labelKey: "support", icon: LifeBuoy },
+];
+
+/** ONE label authority for recents: NAV_ITEMS first, then the extras. */
+const RECENT_SOURCES: PaletteItem[] = [...NAV_ITEMS, ...RECENT_EXTRA];
+
+function recentLabelOf(view: AppView): PaletteItem | null {
+  const key = viewKeyOf(view);
+  return RECENT_SOURCES.find((n) => viewKeyOf(n.view) === key) ?? null;
+}
 
 /**
  * Prompt 33 §12 — the palette keeps ALL existing behavior (navigation,
@@ -210,10 +249,21 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
 
   const q = debouncedQuery;
   const searchActive = open && q.length >= SEARCH_Q_MIN;
+  // R135 — the recent-destinations group (MRU, device-local, capped).
+  // Recents render only in NAV mode: during an active search the results
+  // come first (§31) and the group yields the floor honestly.
+  const recentViews = useAppStore((s) => s.recentViews);
+  const clearRecentViews = useAppStore((s) => s.clearRecentViews);
+  const recentItems = searchActive
+    ? []
+    : recentViews
+        .map((v) => ({ view: v, nav: recentLabelOf(v) }))
+        .filter((r): r is { view: AppView; nav: PaletteItem } => r.nav !== null);
   const groups = search.data?.groups ?? [];
   const hasResults = groups.length > 0;
 
   return (
+    <>
     <CommandDialog
       open={open}
       onOpenChange={setOpen}
@@ -318,6 +368,39 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
           </>
         ) : null}
 
+        {recentItems.length > 0 ? (
+          <>
+            <CommandGroup heading={tCommon("palette.groups.recent")}>
+              {recentItems.map(({ view, nav }) => (
+                <CommandItem
+                  key={`recent-${viewKeyOf(view)}`}
+                  value={`${tNav(nav.labelKey)} ${nav.labelKey}`}
+                  onSelect={() => go(view)}
+                  data-testid={`palette-recent-${viewKeyOf(view)}`}
+                >
+                  <nav.icon className="text-muted-foreground" aria-hidden="true" />
+                  <span>{tNav(nav.labelKey)}</span>
+                </CommandItem>
+              ))}
+              <CommandItem
+                value={tCommon("palette.clearRecent")}
+                onSelect={() => clearRecentViews()}
+                data-testid="palette-recent-clear"
+                // R135 styling law — the clear row is a quiet destructive
+                // action: muted at rest, destructive on hover, and it never
+                // animates under motion-reduce.
+                className="text-muted-foreground hover:text-destructive transition-colors motion-reduce:transition-none"
+              >
+                <Eraser
+                  className="text-muted-foreground group-data-[selected=true]:text-destructive"
+                  aria-hidden="true"
+                />
+                <span>{tCommon("palette.clearRecent")}</span>
+              </CommandItem>
+            </CommandGroup>
+            <CommandSeparator />
+          </>
+        ) : null}
         <CommandGroup heading={tCommon("palette.groups.navigate")}>
           {navItems.map((item) => (
             <CommandItem
@@ -417,15 +500,24 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
         <kbd className="bg-muted rounded border px-1 font-sans">K</kbd>
         <span className="ms-2">{tCommon("palette.hint")}</span>
       </div>
-      {/* R133 — rendered OUTSIDE the CommandDialog (never nested in cmdk). */}
-      <UsageQuickDialog
-        open={usageOpen}
-        onOpenChange={setUsageOpen}
-        onOpenSubscription={() => {
-          setUsageOpen(false);
-          go({ kind: "settings:billing" });
-        }}
-      />
     </CommandDialog>
+    {/* R135 — rendered as a SIBLING of the palette, never inside its
+        DialogContent subtree. Radix unmounts the palette's content when it
+        closes (no forceMount), which previously unmounted THIS dialog in
+        the very batch that opened it: selecting "AI usage" closed the
+        palette and the usage view silently never appeared — it only
+        "zombied" back on the NEXT palette open (mounted with a stale
+        usageOpen=true). As a sibling it mounts independently of the
+        palette's open state, so one selection = palette closes AND the
+        dialog opens in the same commit. */}
+    <UsageQuickDialog
+      open={usageOpen}
+      onOpenChange={setUsageOpen}
+      onOpenSubscription={() => {
+        setUsageOpen(false);
+        go({ kind: "settings:billing" });
+      }}
+    />
+    </>
   );
 }

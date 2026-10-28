@@ -84,6 +84,10 @@ export const BILLING_KEYS = {
   plans: ["billing", "plans"] as const,
   events: ["billing", "events"] as const,
   usage: ["billing", "usage"] as const,
+  // R135 — the daily AI-usage series (one key per window size; the dialog
+  // pins 14 — a different window is a DIFFERENT cache entry, never a
+  // silent reshape of the same key).
+  usageSeries: (days: number) => ["billing", "usage-series", days] as const,
 };
 
 /** Invalidate everything billing touched (§60: no stale premium state). */
@@ -167,6 +171,24 @@ export function useUsage(enabled = true) {
   return useQuery<UsagePayload>({
     queryKey: BILLING_KEYS.usage,
     queryFn: () => api("/api/v1/billing/usage"),
+    enabled,
+    staleTime: 15_000,
+  });
+}
+
+// R135 — the daily AI-usage series behind the quick dialog's sparkline.
+// Same fetch law as useUsage: enabled ONLY while the dialog is open (the
+// palette must never fire a billing request) and informational only (§52).
+export type UsageSeriesPayload = {
+  window: { from: string; to: string };
+  days: number;
+  series: Array<{ date: string; requests: number }>;
+};
+
+export function useUsageSeries(enabled = true, days = 14) {
+  return useQuery<UsageSeriesPayload>({
+    queryKey: BILLING_KEYS.usageSeries(days),
+    queryFn: () => api(`/api/v1/billing/usage/series?days=${days}`),
     enabled,
     staleTime: 15_000,
   });

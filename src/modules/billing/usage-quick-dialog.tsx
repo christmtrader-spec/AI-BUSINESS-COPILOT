@@ -38,6 +38,8 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUsage, type UsageMetricPayload } from "@/hooks/use-billing";
 import { cn } from "@/lib/utils";
+// R135 — the 14-day server-counted sparkline (its own fetch law inside).
+import { UsageSeriesSpark } from "@/modules/billing/usage-series-spark";
 
 /** Same medium-datetime convention as the subscription view. */
 function formatDate(iso: string | null, locale: string): string {
@@ -189,13 +191,28 @@ export function UsageQuickDialog({
               </span>
             </div>
 
-            <QuickMetricRow metric="AI_REQUESTS" m={usageQ.data.metrics.AI_REQUESTS} periodEnd={usageQ.data.period.end} />
-            <QuickMetricRow metric="AI_MESSAGES" m={usageQ.data.metrics.AI_MESSAGES} periodEnd={usageQ.data.period.end} />
-            {/* AI_TOKENS — recorded-when-reported (§14): only when real
-                provider data exists; never displayed as a quota. */}
-            {usageQ.data.metrics.AI_TOKENS.used > 0 ? (
-              <QuickMetricRow metric="AI_TOKENS" m={usageQ.data.metrics.AI_TOKENS} periodEnd={usageQ.data.period.end} />
-            ) : null}
+            {/* R135 — the 14-day shape of the same server-counted truth.
+                Sits between the period strip and the period metrics: the
+                dialog reads top-down as WHEN (period) → WHAT SHAPE (days)
+                → HOW MUCH (counters). */}
+            <div className="divide-y divide-border/60">
+              <div className="pb-3">
+                <UsageSeriesSpark open={open} />
+              </div>
+              <div className="pt-3">
+                <QuickMetricRow metric="AI_REQUESTS" m={usageQ.data.metrics.AI_REQUESTS} periodEnd={usageQ.data.period.end} />
+              </div>
+              <div className="pt-3">
+                <QuickMetricRow metric="AI_MESSAGES" m={usageQ.data.metrics.AI_MESSAGES} periodEnd={usageQ.data.period.end} />
+              </div>
+              {/* AI_TOKENS — recorded-when-reported (§14): only when real
+                  provider data exists; never displayed as a quota. */}
+              {usageQ.data.metrics.AI_TOKENS.used > 0 ? (
+                <div className="pt-3">
+                  <QuickMetricRow metric="AI_TOKENS" m={usageQ.data.metrics.AI_TOKENS} periodEnd={usageQ.data.period.end} />
+                </div>
+              ) : null}
+            </div>
 
             <p className="text-muted-foreground flex items-start gap-1.5 text-xs">
               <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />

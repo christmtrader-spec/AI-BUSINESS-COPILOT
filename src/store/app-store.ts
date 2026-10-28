@@ -1071,11 +1071,164 @@ function sanitizeSearchHashQuery(raw: string): string {
   return trimmed.length > 0 ? trimmed : "";
 }
 
+// ---------------------------------------------------------------------------
+// R135 — ⌘K RECENT DESTINATIONS (device-local, closed vocabulary)
+//
+// The command palette gains a "Recent" group: the last destinations the user
+// NAVIGATED to. Laws:
+// - INTENT-ONLY RECORDING — navigate() records; replaceView() never does, so
+//   browser back/forward and hash re-entry (app-root applyHash) cannot churn
+//   the list. Recents mean "where I chose to go", not "where history passed".
+// - CLOSED GATE — isRecentDestination accepts exactly the palette-labelable
+//   destination vocabulary (bare modules, list kinds, settings/support/
+//   notifications pages, CRM tabs). Detail views (entity/statements/stocktake/
+//   purchase-order/goods-receipt/…), aging-details, the search center and
+//   module sub-states (sales lanes, reports perf/range windows) NEVER record:
+//   recents are DESTINATIONS, not documents or answer windows — and every
+//   recent must have a palette label (an unlabeled recent would be a
+//   dead row). inventory-stocktakes and settings:notifications have no
+//   palette label today, so they are outside the gate too.
+// - MRU + DEDUPE + CAP — pushRecent moves an existing entry to the front
+//   (viewKeyOf equality — ONE authority with the router) and evicts the
+//   oldest beyond RECENT_VIEWS_CAP.
+// - DEVICE-LOCAL — recentViews rides the existing "abc-preferences" persist
+//   (same family as locale/activeBusinessId); it is UI state and is never
+//   sent to the server (the API client carries only the business context).
+// - BUSINESS-SCOPED — switching the active business CLEARS the list: ids are
+//   never recorded (the gate forbids detail views), so nothing can leak
+//   across businesses, and the palette stays honest about "where you have
+//   been" in THIS business.
+// - PARSE LAW — parseRecentViews validates persisted JSON entry-by-entry: a
+//   non-array is wholesale [], a malformed/closed-vocabulary-violating entry
+//   is dropped INDIVIDUALLY, surviving views are rebuilt to their minimal
+//   canonical shape (persisted extra fields stripped), deduped and capped.
+// ---------------------------------------------------------------------------
+
+/** The palette shows at most five recent destinations. */
+export const RECENT_VIEWS_CAP = 5;
+
+/** Bare modules the palette can label (the palette's NAV_ITEMS vocabulary). */
+const RECENT_MODULES = [
+  "customers",
+  "suppliers",
+  "products",
+  "inventory",
+  "sales",
+  "expenses",
+  "payments",
+  "receivables",
+  "payables",
+  "reports",
+  "copilot",
+] as const;
+
+/** Bare (field-free) destination kinds the palette can label. */
+const RECENT_KINDS = [
+  "dashboard",
+  "audit",
+  "profile",
+  "support",
+  "notifications",
+  "settings:business",
+  "settings:members",
+  "settings:billing",
+  "settings:security",
+  "settings:data",
+  "inventory-goods-receipts",
+  "inventory-goods-returns",
+  "inventory-goods-dispatches",
+  "sales-orders",
+  "sales-quotations",
+  "supplier-bills",
+  "purchase-orders",
+] as const;
+
+/**
+ * The record gate — ONE closed vocabulary of recentable destinations.
+ * Battery-pinned (r135-palette-recents-check): every gate acceptance has a
+ * palette label; every exclusion is a document/answer-window/unlabeled view.
+ */
+export function isRecentDestination(view: AppView): boolean {
+  if ((RECENT_KINDS as readonly string[]).includes(view.kind)) return true;
+  if (view.kind === "module") {
+    return (
+      (RECENT_MODULES as readonly string[]).includes(view.module) &&
+      view.param == null &&
+      !view.overdue &&
+      view.customerId == null &&
+      view.perfFrom == null &&
+      view.perfTo == null &&
+      view.perfDirection == null &&
+      view.rangeFrom == null &&
+      view.rangeTo == null
+    );
+  }
+  if (view.kind === "crm") return CRM_TABS.includes(view.tab);
+  return false;
+}
+
+/**
+ * Pure MRU push — dedupe by viewKeyOf (one authority with the router),
+ * evict the oldest beyond the cap. A non-destination view returns the SAME
+ * array (the caller's set() can skip the recents key entirely).
+ */
+export function pushRecent(list: AppView[], view: AppView): AppView[] {
+  if (!isRecentDestination(view)) return list;
+  const key = viewKeyOf(view);
+  const rest = list.filter((v) => viewKeyOf(v) !== key);
+  return [view, ...rest].slice(0, RECENT_VIEWS_CAP);
+}
+
+/**
+ * Persist-merge validator — entry-level honesty: garbage entries are dropped
+ * INDIVIDUALLY (one stale entry never poisons the whole list), surviving
+ * views are rebuilt to their minimal canonical shape (persisted extra fields
+ * are stripped), then deduped and capped through the same pushRecent law.
+ */
+export function parseRecentViews(input: unknown): AppView[] {
+  if (!Array.isArray(input)) return [];
+  // pushRecent is PURE (it returns a new list, never mutates) — the loop
+  // must REASSIGN, exactly like the store's navigate() does.
+  let out: AppView[] = [];
+  for (const raw of input) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const rec = raw as Record<string, unknown>;
+    const kind = rec.kind;
+    if (typeof kind !== "string") continue;
+    let view: AppView | null = null;
+    if ((RECENT_KINDS as readonly string[]).includes(kind)) {
+      // Bare kinds carry no fields — rebuild minimal (strips extras).
+      view = { kind } as AppView;
+    } else if (kind === "module") {
+      const mod = rec.module;
+      if (typeof mod === "string" && (RECENT_MODULES as readonly string[]).includes(mod)) {
+        view = { kind: "module", module: mod };
+      }
+    } else if (kind === "crm") {
+      const tab = rec.tab;
+      if (typeof tab === "string" && (CRM_TABS as readonly string[]).includes(tab)) {
+        view = { kind: "crm", tab: tab as CrmTab };
+      }
+    }
+    if (view) out = pushRecent(out, view);
+  }
+  return out;
+}
+
 type AppState = {
   locale: Locale;
   activeBusinessId: string | null;
   view: AppView;
   commandOpen: boolean;
+  /**
+   * R135 — device-local recent destinations for the ⌘K palette (MRU order,
+   * capped at RECENT_VIEWS_CAP, recorded only by navigate() through the
+   * isRecentDestination gate). Persisted with the preferences family and
+   * validated on rehydration by parseRecentViews.
+   */
+  recentViews: AppView[];
+  /** R135 — explicit clear (the palette's "Clear recent destinations" row). */
+  clearRecentViews: () => void;
   /**
    * Prompt 25/27 — auth surface the join/sign-in card should show. The
    * legal & pricing pages flip this BEFORE navigating to the dashboard so
@@ -1112,12 +1265,23 @@ export const useAppStore = create<AppState>()(
       authMode: "signin",
       setAuthMode: (authMode) => set({ authMode }),
       setLocale: (locale) => set({ locale }),
-      setActiveBusiness: (activeBusinessId) => set({ activeBusinessId }),
+      // R135 — a business switch starts a fresh recents session (business-
+      // scoped law): the same-id re-set is a no-op for the list.
+      setActiveBusiness: (activeBusinessId) =>
+        set((s) => ({
+          activeBusinessId,
+          recentViews:
+            s.activeBusinessId === activeBusinessId ? s.recentViews : [],
+        })),
+      recentViews: [],
+      // R135 — navigate() is the ONLY recorder: replaceView() (back/forward
+      // + deep-link re-entry) deliberately never touches recentViews.
       navigate: (view, opts) => {
-        set({ view });
+        set((s) => ({ view, recentViews: pushRecent(s.recentViews, view) }));
         syncUrl(view, opts?.replace ?? false);
       },
       replaceView: (view) => set({ view }),
+      clearRecentViews: () => set({ recentViews: [] }),
       setCommandOpen: (commandOpen) => set({ commandOpen }),
       fireQuickIntent: (action) =>
         set({ quickIntent: { action, seq: Date.now() + Math.random() } }),
@@ -1128,6 +1292,7 @@ export const useAppStore = create<AppState>()(
       partialize: (s) => ({
         locale: s.locale,
         activeBusinessId: s.activeBusinessId,
+        recentViews: s.recentViews,
       }),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<AppState>;
@@ -1136,6 +1301,10 @@ export const useAppStore = create<AppState>()(
           locale: isLocale(p.locale) ? p.locale : DEFAULT_LOCALE,
           activeBusinessId:
             typeof p.activeBusinessId === "string" ? p.activeBusinessId : null,
+          // R135 — the persisted recents list re-validates entry-by-entry
+          // (parseRecentViews law): a stale/foreign shape can never become
+          // state.
+          recentViews: parseRecentViews(p.recentViews),
         };
       },
     },
