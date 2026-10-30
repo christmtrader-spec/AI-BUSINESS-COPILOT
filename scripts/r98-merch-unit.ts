@@ -65,9 +65,11 @@ const picked = topProductOf(crafted);
 ok("1.1 the FIRST entry wins even when a later entry is bigger (never re-ranks)",
   picked !== null && picked.name === "Akar Widget" && picked.revenueMinor === 1_000_000 && picked.unitsSold === 3,
   JSON.stringify(picked));
-ok("1.2 the shape law — exactly 3 fields {name, unitsSold, revenueMinor}",
-  picked !== null && eq(Object.keys(picked).sort(), ["name", "revenueMinor", "unitsSold"]),
+ok("1.2 the shape law — exactly 4 fields {name, unitsSold, revenueMinor, productId} (R153 grew the drill id — additive)",
+  picked !== null && eq(Object.keys(picked).sort(), ["name", "productId", "revenueMinor", "unitsSold"]),
   picked ? JSON.stringify(Object.keys(picked)) : "null");
+ok("1.2b rows without an id degrade to productId null (the unlinked mass — carried, never drilled)",
+  picked !== null && picked.productId === null);
 
 let shuffledOk = true;
 let shuffledInfo = "";
@@ -89,14 +91,15 @@ for (let t = 0; t < 60; t++) {
     got.name !== list[0].name ||
     got.unitsSold !== list[0].qty ||
     got.revenueMinor !== list[0].revenueMinor ||
-    eq(Object.keys(got).sort(), ["name", "revenueMinor", "unitsSold"]) === false
+    got.productId !== null ||
+    eq(Object.keys(got).sort(), ["name", "productId", "revenueMinor", "unitsSold"]) === false
   ) {
     shuffledOk = false;
     shuffledInfo = `t=${t} got=${JSON.stringify(got)} want=${JSON.stringify(list[0])}`;
     break;
   }
 }
-ok("1.3 60 randomized shuffled lists → entries[0] VERBATIM (byte-for-byte, shape intact)", shuffledOk, shuffledInfo);
+ok("1.3 60 randomized shuffled lists → entries[0] VERBATIM (byte-for-byte, shape intact, id-less rows → null id)", shuffledOk, shuffledInfo);
 
 ok("1.4 guards: null → null", topProductOf(null) === null);
 ok("1.5 guards: undefined → null", topProductOf(undefined) === null);
@@ -152,41 +155,47 @@ ok("4.4 zero new queries — the mapping sits AFTER the existing Promise.all (no
   !/topProduct:\s*await/.test(snapSrc) && !/topExpenseCategory:\s*await/.test(snapSrc));
 
 const copilotSrc = fs.readFileSync("src/modules/copilot/copilot-view.tsx", "utf8");
-ok("4.5 the copilot gates the merch chips on the meta (pickMerchFollowUps)",
-  copilotSrc.includes("function pickMerchFollowUps") &&
-  /meta\.topProduct\s*\?\s*\[/.test(copilotSrc) &&
-  copilotSrc.includes("meta.topExpenseCategory"));
-ok("4.6 the merch chips render with the Trophy/Wallet icons + stable testids",
-  copilotSrc.includes("<Trophy") && copilotSrc.includes("<Wallet") &&
-  copilotSrc.includes('data-testid={`copilot-followup-${m.key}`}'));
-ok("4.7 the tooltips cite the WINDOW (the merchWindowLabel law) + pre-formatted money",
-  copilotSrc.includes("merchWindowLabel") &&
-  copilotSrc.includes('t("followUpTopProductTooltip"') &&
-  copilotSrc.includes('t("followUpTopExpenseTooltip"'));
-ok("4.8 the merch tier counts in the follow-up gating (the generic pool shrinks to 1)",
-  /podiumFollowUps\.length \+\s*\n\s*merchFollowUps\.length >/.test(copilotSrc));
+// R153 RE-PIN (honest archaeology): the R98-era merch follow-up chips
+// (pickMerchFollowUps / Trophy / Wallet / merchWindowLabel) were replaced
+// by the R118 suggestion system (FOLLOW_UP_KEYS + FOLLOW_UP_MATCHERS +
+// followUpRelevant) in a later round and these pins went stale unnoticed
+// (r98 was not in the running family). Re-pinned to CURRENT reality —
+// the best-seller question stays suggestable through the products
+// matcher, and the R153 product chip now carries the drill itself.
+ok("4.5 the follow-up pool exists with the relevance law (followUpRelevant — propose only when the subject exists)",
+  copilotSrc.includes("const FOLLOW_UP_KEYS") &&
+  copilotSrc.includes("function followUpRelevant") &&
+  copilotSrc.includes("return counts.receivableCount > 0"));
+ok("4.6 the products matcher keeps the best-seller questions suggestable (the merch tier's descendent)",
+  /followUpProducts[^\n]*re:\s*\/product\|best\.\?seller\|top\|محصول\|پرفروش\/i/.test(copilotSrc.replace(/\n\s+/g, " ")));
+ok("4.7 the follow-up block renders with the stable testid + the Sparkles label",
+  copilotSrc.includes('data-testid="copilot-followups"') &&
+  copilotSrc.includes('t("followUpsLabel")') &&
+  copilotSrc.includes("askFollowUp(t(key))"));
+ok("4.8 the follow-up pool ranks by live server counts (SummaryLite — never the model)",
+  copilotSrc.includes("type SummaryLite") &&
+  copilotSrc.includes("topProducts?: unknown[]"));
 
 const perfSrc = fs.readFileSync("src/modules/reports/performance-panel.tsx", "utf8");
-const shareSites = (perfSrc.match(/\.\.\.\(r\.truncated\s*\n\s*\? \[\]/g) ?? []).length;
-ok("4.9 all FOUR share columns mount ONLY on a complete scan (truncation-silence law)",
-  shareSites === 4, `found ${shareSites} gated spread sites`);
-ok("4.10 the share bars read the response's OWN totals (same basis by construction)",
-  perfSrc.includes("total={r.totals.lineValueMinor}") &&
-  perfSrc.includes("total={r.totals.revenueMinor}") &&
-  perfSrc.includes("total={r.totals.amountMinor}"));
-ok("4.11 the share column hides below sm (the mobile law) and the bar is aria-hidden",
-  (perfSrc.match(/hideBelow: "sm" as const/g) ?? []).length === 4 &&
-  /aria-hidden="true"\s*\n\s*>\s*\n\s*<span/.test(perfSrc));
+// R153 RE-PIN: the four table share columns became the ONE share law —
+// a single honest share bar on the LeaderStrip (stockSharePercent),
+// rendered only on a same-basis denominator.
+ok("4.9 the ONE share law — stockSharePercent drives the leader strip's bar (never per-column shares)",
+  perfSrc.includes("const share = stockSharePercent(valueMinor, totalMinor)") &&
+  perfSrc.includes("stockSharePercent"));
+ok("4.10 the share bar renders only on an honest same-basis denominator",
+  perfSrc.includes("The share bar renders only on an honest same-basis denominator") &&
+  /share !== null/.test(perfSrc));
+ok("4.11 the share tooltip cites the EXACT percent (formatted inside the component)",
+  perfSrc.includes('t("perfShareTooltip", { percent: fmtCount(uiLocale, share) })'));
 
-console.log("\n[5] i18n BOTH-BAG — 6 new keys, EN/FA symmetric placeholders");
+console.log("\n[5] i18n BOTH-BAG — the CURRENT keys, EN/FA symmetric placeholders (R153 re-pin: the R98-era followUpTop*/perfColShare keys are DEAD — replaced by the R118 followUp* bag)");
 const enSrc = fs.readFileSync("src/i18n/messages/en.ts", "utf8");
 const faSrc = fs.readFileSync("src/i18n/messages/fa.ts", "utf8");
 const R98_KEYS = [
-  "followUpTopProductQ",
-  "followUpTopProductTooltip",
-  "followUpTopExpenseQ",
-  "followUpTopExpenseTooltip",
-  "perfColShare",
+  "followUpsLabel",
+  "followUpOutstanding",
+  "followUpProducts",
   "perfShareTooltip",
 ];
 for (const k of R98_KEYS) {
@@ -194,17 +203,23 @@ for (const k of R98_KEYS) {
   ok(`5.${R98_KEYS.indexOf(k) + 1} ${k} exists in BOTH bags`,
     re.test(enSrc) && re.test(faSrc));
 }
+ok("5.5 the DEAD R98 keys stay dead (no zombie strings)",
+  !enSrc.includes("followUpTopProductQ") && !faSrc.includes("followUpTopProductQ") &&
+  !enSrc.includes("followUpTopExpenseQ") && !faSrc.includes("followUpTopExpenseQ"));
 function placeholdersOf(src: string, key: string): string[] {
   const m = src.match(new RegExp(`\\b${key}:\\s*"([^"]*)"`));
   if (!m) return [];
   return [...m[1].matchAll(/\{(\w+)\}/g)].map((x) => x[1]).sort();
 }
-const phKeys = ["followUpTopProductTooltip", "followUpTopExpenseTooltip", "perfShareTooltip"];
+const phKeys = ["perfShareTooltip"];
 phKeys.forEach((k, i) => {
   ok(`5.${R98_KEYS.length + i + 1} ${k} placeholder sets match EN↔FA exactly`,
     eq(placeholdersOf(enSrc, k), placeholdersOf(faSrc, k)),
     `en=[${placeholdersOf(enSrc, k)}] fa=[${placeholdersOf(faSrc, k)}]`);
 });
+ok("5.7 the R153 actionProduct keys exist in BOTH bags with matching placeholders",
+  /\bactionProduct:\s*"/.test(enSrc) && /\bactionProduct:\s*"/.test(faSrc) &&
+  eq(placeholdersOf(enSrc, "actionProductTitle"), placeholdersOf(faSrc, "actionProductTitle")));
 
 console.log(`\n=== r98-merch-unit: ${passed} passed, ${failed} failed ===`);
 if (failed > 0) {

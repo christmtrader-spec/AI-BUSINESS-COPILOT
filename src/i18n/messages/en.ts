@@ -2034,6 +2034,8 @@ const en = {
     actionDebtorTitle: "«{name}» owes you {money} across {count} open invoices. Open their aging details.",
     actionCreditor: "Payables aging",
     actionCreditorTitle: "You owe «{name}» {money} across {count} open bills. Open their aging details.",
+    actionProduct: "The product's page",
+    actionProductTitle: "Best seller in this window: «{name}» — {count} units at {money}. Open the product's own page.",
     suggestion1: "Who owes me money?",
     suggestion2: "How did sales do in the last 30 days?",
     suggestion3: "Where is my money going?",

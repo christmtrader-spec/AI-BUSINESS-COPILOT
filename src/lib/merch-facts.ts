@@ -18,11 +18,22 @@
  * leader.
  */
 
-/** The copilot meta's top-product view (R98): the report's own rank 1. */
+/**
+ * The copilot meta's top-product view (R98): the report's own rank 1.
+ * R153 — the view grows the stable catalog identity (ADDITIVE — r98's
+ * shape law re-pinned to 4 fields in the same round): the report row
+ * already carries `productId` (the Prompt 50 aggregation key), so the
+ * view passes it through VERBATIM instead of dropping it. `null` = the
+ * unlinked mass (a snapshot name with no catalog row) — carried, but the
+ * client picker refuses to drill it (the R96 mass law, exactly like
+ * R147's null partyId). The FACT never depended on the id; only the
+ * DRILL does.
+ */
 export type TopProductView = {
   name: string;
   unitsSold: number;
   revenueMinor: number;
+  productId: string | null;
 };
 
 /** The copilot meta's top-expense-category view (R98): the report's own
@@ -41,13 +52,21 @@ export type TopCategoryView = {
  * nameable fact — honest silence beats a "best seller" with no name).
  */
 export function topProductOf(
-  products: readonly { name: unknown; qty: unknown; revenueMinor: unknown }[] | null | undefined,
+  products: readonly {
+    name: unknown;
+    qty: unknown;
+    revenueMinor: unknown;
+    productId?: unknown;
+  }[]
+    | null
+    | undefined,
 ): TopProductView | null {
   if (!Array.isArray(products) || products.length === 0) return null;
   const first = products[0] as {
     name?: unknown;
     qty?: unknown;
     revenueMinor?: unknown;
+    productId?: unknown;
   };
   if (typeof first?.name !== "string" || first.name.trim().length === 0) return null;
   if (typeof first.qty !== "number" || !Number.isFinite(first.qty)) return null;
@@ -60,6 +79,14 @@ export function topProductOf(
     name: first.name,
     unitsSold: first.qty,
     revenueMinor: first.revenueMinor,
+    // R153 — the drill id: a non-blank string rides VERBATIM; anything
+    // else (null for the unlinked mass, a missing key on old rows, or an
+    // ill-typed value) degrades to null — honest silence for the DRILL,
+    // never a navigation that rides a name or a fabricated id.
+    productId:
+      typeof first.productId === "string" && first.productId.trim().length > 0
+        ? first.productId
+        : null,
   };
 }
 

@@ -199,8 +199,10 @@ type CopilotMeta = {
   // R143 DRIFT FIX — the server's TopProductView (src/lib/merch-facts.ts)
   // normalizes its report row to `unitsSold`; the client type used to say
   // `qty` (the raw report field). Same value, honest name — the type now
-  // matches the wire contract byte-for-byte.
-  topProduct?: { name: string; unitsSold: number; revenueMinor: number } | null;
+  // matches the wire contract byte-for-byte. R153 — the view grows the
+  // drill id (ADDITIVE optional: old persisted metas honestly omit it;
+  // the picker refuses a missing/blank/null id — the R96 mass law).
+  topProduct?: { name: string; unitsSold: number; revenueMinor: number; productId?: string | null } | null;
   topExpenseCategory?: { category: string; totalMinor: number } | null;
   topStockProduct?: { id: string; name: string; valueMinor: number } | null;
   // R103 — the podium's rank 2 (additive optional — old persisted metas
@@ -884,6 +886,115 @@ function OutstandingActionChips({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+// ---- Product action chip (R153 — the best seller meets its own surface) ----
+
+export type ProductActionChipFact = {
+  productId: string;
+  name: string;
+  unitsSold: number;
+  revenueMinor: number;
+};
+
+/**
+ * R153 — the product drill's gate: when the answer's proven best-seller
+ * fact carries a STABLE catalog id, ONE chip opens the product's own
+ * surface (the entity detail — the R152 destination, where the
+ * StockDialog adjusts stock and the threshold is edited). Laws
+ * (battery-pinned in scripts/r153-product-drill-check.ts):
+ * - the id law — navigation rides the STABLE productId, never the name
+ *   (the R147 law verbatim); a missing/blank/null id NEVER drills — the
+ *   unlinked mass (a snapshot name with no catalog row) stays honest
+ *   (the R96 mass-row law, exactly like R147's null partyId);
+ * - the positive-value law — unitsSold > 0 AND revenueMinor > 0 (no chip
+ *   about nothing — the stock family's law);
+ * - a nameless fact never drills (a chip that cannot name its target is
+ *   noise, not an affordance);
+ * - old persisted metas without the id stay honest (null);
+ * - null/undefined meta → null.
+ */
+export function pickProductActionChip(
+  meta: CopilotMeta | null | undefined,
+): ProductActionChipFact | null {
+  if (!meta || typeof meta !== "object") return null;
+  const fact = meta.topProduct;
+  if (!fact || typeof fact !== "object") return null;
+  if (typeof fact.productId !== "string" || fact.productId.trim().length === 0) return null;
+  if (typeof fact.name !== "string" || fact.name.trim().length === 0) return null;
+  if (typeof fact.unitsSold !== "number" || !Number.isFinite(fact.unitsSold) || fact.unitsSold <= 0)
+    return null;
+  if (
+    typeof fact.revenueMinor !== "number" ||
+    !Number.isFinite(fact.revenueMinor) ||
+    fact.revenueMinor <= 0
+  )
+    return null;
+  return {
+    productId: fact.productId,
+    name: fact.name,
+    unitsSold: fact.unitsSold,
+    revenueMinor: fact.revenueMinor,
+  };
+}
+
+/**
+ * R153 — the ONE product chip under a grounded answer: the proven
+ * best-seller opens THE PRODUCT (the entity detail — the R152
+ * destination; the store's entityToHash authority builds the hash, never
+ * a hand-built #/products/…). Laws:
+ * - ONE chip max (the fact is one rank-1); the violet perf chip and the
+ *   sky stock chips keep their OWN destinations — this chip is the
+ *   product's own page, a materially different surface (stock lives
+ *   there), not a duplicate;
+ * - the icon mirrors the app's OWN nav iconography (Package = products —
+ *   one icon one meaning); the hue is the R152 "open the surface"
+ *   primary identity;
+ * - the tooltip carries the EXACT proven figures (fmtCount / fmtMoney
+ *   INSIDE the component — never a raw ICU template; the R99/R140
+ *   formatting laws); title = aria-label = ONE source;
+ * - absent/undrillable fact → renders null (honest silence).
+ */
+function ProductActionChip({
+  meta,
+  business,
+}: {
+  meta: CopilotMeta;
+  business: BusinessSummary;
+}) {
+  const t = useTranslations("copilot");
+  const uiLocale = useLocale();
+  const navigate = useAppStore((s) => s.navigate);
+  const chip = pickProductActionChip(meta);
+  if (!chip) return null;
+  const tooltip = t("actionProductTitle", {
+    name: chip.name,
+    count: fmtCount(uiLocale, chip.unitsSold),
+    money: fmtMoney(business, chip.revenueMinor),
+  });
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5 ps-1" data-testid="copilot-product-chips">
+      <button
+        type="button"
+        onClick={() => navigate({ kind: "entity", entity: "product", id: chip.productId })}
+        title={tooltip}
+        aria-label={tooltip}
+        data-testid="copilot-action-product"
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none transition-colors motion-reduce:transition-none",
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+          "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10",
+        )}
+      >
+        <Package className="size-3 shrink-0" aria-hidden="true" />
+        {t("actionProduct")}
+        <ChevronDown
+          className="size-3 shrink-0 opacity-60 rtl:-scale-x-100"
+          aria-hidden="true"
+        />
+      </button>
     </div>
   );
 }
@@ -2571,6 +2682,13 @@ export function CopilotView({
                       {!m.failed && m.meta ? (
                         <OutstandingActionChips meta={m.meta} business={business} />
                       ) : null}
+                      {/* R153 — the product chip: the proven best-seller
+                          with a STABLE catalog id opens the product's own
+                          surface (the R152 destination — stock lives
+                          there). */}
+                      {!m.failed && m.meta ? (
+                        <ProductActionChip meta={m.meta} business={business} />
+                      ) : null}
                       {resumingId === m.id ? (
                         <div
                           className={cn(
@@ -2617,7 +2735,7 @@ export function CopilotView({
                         key={key}
                         type="button"
                         onClick={() => askFollowUp(t(key))}
-                        className="border-emerald-500/25 bg-emerald-500/5 hover:border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors"
+                        className="border-emerald-500/25 bg-emerald-500/5 hover:border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors motion-reduce:transition-none"
                       >
                         {t(key)}
                       </button>

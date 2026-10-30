@@ -2019,6 +2019,8 @@ const fa: Messages = {
     actionDebtorTitle: "«{name}» به شما {money} بدهکار است، در {count} فاکتور باز. مشاهدهٔ جزئیات سررسیدشان.",
     actionCreditor: "سررسید بدهی‌ها",
     actionCreditorTitle: "شما به «{name}» {money} بدهکار هستید، در {count} صورتحساب باز. مشاهدهٔ جزئیات سررسیدشان.",
+    actionProduct: "صفحهٔ خودِ کالا",
+    actionProductTitle: "پرفروش‌ترینِ این بازه: «{name}» — {count} واحد به ارزش {money}. بازکردن صفحهٔ خودِ کالا.",
     suggestion1: "چه کسی به من بدهکار است؟",
     suggestion2: "فروش ۳۰ روز گذشته چطور بود؟",
     suggestion3: "پول من کجا می‌رود؟",

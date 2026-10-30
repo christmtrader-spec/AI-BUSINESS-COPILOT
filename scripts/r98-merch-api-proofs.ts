@@ -248,10 +248,10 @@ async function main() {
 
   const seeded = await grounding(30);
   const tp = seeded.meta.topProduct;
-  ok("B3 meta.topProduct EXACT = { Akar Widget, 3 units, 1,000,000 } (the report's own rank 1)",
-    tp && tp.name === "Akar Widget" && tp.unitsSold === 3 && tp.revenueMinor === 1_000_000,
+  ok("B3 meta.topProduct EXACT = { Akar Widget, 3 units, 1,000,000, its productId } (the report's own rank 1; R153 — the drill id rides)",
+    tp && tp.name === "Akar Widget" && tp.unitsSold === 3 && tp.revenueMinor === 1_000_000 && typeof tp.productId === "string" && tp.productId.length > 0,
     JSON.stringify(tp));
-  ok("B4 the shape law — exactly 3 fields", tp && eq2(Object.keys(tp).sort(), ["name", "revenueMinor", "unitsSold"]));
+  ok("B4 the shape law — exactly 4 fields (R153 grew the drill id — additive)", tp && eq2(Object.keys(tp).sort(), ["name", "productId", "revenueMinor", "unitsSold"]));
   const tc = seeded.meta.topExpenseCategory;
   ok("B5 meta.topExpenseCategory EXACT = { Rent, 400,000 } (two entries folded by the report)",
     tc && tc.category === "Rent" && tc.totalMinor === 400_000,

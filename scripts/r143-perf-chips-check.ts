@@ -58,9 +58,14 @@ const en = readFileSync("src/i18n/messages/en.ts", "utf8");
 const fa = readFileSync("src/i18n/messages/fa.ts", "utf8");
 
 // [1] DRIFT-FIX LAW --------------------------------------------------------------
+// R153 re-pin — the type grew the ADDITIVE drill id (productId?: string |
+// null; the unlinked mass stays null and the R153 picker refuses it). The
+// unitsSold normalization law is untouched.
 ok(
-  "[1a] the client CopilotMeta.topProduct type says unitsSold",
-  view.includes("topProduct?: { name: string; unitsSold: number; revenueMinor: number } | null;"),
+  "[1a] the client CopilotMeta.topProduct type says unitsSold (+ the R153 additive productId)",
+  view.includes(
+    "topProduct?: { name: string; unitsSold: number; revenueMinor: number; productId?: string | null } | null;",
+  ),
 );
 ok(
   "[1b] the client meta type no longer says qty (the drift is dead)",
