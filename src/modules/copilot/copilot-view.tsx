@@ -117,6 +117,13 @@ import { fmtMoney } from "../finance-shared/finance-kit";
  * stream and keeps the partial answer.
  */
 
+// R136 — ONE class law for the transcript's status pills (the amber resuming
+// pill and the sky restored badge share the shape; only the HUE differs, so
+// the pills can never drift apart in geometry — same law as the trend
+// panel's trendDeltaCls single hue source).
+const statusPillBase =
+  "inline-flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium";
+
 type ChatMessage = {
   id: string;
   role: "user" | "assistant";
@@ -330,7 +337,7 @@ function CitationStrip({
         <span
           key={chip.key}
           title={chip.title}
-          className="border-border/70 bg-background text-muted-foreground inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] leading-none"
+          className="border-border/70 bg-background text-muted-foreground inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] leading-none transition-colors hover:border-foreground/25 hover:text-foreground motion-reduce:transition-none"
         >
           <chip.icon className="size-3" aria-hidden="true" />
           {chip.key === "range" ? (
@@ -1526,7 +1533,7 @@ export function CopilotView({
                         <DropdownMenuItem
                           key={s.id}
                           onSelect={() => switchSession(s.id)}
-                          className="focus:bg-muted/70 items-start gap-2 rounded-md py-2"
+                          className="focus:bg-muted/70 group/item items-start gap-2 rounded-md py-2"
                         >
                           <MessageSquareText
                             className={cn(
@@ -1562,7 +1569,7 @@ export function CopilotView({
                             />
                           ) : null}
                           <span
-                            className="flex shrink-0 items-center gap-0.5"
+                            className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/item:opacity-100 group-data-[highlighted]/item:opacity-100 focus-within:opacity-100 max-md:opacity-100 motion-reduce:transition-none"
                             onClick={(e) => e.stopPropagation()}
                             onKeyDown={(e) => e.stopPropagation()}
                           >
@@ -1692,15 +1699,18 @@ export function CopilotView({
           </div>
         ) : null}
 
-        {/* Messages */}
-        <div
-          ref={scrollRef}
-          className="flex-1 space-y-4 overflow-y-auto px-4 py-4"
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 60);
-          }}
-        >
+        {/* Messages — wrapped in a relative box so the scroll-to-bottom
+            pill can float over the transcript without being clipped by
+            the Card's overflow-hidden (R136). */}
+        <div className="relative min-h-0 flex-1">
+          <div
+            ref={scrollRef}
+            className="absolute inset-0 space-y-4 overflow-y-auto px-4 py-4"
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 60);
+            }}
+          >
           {empty ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
               <div className="border-emerald-500/20 from-emerald-500/15 to-teal-500/10 flex size-14 items-center justify-center rounded-2xl border bg-gradient-to-br">
@@ -1723,7 +1733,7 @@ export function CopilotView({
                         key={s.id}
                         type="button"
                         onClick={() => switchSession(s.id)}
-                        className="border-border bg-muted/40 hover:border-emerald-500/40 hover:bg-emerald-500/5 group inline-flex max-w-full items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all hover:shadow-sm"
+                        className="border-border bg-muted/40 hover:border-emerald-500/40 hover:bg-emerald-500/5 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-background group active:scale-[0.98] inline-flex max-w-full items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all hover:shadow-sm motion-reduce:transition-none motion-reduce:active:scale-100"
                       >
                         {s.pinned ? (
                           <Pin
@@ -1773,10 +1783,29 @@ export function CopilotView({
               {messages.map((m) =>
                 m.role === "user" ? (
                   <div key={m.id} className="flex items-start justify-end gap-2.5">
-                    <div className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl rounded-ee-sm px-3.5 py-2.5 sm:max-w-[70%]">
+                    <div className="bg-primary text-primary-foreground group relative max-w-[85%] rounded-2xl rounded-ee-sm px-3.5 py-2.5 shadow-xs sm:max-w-[70%]">
                       <p className="text-sm leading-relaxed whitespace-pre-wrap" dir="auto">
                         {m.content}
                       </p>
+                      {/* R136 — the user's own question is copyable too
+                          (answer/copy symmetry); the affordance rides the
+                          SAME hover-reveal + focus-visible law as the
+                          assistant bubble's copy button, inverted for the
+                          primary surface. */}
+                      {!pending ? (
+                        <button
+                          type="button"
+                          onClick={() => void copyAnswer(m)}
+                          aria-label={copiedId === m.id ? tCommon("copied") : tCommon("copy")}
+                          className="absolute end-2 bottom-1.5 rounded p-1 text-primary-foreground/50 opacity-0 transition-[opacity,color] group-hover:opacity-100 hover:text-primary-foreground focus-visible:opacity-100 focus-visible:outline-none motion-reduce:transition-none"
+                        >
+                          {copiedId === m.id ? (
+                            <Check className="size-3.5" aria-hidden="true" />
+                          ) : (
+                            <Copy className="size-3.5" aria-hidden="true" />
+                          )}
+                        </button>
+                      ) : null}
                     </div>
                     <div
                       className="bg-primary text-primary-foreground mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full"
@@ -1805,10 +1834,10 @@ export function CopilotView({
                     <div className="flex min-w-0 max-w-[88%] flex-col sm:max-w-[75%]">
                       <div
                         className={cn(
-                          "group relative w-fit rounded-2xl rounded-ss-sm border px-3.5 py-2.5",
+                          "group ring-border/40 relative w-fit rounded-2xl rounded-ss-sm border px-3.5 py-2.5 ring-1",
                           m.failed
                             ? "border-destructive/30 bg-destructive/5"
-                            : "bg-muted/50",
+                            : "bg-muted/50 shadow-xs",
                         )}
                       >
                       {m.content.length === 0 && m.id === activeStreamId ? (
@@ -1816,7 +1845,7 @@ export function CopilotView({
                           {[0, 1, 2].map((i) => (
                             <span
                               key={i}
-                              className="bg-muted-foreground/60 size-1.5 animate-bounce rounded-full"
+                              className="bg-muted-foreground/60 size-1.5 animate-bounce rounded-full motion-reduce:animate-none"
                               style={{ animationDelay: `${i * 150}ms` }}
                             />
                           ))}
@@ -1830,7 +1859,7 @@ export function CopilotView({
                           type="button"
                           onClick={() => void copyAnswer(m)}
                           aria-label={copiedId === m.id ? t("copied") : t("copy")}
-                          className="text-muted-foreground hover:text-foreground absolute end-2 bottom-1.5 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                          className="bg-background/80 border-border/60 text-muted-foreground hover:text-foreground hover:border-foreground/20 absolute end-2 bottom-1.5 rounded border p-1.5 opacity-0 shadow-xs backdrop-blur-sm transition-[opacity,color,border-color] group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none motion-reduce:transition-none"
                         >
                           {copiedId === m.id ? (
                             <Check className="size-3.5 text-emerald-600" aria-hidden="true" />
@@ -1840,6 +1869,25 @@ export function CopilotView({
                         </button>
                       ) : null}
                       </div>
+                      {/* R136 — the R126/R127 restored-answer honesty marker
+                          finally SURFACED: a healed answer (device-local flag,
+                          never synced — R128 law C) shows a sky badge right
+                          under its bubble. Shape rides statusPillBase (one
+                          pill law); the hue is sky = informational, distinct
+                          from the amber resuming pill's in-flight state. */}
+                      {m.healed && !m.failed ? (
+                        <span
+                          title={t("restoredDesc")}
+                          data-testid="copilot-restored-badge"
+                          className={cn(
+                            statusPillBase,
+                            "border-sky-500/40 bg-sky-500/10 mt-1.5 text-sky-700 dark:text-sky-400",
+                          )}
+                        >
+                          <History className="size-3" aria-hidden="true" />
+                          <span>{t("restoredBadge")}</span>
+                        </span>
+                      ) : null}
                       {!m.failed && m.meta ? (
                         <CitationStrip meta={m.meta} locale={business.locale} business={business} />
                       ) : null}
@@ -1848,7 +1896,10 @@ export function CopilotView({
                       ) : null}
                       {resumingId === m.id ? (
                         <div
-                          className="inline-flex w-fit items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-400"
+                          className={cn(
+                            statusPillBase,
+                            "border-amber-500/40 bg-amber-500/10 mt-1.5 text-amber-700 dark:text-amber-400",
+                          )}
                           role="status"
                           aria-live="polite"
                         >
@@ -1897,6 +1948,42 @@ export function CopilotView({
               ) : null}
             </>
           )}
+          </div>
+
+          {/* R136 — scroll-to-bottom pill: appears ONLY when the reader has
+              scrolled away from the live edge (atBottom is scroll-derived);
+              while a stream is running it becomes a "new answers" hint with
+              a pulsing dot. Physical centering (left-1/2 -translate-x-1/2)
+              is direction-agnostic — safe under RTL. */}
+          {!atBottom && !empty ? (
+            <button
+              type="button"
+              onClick={() =>
+                scrollRef.current?.scrollTo({
+                  top: scrollRef.current.scrollHeight,
+                  behavior: "smooth",
+                })
+              }
+              aria-label={pending ? t("scrollBottomLive") : t("scrollBottom")}
+              title={pending ? t("scrollBottomLive") : t("scrollBottom")}
+              data-testid="copilot-scroll-bottom"
+              className="border-border/70 bg-background/95 text-foreground animate-in fade-in slide-in-from-bottom-2 absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border py-1.5 pe-3 ps-2 text-xs font-medium shadow-md backdrop-blur transition-[box-shadow,border-color] hover:border-foreground/30 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background duration-200 motion-reduce:animate-none motion-reduce:transition-none"
+            >
+              <span className="relative flex items-center justify-center">
+                <ArrowDown
+                  className="text-emerald-600 size-3.5 dark:text-emerald-400"
+                  aria-hidden="true"
+                />
+                {pending ? (
+                  <span
+                    className="bg-emerald-500 absolute -top-1 -end-1 size-1.5 animate-pulse rounded-full motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                ) : null}
+              </span>
+              <span>{pending ? t("scrollBottomLive") : t("scrollBottom")}</span>
+            </button>
+          ) : null}
         </div>
 
         {/* Composer */}
