@@ -48,7 +48,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiClientError } from "@/lib/api-client";
 import {
   clearCopilotState,
@@ -60,9 +60,11 @@ import {
   newMessageId,
   saveCopilotState,
   sessionMatchesQuery,
+  sessionMatchParts,
   titleFromQuestion,
   type CopilotSession,
   type DaySeparator,
+  type SessionMatchParts,
 } from "@/lib/copilot-sessions";
 import type { StreamResumeSnapshot } from "@/lib/ai/stream-resume";
 import {
@@ -784,6 +786,12 @@ export function CopilotView({
     typeof meterRaw.limit === "number"
       ? { used: meterRaw.used, limit: meterRaw.limit }
       : null;
+  // R141 — the glance chip's honesty window: a completed ask consumes a
+  // metered request, so the shared usage cache is invalidated the moment a
+  // stream ends (without this the chip froze up to staleTime 60s — the
+  // meter lied by omission after the FIRST ask). The refetch is passive:
+  // it only runs while the copilot view is mounted (the query's owner).
+  const queryClient = useQueryClient();
   // R140 — ONE memoized formatter for BOTH the glance chip and the
   // regenerate dialog's meter line (the R138 single-locale law: every
   // AI-usage number rides dayLocale — fa-IR gives Persian digits).
@@ -1338,9 +1346,12 @@ export function CopilotView({
         abortRef.current = null;
         activeRequestIdRef.current = null;
         setActiveStreamId((cur) => (cur === assistantId ? null : cur));
+        // R141 — refresh the meter the moment a stream ends (success,
+        // failure, stop or heal — the server's truth wins either way).
+        void queryClient.invalidateQueries({ queryKey: ["billing", "usage", "copilot"] });
       }
     },
-    [activeStreamId, business.id, days, localizedError, patchAssistant, syncAppend],
+    [activeStreamId, business.id, days, localizedError, patchAssistant, syncAppend, queryClient],
   );
 
   const handleSubmit = () => {
@@ -1678,7 +1689,24 @@ export function CopilotView({
                   ) : null}
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-80">
+              <DropdownMenuContent
+              align="end"
+              className="w-80"
+              onEscapeKeyDown={(event) => {
+                // R141 — progressive-dismissal law: Escape with an ACTIVE
+                // query swallows the dismiss (Radix honors
+                // defaultPrevented) and clears the filter — the menu stays
+                // open for a fresh look at the full list; a blank input
+                // lets the menu close as usual. (The first attempt —
+                // stopPropagation in the input's onKeyDown — could never
+                // work: Radix's escape listener is a DOCUMENT-CAPTURE
+                // listener, it fires before any target-level handler.)
+                if (queryActive) {
+                  event.preventDefault();
+                  setSessionQuery("");
+                }
+              }}
+            >
                 <DropdownMenuLabel className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                   <span>{t("sessionHistory")}</span>
                   {queryActive ? (
@@ -1739,7 +1767,14 @@ export function CopilotView({
                       </p>
                     ) : (
                       <div className="max-h-72 overflow-y-auto">
-                        {filteredSessions.map((s) => (
+                        {filteredSessions.map((s) => {
+                        // R141 — where did the query hit? Computed per row
+                        // while the filter is active; null otherwise (the
+                        // plain row, no fabricated highlights).
+                        const match: SessionMatchParts | null = queryActive
+                          ? sessionMatchParts(s, sessionQuery)
+                          : null;
+                        return (
                         <DropdownMenuItem
                           key={s.id}
                           onSelect={() => switchSession(s.id)}
@@ -1757,7 +1792,17 @@ export function CopilotView({
                           <span className="min-w-0 flex-1">
                             <span className="flex items-center gap-1.5">
                               <span className="block truncate text-xs font-medium">
-                                {s.title || t("untitledConversation")}
+                                {match && match.titleMarkStart >= 0 ? (
+                                  <>
+                                    {s.title.slice(0, match.titleMarkStart)}
+                                    <mark className="rounded-[3px] bg-amber-200/70 px-0.5 text-inherit dark:bg-amber-400/25 dark:text-amber-50">
+                                      {s.title.slice(match.titleMarkStart, match.titleMarkEnd)}
+                                    </mark>
+                                    {s.title.slice(match.titleMarkEnd)}
+                                  </>
+                                ) : (
+                                  s.title || t("untitledConversation")
+                                )}
                               </span>
                               {s.pinned ? (
                                 <Pin
@@ -1766,6 +1811,24 @@ export function CopilotView({
                                 />
                               ) : null}
                             </span>
+                            {/* R141 — the match preview: WHERE the query hit
+                                the conversation's content (the filter's honest
+                                witness — a content-only match is no longer
+                                invisible). Amber edge + mark on the first hit;
+                                ellipses are the lib's cut-edge honesty. */}
+                            {match?.preview ? (
+                              <span
+                                className="text-muted-foreground/90 mt-0.5 block truncate border-s-2 border-amber-400/50 ps-1.5 text-[11px]"
+                                dir="auto"
+                                data-testid="copilot-session-match-preview"
+                              >
+                                {match.preview.slice(0, match.previewMarkStart)}
+                                <mark className="rounded-[3px] bg-amber-200/70 px-0.5 text-inherit dark:bg-amber-400/25 dark:text-amber-50">
+                                  {match.preview.slice(match.previewMarkStart, match.previewMarkEnd)}
+                                </mark>
+                                {match.preview.slice(match.previewMarkEnd)}
+                              </span>
+                            ) : null}
                             <span className="text-muted-foreground block text-[11px] tabular-nums">
                               {t("messagesCount", { count: s.messages.length })}
                               {" · "}
@@ -1830,7 +1893,8 @@ export function CopilotView({
                             </button>
                           </span>
                         </DropdownMenuItem>
-                        ))}
+                        );
+                        })}
                       </div>
                     )}
                     {savedSessions.length >= MAX_SESSIONS ? (

@@ -276,6 +276,90 @@ export function sessionMatchesQuery(
   return false;
 }
 
+/**
+ * R141 — session-search match geometry (PURE). Where does the query hit?
+ *
+ * The history dropdown's search (R138) matches TITLE OR CONTENT, but the
+ * row only showed the title — a content match was invisible ("why is this
+ * here?"). sessionMatchParts answers honestly:
+ *  - titleMark*: the FIRST title occurrence's [start, end) (-1 when the
+ *    title does not match);
+ *  - preview: a ONE-LINE window of the FIRST content-matching message,
+ *    cut around the match with honest ellipses on every cut edge, plus
+ *    the match's [start, end) offsets WITHIN the window slice;
+ *  - everything null/-1/false when the query is blank or the session is
+ *    malformed — the caller then renders the plain row (no fabricated
+ *    highlights).
+ *
+ * The matching itself mirrors sessionMatchesQuery exactly (trim +
+ * toLocaleLowerCase on BOTH sides — locale-aware, Persian compares
+ * verbatim), so a row can never highlight something the filter did not
+ * match. Defensive by design (law F): null sessions, non-string titles
+ * and malformed message arrays never crash.
+ */
+export type SessionMatchParts = {
+  /** Title contains the query (first occurrence marked in the view). */
+  titleMarkStart: number;
+  titleMarkEnd: number;
+  /** Windowed content preview (null when no message content matches). */
+  preview: string | null;
+  /** The match's offsets INSIDE the preview window (-1 when no preview). */
+  previewMarkStart: number;
+  previewMarkEnd: number;
+};
+
+/** Radius of context shown around a content match (chars, one line). */
+const MATCH_PREVIEW_CONTEXT = 28;
+
+export function sessionMatchParts(
+  session: { title?: string; messages?: Array<{ content?: unknown }> } | null | undefined,
+  query: string,
+): SessionMatchParts {
+  const blank: SessionMatchParts = {
+    titleMarkStart: -1,
+    titleMarkEnd: -1,
+    preview: null,
+    previewMarkStart: -1,
+    previewMarkEnd: -1,
+  };
+  const q = (typeof query === "string" ? query : "").trim().toLocaleLowerCase();
+  if (q.length === 0 || !session || typeof session !== "object") return blank;
+
+  // Title: first occurrence of the lowered query in the lowered title.
+  // Offsets are computed on the LOWERED string and reused on the ORIGINAL
+  // — honest constraint: for the supported UI locales (en, fa) 
+  // toLocaleLowerCase is length-preserving, so lowered offsets map 1:1
+  // onto the original string.
+  const titleOriginal = typeof session.title === "string" ? session.title : "";
+  const titleMarkStart = titleOriginal.toLocaleLowerCase().indexOf(q);
+  const titleMarkEnd = titleMarkStart >= 0 ? titleMarkStart + q.length : -1;
+
+  // Content: first message whose lowered content contains the query.
+  const messages = Array.isArray(session.messages) ? session.messages : [];
+  for (const m of messages) {
+    if (!m || typeof m !== "object") continue;
+    const content = typeof m.content === "string" ? m.content : "";
+    if (content.length === 0) continue;
+    const idx = content.toLocaleLowerCase().indexOf(q);
+    if (idx < 0) continue;
+    // Window the ORIGINAL text around the match (context on both sides,
+    // honest ellipses only on actual cut edges).
+    const start = Math.max(0, idx - MATCH_PREVIEW_CONTEXT);
+    const end = Math.min(content.length, idx + q.length + MATCH_PREVIEW_CONTEXT);
+    const prefix = start > 0 ? "…" : "";
+    const suffix = end < content.length ? "…" : "";
+    const window = `${prefix}${content.slice(start, end)}${suffix}`;
+    return {
+      titleMarkStart,
+      titleMarkEnd,
+      preview: window,
+      previewMarkStart: prefix.length + (idx - start),
+      previewMarkEnd: prefix.length + (idx - start) + q.length,
+    };
+  }
+  return { ...blank, titleMarkStart, titleMarkEnd };
+}
+
 /** Remove ALL stored transcripts for a business (used by "clear history"). */
 export function clearCopilotState(businessId: string): void {
   if (typeof window === "undefined") return;
