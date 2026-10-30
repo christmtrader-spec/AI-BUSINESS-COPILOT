@@ -217,7 +217,7 @@ async function cleanup(ids: { tenantId: string; opUserId: string }) {
   await db.user.deleteMany({ where: { id: { in: [ids.tenantId, ids.opUserId] } } });
   // r109 fixtures match the sweep utility's %@t.dev pattern; the same sweep
   // also collects the smoke-suite's known leaks (smkowner*/inv*) so the
-  // census returns to the canonical 5/3 after every battery run.
+  // census returns to the canonical 7/5 after every battery run (R136 re-pin: the 2026-10-30 git-blob restore returned the September KEEP-baseline).
   // R111 hardening: the sweep exits early with "nothing to sweep." when the
   // direct deletes already restored the baseline — tolerate BOTH success
   // shapes and prove the census from the DB itself (never from its output).
@@ -238,8 +238,8 @@ async function cleanup(ids: { tenantId: string; opUserId: string }) {
     out.trim().split("\n").pop(),
   );
   check(
-    "C2 census baseline 5/3",
-    Number(census[0]?.users) === 5 && Number(census[0]?.biz) === 3,
+    "C2 census baseline 7/5 (the 2026-10-30 third DB wipe recovered the September KEEP-baseline via git blob 766d32a; R136; supersedes the R134 5/3 env-repair floor)",
+    Number(census[0]?.users) === 7 && Number(census[0]?.biz) === 5,
     `users=${census[0]?.users} businesses=${census[0]?.biz}`,
   );
 }

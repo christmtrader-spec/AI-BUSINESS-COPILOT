@@ -123,7 +123,7 @@ async function main() {
   const out = execFileSync("bun", ["scripts/r104-user-sweep.mjs"], { encoding: "utf8" });
   const censusLine = out.split("\n").find((l) => l.includes("census after sweep"));
   check("D1 FK-safe sweep removed fixture (pattern-registered)", out.includes("foreign_key_check: 0 violations"), censusLine?.trim());
-  check("D2 census restored 5/3, residue 0", censusLine?.includes("users=5 businesses=3") === true && out.includes("residue: 0"), censusLine?.trim());
+  check("D2 census restored 7/5, residue 0", censusLine?.includes("users=7 businesses=5") === true && out.includes("residue: 0"), censusLine?.trim());
 
   const failed = checks.filter((c) => !c.ok);
   console.log(`\nr108 me-checklist API proofs: ${checks.length - failed.length}/${checks.length} checks passed`);

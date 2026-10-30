@@ -272,8 +272,8 @@ async function cleanup() {
   // real Artwoodlaser signup = 7 users / 4 businesses. The r104 sweep wave
   // proved provenance for every kept identity; QA residue is 0.
   check(
-    "C2 census baseline 5/3 (the 2026-10-27 DB wipe reset the census to the env-repair fixture floor; R134)",
-    Number(census[0]?.users) === 5 && Number(census[0]?.biz) === 3,
+    "C2 census baseline 7/5 (the 2026-10-30 third DB wipe recovered the September KEEP-baseline via git blob 766d32a; R136; supersedes the R134 5/3 env-repair floor)",
+    Number(census[0]?.users) === 7 && Number(census[0]?.biz) === 5,
     `users=${census[0]?.users} businesses=${census[0]?.biz}`,
   );
 }

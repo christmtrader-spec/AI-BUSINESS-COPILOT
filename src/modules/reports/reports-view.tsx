@@ -21,14 +21,17 @@ import {
   AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
+  BarChart3,
   Boxes,
   CalendarDays,
   ChartPie,
+  Check,
   ChevronRight,
   Coins,
   Download,
   HandCoins,
   Layers,
+  Link2,
   Loader2,
   Lock,
   Minus,
@@ -37,6 +40,7 @@ import {
   ReceiptText,
   TrendingUp,
   Trophy,
+  X,
 } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
 // R116 — the ONE trend chip shared with the dashboard perf tiles: the
@@ -558,6 +562,67 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
       }),
   });
 
+  // R136 — the R100 perf sub-view LANDING (restored): #/reports?perf=<token>
+  // &from&to[&direction] renders the performance panel as a FOCUSED sub-view
+  // with the deep link's preselection — the copilot's windowed-answer chips
+  // and the perf deep links finally land on the surface they name (the
+  // parser + sameView comparator were whole; only this consumer was lost).
+  const perfToken =
+    view.kind === "module" && view.module === "reports" && typeof view.param === "string" && view.param.startsWith("perf-")
+      ? view.param
+      : null;
+  const perfKind: "sales" | "expenses" | "cashflow" | null =
+    perfToken === "perf-sales"
+      ? "sales"
+      : perfToken === "perf-expenses"
+        ? "expenses"
+        : perfToken === "perf-cashflow"
+          ? "cashflow"
+          : null;
+  const perfWindow =
+    view.kind === "module" && view.module === "reports" && view.perfFrom && view.perfTo
+      ? { from: view.perfFrom, to: view.perfTo }
+      : null;
+  const perfDirection =
+    view.kind === "module" && view.module === "reports" && view.perfDirection
+      ? view.perfDirection
+      : null;
+  // R136 — the sub-view honors the SAME entitlement gate as the inline
+  // mount (the summary already fetched carries advancedAvailable; while it
+  // loads, the panel's own states lead). A plan without ADVANCED_REPORTS
+  // lands on the summary + its locked teaser — never a naked error card.
+  const isPerfFocus =
+    perfKind !== null && (data === undefined || data.advancedAvailable === true);
+
+  // R101 — the perf sub-view's shareable deep link: window.location.href
+  // (the hash IS the state — the panel's own drills ride the URL through
+  // the write-back, so the copied link lands exactly this view). The
+  // textarea fallback covers clipboard denial (the inventory panel's law);
+  // failures toast destructive, success is the 2s inline swap.
+  const [linkCopied, setLinkCopied] = useState(false);
+  const copyPerfLink = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(window.location.href);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = window.location.href;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        const okFallback = document.execCommand("copy");
+        ta.remove();
+        if (!okFallback) throw new Error("copy rejected");
+      }
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      toast({ title: t("perfCopyFailed"), variant: "destructive" });
+    }
+  };
+
   const fmtDay = (key: string) => {
     // YYYY-MM-DD -> localized medium date for tooltips (UI locale, not
     // business locale — these are interface labels, not financial data).
@@ -785,6 +850,87 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
            via #/reports?inventory=1). Replaces the summary content; the
            panel owns its own loading/error/empty/export states. */
         <InventoryValuationPanel business={business} />
+      ) : isPerfFocus ? (
+        /* R136 — the R100/R101 performance sub-view (deep-linkable via
+           #/reports?perf=<closed token>&from&to[&direction]). The panel
+           owns its states; the header carries the shareable deep link
+           (the hash IS the state) + the exit affordance. */
+        <section aria-label={t("perfTitle")} className="space-y-3" data-testid="perf-focus">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="bg-violet-600/10 text-violet-700 dark:text-violet-300 flex size-8 shrink-0 items-center justify-center rounded-lg">
+              <BarChart3 className="size-4" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold">{t("perfTitle")}</h2>
+              <p className="text-muted-foreground text-xs">
+                {perfKind === "sales"
+                  ? t("perfKindSales")
+                  : perfKind === "expenses"
+                    ? t("perfKindExpenses")
+                    : t("perfKindCashflow")}
+                {perfWindow ? ` · ${perfWindow.from} → ${perfWindow.to}` : ""}
+              </p>
+            </div>
+            <div className="ms-auto flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5"
+                onClick={() => void copyPerfLink()}
+                title={t("perfCopyLink")}
+                aria-label={t("perfCopyLink")}
+                data-testid="perf-copy-link"
+              >
+                {linkCopied ? (
+                  <Check className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                ) : (
+                  <Link2 className="size-4" aria-hidden="true" />
+                )}
+                <span className="hidden sm:inline">
+                  {linkCopied ? t("perfCopiedToast") : t("perfCopyLink")}
+                </span>
+                <span className="sr-only">
+                  {linkCopied ? t("perfCopiedToast") : t("perfCopyLink")}
+                </span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1"
+                onClick={() => navigate({ kind: "module", module: "reports" })}
+                title={t("perfFocusExit")}
+                data-testid="perf-focus-exit"
+              >
+                <X className="size-4" aria-hidden="true" />
+                <span className="hidden sm:inline">{t("perfFocusExit")}</span>
+                <span className="sr-only">{t("perfFocusExit")}</span>
+              </Button>
+            </div>
+          </div>
+          <PerformancePanel
+            business={business}
+            initialKind={perfKind ?? undefined}
+            initialWindow={perfWindow ?? undefined}
+            initialDirection={perfDirection ?? undefined}
+            onCommitState={(s) => {
+              // Mirror the parser's closed grammar on the way OUT: the
+              // window only as a complete ordered pair, the direction
+              // cashflow-only (orphan fields never serialize — R100).
+              const win =
+                /^\d{4}-\d{2}-\d{2}$/.test(s.window.from) && /^\d{4}-\d{2}-\d{2}$/.test(s.window.to) && s.window.from <= s.window.to
+                  ? { perfFrom: s.window.from, perfTo: s.window.to }
+                  : {};
+              const dir =
+                s.kind === "cashflow" && (s.direction === "IN" || s.direction === "OUT")
+                  ? { perfDirection: s.direction }
+                  : {};
+              navigate(
+                { kind: "module", module: "reports", param: `perf-${s.kind}`, ...win, ...dir },
+                { replace: true },
+              );
+            }}
+          />
+        </section>
       ) : (
         <>
           {error ? (

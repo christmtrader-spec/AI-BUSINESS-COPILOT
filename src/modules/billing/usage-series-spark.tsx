@@ -29,6 +29,9 @@
 import { useLocale, useTranslations } from "next-intl";
 import { useUsageSeries } from "@/hooks/use-billing";
 import { toPersianDigits } from "@/lib/jalali";
+import { useAppStore } from "@/store/app-store";
+import { Button } from "@/components/ui/button";
+import { Bot } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /** Locale-aware short day label (e.g. "Oct 28" / «۲۸ آبان»). */
@@ -47,6 +50,7 @@ function dayLabel(iso: string, locale: string): string {
 export function UsageSeriesSpark({ open }: { open: boolean }) {
   const t = useTranslations("billing.usage");
   const locale = useLocale();
+  const navigate = useAppStore((s) => s.navigate);
   const fa = locale === "fa";
   const loc = (n: number | string) => (fa ? toPersianDigits(String(n)) : String(n));
   const seriesQ = useUsageSeries(open);
@@ -81,9 +85,22 @@ export function UsageSeriesSpark({ open }: { open: boolean }) {
     return (
       <div className="space-y-1.5" data-testid="usage-series-empty">
         <p className="text-muted-foreground text-xs font-medium">{t("seriesTitle")}</p>
-        <p className="text-muted-foreground/80 rounded-md border border-dashed px-3 py-3 text-xs leading-relaxed">
-          {t("seriesEmpty")}
-        </p>
+        <div className="border-border/70 rounded-md border border-dashed px-3 py-3">
+          <p className="text-muted-foreground/80 text-xs leading-relaxed">{t("seriesEmpty")}</p>
+          {/* R136 — the empty state is an INVITATION, not a dead end: one
+              click lands the copilot where the first request comes from.
+              A real button (the a11y law) — not a fake link. */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-2 h-7 gap-1.5 text-xs"
+            onClick={() => navigate({ kind: "module", module: "copilot" })}
+            data-testid="usage-series-ask"
+          >
+            <Bot className="size-3.5" aria-hidden="true" />
+            {t("seriesAskCta")}
+          </Button>
+        </div>
       </div>
     );
   }
@@ -136,6 +153,16 @@ export function UsageSeriesSpark({ open }: { open: boolean }) {
             />
           );
         })}
+      </div>
+      {/* R136 — the axis anchors: first and last day micro-labels under the
+          baseline. Time axes don't mirror (the dir="ltr" law above), but the
+          LABELS localize — Persian calendar names ride the same formatter. */}
+      <div className="text-muted-foreground/70 flex justify-between text-[10px] leading-none" dir="ltr">
+        <span>{dayLabel(series[0].date, locale)}</span>
+        <span className="flex items-center gap-1">
+          <span aria-hidden="true" className="bg-primary size-1.5 rounded-full" />
+          {dayLabel(todayKey, locale)}
+        </span>
       </div>
     </div>
   );

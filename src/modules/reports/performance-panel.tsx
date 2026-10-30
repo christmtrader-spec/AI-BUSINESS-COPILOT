@@ -26,6 +26,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Coins,
+  Crown,
   Download,
   ExternalLink,
   Loader2,
@@ -53,10 +54,17 @@ import {
 import { DataTable, Ltr } from "@/components/shared/data-table";
 import { fmtCount, fmtMoney } from "../finance-shared/finance-kit";
 import type { BusinessSummary } from "../shell/types";
+// R101 (restored R136) — the leader fact: the panel cites its OWN rank 1
+// (the R99 throne grammar's fourth surface). The extractor NEVER re-ranks
+// — groups[0] verbatim under the silence laws.
+import { perfLeaderFact, type PerfLeaderDrill, type PerfLeaderFact } from "@/lib/perf-leader";
+// The ONE share law (stock-facts): the crown's % rides the SAME capped,
+// non-positive-denominator-silent math as the inventory throne.
+import { stockSharePercent } from "@/lib/stock-facts";
 
-type SalesGroupBy = "product" | "customer" | "day" | "month";
-type ExpenseGroupBy = "category" | "supplier" | "day" | "month";
-type PerfKind = "sales" | "expenses" | "cashflow";
+export type SalesGroupBy = "product" | "customer" | "day" | "month";
+export type ExpenseGroupBy = "category" | "supplier" | "day" | "month";
+export type PerfKind = "sales" | "expenses" | "cashflow";
 
 type SalesPerf = {
   kind: "sales";
@@ -144,28 +152,88 @@ function addDaysKey(key: string, n: number): string {
 const SALES_GROUPS: SalesGroupBy[] = ["product", "customer", "day", "month"];
 const EXPENSE_GROUPS: ExpenseGroupBy[] = ["category", "supplier", "day", "month"];
 
-export function PerformancePanel({ business }: { business: BusinessSummary }) {
+export function PerformancePanel({
+  business,
+  initialKind,
+  initialWindow,
+  initialDirection,
+  onCommitState,
+}: {
+  business: BusinessSummary;
+  /** R136 — the perf sub-view's preselection (the store's closed-token
+   *  grammar reader). Undefined on the inline (advanced-insights) mount —
+   *  the panel then behaves exactly as before (local state only). */
+  initialKind?: PerfKind;
+  initialWindow?: { from: string; to: string };
+  initialDirection?: "IN" | "OUT";
+  /** R136 — sub-view write-back: the hash IS the state. Every USER-driven
+   *  kind/window/direction change is echoed to the URL so the perf deep
+   *  link's copy button shares the truth the user is looking at. */
+  onCommitState?: (s: {
+    kind: PerfKind;
+    window: { from: string; to: string };
+    direction: "all" | "IN" | "OUT";
+  }) => void;
+}) {
   const t = useTranslations("reports");
   const tErrors = useTranslations("errors");
   const billingErrorText = useBillingErrorText();
   const uiLocale = useLocale();
   const navigate = useAppStore((s) => s.navigate);
 
-  const [kind, setKind] = useState<PerfKind>("sales");
+  const [kind, setKind] = useState<PerfKind>(initialKind ?? "sales");
   const [salesGroup, setSalesGroup] = useState<SalesGroupBy>("product");
   const [expenseGroup, setExpenseGroup] = useState<ExpenseGroupBy>("category");
-  const [direction, setDirection] = useState<"all" | "IN" | "OUT">("all");
+  const [direction, setDirection] = useState<"all" | "IN" | "OUT">(initialDirection ?? "all");
 
   // Default window: the last 30 business-local days (display default only —
-  // the server re-validates and re-derives every boundary).
+  // the server re-validates and re-derives every boundary). The sub-view's
+  // preselected window (the deep link's own BOTH-or-nothing pair) wins.
   const today = localTodayKey(business.timezone || "UTC");
-  const [fromInput, setFromInput] = useState(addDaysKey(today, -29));
-  const [toInput, setToInput] = useState(today);
-  const [applied, setApplied] = useState({ from: addDaysKey(today, -29), to: today });
+  const [fromInput, setFromInput] = useState(initialWindow?.from ?? addDaysKey(today, -29));
+  const [toInput, setToInput] = useState(initialWindow?.to ?? today);
+  const [applied, setApplied] = useState({
+    from: initialWindow?.from ?? addDaysKey(today, -29),
+    to: initialWindow?.to ?? today,
+  });
   const [invalidRange, setInvalidRange] = useState(false);
 
   // Cash-flow keyset page stack ("Load more" appends; Reset returns to page 1).
   const [cursorStack, setCursorStack] = useState<Array<string | null>>([null]);
+
+  // R136 — external preselection ADOPTION (the R100 re-entry law): a SECOND
+  // chip with a different window must re-preselect an ALREADY-MOUNTED
+  // panel. Uses React's sanctioned render-time adjustment pattern (the
+  // previous-value STATE law — the auth-view adoptedStoreMode precedent;
+  // a setState-in-effect is a cascading-render hazard the lint forbids).
+  // Our OWN write-back echoes the same signature back — the pushed-sig
+  // STATE swallows that echo (no reset of the user's other local state).
+  const extSig = `${initialKind ?? ""}|${initialWindow?.from ?? ""}|${initialWindow?.to ?? ""}|${initialDirection ?? ""}`;
+  const [adoptedSig, setAdoptedSig] = useState<string | null>(initialKind ? extSig : null);
+  const [pushedSig, setPushedSig] = useState<string | null>(null);
+  if (initialKind && adoptedSig !== extSig) {
+    setAdoptedSig(extSig);
+    if (pushedSig !== extSig) {
+      setKind(initialKind);
+      if (initialWindow) {
+        setFromInput(initialWindow.from);
+        setToInput(initialWindow.to);
+        setApplied({ from: initialWindow.from, to: initialWindow.to });
+        setCursorStack([null]);
+      }
+      setDirection(initialDirection ?? "all");
+    }
+  }
+
+  /** The sub-view write-back (no-op inline): the URL receives EXACTLY the
+   *  grammar the parser accepts — the window only as a complete ordered
+   *  pair, the direction cashflow-only. The signature is remembered so
+   *  the echo never re-preselects. */
+  const pushUrlState = (k: PerfKind, win: { from: string; to: string }, dir: "all" | "IN" | "OUT") => {
+    if (!onCommitState) return;
+    setPushedSig(`${k}|${win.from}|${win.to}|${dir}`);
+    onCommitState({ kind: k, window: win, direction: dir });
+  };
 
   const groupBy = kind === "sales" ? salesGroup : kind === "expenses" ? expenseGroup : null;
 
@@ -213,6 +281,7 @@ export function PerformancePanel({ business }: { business: BusinessSummary }) {
     setInvalidRange(false);
     setApplied({ from: fromInput, to: toInput });
     setCursorStack([null]);
+    pushUrlState(kind, { from: fromInput, to: toInput }, direction);
   };
 
   // §F4 — apply an explicit window (used by the Jalali presets).
@@ -222,6 +291,7 @@ export function PerformancePanel({ business }: { business: BusinessSummary }) {
     setInvalidRange(false);
     setApplied({ from, to });
     setCursorStack([null]);
+    pushUrlState(kind, { from, to }, direction);
   };
 
   const setQuickRange = (days: number) => {
@@ -232,6 +302,7 @@ export function PerformancePanel({ business }: { business: BusinessSummary }) {
     setInvalidRange(false);
     setApplied({ from, to });
     setCursorStack([null]);
+    pushUrlState(kind, { from, to }, direction);
   };
 
   const fmt = (minor: number) => fmtMoney(business, minor);
@@ -304,6 +375,7 @@ export function PerformancePanel({ business }: { business: BusinessSummary }) {
               onValueChange={(v) => {
                 setKind(v as PerfKind);
                 setCursorStack([null]);
+                pushUrlState(v as PerfKind, applied, direction);
               }}
             >
               <SelectTrigger className="h-9 w-full sm:w-44" aria-label={t("perfKind")}>
@@ -353,6 +425,7 @@ export function PerformancePanel({ business }: { business: BusinessSummary }) {
                 onValueChange={(v) => {
                   setDirection(v as "all" | "IN" | "OUT");
                   setCursorStack([null]);
+                  pushUrlState(kind, applied, v as "all" | "IN" | "OUT");
                 }}
               >
                 <SelectTrigger className="h-9 w-full sm:w-40" aria-label={t("perfColDirection")}>
@@ -532,6 +605,10 @@ function PerfBody({
 
   if (data.kind === "sales") {
     const r = data;
+    // R101 — the panel cites its OWN rank 1 (groups[0] verbatim — the
+    // server's value-DESC head; the extractor never re-ranks). The
+    // unassigned mass is crowned under the table's own fallback label.
+    const leader = perfLeaderFact(r, t("perfColNoCustomer"));
     return (
       <div className="space-y-3">
         <TotalsStrip
@@ -544,6 +621,15 @@ function PerfBody({
           ]}
           notes={[t("perfBasisRevenue"), r.groupBy === "product" ? t("perfBasisNet") : null]}
         />
+        {leader ? (
+          <LeaderStrip
+            fact={leader}
+            tone="emerald"
+            fmt={fmt}
+            uiLocale={uiLocale}
+            onDrill={(d) => openEntity(d.entity, d.id)}
+          />
+        ) : null}
         {r.truncated ? (
           <p className="text-amber-700 dark:text-amber-400 flex items-center gap-1.5 text-xs">
             <TriangleAlert className="size-3.5" aria-hidden="true" />
@@ -690,6 +776,10 @@ function PerfBody({
 
   if (data.kind === "expenses") {
     const r = data;
+    // R101 — the expense side crowns under the supplier fallback (the
+    // anonymous supplier mass can legitimately lead — citation, never a
+    // fake destination).
+    const leader = perfLeaderFact(r, t("perfColNoSupplier"));
     return (
       <div className="space-y-3">
         <TotalsStrip
@@ -699,6 +789,15 @@ function PerfBody({
           ]}
           notes={[t("perfBasisExpense")]}
         />
+        {leader ? (
+          <LeaderStrip
+            fact={leader}
+            tone="violet"
+            fmt={fmt}
+            uiLocale={uiLocale}
+            onDrill={(d) => openEntity(d.entity, d.id)}
+          />
+        ) : null}
         {r.truncated ? (
           <p className="text-amber-700 dark:text-amber-400 flex items-center gap-1.5 text-xs">
             <TriangleAlert className="size-3.5" aria-hidden="true" />
@@ -977,5 +1076,130 @@ function TotalsStrip({
         </p>
       ))}
     </div>
+  );
+}
+
+/**
+ * R101 (restored R136) — THE LEADER STRIP: the performance panel cites its
+ * OWN rank 1 — the R99 throne grammar's fourth surface (summary card chips,
+ * dashboard tile, copilot chips, and now the perf table's own crown).
+ *
+ * Laws (each pinned by scripts/r101-leader-unit.ts):
+ * - DIMENSION tones: sales = emerald, expenses = violet — the strip speaks
+ *   the same tone families as the tables it crowns (never a second hue);
+ * - the share bar is the ONE share law (stockSharePercent — the throne's
+ *   own math) gated by the same-basis law (totalMinor > 0 && valueMinor
+ *   > 0) and hidden below sm (the mobile law — a crown never crowds a
+ *   320px row);
+ * - the tooltip is formatted INSIDE the component (the R99
+ *   FORMATTING_ERROR lesson): the drill variant names the destination,
+ *   the plain variant is the honest citation;
+ * - identity law: a rank-1 WITH a stable id renders a real button that
+ *   drills (product/customer/supplier entity routes); WITHOUT one renders
+ *   a static citation (cursor-default, no chevron, no fake page);
+ * - the chevron is RTL-mirrored with the hover nudge (W20's throne law);
+ * - money is exact LTR (dir="ltr"), counts localize via fmtCount.
+ */
+function LeaderStrip({
+  fact,
+  tone,
+  fmt,
+  uiLocale,
+  onDrill,
+}: {
+  fact: PerfLeaderFact;
+  tone: "emerald" | "violet";
+  fmt: (minor: number) => string;
+  uiLocale: string;
+  onDrill: (drill: PerfLeaderDrill) => void;
+}) {
+  const t = useTranslations("reports");
+  const { name, valueMinor, totalMinor, drill } = fact;
+  const money = fmt(valueMinor);
+  const tooltip = drill
+    ? t("perfLeaderTooltipDrill", { name, money })
+    : t("perfLeaderTooltipPlain", { name, money });
+  const share = stockSharePercent(valueMinor, totalMinor);
+  const TONES = {
+    emerald: {
+      icon: "text-emerald-600 dark:text-emerald-400",
+      text: "text-emerald-800 dark:text-emerald-300",
+      border: "border-emerald-600/25",
+      borderHover: "hover:border-emerald-600/45",
+      bg: "bg-emerald-600/[0.04] hover:bg-emerald-600/10",
+      track: "bg-emerald-600/15",
+      fill: "bg-emerald-600/60",
+    },
+    violet: {
+      icon: "text-violet-600 dark:text-violet-400",
+      text: "text-violet-800 dark:text-violet-300",
+      border: "border-violet-600/25",
+      borderHover: "hover:border-violet-600/45",
+      bg: "bg-violet-600/[0.04] hover:bg-violet-600/10",
+      track: "bg-violet-600/15",
+      fill: "bg-violet-600/60",
+    },
+  } as const;
+  const tn = TONES[tone];
+  const body = (
+    <>
+      <Crown className={`size-3.5 shrink-0 ${tn.icon}`} aria-hidden="true" />
+      <span className={`min-w-0 truncate text-xs font-medium ${tn.text}`}>
+        {t("perfLeaderCaption", { name })}
+      </span>
+      {/* The share bar renders only on an honest same-basis denominator:
+          totalMinor > 0 && valueMinor > 0 (the throne's own gate; the
+          stockSharePercent math is silent on the same cases — belt and
+          suspenders that can never disagree). */}
+      {totalMinor > 0 && valueMinor > 0 ? (
+        <span
+          className="hidden min-w-0 flex-1 items-center gap-1.5 sm:flex"
+          aria-hidden="true"
+          title={share !== null ? t("perfShareTooltip", { percent: fmtCount(uiLocale, share) }) : undefined}
+        >
+          <span className={`h-1 min-w-0 flex-1 overflow-hidden rounded-full ${tn.track}`}>
+            <span
+              className={`h-1 rounded-full transition-[width] duration-500 motion-reduce:transition-none ${tn.fill}`}
+              style={{ width: `${share ?? 0}%` }}
+            />
+          </span>
+          {share !== null ? (
+            <span className={`shrink-0 text-[10px] tabular-nums ${tn.text}`}>
+              {t("perfLeaderShareShort", { percent: fmtCount(uiLocale, share) })}
+            </span>
+          ) : null}
+        </span>
+      ) : null}
+      <span className={`shrink-0 text-xs font-semibold tabular-nums ${tn.text}`} dir="ltr">
+        {money}
+      </span>
+    </>
+  );
+  if (!drill) {
+    return (
+      <div
+        className={`flex w-full cursor-default items-center gap-2 rounded-lg border px-3 py-1.5 ${tn.border} bg-muted/30`}
+        title={tooltip}
+        data-testid={`perf-leader-${tone}`}
+      >
+        {body}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onDrill(drill)}
+      className={`group flex w-full items-center gap-2 rounded-lg border px-3 py-1.5 text-start transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background ${tn.border} ${tn.borderHover} ${tn.bg}`}
+      title={tooltip}
+      aria-label={tooltip}
+      data-testid={`perf-leader-${tone}`}
+    >
+      {body}
+      <ChevronRight
+        className={`size-3.5 shrink-0 opacity-70 transition-transform rtl:-scale-x-100 group-hover:translate-x-0.5 rtl:group-hover:-translate-x-0.5 ${tn.icon}`}
+        aria-hidden="true"
+      />
+    </button>
   );
 }

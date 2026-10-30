@@ -209,3 +209,9 @@ if (failed > 0) {
   console.log("FAILURES:\n" + failures.map((f) => `  - ${f}`).join("\n"));
   process.exit(1);
 }
+
+// R136 — module marker: this file previously declared global-scope
+// BASE/login that collided with scripts/e2e-smoke.ts (tsc TS2451 — the
+// full-project tsc had not been run when this landed). An empty export
+// makes it a module; its globals no longer leak.
+export {};

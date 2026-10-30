@@ -38,6 +38,7 @@ const DRY = process.argv.includes("--dry");
 const EMAIL_PATTERNS = [
   "%@example.com", // origin-gate probes origintest1/2
   "%@t.dev", // repro-origin2 / repro-xfh / curl-ok / direct-ok / flow-login / rep16007-EXCLUDED below / smoke owners / invite probes
+  "r136-qa-%@test.local", // R136 (registered in the SAME round — the r131 lesson is law)
   "r103-qa-user@test.local",
   "%r104-probe-1@test.local",
   "%r104-probe-2@test.local",
@@ -50,6 +51,7 @@ const EMAIL_PATTERNS = [
   "%@p25check.local", // prompt25 fixtures (R131 sweep wave)
   "%@check.local", // prompt25 UI-trial / flow fixtures (p25ui-/p25flow- stamps)
   "%@t.local", // dbg<stamp> debug probes (R131 sweep wave)
+  "%@qa.local", // r99/r103 probe fixtures (R136 sweep wave — the r103 crash-leak lesson)
   "r106-qa@test.local", // R106 checklist browser QA
   "r107-qa@test.local", // R107 MFA manual QA session
   "r107-mfa@test.local", // R107 MFA E2E fixture
@@ -72,7 +74,7 @@ const KEEP_EMAILS = new Set(["rep16007@t.dev"]);
 
 const SWEEP_BUSINESS_NAMES = ["R104 QA Studio", "R106 QA Ventures", "R107 QA Ventures", "R108 QA Ventures", "R110 QA Ventures", "R111 QA Ventures", "R112 QA Ventures", "R113 QA Ventures", "P23 Real Provider Shop", "P25 UI Trial Shop", "Trial Flow Shop"];
 /** R114 — stamped QA business names match by PREFIX ("R114 QA Ventures mvmv1g18"). */
-const SWEEP_BUSINESS_PREFIXES = ["R114 QA Ventures", "R115 QA Ventures", "R116 QA Ventures", "R117 QA Ventures", "R118 QA Ventures", "R131 QA Ventures", "P19 Isolation Co "];
+const SWEEP_BUSINESS_PREFIXES = ["R114 QA Ventures", "R115 QA Ventures", "R116 QA Ventures", "R117 QA Ventures", "R118 QA Ventures", "R131 QA Ventures", "R136 QA Shop ", "P19 Isolation Co "];
 
 async function tableList() {
   const tables = await db.$queryRawUnsafe(

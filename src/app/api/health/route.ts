@@ -46,29 +46,40 @@ export async function GET(req: Request) {
   let migrationsKnown: boolean | null = null;
 
   try {
-    const rows = (await db.$queryRawUnsafe<Array<{ finished_at: number | null }>>(
-      `SELECT finished_at FROM "_prisma_migrations"`,
-    )) as Array<{ finished_at: number | null }>;
+    // R136 — probe the migrations LEDGER's existence through sqlite_master
+    // FIRST (a plain catalog read that ANSWERS instead of throwing). The
+    // previous shape queried "_prisma_migrations" directly: under the
+    // documented db-push provisioning (this deployment's flow, Prompt 52)
+    // that threw "no such table" on EVERY probe — the response contract was
+    // already correct (Prompt 52's catch classified it), but the Prisma
+    // client logged a frightening `prisma:error` stack into dev.log each
+    // time (the liveness probe runs every minute — the log became a wall of
+    // fake errors that buried real ones). The catalog preflight keeps the
+    // EXACT response payload (db-push ⇒ migrations.known=null, "ok") while
+    // the error path now fires only for a genuinely unreachable database.
+    const ledger = (await db.$queryRawUnsafe<Array<{ present: number }>>(
+      `SELECT COUNT(*) AS present FROM sqlite_master WHERE type = 'table' AND name = '_prisma_migrations'`,
+    )) as Array<{ present: number }>;
+    // The catalog itself answered — the database file is reachable.
     databaseReachable = true;
-    migrationsKnown = true;
-    migrationsApplied = rows.filter((r) => r.finished_at !== null).length;
-    migrationsPending = rows.filter((r) => r.finished_at === null).length;
-  } catch (error) {
-    // Prompt 52 — distinguish "database is DOWN" from "database is UP but
-    // provisioned via `prisma db push`" (the db-push flow creates NO
-    // _prisma_migrations table — the raw probe above then throws "no such
-    // table", which is NOT a degradation). Probe the business tables: if a
-    // cheap SELECT answers, the database is reachable and healthy — report
-    // ok with migrations "unknown" instead of a misleading "degraded".
-    const message = error instanceof Error ? error.message : String(error);
-    if (/no such table/i.test(message) && /_prisma_migrations/i.test(message)) {
-      try {
-        await db.$queryRawUnsafe(`SELECT 1 FROM "User" LIMIT 1`);
-        databaseReachable = true;
-      } catch {
-        databaseReachable = false;
-      }
-    } else {
+    if (Number(ledger[0]?.present ?? 0) > 0) {
+      const rows = (await db.$queryRawUnsafe<Array<{ finished_at: number | null }>>(
+        `SELECT finished_at FROM "_prisma_migrations"`,
+      )) as Array<{ finished_at: number | null }>;
+      migrationsKnown = true;
+      migrationsApplied = rows.filter((r) => r.finished_at !== null).length;
+      migrationsPending = rows.filter((r) => r.finished_at === null).length;
+    }
+    // present === 0 ⇒ db-push provisioned (no migrations ledger): leave
+    // migrationsKnown null — the documented "unknown" (Prompt 52).
+  } catch {
+    // The catalog read itself failed — the database is DOWN (or locked
+    // hard enough to be unreachable for probing). One confirmation probe
+    // against a business table guards against a transient catalog quirk.
+    try {
+      await db.$queryRawUnsafe(`SELECT 1 FROM "User" LIMIT 1`);
+      databaseReachable = true;
+    } catch {
       databaseReachable = false;
     }
   }

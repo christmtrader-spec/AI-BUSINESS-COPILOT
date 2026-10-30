@@ -36,6 +36,11 @@ export const dynamic = "force-dynamic";
 const updateSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
   locale: z.enum(["en", "fa"]).optional(),
+  /** R108 (restored R136) — the user-level welcome-checklist dismissal.
+   *  The request carries the BOOLEAN; the response carries the TIMESTAMP
+   *  (checklistDismissedAt: ISO instant or null). Idempotent both ways;
+   *  a non-boolean is a 422 VALIDATION_ERROR (the envelope law). */
+  checklistDismissed: z.boolean().optional(),
 });
 
 const deleteSchema = z.object({
@@ -53,7 +58,14 @@ export const GET = route(async () => {
 
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { id: true, name: true, email: true, locale: true, createdAt: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      locale: true,
+      createdAt: true,
+      checklistDismissedAt: true,
+    },
   });
   if (!user) throw new ApiError(404, "NOT_FOUND", "Account not found.");
 
@@ -71,8 +83,18 @@ export const PATCH = route(async (req: NextRequest) => {
     data: {
       ...(input.name !== undefined ? { name: input.name } : {}),
       ...(input.locale !== undefined ? { locale: input.locale } : {}),
+      ...(input.checklistDismissed !== undefined
+        ? { checklistDismissedAt: input.checklistDismissed ? new Date() : null }
+        : {}),
     },
-    select: { id: true, name: true, email: true, locale: true, createdAt: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      locale: true,
+      createdAt: true,
+      checklistDismissedAt: true,
+    },
   });
 
   return ok(user);

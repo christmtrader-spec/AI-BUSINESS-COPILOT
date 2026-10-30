@@ -5,6 +5,7 @@ import {
   Banknote,
   Bot,
   CheckCircle2,
+  ChevronRight,
   ClipboardList,
   Coins,
   Map,
@@ -653,6 +654,7 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
                 {summary ? (
                   <InventoryLeaderCitation summary={summary} membership={membership} />
                 ) : null}
+                {summary ? <LowStockAttentionLine summary={summary} /> : null}
               </div>
             </div>
             <p className="text-muted-foreground mt-3 text-xs">{t("metricsNote")}</p>
@@ -689,5 +691,48 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
         </Card>
       </div>
     </div>
+  );
+}
+
+/**
+ * R104 (restored R136) — THE LOW-STOCK ATTENTION LINE: the inventory tile
+ * grows the amber one-click affordance into the Prompt 55 reorder
+ * suggestions when the book actually runs low. Honesty laws:
+ * - healthy book = SILENCE (renders only on lowStockCount > 0 — a 0-line
+ *   would advertise an absence);
+ * - the count is the server's OWN summary figure (fmtCount — UI-locale
+ *   digits, the R94 law; never recomputed client-side);
+ * - one click opens the CLOSED reorder token (deep-linkable, Prompt 55
+ *   §X2) — never a fabricated page;
+ * - the amber family is the aging tiles' attention language + the
+ *   AlertTriangle icon; the chevron rides the R101 RTL-mirror law.
+ */
+function LowStockAttentionLine({ summary }: { summary: ReportsSummary }) {
+  const navigate = useAppStore((s) => s.navigate);
+  const t = useTranslations("dashboard");
+  const uiLocale = useLocale();
+  const low = summary.inventory.lowStockCount ?? 0;
+  if (low <= 0) return null;
+  const tooltip = t("statInventoryLowTooltip", {
+    count: fmtCount(uiLocale, low),
+  });
+  return (
+    <button
+      type="button"
+      data-testid="attention-inventory-low"
+      onClick={() => navigate({ kind: "module", module: "reports", param: "reorder" })}
+      title={tooltip}
+      aria-label={tooltip}
+      className="text-amber-700 underline-offset-2 hover:underline focus-visible:ring-ring group mt-2 flex max-w-full items-center gap-1 rounded text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 motion-reduce:transition-none dark:text-amber-300"
+    >
+      <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
+      <span className="truncate">
+        {t("statInventoryLowLine", { count: fmtCount(uiLocale, low) })}
+      </span>
+      <ChevronRight
+        className="size-3 shrink-0 opacity-70 transition-transform rtl:-scale-x-100 rtl:group-hover:-translate-x-0.5 group-hover:translate-x-0.5"
+        aria-hidden="true"
+      />
+    </button>
   );
 }
