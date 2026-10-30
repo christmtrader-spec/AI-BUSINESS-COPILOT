@@ -22,7 +22,7 @@
  *  - Quantities of different units are never summed into one grand total.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import {
@@ -143,6 +143,9 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
   const billingErrorText = useBillingErrorText();
   const uiLocale = useLocale();
   const navigate = useAppStore((s) => s.navigate);
+  // R148 — the search-seed consumer: the store view carries the deep link's
+  // q (the stock chips' row-level drill) and this panel owns the search box.
+  const view = useAppStore((s) => s.view);
 
   // Filter state — the DEFAULT state is documented: everything included,
   // value descending. Reset returns exactly here.
@@ -166,6 +169,26 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
     }, 300);
     return () => clearTimeout(handle);
   }, [searchInput]);
+
+  // R148 — the ONE-SEED-PER-NAVIGATION law (the R144 ask-seed pattern):
+  // a fresh deep link (or a DIFFERENT seed — Crown chip then Medal chip)
+  // prefills the search box once per seed value; the SAME seed never
+  // re-fires (sameView blocks the store re-entry, and the ref pins the
+  // value), so clearing the box afterwards stays cleared. The seed rides
+  // the SAME debounce as typing — the filtered fetch is the box's own
+  // behavior, never a second fetch path.
+  const seededQRef = useRef<string | null>(null);
+  useEffect(() => {
+    const seed =
+      view.kind === "module" &&
+      view.module === "reports" &&
+      view.param === "inventory"
+        ? (view.invQuery ?? "").trim()
+        : "";
+    if (!seed || seededQRef.current === seed) return;
+    seededQRef.current = seed;
+    setSearchInput(seed);
+  }, [view]);
 
   const changeFilter = <T,>(setter: (v: T) => void) => (v: T) => {
     setter(v);

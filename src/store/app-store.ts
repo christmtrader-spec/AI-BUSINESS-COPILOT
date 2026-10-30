@@ -195,7 +195,16 @@ export type AppView =
        * user's action, not a navigation's). Bounded to the composer's own
        * 500-char cap, trimmed; a blank/over-cap value drops WHOLESALE
        * (bare copilot). Other modules never grow the token. */
-      ask?: string; }
+      ask?: string;
+      /** R148 — the valuation search seed (#/reports?inventory=1&q=…):
+       * a SEARCH-BOX prefill for the detailed valuation table (the stock
+       * chips' row-level drill — the copilot's throne fact finds its own
+       * row). Trimmed, sliced to the search input's OWN cap (maxLength 80
+       * — the consumer-cap-authority law, R144's composer precedent); a
+       * blank seed drops WHOLESALE (bare ?inventory=1). Only the inventory
+       * sub-view grows this token — the parser branch is inventory-scoped,
+       * so no other reports sub-view can ever see it. */
+      invQuery?: string; }
   /** Prompt 28 — internal platform console (separate workspace, §15). */
   | { kind: "platform"; section: PlatformSection }
   /** Prompt 30 §250 — email verification landing (token from the email link). */
@@ -394,7 +403,11 @@ export function sameView(a: AppView, b: AppView): boolean {
         // R134 — a DIFFERENT custom range re-enters the store without
         // remounting the shell (the range effect applies it in place).
         (a.rangeFrom ?? null) === (b.rangeFrom ?? null) &&
-        (a.rangeTo ?? null) === (b.rangeTo ?? null)
+        (a.rangeTo ?? null) === (b.rangeTo ?? null) &&
+        // R148 — a DIFFERENT valuation search seed re-enters the store (the
+        // Crown chip then the Medal chip seed DIFFERENT products); the SAME
+        // seed is structurally equal (one seed per navigation, the R144 law).
+        (a.invQuery ?? null) === (b.invQuery ?? null)
       );
     }
     // R144 — the copilot ask seed is structural: a DIFFERENT ask re-enters
@@ -598,7 +611,10 @@ export function viewToHash(view: AppView): string | null {
       // detailed inventory valuation (?inventory=1) and — Prompt 55 —
       // the reorder suggestions (?reorder=1). Mutually exclusive.
       if (view.module === "reports" && view.param === "inventory") {
-        return "#/reports?inventory=1";
+        const seedQ = (view.invQuery ?? "").trim();
+        return seedQ
+          ? `#/reports?inventory=1&q=${encodeURIComponent(seedQ)}`
+          : "#/reports?inventory=1";
       }
       if (view.module === "reports" && view.param === "reorder") {
         return "#/reports?reorder=1";
@@ -983,7 +999,18 @@ export function hashToView(hash: string): AppView {
       return { kind: "module", module: path, param: month };
     }
     if (path === "reports" && query.get("inventory") === "1") {
-      return { kind: "module", module: path, param: "inventory" };
+      // R148 — the search seed rides WITH the closed inventory token: the
+      // stock chips' row-level drill prefills the valuation search box.
+      // Same laws as the R144 ask: URLSearchParams already decoded once (no
+      // second decode — literal "%" survives), trim, slice to the input's
+      // own 80 cap, a blank seed drops WHOLESALE (bare ?inventory=1).
+      const rawQ = (query.get("q") ?? "").trim().slice(0, 80);
+      return {
+        kind: "module",
+        module: path,
+        param: "inventory",
+        ...(rawQ ? { invQuery: rawQ } : {}),
+      };
     }
     // Prompt 55 (§X2) — ?reorder=1 opens the low-stock reorder suggestions
     // sub-view. Closed token, never arbitrary state.

@@ -133,7 +133,7 @@ console.log("\n== [3] seed-not-send law ==");
     ok("3g. the stream guard (never seeds mid-flight)", block.includes("activeStreamId !== null"));
     ok("3h. the seed gates on the copilot module view + ask", block.includes('view.module === "copilot"') && block.includes("view.ask ??"));
   }
-  ok("3i. the store carries the ask field on the module view (typed, optional)", store.includes("ask?: string; }") && store.includes("R144 — the copilot ask deep link"));
+  ok("3i. the store carries the ask field on the module view (typed, optional; R148 grew the type with invQuery AFTER it)", store.includes("ask?: string;") && store.includes("R144 — the copilot ask deep link"));
   ok("3j. the parser comment pins the decode-once law (no double decode)", /URLSearchParams already decoded the value/.test(store));
   ok("3k. the serializer comment pins the blank-ask honesty", /a blank ask never serializes/.test(store));
 }

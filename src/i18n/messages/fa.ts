@@ -1999,9 +1999,9 @@ const fa: Messages = {
     actionPerfExpensesTitle: "بزرگ‌ترین دستهٔ هزینه: «{category}» به ارزش {money}. مشاهدهٔ تفکیک هزینه‌ها.",
     actionPerfCashflowTitle: "{count} پرداخت در این بازه ثبت شده است. مشاهدهٔ جریان نقدی.",
     actionTopStock: "باارزش‌ترین موجودی",
-    actionTopStockTitle: "بزرگ‌ترین ارزش موجودی: «{name}» به ارزش {money}. مشاهدهٔ ارزیابی تفصیلی.",
+    actionTopStockTitle: "بزرگ‌ترین ارزش موجودی: «{name}» به ارزش {money}. جستجوی این کالا در ارزیابی تفصیلی.",
     actionTopStockRunnerUp: "کالای دوم گران‌بها",
-    actionTopStockRunnerUpTitle: "دومین ارزش بزرگ موجودی: «{name}» به ارزش {money}. مشاهدهٔ ارزیابی تفصیلی.",
+    actionTopStockRunnerUpTitle: "دومین ارزش بزرگ موجودی: «{name}» به ارزش {money}. جستجوی این کالا در ارزیابی تفصیلی.",
     // R147 — تراشه‌های drill مطالبات/بدهی‌ها (مقصود: جزئیات سررسید). برچسب‌ها
     // نام «مقصد» را می‌گویند؛ tooltipها مبلغ و تعداد دقیقِ اثبات‌شده را
     // دارند (در خود مؤلفه قالب‌بندی می‌شود — هرگز عدد خام اینجا نیست).

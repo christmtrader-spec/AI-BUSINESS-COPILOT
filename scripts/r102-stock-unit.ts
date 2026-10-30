@@ -219,9 +219,9 @@ ok(
   /6f\. STOCK VALUE LEADERS/.test(snapshotSrc) && /ALL-TIME fact about CURRENT stock/.test(snapshotSrc),
 );
 ok(
-  "W8 the copilot chip deep-links the Prompt 51 closed token (param: \"inventory\")",
+  "W8 the copilot chip deep-links the Prompt 51 closed token — R148: the ROW-LEVEL drill seeds the valuation search (invQuery: fact.name)",
   /copilot-action-topstock/.test(copilotSrc) &&
-    /onClick=\{\(\) => navigate\(\{ kind: "module", module: "reports", param: "inventory" \}\)\}/.test(copilotSrc),
+    /module: "reports",\s*\n\s*param: "inventory",[\s\S]*?invQuery: fact\.name,/.test(copilotSrc),
 );
 ok(
   "W9 the chip gate is the PROOF + value > 0 (the all-zero book renders no chip)",

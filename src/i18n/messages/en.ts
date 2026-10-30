@@ -2009,9 +2009,9 @@ const en = {
     actionPerfExpensesTitle: "Largest expense category: «{category}» at {money}. Open the expense breakdown.",
     actionPerfCashflowTitle: "{count} payments recorded in this window. Open the cash flow view.",
     actionTopStock: "Most valuable stock",
-    actionTopStockTitle: "Largest stock value: «{name}» at {money}. Open the detailed valuation.",
+    actionTopStockTitle: "Largest stock value: «{name}» at {money}. Search the detailed valuation for this product.",
     actionTopStockRunnerUp: "Second most valuable",
-    actionTopStockRunnerUpTitle: "Second largest stock value: «{name}» at {money}. Open the detailed valuation.",
+    actionTopStockRunnerUpTitle: "Second largest stock value: «{name}» at {money}. Search the detailed valuation for this product.",
     // R147 — the outstanding drill chips (the aging-details landing). The
     // labels name the DESTINATION side; the tooltips carry the EXACT proven
     // money + open-item count (formatted inside the component — never a

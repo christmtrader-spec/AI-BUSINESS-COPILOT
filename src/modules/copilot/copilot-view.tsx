@@ -452,12 +452,24 @@ function StockActionChips({
           <button
             key={chip.key}
             type="button"
-            onClick={() => navigate({ kind: "module", module: "reports", param: "inventory" })}
+            onClick={() =>
+              navigate({
+                kind: "module",
+                module: "reports",
+                param: "inventory",
+                // R148 — the ROW-LEVEL drill: the stable fact's own name
+                // seeds the valuation search box (?inventory=1&q=…), so the
+                // crowned table opens ALREADY filtered to this product's
+                // row. The seed rides the parser's 80-cap law; the panel's
+                // one-seed-per-navigation effect consumes it.
+                invQuery: fact.name,
+              })
+            }
             title={tooltip}
             aria-label={tooltip}
             data-testid={crown ? "copilot-action-topstock" : "copilot-action-topstock-runnerup"}
             className={cn(
-              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none transition-colors",
+              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none transition-colors motion-reduce:transition-none",
               "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600",
               crown
                 ? "border-sky-600/30 bg-sky-600/5 text-sky-800 dark:text-sky-300 hover:bg-sky-600/10"
@@ -558,7 +570,7 @@ function PerfActionChips({
                   : "copilot-action-perf-cashflow"
             }
             className={cn(
-              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none transition-colors",
+              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none transition-colors motion-reduce:transition-none",
               "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600",
               "border-violet-600/30 bg-violet-600/5 text-violet-800 dark:text-violet-300 hover:bg-violet-600/10",
             )}
