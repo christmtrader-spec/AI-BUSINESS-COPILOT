@@ -16,6 +16,12 @@ export type StoredCopilotMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /** R138 — creation stamp (epoch ms, LOCAL clock). Set by this device at
+   *  append time; a server-transcript restore maps the server row's
+   *  createdAt onto it (copilot-sync). OPTIONAL additive law: older
+   *  persisted messages honestly omit it — the transcript renders their
+   *  bubbles without a time label and never fabricates one. */
+  ts?: number;
   failed?: boolean;
   /** R127 — set ONLY when an answer was restored through the stream-resume
    *  healing path (R126): the client's own stream was cut mid-answer and the
@@ -96,7 +102,7 @@ function sanitizeSession(raw: unknown): CopilotSession | null {
         typeof (m as StoredCopilotMessage).content === "string",
     )
     .slice(-MAX_MESSAGES_PER_SESSION)
-    .map((m) => ({ id: m.id, role: m.role, content: m.content, ...(m.failed ? { failed: true } : {}), ...(m.healed === true ? { healed: true } : {}), ...(m.meta ? { meta: m.meta } : {}) }));
+    .map((m) => ({ id: m.id, role: m.role, content: m.content, ...(typeof m.ts === "number" && Number.isFinite(m.ts) ? { ts: m.ts } : {}), ...(m.failed ? { failed: true } : {}), ...(m.healed === true ? { healed: true } : {}), ...(m.meta ? { meta: m.meta } : {}) }));
   const createdAt = typeof s.createdAt === "number" ? s.createdAt : Date.now();
   const updatedAt = typeof s.updatedAt === "number" ? s.updatedAt : createdAt;
   const title = typeof s.title === "string" ? s.title.slice(0, 80) : "";
@@ -201,6 +207,73 @@ export function transportReliability(sessions: CopilotSession[]): TransportRelia
     }
   }
   return { answered, healed };
+}
+
+// ---- R138 transcript-time helpers (PURE — no DOM, no IO) -------------------
+
+/**
+ * Local calendar-day key of an epoch-ms stamp ("YYYY-MM-DD" in the device's
+ * own timezone — the transcript groups by the day the READER experienced,
+ * never UTC). Defensive: a non-finite stamp yields an empty key so callers
+ * can detect "no honest day" and skip the separator (additive law — old
+ * messages without ts never fabricate one).
+ */
+export function dayKeyLocal(ts: number): string {
+  if (typeof ts !== "number" || !Number.isFinite(ts)) return "";
+  const d = new Date(ts);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+/**
+ * Which separator label a stamp deserves relative to `now`: today, yesterday,
+ * or an absolute calendar date (the view formats it through Intl so the FA
+ * surface gets the Jalali calendar + Persian digits automatically).
+ * Defensive (law F): malformed stamps fall through to the honest "date" kind
+ * only when finite — otherwise the caller renders nothing.
+ */
+export type DaySeparator =
+  | { kind: "today" }
+  | { kind: "yesterday" }
+  | { kind: "date"; ts: number };
+
+export function daySeparatorFor(ts: number, now: number = Date.now()): DaySeparator | null {
+  const key = dayKeyLocal(ts);
+  if (key === "") return null;
+  const nowKey = dayKeyLocal(now);
+  if (key === nowKey) return { kind: "today" };
+  const yesterdayKey = dayKeyLocal(now - 86_400_000);
+  // Direct key comparison — NOT a raw 24h subtraction, so a message from
+  // 23:59 yesterday still reads "yesterday" at 00:01 today (DST-day drift
+  // collapses to at most one mislabeled hour, never a wrong calendar claim).
+  if (key === yesterdayKey) return { kind: "yesterday" };
+  return { kind: "date", ts };
+}
+
+/**
+ * R138 — session history search (PURE). A conversation matches when the
+ * query appears in its title OR any message's content (case-insensitive,
+ * locale-aware lowercasing — Persian text compares verbatim). A blank
+ * query matches everything (the unfiltered list). Defensive by design:
+ * null sessions, missing titles and malformed message arrays never crash.
+ */
+export function sessionMatchesQuery(
+  session: { title?: string; messages?: Array<{ content?: unknown }> } | null | undefined,
+  query: string,
+): boolean {
+  const q = (typeof query === "string" ? query : "").trim().toLocaleLowerCase();
+  if (q.length === 0) return true;
+  if (!session || typeof session !== "object") return false;
+  const title = typeof session.title === "string" ? session.title.toLocaleLowerCase() : "";
+  if (title.includes(q)) return true;
+  const messages = Array.isArray(session.messages) ? session.messages : [];
+  for (const m of messages) {
+    if (!m || typeof m !== "object") continue;
+    const content = typeof m.content === "string" ? m.content.toLocaleLowerCase() : "";
+    if (content.includes(q)) return true;
+  }
+  return false;
 }
 
 /** Remove ALL stored transcripts for a business (used by "clear history"). */

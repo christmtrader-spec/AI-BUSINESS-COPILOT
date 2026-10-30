@@ -127,7 +127,26 @@ async function seed() {
 }
 
 async function grounding(days = 30) {
-  const { buildCopilotGrounding } = await import("../src/lib/ai/snapshot");
+  // R138 — friendly preflight: src/lib/ai/snapshot's graph carries the
+  // `server-only` guard (correct architecture — it is server-domain code).
+  // Outside Next, that guard throws unless the module resolver sees the
+  // `react-server` condition (the documented invocation in the header).
+  // Without it bun fails with a cryptic Client-Component stack — catch it
+  // and prescribe the one true command instead.
+  let mods: { buildCopilotGrounding: (typeof import("../src/lib/ai/snapshot"))["buildCopilotGrounding"] };
+  try {
+    mods = await import("../src/lib/ai/snapshot");
+  } catch (error) {
+    if ((error as Error)?.message?.includes("Client Component")) {
+      console.error(
+        "\n✗ server-only guard tripped — run this battery as documented in the header:\n" +
+          "  bun --conditions react-server scripts/r103-tile-api-proofs.ts\n",
+      );
+      process.exit(1);
+    }
+    throw error;
+  }
+  const { buildCopilotGrounding } = mods;
   const business = await db.business.findUniqueOrThrow({ where: { id: BIZ_ID } });
   const g = await buildCopilotGrounding({
     businessId: BIZ_ID,

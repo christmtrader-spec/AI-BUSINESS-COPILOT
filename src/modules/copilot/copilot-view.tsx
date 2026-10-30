@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -15,6 +16,7 @@ import {
   BookMarked,
   Bot,
   CalendarClock,
+  CalendarDays,
   Check,
   ChevronDown,
   Copy,
@@ -33,6 +35,8 @@ import {
   PinOff,
   ReceiptText,
   RefreshCcw,
+  Search,
+  SearchX,
   SendHorizontal,
   ShieldCheck,
   Sparkles,
@@ -41,18 +45,23 @@ import {
   TriangleAlert,
   UserRound,
   Wallet,
+  X,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiClientError } from "@/lib/api-client";
 import {
   clearCopilotState,
   createEmptySession,
+  dayKeyLocal,
+  daySeparatorFor,
   loadCopilotState,
   MAX_SESSIONS,
   newMessageId,
   saveCopilotState,
+  sessionMatchesQuery,
   titleFromQuestion,
   type CopilotSession,
+  type DaySeparator,
 } from "@/lib/copilot-sessions";
 import type { StreamResumeSnapshot } from "@/lib/ai/stream-resume";
 import {
@@ -124,10 +133,29 @@ import { fmtMoney } from "../finance-shared/finance-kit";
 const statusPillBase =
   "inline-flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium";
 
+/**
+ * R138 — hour:minute label for a message stamp, formatted through Intl so
+ * the FA surface gets Persian digits automatically. Empty string on any
+ * formatting failure (the caller then renders no label — never a lie).
+ */
+function fmtTimeLabel(ts: number, localeTag: string): string {
+  try {
+    return new Intl.DateTimeFormat(localeTag, {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(ts));
+  } catch {
+    return "";
+  }
+}
+
 type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /** R138 — creation stamp (epoch ms) from the stored message; old persisted
+   *  messages honestly omit it (no time label, no day separator). */
+  ts?: number;
   failed?: boolean;
   /** R127 — restored through the stream-resume healing path (R126). */
   healed?: boolean;
@@ -628,6 +656,9 @@ export function CopilotView({
   // Dialog so the menu can close without swallowing the edit.
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  // R138 — session history search (client-side filter across the 20-session
+  // cap; matches title OR any message content).
+  const [sessionQuery, setSessionQuery] = useState("");
   const [atBottom, setAtBottom] = useState(true);
   const lastQuestionRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -964,7 +995,7 @@ export function CopilotView({
       const assistantId = nextId();
       setMessages((prev) => [
         ...prev,
-        { id: assistantId, role: "assistant", content: "" },
+        { id: assistantId, role: "assistant", content: "", ts: Date.now() },
       ]);
       setActiveStreamId(assistantId);
 
@@ -1260,7 +1291,10 @@ export function CopilotView({
     setInput("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     const sessionId = ensureActiveSession(trimmed);
-    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: trimmed }]);
+    setMessages((prev) => [
+      ...prev,
+      { id: nextId(), role: "user", content: trimmed, ts: Date.now() },
+    ]);
     syncAppend(sessionId, { role: "user", content: trimmed }, titleFromQuestion(trimmed));
     void send(trimmed, messages);
   };
@@ -1297,7 +1331,10 @@ export function CopilotView({
     const q = lastQuestionRef.current;
     if (!q || pending) return;
     const sessionId = ensureActiveSession();
-    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: q }]);
+    setMessages((prev) => [
+      ...prev,
+      { id: nextId(), role: "user", content: q, ts: Date.now() },
+    ]);
     syncAppend(sessionId, { role: "user", content: q });
     void send(q, messages);
   };
@@ -1342,6 +1379,20 @@ export function CopilotView({
         qIndex += 1;
         lines.push("");
         lines.push(`## ${qIndex}. ${m.content}`);
+        // R138 — the question's own stamp in the export (honest additive:
+        // legacy unstamped questions simply omit the line).
+        if (typeof m.ts === "number") {
+          try {
+            const askedLabel = new Intl.DateTimeFormat(localeTag, {
+              dateStyle: "long",
+              timeStyle: "short",
+            }).format(new Date(m.ts));
+            lines.push("");
+            lines.push(`*${t("askedAt", { time: askedLabel })}*`);
+          } catch {
+            /* timestamp is decorative in the export */
+          }
+        }
         lines.push("");
         lines.push(answer.content);
         const meta = answer.meta;
@@ -1396,7 +1447,10 @@ export function CopilotView({
   const askFollowUp = (question: string) => {
     if (pending) return;
     const sessionId = ensureActiveSession();
-    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: question }]);
+    setMessages((prev) => [
+      ...prev,
+      { id: nextId(), role: "user", content: question, ts: Date.now() },
+    ]);
     syncAppend(sessionId, { role: "user", content: question });
     void send(question, messages);
   };
@@ -1413,6 +1467,15 @@ export function CopilotView({
     [sessions],
   );
   const recentSessions = savedSessions.slice(0, 3);
+
+  // R138 — history search: blank query → the unfiltered list (pinned-first
+  // law untouched); otherwise title-or-content match via the pure lib.
+  const filteredSessions = useMemo(() => {
+    const q = sessionQuery.trim();
+    if (q.length === 0) return savedSessions;
+    return savedSessions.filter((s) => sessionMatchesQuery(s, q));
+  }, [savedSessions, sessionQuery]);
+  const queryActive = sessionQuery.trim().length > 0;
 
   if (!canUse) {
     return (
@@ -1445,6 +1508,22 @@ export function CopilotView({
       const hours = Math.round(diffMs / 3_600_000);
       if (Math.abs(hours) < 24) return rtf.format(hours, "hour");
       return rtf.format(Math.round(diffMs / 86_400_000), "day");
+    } catch {
+      return "";
+    }
+  };
+
+  // R138 — transcript-time formatting. ONE locale source (the active UI
+  // locale, same law as formatRelative above): fa-IR yields the Jalali
+  // calendar + Persian digits through Intl automatically; en-GB Gregorian.
+  const dayLocale = uiLocale === "fa" ? "fa-IR" : "en-GB";
+  const daySeparatorLabel = (sep: DaySeparator): string => {
+    if (sep.kind === "today") return t("dayToday");
+    if (sep.kind === "yesterday") return t("dayYesterday");
+    try {
+      return new Intl.DateTimeFormat(dayLocale, { dateStyle: "long" }).format(
+        new Date(sep.ts),
+      );
     } catch {
       return "";
     }
@@ -1498,8 +1577,15 @@ export function CopilotView({
                 </Button>
               </CollapsibleTrigger>
             </Collapsible>
-            {/* Conversation history — switch / resume / delete transcripts. */}
-            <DropdownMenu>
+            {/* Conversation history — switch / resume / delete transcripts.
+                R138: the dropdown carries a search box (title OR content
+                match across the 20-session cap) and resets the filter on
+                close so every open starts from the full list. */}
+            <DropdownMenu
+              onOpenChange={(open) => {
+                if (!open) setSessionQuery("");
+              }}
+            >
               <DropdownMenuTrigger asChild disabled={pending}>
                 <Button
                   variant="ghost"
@@ -1518,8 +1604,13 @@ export function CopilotView({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-80">
-                <DropdownMenuLabel className="text-xs text-muted-foreground">
-                  {t("sessionHistory")}
+                <DropdownMenuLabel className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>{t("sessionHistory")}</span>
+                  {queryActive ? (
+                    <span className="tabular-nums" aria-live="polite">
+                      {filteredSessions.length}/{savedSessions.length}
+                    </span>
+                  ) : null}
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {savedSessions.length === 0 ? (
@@ -1528,8 +1619,52 @@ export function CopilotView({
                   </p>
                 ) : (
                   <>
-                    <div className="max-h-72 overflow-y-auto">
-                      {savedSessions.map((s) => (
+                    {/* R138 — search across titles AND message content. The
+                        clear affordance appears only while a query is active;
+                        Escape still closes the menu (Radix default). */}
+                    <div className="px-2 pb-2">
+                      <div className="relative">
+                        <Search
+                          className="text-muted-foreground/70 pointer-events-none absolute start-2.5 top-1/2 size-3.5 -translate-y-1/2"
+                          aria-hidden="true"
+                        />
+                        <Input
+                          value={sessionQuery}
+                          onChange={(e) => setSessionQuery(e.target.value)}
+                          placeholder={t("searchSessions")}
+                          aria-label={t("searchSessions")}
+                          maxLength={80}
+                          dir="auto"
+                          data-testid="copilot-session-search"
+                          className="h-8 pe-8 ps-8 text-xs"
+                        />
+                        {queryActive ? (
+                          <button
+                            type="button"
+                            onClick={() => setSessionQuery("")}
+                            aria-label={t("clearSearch")}
+                            title={t("clearSearch")}
+                            className="text-muted-foreground/70 hover:text-foreground focus-visible:ring-ring absolute end-2 top-1/2 -translate-y-1/2 rounded p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2"
+                          >
+                            <X className="size-3.5" aria-hidden="true" />
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                    <DropdownMenuSeparator />
+                    {filteredSessions.length === 0 ? (
+                      <p
+                        className="text-muted-foreground flex items-center gap-1.5 px-2 py-3 text-xs"
+                        data-testid="copilot-session-search-empty"
+                      >
+                        <SearchX className="size-3.5 shrink-0" aria-hidden="true" />
+                        <span className="min-w-0 truncate">
+                          {t("searchNoResults", { query: sessionQuery.trim() })}
+                        </span>
+                      </p>
+                    ) : (
+                      <div className="max-h-72 overflow-y-auto">
+                        {filteredSessions.map((s) => (
                         <DropdownMenuItem
                           key={s.id}
                           onSelect={() => switchSession(s.id)}
@@ -1620,8 +1755,9 @@ export function CopilotView({
                             </button>
                           </span>
                         </DropdownMenuItem>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    )}
                     {savedSessions.length >= MAX_SESSIONS ? (
                       <p className="text-muted-foreground/80 border-t px-2 pt-2 mt-2 text-[11px] leading-snug">
                         {t("historyCapNote", { count: MAX_SESSIONS })}
@@ -1766,7 +1902,9 @@ export function CopilotView({
                       type="button"
                       onClick={() => {
                         const sessionId = ensureActiveSession(s);
-                        setMessages([{ id: nextId(), role: "user", content: s }]);
+                        setMessages([
+                          { id: nextId(), role: "user", content: s, ts: Date.now() },
+                        ]);
                         syncAppend(sessionId, { role: "user", content: s }, titleFromQuestion(s));
                         void send(s, []);
                       }}
@@ -1780,10 +1918,47 @@ export function CopilotView({
             </div>
           ) : (
             <>
-              {messages.map((m) =>
-                m.role === "user" ? (
-                  <div key={m.id} className="flex items-start justify-end gap-2.5">
-                    <div className="bg-primary text-primary-foreground group relative max-w-[85%] rounded-2xl rounded-ee-sm px-3.5 py-2.5 shadow-xs sm:max-w-[70%]">
+              {messages.map((m, i) => {
+                // R138 — day separators + time labels (additive honesty):
+                // a separator renders ONLY on an honest day boundary — the
+                // first stamped message, or a stamped message whose local
+                // calendar day differs from the previous STAMPED message's
+                // day. Unstamped legacy messages never fabricate one.
+                const mTs = typeof m.ts === "number" ? m.ts : null;
+                const prevTs = i > 0 ? messages[i - 1]?.ts : undefined;
+                const sep = mTs !== null ? daySeparatorFor(mTs) : null;
+                const showSep =
+                  mTs !== null &&
+                  sep !== null &&
+                  (i === 0 ||
+                    (typeof prevTs === "number" &&
+                      dayKeyLocal(prevTs) !== dayKeyLocal(mTs)));
+                const sepLabel = sep ? daySeparatorLabel(sep) : "";
+                const timeLabel = mTs !== null ? fmtTimeLabel(mTs, dayLocale) : "";
+                return (
+                  <Fragment key={m.id}>
+                    {showSep && sepLabel ? (
+                      <div
+                        className="my-1 flex items-center gap-3"
+                        role="separator"
+                        aria-label={sepLabel}
+                        data-testid="copilot-day-separator"
+                      >
+                        <span className="bg-border h-px flex-1" aria-hidden="true" />
+                        <span className="border-border/70 bg-background text-muted-foreground inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10.5px] font-medium shadow-xs">
+                          <CalendarDays
+                            className="text-muted-foreground/70 size-3"
+                            aria-hidden="true"
+                          />
+                          <span>{sepLabel}</span>
+                        </span>
+                        <span className="bg-border h-px flex-1" aria-hidden="true" />
+                      </div>
+                    ) : null}
+                    {m.role === "user" ? (
+                  <div className="flex items-start justify-end gap-2.5">
+                    <div className="flex max-w-[85%] flex-col items-end sm:max-w-[70%]">
+                    <div className="bg-primary text-primary-foreground group relative w-fit rounded-2xl rounded-ee-sm px-3.5 py-2.5 shadow-xs">
                       <p className="text-sm leading-relaxed whitespace-pre-wrap" dir="auto">
                         {m.content}
                       </p>
@@ -1807,6 +1982,15 @@ export function CopilotView({
                         </button>
                       ) : null}
                     </div>
+                    {timeLabel ? (
+                      <time
+                        dateTime={new Date(m.ts as number).toISOString()}
+                        className="text-muted-foreground/70 mt-1 px-1 text-[10px] tabular-nums"
+                      >
+                        {timeLabel}
+                      </time>
+                    ) : null}
+                    </div>
                     <div
                       className="bg-primary text-primary-foreground mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full"
                       aria-hidden="true"
@@ -1815,7 +1999,7 @@ export function CopilotView({
                     </div>
                   </div>
                 ) : (
-                  <div key={m.id} className="flex items-start gap-2.5">
+                  <div className="flex items-start gap-2.5">
                     <div
                       className={cn(
                         "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border",
@@ -1869,6 +2053,14 @@ export function CopilotView({
                         </button>
                       ) : null}
                       </div>
+                      {timeLabel ? (
+                        <time
+                          dateTime={new Date(m.ts as number).toISOString()}
+                          className="text-muted-foreground/70 mt-1 px-1 text-[10px] tabular-nums"
+                        >
+                          {timeLabel}
+                        </time>
+                      ) : null}
                       {/* R136 — the R126/R127 restored-answer honesty marker
                           finally SURFACED: a healed answer (device-local flag,
                           never synced — R128 law C) shows a sky badge right
@@ -1909,8 +2101,10 @@ export function CopilotView({
                       ) : null}
                     </div>
                   </div>
-                ),
-              )}
+                  )}
+                </Fragment>
+              );
+            })}
 
               {waitingForFirstToken ? null : null}
 

@@ -160,6 +160,13 @@ function toLocalSession(s: ServerCopilotSession): CopilotSession {
     id: m.id,
     role: m.role,
     content: m.content,
+    // R138 — the server row's createdAt becomes the message's time stamp so
+    // a restored (other-device / reload) transcript renders honest time
+    // labels and day separators. Non-parseable stamps are omitted (the
+    // additive law — never a fabricated time).
+    ...(typeof m.createdAt === "string" && Number.isFinite(Date.parse(m.createdAt))
+      ? { ts: Date.parse(m.createdAt) }
+      : {}),
     ...(m.failed ? { failed: true } : {}),
     ...(m.meta !== undefined ? { meta: m.meta } : {}),
   }));
