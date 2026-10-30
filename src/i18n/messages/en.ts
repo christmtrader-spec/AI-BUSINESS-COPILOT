@@ -405,6 +405,15 @@ const en = {
     checklistTaskSale: "Create your first invoice",
     checklistTaskCopilot: "Ask the AI Copilot something",
     checklistDismiss: "Dismiss checklist",
+    // R140 — the USER-level welcome card (the R108 checklistDismissedAt
+    // consumer). Dismissal is a server fact on the account; restore lives
+    // in Settings → Profile.
+    welcomeCardTitle: "Welcome to AI Business Copilot",
+    welcomeCardDesc: "Your workspace is ready — three good first stops, and the copilot is always one question away.",
+    welcomeActionCopilot: "Ask the copilot",
+    welcomeActionReports: "Open your reports",
+    welcomeReplayTour: "Replay the product tour",
+    welcomeDismiss: "Dismiss this welcome card",
     welcome: "Welcome",
     welcomeBack: "Welcome back",
     subtitle: "Here is where your business stands today.",
@@ -638,6 +647,12 @@ const en = {
     memberSince: "Member since",
     accountSection: "Account",
     preferencesSection: "Preferences",
+    // R140 — the welcome-card restore row (the R108 contract's other half).
+    welcomeCardLabel: "Welcome card",
+    welcomeCardShown: "Currently shown at the top of your dashboard.",
+    welcomeCardHidden: "You dismissed it — it stays hidden on every device until you restore it.",
+    welcomeCardRestore: "Show it again",
+    welcomeCardRestoreToast: "Welcome card restored",
   },
   audit: {
     title: "Audit log",

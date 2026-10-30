@@ -304,11 +304,15 @@ async function main() {
     `${JSON.stringify(meta2.meta.topStockProduct)}`,
   );
   ok(
-    "G4 the snapshot prose cites the ranked throne (rank 1 name + pre-formatted value present)",
-    Array.isArray(meta2.snapshot?.inventory?.topValueProducts) &&
-      meta2.snapshot.inventory.topValueProducts[0]?.name === "Akar Widget" &&
-      typeof meta2.snapshot.inventory.topValueProducts[0]?.estimatedValue === "string" &&
-      meta2.snapshot.inventory.topValueProducts[0]?.rank === 1,
+    "G4 the snapshot prose cites the ranked throne — the R102/W6 PRE-FORMATTED law: {name, value} only (raw minors never cross to the model)",
+    JSON.stringify(meta2.snapshot?.inventory?.topValueProducts) ===
+      JSON.stringify([
+        { name: "Akar Widget", value: "$30,000.00" },
+        { name: "Bulk Screws", value: "$20,000.00" },
+      ]) &&
+      meta2.snapshot?.inventory?.topValueProducts?.every(
+        (p: Record<string, unknown>) => JSON.stringify(Object.keys(p).sort()) === JSON.stringify(["name", "value"]),
+      ) === true,
     JSON.stringify(meta2.snapshot?.inventory?.topValueProducts),
   );
 
@@ -322,7 +326,7 @@ async function main() {
   );
   const topKeys = Object.keys(sum2.body).sort();
   ok(
-    "H2 the summary top-level key set is untouched",
+    "H2 the summary top-level key set — the R115 additive trend block is the ONE growth over the R102 pin",
     JSON.stringify(topKeys) ===
       JSON.stringify([
         "advancedAvailable",
@@ -336,6 +340,7 @@ async function main() {
         "range",
         "timeline",
         "topProducts",
+        "trend",
       ]),
     JSON.stringify(topKeys),
   );

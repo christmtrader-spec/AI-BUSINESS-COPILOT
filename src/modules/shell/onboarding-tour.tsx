@@ -22,6 +22,21 @@ import { cn } from "@/lib/utils";
 
 const TOUR_FLAG = "abc-tour-v1";
 
+/** R140 — replay event name. The welcome card dispatches this instead of
+ *  reaching into the component's internals; the tour (wherever mounted)
+ *  owns the flag and the guards. */
+const TOUR_REPLAY_EVENT = "abc-tour-replay";
+
+/** R140 — ask the product tour to replay. The dashboard's <OnboardingTour>
+ *  instance listens for this event: it clears the once-per-browser flag and
+ *  re-arms. Honest no-op where the tour cannot run (mobile / no anchors) —
+ *  the listener re-applies the SAME guards as the auto-arm effect, so the
+ *  caller needs no duplicate viewport logic. */
+export function replayProductTour() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(TOUR_REPLAY_EVENT));
+}
+
 type TourStep = {
   anchor: string;
   titleKey: string;
@@ -88,6 +103,28 @@ export function OnboardingTour({ enabled }: { enabled: boolean }) {
     }, 900);
     return () => window.clearTimeout(timer);
   }, [enabled]);
+
+  // R140 — replay support: the welcome card's "Replay the product tour"
+  // dispatches the replay event; this effect clears the once-per-browser
+  // flag and re-arms the SAME guards as the auto-arm effect (desktop
+  // viewport + a visible quick-actions anchor). A replay request where the
+  // tour honestly cannot run (mobile, no anchors) is a silent no-op — the
+  // UI hides the affordance there anyway (double guard, no dead button).
+  useEffect(() => {
+    const onReplay = () => {
+      try {
+        window.localStorage.removeItem(TOUR_FLAG);
+      } catch {
+        // Storage disabled — the tour still replays for this visit.
+      }
+      if (window.innerWidth < 1024) return;
+      if (rectOf("quick-actions") === null) return;
+      setStepIndex(0);
+      setActive(true);
+    };
+    window.addEventListener(TOUR_REPLAY_EVENT, onReplay);
+    return () => window.removeEventListener(TOUR_REPLAY_EVENT, onReplay);
+  }, []);
 
   // Track the highlighted anchor (resize/scroll/RTL switches).
   useEffect(() => {

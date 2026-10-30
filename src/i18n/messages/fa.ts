@@ -408,6 +408,15 @@ const fa: Messages = {
     checklistTaskSale: "اولین فاکتور را صادر کنید",
     checklistTaskCopilot: "از دستیار هوشمند بپرسید",
     checklistDismiss: "بستن چک‌لیست",
+    // R140 — کارت خوش‌آمد سطح کاربر (مصرف‌کنندهٔ checklistDismissedAt در
+    // قرارداد R108). بستن یک واقعیت سروری روی حساب است؛ فعال‌سازی دوباره در
+    // تنظیمات ← پروفایل است.
+    welcomeCardTitle: "به دستیار هوشمند کسب‌وکار خوش آمدید",
+    welcomeCardDesc: "فضای کاری شما آماده است — سه مقصد نخست خوب، و دستیار همیشه به یک پرسش فاصله دارد.",
+    welcomeActionCopilot: "از دستیار بپرسید",
+    welcomeActionReports: "گزارش‌ها را باز کنید",
+    welcomeReplayTour: "اجرای دوبارهٔ تور معرفی",
+    welcomeDismiss: "بستن این کارت خوش‌آمد",
     welcome: "خوش آمدید",
     welcomeBack: "خوش برگشتید",
     subtitle: "وضعیت امروز کسب‌وکار شما اینجاست.",
@@ -640,6 +649,12 @@ const fa: Messages = {
     memberSince: "عضو از",
     accountSection: "حساب",
     preferencesSection: "ترجیحات",
+    // R140 — ردیف فعال‌سازی دوبارهٔ کارت خوش‌آمد (نیمهٔ دیگر قرارداد R108).
+    welcomeCardLabel: "کارت خوش‌آمد",
+    welcomeCardShown: "در حال حاضر بالای داشبورد شما نمایش داده می‌شود.",
+    welcomeCardHidden: "آن را بستید — تا زمانی که دوباره فعالش کنید، در همهٔ دستگاه‌ها پنهان می‌ماند.",
+    welcomeCardRestore: "نمایش دوباره",
+    welcomeCardRestoreToast: "کارت خوش‌آمد دوباره فعال شد",
   },
   audit: {
     title: "گزارش حسابرسی",

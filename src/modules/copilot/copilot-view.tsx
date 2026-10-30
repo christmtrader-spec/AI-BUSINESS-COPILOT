@@ -755,26 +755,39 @@ export function CopilotView({
   }, [messages]);
   const canRegenerate = lastCompletedAnswer && regenerateQuestion !== null;
 
-  // R139 — the plan's REAL usage for the confirm dialog (best-effort: the
-  // fetch runs ONLY while the dialog is open, and a failure or an unlimited
-  // plan simply omits the meter line — §64, never fake numbers).
-  type RegenUsage = {
+  // R138 — transcript-time formatting. ONE locale source (the active UI
+  // locale, same law as formatRelative above): fa-IR yields the Jalali
+  // calendar + Persian digits through Intl automatically; en-GB Gregorian.
+  // R140 note: hoisted ABOVE the usage query so the shared numFmt can ride
+  // the same source — there is exactly ONE definition of this mapping.
+  const dayLocale = uiLocale === "fa" ? "fa-IR" : "en-GB";
+
+  // R140 — the plan's REAL AI usage, fetched ONCE when the copilot view
+  // mounts (R139 gated this fetch to the regenerate dialog; the new glance
+  // line under the composer needs it visible, so ONE shared query now
+  // feeds BOTH the glance chip and the dialog — single fetch, one cache).
+  // §64 honesty: an unlimited plan (limit null) or a failed fetch renders
+  // NOTHING — never fake numbers. retry:false: a 403 must never spin.
+  type CopilotUsage = {
     metrics?: { AI_REQUESTS?: { used?: number; limit?: number | null } };
   };
-  const { data: regenUsage } = useQuery<RegenUsage>({
-    queryKey: ["billing", "usage", "copilot-regen"],
+  const { data: usage } = useQuery<CopilotUsage>({
+    queryKey: ["billing", "usage", "copilot"],
     queryFn: () => api("/api/v1/billing/usage"),
-    enabled: regenOpen,
-    staleTime: 30_000,
+    staleTime: 60_000,
     retry: false,
   });
-  const regenMeterRaw = regenUsage?.metrics?.AI_REQUESTS;
-  const regenMeter =
-    regenMeterRaw &&
-    typeof regenMeterRaw.used === "number" &&
-    typeof regenMeterRaw.limit === "number"
-      ? { used: regenMeterRaw.used, limit: regenMeterRaw.limit }
+  const meterRaw = usage?.metrics?.AI_REQUESTS;
+  const meter =
+    meterRaw &&
+    typeof meterRaw.used === "number" &&
+    typeof meterRaw.limit === "number"
+      ? { used: meterRaw.used, limit: meterRaw.limit }
       : null;
+  // R140 — ONE memoized formatter for BOTH the glance chip and the
+  // regenerate dialog's meter line (the R138 single-locale law: every
+  // AI-usage number rides dayLocale — fa-IR gives Persian digits).
+  const numFmt = useMemo(() => new Intl.NumberFormat(dayLocale), [dayLocale]);
 
   // Keep the latest message in view (scroll-only effect — no setState).
   useEffect(() => {
@@ -1578,10 +1591,7 @@ export function CopilotView({
     }
   };
 
-  // R138 — transcript-time formatting. ONE locale source (the active UI
-  // locale, same law as formatRelative above): fa-IR yields the Jalali
-  // calendar + Persian digits through Intl automatically; en-GB Gregorian.
-  const dayLocale = uiLocale === "fa" ? "fa-IR" : "en-GB";
+  // R138 — transcript-time formatting. Locale source above (single law).
   const daySeparatorLabel = (sep: DaySeparator): string => {
     if (sep.kind === "today") return t("dayToday");
     if (sep.kind === "yesterday") return t("dayYesterday");
@@ -2317,14 +2327,44 @@ export function CopilotView({
           </div>
           <p className="text-muted-foreground mt-2 flex items-center justify-between gap-2 text-[11px]">
             <span className="truncate">{t("groundedNote")}</span>
-            <span
-              className={cn(
-                "shrink-0 tabular-nums transition-colors",
-                input.length >= 450 && "text-amber-600 dark:text-amber-400",
-              )}
-              dir="ltr"
-            >
-              {input.length}/500
+            <span className="flex shrink-0 items-center gap-2">
+              {/* R140 — the usage glance chip: the plan's REAL AI-request
+                  meter, always visible under the composer (fed by the same
+                  shared query the regenerate dialog reads). §64 law: no
+                  real used+limit pair → NO chip (unlimited plans and failed
+                  fetches render nothing). The tone escalates honestly:
+                  muted → amber at ≥80% → destructive when exhausted. */}
+              {meter ? (
+                <span
+                  data-testid="copilot-usage-glance"
+                  title={t("regenerateMeter", {
+                    used: numFmt.format(meter.used),
+                    limit: numFmt.format(meter.limit),
+                  })}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] tabular-nums transition-colors",
+                    meter.limit > 0 && meter.used / meter.limit >= 1
+                      ? "border-destructive/40 bg-destructive/10 text-destructive"
+                      : meter.limit > 0 && meter.used / meter.limit >= 0.8
+                        ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                        : "border-border/70 bg-muted/40",
+                  )}
+                >
+                  <Gauge className="size-3 shrink-0" aria-hidden="true" />
+                  <span dir="ltr">
+                    {numFmt.format(meter.used)}/{numFmt.format(meter.limit)}
+                  </span>
+                </span>
+              ) : null}
+              <span
+                className={cn(
+                  "shrink-0 tabular-nums transition-colors",
+                  input.length >= 450 && "text-amber-600 dark:text-amber-400",
+                )}
+                dir="ltr"
+              >
+                {input.length}/500
+              </span>
             </span>
           </p>
         </div>
@@ -2373,24 +2413,19 @@ export function CopilotView({
               {t("regenerateDesc", { question: regenerateQuestion ?? "" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {regenMeter ? (
-            (() => {
-              const numFmt = new Intl.NumberFormat(dayLocale);
-              return (
-                <p
-                  className="text-muted-foreground border-border/60 bg-muted/40 flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs"
-                  data-testid="copilot-regen-meter"
-                >
-                  <Gauge className="size-3.5 shrink-0" aria-hidden="true" />
-                  <span className="tabular-nums">
-                    {t("regenerateMeter", {
-                      used: numFmt.format(regenMeter.used),
-                      limit: numFmt.format(regenMeter.limit),
-                    })}
-                  </span>
-                </p>
-              );
-            })()
+          {meter ? (
+            <p
+              className="text-muted-foreground border-border/60 bg-muted/40 flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs"
+              data-testid="copilot-regen-meter"
+            >
+              <Gauge className="size-3.5 shrink-0" aria-hidden="true" />
+              <span className="tabular-nums">
+                {t("regenerateMeter", {
+                  used: numFmt.format(meter.used),
+                  limit: numFmt.format(meter.limit),
+                })}
+              </span>
+            </p>
           ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>

@@ -125,17 +125,27 @@ ok(
 );
 ok(
   "[3] §64 — meter line only when used AND limit are real numbers",
-  /typeof regenMeterRaw\.used === "number" &&\s*\n\s*typeof regenMeterRaw\.limit === "number"/.test(view),
+  /typeof meterRaw\.used === "number" &&\s*\n\s*typeof meterRaw\.limit === "number"/.test(view),
 );
 ok(
-  "[3] ONE locale law — meter numbers through Intl.NumberFormat(dayLocale)",
-  view.includes("const numFmt = new Intl.NumberFormat(dayLocale);") &&
-    view.includes("numFmt.format(regenMeter.used)") &&
-    view.includes("numFmt.format(regenMeter.limit)"),
+  "[3] ONE locale law — ONE memoized formatter for dialog + glance",
+  view.includes("const numFmt = useMemo(() => new Intl.NumberFormat(dayLocale), [dayLocale]);") &&
+    // The DIALOG's two sites are this battery's mandate (the glance chip's
+    // third site is R140's — pinned by r140-welcome-usage-check).
+    count(view, "numFmt.format(meter.used)") >= 2 &&
+    count(view, "numFmt.format(meter.limit)") >= 2,
 );
 ok(
-  "[3] usage fetched ONLY while the dialog is open, never retried",
-  /queryKey: \["billing", "usage", "copilot-regen"\],\s*\n\s*queryFn: \(\) => api\("\/api\/v1\/billing\/usage"\),\s*\n\s*enabled: regenOpen,\s*\n\s*staleTime: 30_000,\s*\n\s*retry: false,/.test(view),
+  "[3] usage: ONE shared query (R140 glance law) — fetches on copilot mount, never retried, no separate dialog fetch",
+  /queryKey: \["billing", "usage", "copilot"\],\s*\n\s*queryFn: \(\) => api\("\/api\/v1\/billing\/usage"\),\s*\n\s*staleTime: 60_000,\s*\n\s*retry: false,/.test(view) &&
+    count(view, 'api("/api/v1/billing/usage")') === 1,
+);
+ok(
+  "[3] glance chip: §64 render gate + honest tone escalation + testid",
+  view.includes('data-testid="copilot-usage-glance"') &&
+    /meter\.limit > 0 && meter\.used \/ meter\.limit >= 1/.test(view) &&
+    /meter\.limit > 0 && meter\.used \/ meter\.limit >= 0\.8/.test(view) &&
+    /\{meter \? \(/.test(view),
 );
 ok("[3] meter line carries its testid", view.includes('data-testid="copilot-regen-meter"'));
 

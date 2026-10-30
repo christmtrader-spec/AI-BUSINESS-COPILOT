@@ -4,7 +4,7 @@ import { useState } from "react";
 import { signOut } from "next-auth/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { KeyRound, Loader2, Save, Scale, TriangleAlert, UserRound } from "lucide-react";
+import { KeyRound, Loader2, RotateCcw, Save, Scale, Sparkles, TriangleAlert, UserRound } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
 import { localeLabel, LOCALES } from "@/i18n/config";
@@ -28,7 +28,16 @@ import { Activity } from "lucide-react";
 import { isPlatformSelf, usePlatformSelf } from "@/modules/platform/use-platform-self";
 import { PageHeader } from "@/components/shared/primitives";
 
-type Me = { id: string; name: string | null; email: string; locale: string; createdAt: string };
+type Me = {
+  id: string;
+  name: string | null;
+  email: string;
+  locale: string;
+  createdAt: string;
+  // R140 — additive R108 field (older cached responses honestly omit it;
+  // absent reads as "never dismissed").
+  checklistDismissedAt?: string | null;
+};
 type OwnedBusiness = { id: string; name: string; members: number };
 /** Minimal legal metadata (Prompt 27 §161) — nothing internal crosses the API. */
 type LegalDocMeta = {
@@ -120,14 +129,24 @@ export function ProfileView() {
   }
 
   const saveMutation = useMutation({
-    mutationFn: async (payload: { name?: string; locale?: string }) =>
+    mutationFn: async (payload: {
+      name?: string;
+      locale?: string;
+      checklistDismissed?: boolean;
+    }) =>
       api<Me>("/api/v1/me", {
         method: "PATCH",
         businessId: null,
         body: JSON.stringify(payload),
       }),
-    onSuccess: (data) => {
-      toast({ title: t("savedToast") });
+    onSuccess: (data, payload) => {
+      // R140 — the restore path carries its own toast (the name/locale path
+      // keeps the generic one; a PATCH that mixes them gets the generic).
+      if (payload.checklistDismissed === false && payload.name === undefined && payload.locale === undefined) {
+        toast({ title: t("welcomeCardRestoreToast") });
+      } else {
+        toast({ title: t("savedToast") });
+      }
       void queryClient.invalidateQueries({ queryKey: ["me"] });
       void queryClient.invalidateQueries({ queryKey: ["businesses"] });
       if (data.locale && data.locale !== locale) setLocale(data.locale === "fa" ? "fa" : "en");
@@ -382,6 +401,42 @@ export function ProfileView() {
           </Select>
           <p className="text-muted-foreground text-xs">{t("languageHint")}</p>
         </CardContent>
+      </Card>
+
+      {/* R140 — the welcome-card restore row (the R108 contract's other
+          half): the card is visible while checklistDismissedAt is null;
+          once dismissed the user can restore it HERE (PATCH
+          { checklistDismissed: false } — the same shared ["me"] cache the
+          dashboard card reads). Both states are honest server facts. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Sparkles className="text-primary size-4" aria-hidden="true" />
+            {t("welcomeCardLabel")}
+          </CardTitle>
+          <CardDescription className="text-muted-foreground" dir="auto">
+            {me?.checklistDismissedAt ? t("welcomeCardHidden") : t("welcomeCardShown")}
+          </CardDescription>
+        </CardHeader>
+        {me?.checklistDismissedAt ? (
+          <CardContent>
+            <Button
+              variant="outline"
+              size="sm"
+              className="focus-visible:ring-ring/40 gap-2"
+              onClick={() => saveMutation.mutate({ checklistDismissed: false })}
+              disabled={saveMutation.isPending}
+              data-testid="welcome-restore"
+            >
+              {saveMutation.isPending ? (
+                <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              ) : (
+                <RotateCcw className="size-4" aria-hidden="true" />
+              )}
+              {t("welcomeCardRestore")}
+            </Button>
+          </CardContent>
+        ) : null}
       </Card>
 
       {/* Prompt 28 — platform console entry. Rendered ONLY when the server

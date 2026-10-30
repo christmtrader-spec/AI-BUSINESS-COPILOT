@@ -42,6 +42,9 @@ import { TrendChip } from "@/components/shared/trend-chip";
 // says "how much, side by side" (same data the surface already fetched).
 import { TrendWindowPanel } from "@/components/shared/trend-window-panel";
 import { OnboardingTour } from "@/modules/shell/onboarding-tour";
+// R140 — the USER-level welcome card (the R108 checklistDismissedAt client
+// consumer): server-persisted per ACCOUNT, dismiss once, every device.
+import { WelcomeCard } from "@/modules/dashboard/welcome-card";
 import { useSession } from "next-auth/react";
 import { fmtCount, fmtMoney } from "../finance-shared/finance-kit";
 // R103 — the ONE share law (the tile's % rides the same helper as the
@@ -263,6 +266,11 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
           </Badge>
         }
       />
+
+      {/* R140 — the user-level welcome card: renders until the account
+          dismisses it (server-persisted checklistDismissedAt — the R108
+          contract); veterans whose card is dismissed never see a gap. */}
+      <WelcomeCard />
 
       {/* Low-stock alert (only when it exists — no fake urgency) */}
       {lowStock.length > 0 ? (
