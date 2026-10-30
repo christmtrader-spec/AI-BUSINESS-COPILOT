@@ -40,6 +40,27 @@ function count(hay: string, needle: string) {
 
 const view = readFileSync("src/modules/copilot/copilot-view.tsx", "utf8");
 const lib = readFileSync("src/lib/copilot-sessions.ts", "utf8");
+const en = readFileSync("src/i18n/messages/en.ts", "utf8");
+const fa = readFileSync("src/i18n/messages/fa.ts", "utf8");
+
+function sectionOf(src: string, section: string): string {
+  const start = src.indexOf(`  ${section}: {`);
+  if (start < 0) return "";
+  let depth = 0;
+  let i = src.indexOf("{", start);
+  const open = i;
+  for (; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}") {
+      depth--;
+      if (depth === 0) break;
+    }
+  }
+  return src.slice(open, i + 1);
+}
+const enCopilot = sectionOf(en, "copilot");
+const faCopilot = sectionOf(fa, "copilot");
+const hasPersian = (s: string) => /[\u0600-\u06FF]/.test(s);
 
 // ---- [1] pure laws ----------------------------------------------------------
 
@@ -143,6 +164,27 @@ const mk = (title: string, contents: string[]) => ({
   ok("[1] witness law — filter false ⇒ no title mark, no preview", !matches && p.titleMarkStart === -1 && p.preview === null);
 }
 
+// ---- [1b] R142 multi-match count laws ---------------------------------------
+
+{
+  // Three messages match: count = 3, preview still the FIRST one.
+  const p = sessionMatchParts(mk("t", ["revenue one", "no match", "revenue two", "revenue three"]), "revenue");
+  ok("[1b] matchCount counts ALL matching messages", p.matchCount === 3, String(p.matchCount));
+  ok("[1b] preview stays the FIRST matching message", typeof p.preview === "string" && p.preview.includes("revenue one"), String(p.preview));
+  // Single match: count = 1 (no badge in the view).
+  const p1 = sessionMatchParts(mk("t", ["only revenue here"]), "revenue");
+  ok("[1b] single match — matchCount 1", p1.matchCount === 1);
+  // Title-only hit: content count 0, no preview.
+  const p2 = sessionMatchParts(mk("Revenue title", ["unrelated body"]), "revenue");
+  ok("[1b] title-only hit — matchCount 0, preview null", p2.matchCount === 0 && p2.preview === null && p2.titleMarkStart === 0);
+  // Blank / malformed → 0.
+  ok("[1b] blank query — matchCount 0", sessionMatchParts(mk("t", ["revenue"]), "  ").matchCount === 0);
+  ok("[1b] null session — matchCount 0", sessionMatchParts(null, "revenue").matchCount === 0);
+  // Duplicated occurrences INSIDE one message count once per MESSAGE.
+  const p3 = sessionMatchParts(mk("t", ["revenue and revenue and revenue"]), "revenue");
+  ok("[1b] one message counts ONCE regardless of occurrences", p3.matchCount === 1, String(p3.matchCount));
+}
+
 // ---- [2] source laws (copilot-view) -----------------------------------------
 
 ok("[2] view imports sessionMatchParts + type", view.includes("sessionMatchParts,") && view.includes("type SessionMatchParts,"));
@@ -166,6 +208,27 @@ ok(
     !view.includes('if (e.key === "Escape" && queryActive)'),
 );
 ok("[2] preview renders BEFORE the meta line (witness above the count)", view.indexOf("copilot-session-match-preview") < view.indexOf('t("messagesCount", { count: s.messages.length })', view.indexOf("copilot-session-match-preview")));
+
+// ---- [4] R142 source laws (the +N badge) ------------------------------------
+
+ok(
+  "[4] badge gate: rendered ONLY when matchCount > 1, honest +{matchCount-1}",
+  /\{match\.matchCount > 1 \? \(/.test(view) && view.includes("+{numFmt.format(match.matchCount - 1)}"),
+);
+ok("[4] badge carries its testid + title from ONE key", view.includes('data-testid="copilot-session-match-count"') && view.includes('t("moreMatches", { count: match.matchCount - 1 })'));
+ok(
+  "[4] badge numbers ride the ONE locale formatter (fa-IR Persian digits)",
+  view.includes("+{numFmt.format(match.matchCount - 1)}"),
+);
+{
+  const enMatch = enCopilot.match(/moreMatches: "([^"]*)"/);
+  const faMatch = faCopilot.match(/moreMatches: "([^"]*)"/);
+  ok("[4] moreMatches exists in BOTH locales", !!enMatch && !!faMatch);
+  if (enMatch && faMatch) {
+    ok("[4] moreMatches {count} placeholder symmetric", enMatch[1].includes("{count}") && faMatch[1].includes("{count}"));
+    ok("[4] FA is Persian, EN has no Persian", hasPersian(faMatch[1]) && !hasPersian(enMatch[1]));
+  }
+}
 
 // ---- [3] regression pins (the R138 search block survives) -------------------
 

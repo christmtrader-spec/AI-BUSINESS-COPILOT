@@ -111,8 +111,24 @@ async function main() {
   await db.expense.create({
     data: { businessId: business.id, category: "Materials", amountMinor: 32000, spentAt: new Date(Date.now() - 3 * 86_400_000), note: "Silk + dye batch" },
   });
-  await db.expense.create({
+  const e2 = await db.expense.create({
     data: { businessId: business.id, category: "Shipping", amountMinor: 8500, spentAt: new Date(Date.now() - 6 * 86_400_000), supplierId: s1.id, note: "Freight" },
+  });
+
+  // R142 — Payment rows (the cashflow perf sub-view's source of truth:
+  // "one payment row = one cash movement"). Without these the cashflow
+  // grouping honestly reports zero — a seed gap, not a code bug. Two IN
+  // (customer receipts at payment dates inside the window) + one OUT
+  // (supplier payment for the freight expense).
+  const sales = await db.sale.findMany({ where: { businessId: business.id }, orderBy: { number: "asc" } });
+  await db.payment.create({
+    data: { businessId: business.id, saleId: sales[0].id, direction: "IN", amountMinor: 37000, method: "BANK_TRANSFER", paidAt: new Date(Date.now() - 2 * 86_400_000), note: "Invoice 1 receipt" },
+  });
+  await db.payment.create({
+    data: { businessId: business.id, saleId: sales[1].id, direction: "IN", amountMinor: 6200, method: "CASH", paidAt: new Date(Date.now() - 4 * 86_400_000), note: "Invoice 2 receipt" },
+  });
+  await db.payment.create({
+    data: { businessId: business.id, expenseId: e2.id, direction: "OUT", amountMinor: 8500, method: "BANK_TRANSFER", paidAt: new Date(Date.now() - 5 * 86_400_000), note: "Freight paid" },
   });
 
   console.log(

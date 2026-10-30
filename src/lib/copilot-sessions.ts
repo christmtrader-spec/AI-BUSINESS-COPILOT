@@ -306,6 +306,11 @@ export type SessionMatchParts = {
   /** The match's offsets INSIDE the preview window (-1 when no preview). */
   previewMarkStart: number;
   previewMarkEnd: number;
+  /** R142 — how MANY messages match the query in total (0 when none, 1
+   *  when only the previewed one). The preview shows the FIRST match; the
+   *  view renders an honest +{matchCount-1} badge when more hide behind
+   *  it — the count never lies about what the row does not show. */
+  matchCount: number;
 };
 
 /** Radius of context shown around a content match (chars, one line). */
@@ -321,6 +326,7 @@ export function sessionMatchParts(
     preview: null,
     previewMarkStart: -1,
     previewMarkEnd: -1,
+    matchCount: 0,
   };
   const q = (typeof query === "string" ? query : "").trim().toLocaleLowerCase();
   if (q.length === 0 || !session || typeof session !== "object") return blank;
@@ -334,14 +340,19 @@ export function sessionMatchParts(
   const titleMarkStart = titleOriginal.toLocaleLowerCase().indexOf(q);
   const titleMarkEnd = titleMarkStart >= 0 ? titleMarkStart + q.length : -1;
 
-  // Content: first message whose lowered content contains the query.
+  // Content: EVERY message whose lowered content contains the query (the
+  // count is honest over ALL messages); the preview windows the FIRST one.
   const messages = Array.isArray(session.messages) ? session.messages : [];
+  let matchCount = 0;
+  let first: SessionMatchParts | null = null;
   for (const m of messages) {
     if (!m || typeof m !== "object") continue;
     const content = typeof m.content === "string" ? m.content : "";
     if (content.length === 0) continue;
     const idx = content.toLocaleLowerCase().indexOf(q);
     if (idx < 0) continue;
+    matchCount += 1;
+    if (first !== null) continue; // the first match already owns the preview
     // Window the ORIGINAL text around the match (context on both sides,
     // honest ellipses only on actual cut edges).
     const start = Math.max(0, idx - MATCH_PREVIEW_CONTEXT);
@@ -349,15 +360,17 @@ export function sessionMatchParts(
     const prefix = start > 0 ? "…" : "";
     const suffix = end < content.length ? "…" : "";
     const window = `${prefix}${content.slice(start, end)}${suffix}`;
-    return {
+    first = {
       titleMarkStart,
       titleMarkEnd,
       preview: window,
       previewMarkStart: prefix.length + (idx - start),
       previewMarkEnd: prefix.length + (idx - start) + q.length,
+      matchCount: 0, // stamped with the REAL total below
     };
   }
-  return { ...blank, titleMarkStart, titleMarkEnd };
+  if (first === null) return { ...blank, titleMarkStart, titleMarkEnd };
+  return { ...first, matchCount };
 }
 
 /** Remove ALL stored transcripts for a business (used by "clear history"). */

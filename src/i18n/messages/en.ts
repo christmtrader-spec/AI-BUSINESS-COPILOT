@@ -1948,6 +1948,7 @@ const en = {
     searchSessions: "Search conversations",
     clearSearch: "Clear search",
     searchNoResults: "No conversations match “{query}”",
+    moreMatches: "{count} more messages match this search",
     askedAt: "Asked at {time}",
     regenerateTitle: "Ask this again?",
     regenerateDesc: "«{question}» will be sent again as a new request — the answer is recomputed from your current records, and it counts toward your plan's AI usage.",

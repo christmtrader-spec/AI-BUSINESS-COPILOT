@@ -1815,18 +1815,32 @@ export function CopilotView({
                                 the conversation's content (the filter's honest
                                 witness — a content-only match is no longer
                                 invisible). Amber edge + mark on the first hit;
-                                ellipses are the lib's cut-edge honesty. */}
+                                ellipses are the lib's cut-edge honesty.
+                                R142 — the +N badge: when MORE messages match
+                                than the previewed one, the row says so
+                                (the count never lies about what it hides). */}
                             {match?.preview ? (
                               <span
-                                className="text-muted-foreground/90 mt-0.5 block truncate border-s-2 border-amber-400/50 ps-1.5 text-[11px]"
+                                className="text-muted-foreground/90 mt-0.5 flex items-center gap-1.5 text-[11px]"
                                 dir="auto"
                                 data-testid="copilot-session-match-preview"
                               >
-                                {match.preview.slice(0, match.previewMarkStart)}
-                                <mark className="rounded-[3px] bg-amber-200/70 px-0.5 text-inherit dark:bg-amber-400/25 dark:text-amber-50">
-                                  {match.preview.slice(match.previewMarkStart, match.previewMarkEnd)}
-                                </mark>
-                                {match.preview.slice(match.previewMarkEnd)}
+                                <span className="min-w-0 flex-1 truncate border-s-2 border-amber-400/50 ps-1.5">
+                                  {match.preview.slice(0, match.previewMarkStart)}
+                                  <mark className="rounded-[3px] bg-amber-200/70 px-0.5 text-inherit dark:bg-amber-400/25 dark:text-amber-50">
+                                    {match.preview.slice(match.previewMarkStart, match.previewMarkEnd)}
+                                  </mark>
+                                  {match.preview.slice(match.previewMarkEnd)}
+                                </span>
+                                {match.matchCount > 1 ? (
+                                  <span
+                                    className="border-border/60 bg-muted/50 shrink-0 rounded-full border px-1.5 py-px text-[10px] font-medium tabular-nums"
+                                    title={t("moreMatches", { count: match.matchCount - 1 })}
+                                    data-testid="copilot-session-match-count"
+                                  >
+                                    +{numFmt.format(match.matchCount - 1)}
+                                  </span>
+                                ) : null}
                               </span>
                             ) : null}
                             <span className="text-muted-foreground block text-[11px] tabular-nums">

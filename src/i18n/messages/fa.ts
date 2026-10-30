@@ -1944,6 +1944,7 @@ const fa: Messages = {
     searchSessions: "جستجو در گفت‌وگوها",
     clearSearch: "پاک کردن جستجو",
     searchNoResults: "گفت‌وگویی مطابق با «{query}» یافت نشد",
+    moreMatches: "{count} پیام دیگر نیز با این جست‌وجو مطابق است",
     askedAt: "پرسش در {time}",
     regenerateTitle: "این پرسش دوباره پرسیده شود؟",
     regenerateDesc: "«{question}» به‌عنوان یک درخواست تازه فرستاده می‌شود — پاسخ از روی داده‌های فعلی شما از نو محاسبه می‌شود و از سهمیه هوش مصنوعی طرح شما مصرف می‌کند.",
