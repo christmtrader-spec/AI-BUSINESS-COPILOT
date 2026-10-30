@@ -226,7 +226,11 @@ ok("[4] non-parseable server stamp is honestly omitted", mergedMsgs[1] && !("ts"
 
 // ---- [5] source laws (copilot-view) -------------------------------------------
 
-ok("[5] all FIVE creation sites stamp ts", count(view, "ts: Date.now()") === 5, String(count(view, "ts: Date.now()")));
+ok(
+  "[5] all SIX creation sites stamp ts (R139 adds the regenerate turn)",
+  count(view, "ts: Date.now()") === 6,
+  String(count(view, "ts: Date.now()")),
+);
 ok("[5] ChatMessage carries the additive ts field", /type ChatMessage = \{[\s\S]*?ts\?: number;/.test(view));
 ok(
   "[5] separator gated on honest boundaries only",

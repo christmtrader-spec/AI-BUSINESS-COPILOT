@@ -21,6 +21,7 @@ import {
   ChevronDown,
   Copy,
   Crown,
+  Gauge,
   Loader2,
   Download,
   HandCoins,
@@ -659,6 +660,10 @@ export function CopilotView({
   // R138 — session history search (client-side filter across the 20-session
   // cap; matches title OR any message content).
   const [sessionQuery, setSessionQuery] = useState("");
+  // R139 — the honest regenerate confirm: asking the SAME question again is
+  // a NEW metered request, so the affordance opens a dialog that says so
+  // (with the plan's real usage when it can be fetched) before burning one.
+  const [regenOpen, setRegenOpen] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const lastQuestionRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -730,6 +735,46 @@ export function CopilotView({
       showFollowUps ? pickFollowUps(lastMessage.content, messages.length, liveCounts) : [],
     [showFollowUps, lastMessage?.content, messages.length, liveCounts],
   );
+
+  // R139 — regenerate-answer gate: the affordance exists only under the
+  // LAST completed (non-failed, non-empty) answer, and carries the question
+  // that actually produced it (derived from the transcript — never a stale
+  // ref after a session switch).
+  const lastCompletedAnswer =
+    !pending &&
+    lastMessage?.role === "assistant" &&
+    lastMessage.failed !== true &&
+    lastMessage.content.trim().length > 0;
+  const regenerateQuestion = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const m = messages[i];
+      if (m.role === "assistant") continue;
+      return m.content.trim().length > 0 ? m.content : null;
+    }
+    return null;
+  }, [messages]);
+  const canRegenerate = lastCompletedAnswer && regenerateQuestion !== null;
+
+  // R139 — the plan's REAL usage for the confirm dialog (best-effort: the
+  // fetch runs ONLY while the dialog is open, and a failure or an unlimited
+  // plan simply omits the meter line — §64, never fake numbers).
+  type RegenUsage = {
+    metrics?: { AI_REQUESTS?: { used?: number; limit?: number | null } };
+  };
+  const { data: regenUsage } = useQuery<RegenUsage>({
+    queryKey: ["billing", "usage", "copilot-regen"],
+    queryFn: () => api("/api/v1/billing/usage"),
+    enabled: regenOpen,
+    staleTime: 30_000,
+    retry: false,
+  });
+  const regenMeterRaw = regenUsage?.metrics?.AI_REQUESTS;
+  const regenMeter =
+    regenMeterRaw &&
+    typeof regenMeterRaw.used === "number" &&
+    typeof regenMeterRaw.limit === "number"
+      ? { used: regenMeterRaw.used, limit: regenMeterRaw.limit }
+      : null;
 
   // Keep the latest message in view (scroll-only effect — no setState).
   useEffect(() => {
@@ -1339,6 +1384,26 @@ export function CopilotView({
     void send(q, messages);
   };
 
+  /**
+   * R139 — regenerate: ask the SAME question again as a NEW turn. The
+   * append-only transcript law holds (no deletion — the server mirror has
+   * no per-message delete), so the old answer stays as history and the
+   * fresh answer lands below; the metering honesty lives in the confirm
+   * dialog the user just accepted.
+   */
+  const confirmRegenerate = () => {
+    const q = regenerateQuestion;
+    setRegenOpen(false);
+    if (!q || pending) return;
+    const sessionId = ensureActiveSession();
+    setMessages((prev) => [
+      ...prev,
+      { id: nextId(), role: "user", content: q, ts: Date.now() },
+    ]);
+    syncAppend(sessionId, { role: "user", content: q }, titleFromQuestion(q));
+    void send(q, messages);
+  };
+
   const copyAnswer = async (m: ChatMessage) => {
     try {
       await navigator.clipboard.writeText(m.content);
@@ -1556,7 +1621,7 @@ export function CopilotView({
                   onClick={() => setDays(w)}
                   aria-pressed={days === w}
                   className={cn(
-                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
                     days === w
                       ? "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground",
@@ -2039,18 +2104,41 @@ export function CopilotView({
                         <MarkdownLite text={m.content} streaming={m.id === activeStreamId} />
                       )}
                       {!m.failed && m.content.length > 0 && m.id !== activeStreamId ? (
-                        <button
-                          type="button"
-                          onClick={() => void copyAnswer(m)}
-                          aria-label={copiedId === m.id ? t("copied") : t("copy")}
-                          className="bg-background/80 border-border/60 text-muted-foreground hover:text-foreground hover:border-foreground/20 absolute end-2 bottom-1.5 rounded border p-1.5 opacity-0 shadow-xs backdrop-blur-sm transition-[opacity,color,border-color] group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none motion-reduce:transition-none"
+                        <div
+                          className="absolute end-2 bottom-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 motion-reduce:transition-none"
                         >
-                          {copiedId === m.id ? (
-                            <Check className="size-3.5 text-emerald-600" aria-hidden="true" />
-                          ) : (
-                            <Copy className="size-3.5" aria-hidden="true" />
-                          )}
-                        </button>
+                          {/* R139 — regenerate: re-ask THIS question as a new
+                              metered turn; only under the LAST completed
+                              answer (canRegenerate). The spin-on-hover is
+                              motion-guarded. */}
+                          {canRegenerate && i === messages.length - 1 ? (
+                            <button
+                              type="button"
+                              onClick={() => setRegenOpen(true)}
+                              aria-label={t("regenerateAria")}
+                              title={t("regenerateAria")}
+                              data-testid="copilot-regenerate"
+                              className="group/regen bg-background/80 border-border/60 text-muted-foreground hover:text-foreground hover:border-foreground/20 rounded border p-1.5 shadow-xs backdrop-blur-sm transition-[color,border-color] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                            >
+                              <RefreshCcw
+                                className="size-3.5 transition-transform duration-500 group-hover/regen:-rotate-[360deg] motion-reduce:transition-none motion-reduce:group-hover/regen:rotate-0"
+                                aria-hidden="true"
+                              />
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => void copyAnswer(m)}
+                            aria-label={copiedId === m.id ? t("copied") : t("copy")}
+                            className="bg-background/80 border-border/60 text-muted-foreground hover:text-foreground hover:border-foreground/20 rounded border p-1.5 shadow-xs backdrop-blur-sm transition-[color,border-color] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                          >
+                            {copiedId === m.id ? (
+                              <Check className="size-3.5 text-emerald-600" aria-hidden="true" />
+                            ) : (
+                              <Copy className="size-3.5" aria-hidden="true" />
+                            )}
+                          </button>
+                        </div>
                       ) : null}
                       </div>
                       {timeLabel ? (
@@ -2229,7 +2317,13 @@ export function CopilotView({
           </div>
           <p className="text-muted-foreground mt-2 flex items-center justify-between gap-2 text-[11px]">
             <span className="truncate">{t("groundedNote")}</span>
-            <span className="shrink-0 tabular-nums" dir="ltr">
+            <span
+              className={cn(
+                "shrink-0 tabular-nums transition-colors",
+                input.length >= 450 && "text-amber-600 dark:text-amber-400",
+              )}
+              dir="ltr"
+            >
               {input.length}/500
             </span>
           </p>
@@ -2257,6 +2351,55 @@ export function CopilotView({
             >
               <Trash2 className="size-4" aria-hidden="true" />
               {t("clearAllConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* R139 — regenerate confirm: the metering honesty gate. Asking the
+          same question again burns a NEW request — the dialog says so in
+          plain words, shows the plan's REAL usage when it could be fetched
+          (numbers through the SAME dayLocale Intl law; §64: an unlimited
+          plan or a failed fetch simply shows no meter line, never fake
+          numbers), and only the confirmation actually sends. */}
+      <AlertDialog open={regenOpen} onOpenChange={setRegenOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-base">
+              <RefreshCcw className="text-primary size-4" aria-hidden="true" />
+              {t("regenerateTitle")}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("regenerateDesc", { question: regenerateQuestion ?? "" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {regenMeter ? (
+            (() => {
+              const numFmt = new Intl.NumberFormat(dayLocale);
+              return (
+                <p
+                  className="text-muted-foreground border-border/60 bg-muted/40 flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs"
+                  data-testid="copilot-regen-meter"
+                >
+                  <Gauge className="size-3.5 shrink-0" aria-hidden="true" />
+                  <span className="tabular-nums">
+                    {t("regenerateMeter", {
+                      used: numFmt.format(regenMeter.used),
+                      limit: numFmt.format(regenMeter.limit),
+                    })}
+                  </span>
+                </p>
+              );
+            })()
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmRegenerate}
+              className="focus-visible:ring-emerald-500/40 bg-emerald-600 text-white hover:bg-emerald-600/90"
+            >
+              <RefreshCcw className="size-4" aria-hidden="true" />
+              {t("regenerateConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
