@@ -4652,6 +4652,10 @@ const en = {
     filters: "Filter by type",
     allResults: "All",
     viewAll: "View all search results",
+    // R150 — the zero-results ask handoff: the honest frame (nothing
+    // matched — ask INSTEAD) above the pill that carries the user's OWN
+    // query as the editable draft. Never a promised answer.
+    askCopilotEmpty: "No records match — ask the Copilot instead:",
     groups: {
       CUSTOMER: "Customers",
       SUPPLIER: "Suppliers",

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { signOutWithRevoke } from "@/lib/sign-out-with-revoke";
 import { useTheme } from "next-themes";
+// R150 — the ask-seed cap law (the composer's 500 is the authority).
+import { askSeedFromFreeText } from "@/lib/ask-seed";
 import {
   Bell,
   ClipboardList,
@@ -180,6 +182,9 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
   const tNav = useTranslations("nav");
   const tCommon = useTranslations("common");
   const tSearch = useTranslations("search");
+  // R150 — the ask door's tooltip rides the ONE generic seed-not-send hint
+  // (the reports namespace — the same source every producer cites).
+  const tAsk = useTranslations("reports");
   const open = useAppStore((s) => s.commandOpen);
   const setOpen = useAppStore((s) => s.setCommandOpen);
   const navigate = useAppStore((s) => s.navigate);
@@ -342,13 +347,35 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
               );
             })}
 
-            {/* No-results state (only when settled and empty). */}
+            {/* No-results state (only when settled and empty). R150 — the
+                dead end grows a SELECTABLE door: the user's OWN query seeds
+                the copilot composer (seed-not-send — askSeedFromFreeText is
+                the composer's 500 cap authority; the door CLOSES the palette
+                and navigates, exactly like every other go() here). The item
+                is keyboard-reachable like every cmdk row — the palette is a
+                keyboard surface, the door cannot be pointer-only. */}
             {!search.isFetching && !search.isError && !hasResults ? (
               <CommandGroup heading={tSearch("title")}>
                 <CommandItem disabled value={q}>
                   <Search className="text-muted-foreground" aria-hidden="true" />
                   <span>{tSearch("empty")}</span>
                 </CommandItem>
+                {askSeedFromFreeText(q) ? (
+                  <CommandItem
+                    value={`ask-copilot ${q}`}
+                    onSelect={() =>
+                      go({ kind: "module", module: "copilot", ask: askSeedFromFreeText(q) })
+                    }
+                    title={tAsk("askCopilotHint")}
+                    aria-label={tAsk("askCopilotHint")}
+                    data-testid="palette-ask-copilot"
+                  >
+                    <Bot className="text-primary" aria-hidden="true" />
+                    <span className="min-w-0 truncate" dir="auto">
+                      {tSearch("askCopilotEmpty")} «{askSeedFromFreeText(q)}»
+                    </span>
+                  </CommandItem>
+                ) : null}
               </CommandGroup>
             ) : null}
 

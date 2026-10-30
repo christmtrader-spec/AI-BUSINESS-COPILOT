@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
-import { AlertTriangle, Loader2, Search, X } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
+import { AlertTriangle, Bot, Loader2, Search, X } from "lucide-react";
 import { useAppStore } from "@/store/app-store";
 import { ApiClientError } from "@/lib/api-client";
+// R150 — the ask-seed cap law (the composer's 500 is the authority).
+import { askSeedFromFreeText } from "@/lib/ask-seed";
 import {
   SEARCH_DEBOUNCE_MS,
   SEARCH_Q_MIN,
@@ -179,7 +181,7 @@ export function SearchCenterView() {
               onClick={() => setFilter(value)}
               aria-pressed={active}
               className={cn(
-                "ring-border focus-visible:ring-ring min-h-11 shrink-0 cursor-pointer rounded-full border px-4 text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2",
+                "ring-border focus-visible:ring-ring min-h-11 shrink-0 cursor-pointer rounded-full border px-4 text-sm font-medium whitespace-nowrap transition-colors motion-reduce:transition-none outline-none focus-visible:ring-2",
                 active
                   ? "bg-primary text-primary-foreground border-transparent"
                   : "bg-background text-foreground hover:bg-accent",
@@ -228,10 +230,19 @@ export function SearchCenterView() {
           }
         />
       ) : groups.length === 0 ? (
-        <EmptyState
-          icon={<Search className="size-5" aria-hidden="true" />}
-          text={tSearch("empty")}
-        />
+        <>
+          <EmptyState
+            icon={<Search className="size-5" aria-hidden="true" />}
+            text={tSearch("empty")}
+          />
+          {/* R150 — the SIXTH ?ask= producer: a zero-results search is a
+              dead end; the copilot is the app's fallback answer engine and
+              the user's OWN words become the editable draft (seed-not-send
+              — the generic hint is the ONE tooltip; nothing is ever sent
+              from navigation). The seed rides askSeedFromFreeText (the
+              composer's 500 cap authority) and BLANK never renders. */}
+          <SearchAskCopilot q={q} />
+        </>
       ) : (
         <>
           <p aria-live="polite" className="text-muted-foreground text-sm">
@@ -261,7 +272,7 @@ export function SearchCenterView() {
                         <button
                           type="button"
                           onClick={() => openResult(item)}
-                          className="hover:bg-accent focus-visible:bg-accent flex min-h-11 w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-start outline-none"
+                          className="hover:bg-accent focus-visible:bg-accent flex min-h-11 w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-start outline-none transition-colors motion-reduce:transition-none"
                         >
                           <Icon
                             className="text-muted-foreground size-4 shrink-0"
@@ -313,6 +324,43 @@ export function SearchCenterView() {
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * R150 — the zero-results ask handoff (the Search Center's door out of the
+ * dead end). The pill shows the user's OWN query (truncated, dir=auto) so
+ * they see EXACTLY what will be seeded; the tooltip = aria-label = the ONE
+ * generic seed-not-send askCopilotHint; the visible caption names the
+ * honest frame (nothing matched — ask INSTEAD, never a promised answer).
+ * Geometry: the ONE ask-pill family (R144→R149) — rounded-full outline,
+ * primary edge, motion-reduce escapes the transition.
+ */
+function SearchAskCopilot({ q }: { q: string }) {
+  const tSearch = useTranslations("search");
+  const tAsk = useTranslations("reports");
+  const navigate = useAppStore((s) => s.navigate);
+  const seed = askSeedFromFreeText(q);
+  if (!seed) return null; // a blank seed drops WHOLESALE (never navigates)
+  return (
+    <div className="flex flex-col items-center gap-2" data-testid="search-ask-block">
+      <p className="text-muted-foreground text-sm">{tSearch("askCopilotEmpty")}</p>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="text-primary hover:bg-primary/5 border-primary/30 hover:border-primary/50 h-7 min-w-0 max-w-full gap-1.5 rounded-full px-2.5 text-[11px] font-medium"
+        onClick={() => navigate({ kind: "module", module: "copilot", ask: seed })}
+        title={tAsk("askCopilotHint")}
+        aria-label={tAsk("askCopilotHint")}
+        data-testid="search-ask-copilot"
+      >
+        <Bot className="size-3 shrink-0" aria-hidden="true" />
+        <span className="min-w-0 truncate" dir="auto">
+          «{seed}»
+        </span>
+      </Button>
+    </div>
   );
 }
 
