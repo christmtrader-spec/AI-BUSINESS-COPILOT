@@ -96,7 +96,55 @@ type ReportsSummary = {
     expensesCountPrev: number;
     previousRange: { from: string; to: string };
   };
+  // R149 — the ADDITIVE field the ask pill's debtor gate reads (the SAME
+  // summary response the copilot's SummaryLite reads). Older cached
+  // responses honestly omit it — the gate falls through, never fabricates.
+  outstanding?: { receivableCount?: number };
 };
+
+/**
+ * R149 — the FIFTH ?ask= producer: the dashboard copilot teaser grows ONE
+ * context-aware, data-gated question picked from the dashboard's OWN live
+ * summary (the SAME ["reports","summary","30"] response the copilot's
+ * suggestion ranking reads — never a second fetch). LAWS (battery-pinned in
+ * scripts/r149-dashboard-ask-check.ts):
+ * - DETERMINISTIC priority, each gate on ITS OWN proof:
+ *     1. restock  — inventory.lowStockCount > 0 (the operational urgency);
+ *     2. debtor   — outstanding.receivableCount > 0 (money on the table;
+ *       the receivables producer's proven answer domain);
+ *     3. stock    — topValueProducts[0] with estimatedValueMinor > 0
+ *       (the valuation producer's live-verified domain);
+ *     4. sales    — kpis.salesCount > 0 (the perf producer's domain);
+ *     5. an EMPTY book (or a summary still absent) → null — NO pill, the
+ *       honest silence the whole chip/ask family renders by law;
+ * - every question names ONLY what the copilot's own grounded tools can
+ *   answer (the R144 question-composition law); the hint stays the ONE
+ *   generic seed-not-send askCopilotHint;
+ * - the pick is a PURE function of the summary — no timestamps, no
+ *   randomness, no conversation state (the deterministic-suggestion law).
+ */
+export type DashboardAskKey =
+  | "dashAskRestock"
+  | "dashAskDebtor"
+  | "dashAskStock"
+  | "dashAskSales";
+
+export function pickDashboardAsk(
+  summary:
+    | Pick<ReportsSummary, "kpis" | "inventory" | "outstanding">
+    | null
+    | undefined,
+): DashboardAskKey | null {
+  if (!summary || typeof summary !== "object") return null;
+  if ((summary.inventory?.lowStockCount ?? 0) > 0) return "dashAskRestock";
+  if ((summary.outstanding?.receivableCount ?? 0) > 0) return "dashAskDebtor";
+  const head = summary.inventory?.topValueProducts?.[0];
+  if (head && typeof head.estimatedValueMinor === "number" && head.estimatedValueMinor > 0) {
+    return "dashAskStock";
+  }
+  if ((summary.kpis?.salesCount ?? 0) > 0) return "dashAskSales";
+  return null;
+}
 
 /**
  * R103 — the At-a-glance quad's throne citation: the CURRENT stock-value
@@ -137,8 +185,19 @@ function InventoryLeaderCitation({
       data-testid="leader-inventory"
       title={tooltip}
       aria-label={tooltip}
-      onClick={() => navigate({ kind: "module", module: "reports", param: "inventory" })}
-      className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 mt-1 flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-start text-[11px] text-sky-700 transition-colors hover:bg-sky-600/10 dark:text-sky-400"
+      onClick={() =>
+        navigate({
+          kind: "module",
+          module: "reports",
+          param: "inventory",
+          // R149 — the leader tile JOINS the R148 row-level drill: the
+          // citation seeds the valuation search with the leader's OWN name
+          // (the SAME name-seed grammar the copilot chips ride — the search
+          // box VISIBLY shows what was searched, the tooltip says SEARCH).
+          invQuery: head.name,
+        })
+      }
+      className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 mt-1 flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-start text-[11px] text-sky-700 transition-colors motion-reduce:transition-none hover:bg-sky-600/10 dark:text-sky-400"
     >
       <Trophy className="size-3 shrink-0" aria-hidden="true" />
       <span className="min-w-0 truncate" dir="auto">
@@ -195,6 +254,10 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
   const t = useTranslations("dashboard");
   const tSettings = useTranslations("settings");
   const tCommon = useTranslations("common");
+  // R149 — the ask pill's tooltip rides the ONE generic seed-not-send hint
+  // (the reports namespace's askCopilotHint — the same source every
+  // producer in the family cites; never a second hint wording).
+  const tAsk = useTranslations("reports");
   const uiLocale = useLocale();
   const navigate = useAppStore((s) => s.navigate);
   const fireQuickIntent = useAppStore((s) => s.fireQuickIntent);
@@ -422,6 +485,37 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
               <Sparkles className="size-4" aria-hidden="true" />
               {can(role, "copilot:use") ? t("copilotTeaserAction") : tCommon("comingSoon")}
             </Button>
+            {/* R149 — the FIFTH ?ask= producer: ONE data-gated question under
+                the primary CTA, picked from this dashboard's OWN summary by
+                pickDashboardAsk (restock → debtor → stock value → sales; an
+                empty book or a summary still loading renders NOTHING). The
+                pill is gated on copilot:use like the CTA above — a seeded
+                ask for a user who cannot open the copilot would be a lying
+                affordance. The button text IS the composed question (the
+                user sees exactly what will be seeded) truncated to one
+                line; the tooltip is the ONE generic seed-not-send hint;
+                the navigation rides the R144 grammar verbatim. */}
+            {(() => {
+              const askKey = pickDashboardAsk(summary);
+              if (!askKey || !can(role, "copilot:use")) return null;
+              const question = t(askKey);
+              return (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-primary hover:bg-primary/5 border-primary/30 hover:border-primary/50 mt-2 h-7 min-w-0 max-w-full gap-1.5 rounded-full px-2.5 text-[11px] font-medium"
+                  onClick={() => navigate({ kind: "module", module: "copilot", ask: question })}
+                  title={tAsk("askCopilotHint")}
+                  aria-label={tAsk("askCopilotHint")}
+                  data-testid="dash-ask-copilot"
+                >
+                  <Bot className="size-3 shrink-0" aria-hidden="true" />
+                  <span className="min-w-0 truncate" dir="auto">
+                    {question}
+                  </span>
+                </Button>
+              );
+            })()}
           </CardContent>
         </Card>
       </div>

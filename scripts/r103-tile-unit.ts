@@ -115,7 +115,15 @@ console.log("\n[3] the dashboard inventory tile wiring");
   ok("D3 the tile renders the HONEST ZERO (no >0 gate on the money — zero stock is a real fact)", /statInventory\"\)\}\s*<\/p>\s*\{summary === undefined \|\| summary\.inventory\.valueMinor === undefined \?/.test(dashboardSrc.replace(/\n\s+/g, "")));
   ok("D4 the skeleton gates on the ADDITIVE field (older cached responses stay honest)", /summary\.inventory\.valueMinor === undefined \?/.test(dashboardSrc));
   ok("D5 the share rides the ONE helper (stockSharePercent import + call)", /import \{ stockSharePercent \} from "@\/lib\/stock-facts";/.test(dashboardSrc) && /stockSharePercent\(\s*head\.estimatedValueMinor,\s*summary\.inventory\.valueMinor!,/.test(dashboardSrc));
-  ok("D6 the citation drill lands the SAME closed token", /navigate\(\{ kind: "module", module: "reports", param: "inventory" \}\)/.test(dashboardSrc));
+  // R149 — the citation JOINED the R148 row-level drill: the navigation
+  // carries the leader's OWN name as the valuation search seed (invQuery),
+  // riding the R148 grammar verbatim. (The three markers must live inside
+  // the citation's own navigate call — sliced to the component block.)
+  ok("D6 the citation drill lands the SAME closed token, SEEDED with the leader name (R149)", (() => {
+    const at = dashboardSrc.indexOf("function InventoryLeaderCitation");
+    const block = at >= 0 ? dashboardSrc.slice(at, at + 3500) : "";
+    return block.includes('module: "reports"') && block.includes('param: "inventory"') && block.includes("invQuery: head.name,");
+  })());
   ok("D7 the citation is a real control (title + aria-label + testid)", /data-testid="leader-inventory"/.test(dashboardSrc) && /title=\{tooltip\}\s*aria-label=\{tooltip\}/.test(dashboardSrc.replace(/\n\s+/g, " ")));
   ok("D8 the tooltip is formatted INSIDE the component (the R99 law) with the business money", /statInventoryLeaderTooltip",\s*\{\s*name: head\.name,\s*money: fmtMoney\(membership\.business, head\.estimatedValueMinor\),\s*\}/.test(dashboardSrc.replace(/\n\s+/g, "")));
   ok("D9 the compact % reuses the tile law key in UI-locale digits (the R94 law)", /statLeaderShareShort", \{ percent: fmtCount\(uiLocale, share\) \}/.test(dashboardSrc));

@@ -430,6 +430,16 @@ const en = {
     copilotTeaser: "AI Copilot — live",
     copilotTeaserDesc: "Ask “Who owes me money?” or “How did sales do?” — every answer is computed from your recorded business data.",
     copilotTeaserAction: "Ask the copilot",
+    // R149 — the FIFTH ?ask= producer: the dashboard teaser grows ONE
+    // context-aware, data-gated question picked from the dashboard's OWN
+    // live summary (pickDashboardAsk priority: restock → debtor → stock
+    // value → sales; an empty book renders NO pill — honest silence).
+    // Each question names ONLY a fact the copilot's own grounded tools can
+    // answer; the seed-not-send hint stays the ONE generic askCopilotHint.
+    dashAskRestock: "Which products need restocking?",
+    dashAskDebtor: "Which customer owes me the most right now?",
+    dashAskStock: "What is my most valuable stock?",
+    dashAskSales: "How did my sales do recently?",
     roadmap: "What's inside",
     roadmapItems: {
       p1: "Core foundation — accounts, tenancy, business settings",
@@ -452,7 +462,10 @@ const en = {
     // to the reorder suggestions). ICU plurals; the count is server truth.
     statInventoryLowLine: "{count, plural, =1 {1 product runs low} other {# products run low}}",
     statInventoryLowTooltip: "{count, plural, =1 {1 product is at or below its low-stock threshold. One click opens the reorder suggestions.} other {# products are at or below their low-stock threshold. One click opens the reorder suggestions.}}",
-    statInventoryLeaderTooltip: "Largest stock value: «{name}» at {money} — share of total inventory value. Open the detailed valuation.",
+    // R149 — the tail is SEARCH semantics (the R148 drill law): the leader
+    // tile seeds the valuation search box — a search affordance, never a
+    // fake jump-to-row.
+    statInventoryLeaderTooltip: "Largest stock value: «{name}» at {money} — share of total inventory value. Search the detailed valuation for this product.",
     statLeaderShareShort: "{percent}% of stock",
     perfTitle: "Performance — last 30 days",
     perfSubtitle: "Invoices issued vs expenses recorded, day by day.",
