@@ -294,14 +294,29 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
     queryFn: () => api<{ total: number }>("/api/v1/sales?page=1&pageSize=1"),
     staleTime: 30_000,
   });
+  // R154 — the INVITE step earns its checkmark: the business's OWN member
+  // count (the ONE ["members", activeId] query — the same cache entry
+  // Settings → Members and the welcome card's invite tile read; members:read
+  // rides every role, so the probe is unconditional). members.length > 1 =
+  // the invites happened — a step that never checked off was a lie of
+  // inertia, and the family law says each step rides its OWN proof (the
+  // first-sale step has ridden the sales probe since Phase 04).
+  const activeId = useAppStore((s) => s.activeBusinessId);
+  const { data: membersProbe } = useQuery<{ id: string }[]>({
+    queryKey: ["members", activeId],
+    queryFn: () => api(`/api/v1/businesses/${activeId}/members`),
+    enabled: !!activeId,
+    staleTime: 30_000,
+  });
 
   const role: Role = asRole(membership.role);
   const firstSaleDone = (salesProbe?.total ?? 0) > 0;
+  const inviteDone = (membersProbe?.length ?? 0) > 1;
 
   const steps = [
     { done: true, icon: CheckCircle2, label: t("stepBusinessDone"), action: null as null | { label: string; view: Parameters<typeof navigate>[0] } },
     { done: false, icon: Settings2, label: t("stepSettings"), action: { label: t("openSettings"), view: { kind: "settings:business" } as const } },
-    { done: false, icon: Users, label: t("stepInvite"), action: can(role, "members:manage") ? { label: t("openMembers"), view: { kind: "settings:members" } as const } : null },
+    { done: inviteDone, icon: Users, label: t("stepInvite"), action: can(role, "members:manage") ? { label: t("openMembers"), view: { kind: "settings:members" } as const } : null },
     { done: firstSaleDone, icon: ClipboardList, label: t("stepSales"), action: { label: t("openSales"), view: { kind: "module", module: "sales" } as const } },
   ];
 
@@ -333,7 +348,7 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
       {/* R140 — the user-level welcome card: renders until the account
           dismisses it (server-persisted checklistDismissedAt — the R108
           contract); veterans whose card is dismissed never see a gap. */}
-      <WelcomeCard />
+      <WelcomeCard role={role} />
 
       {/* Low-stock alert (only when it exists — no fake urgency) */}
       {lowStock.length > 0 ? (

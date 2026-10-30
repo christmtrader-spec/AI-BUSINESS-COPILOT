@@ -98,7 +98,7 @@ ok(
 const card = read("../src/modules/dashboard/welcome-card.tsx");
 const dash = read("../src/modules/dashboard/dashboard-view.tsx");
 
-ok("[2] shared ONE account query — the SAME [\"me\"] key the profile reads", card.includes('queryKey: ["me"],') && count(card, "useQuery<") === 1);
+ok("[2] shared ONE account query — the SAME [\"me\"] key the profile reads (R154 re-pin: the card grew the shared [\"members\", activeId] probe — two useQuery calls, BOTH shared-cache)", card.includes('queryKey: ["me"],') && count(card, "useQuery<") === 2 && card.includes('queryKey: ["members", activeId]'));
 ok("[2] gate law: loading → silence, dismissed → gone (one combined gate)", /if \(!me \|\| me\.checklistDismissedAt\) return null;/.test(card));
 ok("[2] dismiss PATCHes the R108 boolean law", card.includes('body: JSON.stringify({ checklistDismissed: true })') && card.includes('method: "PATCH"'));
 ok("[2] dismissal invalidates the shared cache", /onSuccess: \(\) => void queryClient\.invalidateQueries\(\{ queryKey: \["me"\] \}\)/.test(card));
@@ -110,23 +110,24 @@ ok(
     card.includes("motion-reduce:animate-none"),
 );
 ok(
-  "[2] the three actions ride testids + icon chips + focus rings",
+  "[2] the actions ride testids + icon chips + focus rings (R154 re-pin: the conditional invite tile joins — 4 when it renders, 3 tiles' pins grow to 4)",
   card.includes('data-testid="welcome-action-copilot"') &&
     card.includes('data-testid="welcome-action-reports"') &&
     card.includes('data-testid="welcome-action-tour"') &&
-    count(card, "focus-visible:outline-none focus-visible:ring-2") === 3,
+    card.includes('data-testid="welcome-action-invite"') &&
+    count(card, "focus-visible:outline-none focus-visible:ring-2") === 4,
 );
 ok(
   "[2] replay affordance honesty: hidden where the tour cannot run (no lg → display:none, out of the a11y tree)",
   card.includes("hidden w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-start text-sm transition-all focus-visible:outline-none focus-visible:ring-2 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0 motion-reduce:transition-none lg:flex"),
 );
 ok(
-  "[2] R144 styling detail: all three tiles carry the motion-safe lift + group icon chip (count pins)",
-  count(card, "motion-safe:hover:-translate-y-px") === 3 &&
-    count(card, "group-hover:bg-primary/15") === 3 &&
-    count(card, "transition-colors group-hover:bg-primary/15") === 3,
+  "[2] R154 re-pin: all FOUR tiles carry the motion-safe lift + group icon chip (count pins)",
+  count(card, "motion-safe:hover:-translate-y-px") === 4 &&
+    count(card, "group-hover:bg-primary/15") === 4 &&
+    count(card, "transition-colors group-hover:bg-primary/15") === 4,
 );
-ok("[2] the card mounts on the dashboard right after the PageHeader", dash.includes("import { WelcomeCard } from \"@/modules/dashboard/welcome-card\";") && count(dash, "<WelcomeCard />") === 1);
+ok("[2] the card mounts on the dashboard right after the PageHeader (R154 re-pin: the role prop feeds the invite tile's gate)", dash.includes("import { WelcomeCard } from \"@/modules/dashboard/welcome-card\";") && count(dash, "<WelcomeCard role={role} />") === 1);
 ok("[2] the card is testid-findable", card.includes('data-testid="welcome-card"'));
 
 // ---- [3] tour replay laws ----------------------------------------------------------

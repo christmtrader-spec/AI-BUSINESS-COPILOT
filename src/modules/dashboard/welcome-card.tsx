@@ -23,8 +23,10 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { Bot, BarChart3, Loader2, PlayCircle, Sparkles, X } from "lucide-react";
+import { Bot, BarChart3, Loader2, PlayCircle, Sparkles, Users, X } from "lucide-react";
 import { api } from "@/lib/api-client";
+import { can, type Role } from "@/lib/rbac";
+import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 import { replayProductTour } from "@/modules/shell/onboarding-tour";
 import { Button } from "@/components/ui/button";
@@ -38,9 +40,10 @@ type MeWelcome = {
   checklistDismissedAt?: string | null;
 };
 
-export function WelcomeCard() {
+export function WelcomeCard({ role }: { role: Role }) {
   const t = useTranslations("dashboard");
   const navigate = useAppStore((s) => s.navigate);
+  const activeId = useAppStore((s) => s.activeBusinessId);
   const queryClient = useQueryClient();
 
   // The ONE account query — shared cache with Settings → Profile.
@@ -49,6 +52,26 @@ export function WelcomeCard() {
     queryFn: () => api("/api/v1/me", { businessId: null }),
     staleTime: 30_000,
   });
+
+  // R154 — the conditional FOURTH tile (the standing conditional's twelfth
+  // round, finally earned by onboarding data): a SOLO shop (the members
+  // probe — the ONE ["members", activeId] query shared with Settings →
+  // Members and the getting-started checklist) that the user can actually
+  // manage (members:manage — OWNER/ADMIN) gets the invite tile. Laws:
+  //  - the gate rides the business's OWN data, never a guess — while the
+  //    probe is loading the tile is ABSENT (unknown → honest silence, no
+  //    pop-in for a team that already exists);
+  //  - a member-ful business never sees it (the need is gone);
+  //  - the probe is the SAME cache entry the checklist reads — one fetch,
+  //    two surfaces, no drift.
+  const manage = can(role, "members:manage");
+  const { data: members } = useQuery<{ id: string }[]>({
+    queryKey: ["members", activeId],
+    queryFn: () => api(`/api/v1/businesses/${activeId}/members`),
+    enabled: !!activeId && manage,
+    staleTime: 30_000,
+  });
+  const inviteTile = manage && members !== undefined && members.length <= 1;
 
   const dismiss = useMutation({
     mutationFn: async () =>
@@ -95,7 +118,10 @@ export function WelcomeCard() {
         </Button>
       </CardHeader>
       <CardContent>
-        <ul className="grid gap-2 sm:grid-cols-3" data-testid="welcome-card-actions">
+        <ul
+          className={cn("grid gap-2", inviteTile ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-3")}
+          data-testid="welcome-card-actions"
+        >
           <li>
             <button
               type="button"
@@ -125,6 +151,26 @@ export function WelcomeCard() {
                 {t("welcomeActionReports")}
               </span>
             </button>
+          </li>
+          <li>
+            {/* R154 — the conditional invite tile: a solo shop with the
+                manage right gets the team handoff (the family byte-pattern,
+                the Users icon = the checklist's own invite iconography). */}
+            {inviteTile ? (
+              <button
+                type="button"
+                data-testid="welcome-action-invite"
+                className="group hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-ring/40 flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-start text-sm transition-all focus-visible:outline-none focus-visible:ring-2 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0 motion-reduce:transition-none"
+                onClick={() => navigate({ kind: "settings:members" })}
+              >
+                <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md transition-colors group-hover:bg-primary/15">
+                  <Users className="size-4" aria-hidden="true" />
+                </span>
+                <span className="min-w-0 truncate" dir="auto">
+                  {t("welcomeActionInvite")}
+                </span>
+              </button>
+            ) : null}
           </li>
           <li>
             {/* The tour honestly needs the desktop sidebar anchors — the

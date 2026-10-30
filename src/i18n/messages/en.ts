@@ -409,9 +409,10 @@ const en = {
     // consumer). Dismissal is a server fact on the account; restore lives
     // in Settings → Profile.
     welcomeCardTitle: "Welcome to AI Business Copilot",
-    welcomeCardDesc: "Your workspace is ready — three good first stops, and the copilot is always one question away.",
+    welcomeCardDesc: "Your workspace is ready — a few good first stops, and the copilot is always one question away.",
     welcomeActionCopilot: "Ask the copilot",
     welcomeActionReports: "Open your reports",
+    welcomeActionInvite: "Invite your team",
     welcomeReplayTour: "Replay the product tour",
     welcomeDismiss: "Dismiss this welcome card",
     welcome: "Welcome",
