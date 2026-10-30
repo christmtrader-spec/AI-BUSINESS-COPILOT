@@ -308,7 +308,27 @@ export function ReorderSuggestionsPanel({ business }: { business: BusinessSummar
               getRowId={(r: ReorderRow) => r.id}
               empty={null}
               ariaLabel={t("reorderTitle")}
+              /* R152 — the THIRD LEVEL of the low-stock journey: the
+                 dashboard alert lands THIS panel (R151), and each row now
+                 opens the product's OWN surface — the entity detail where
+                 stock is adjusted (the StockDialog) and the threshold is
+                 edited. The gate rides the row's own proof (the server-sent
+                 id — the perf-panel gate grammar); the hash is built by the
+                 store's entityToHash authority (never a hand-built
+                 #/products/…). Navigation is not mutation: the report still
+                 never places an order nor changes stock (the R145 promise).
+                 The hover tint is HONEST — the row really navigates — and
+                 joins the motion-safety unification family. */
+              onRowClick={(r) =>
+                r.id ? navigate({ kind: "entity", entity: "product", id: r.id }) : undefined
+              }
+              rowClassName={() => "transition-colors hover:bg-muted/40 motion-reduce:transition-none"}
             />
+            {/* R152 — the affordance's ONE discovery hint: names what a row
+                opens, never what the report does (no mutation wording). */}
+            <p className="text-muted-foreground text-xs" data-testid="reorder-drill-hint">
+              {t("reorderDrillHint")}
+            </p>
           </>
         )}
       </CardContent>
