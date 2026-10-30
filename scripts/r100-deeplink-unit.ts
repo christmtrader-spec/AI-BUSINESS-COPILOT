@@ -217,7 +217,7 @@ const BASE_COUNTS = {
 };
 
 const chipsFull = pickPerfActionChips(
-  meta({ topProduct: { name: "Akar Widget", qty: 3, revenueMinor: 1000000 }, topExpenseCategory: { category: "Rent", totalMinor: 400000 } }),
+  meta({ topProduct: { name: "Akar Widget", unitsSold: 3, revenueMinor: 1000000 }, topExpenseCategory: { category: "Rent", totalMinor: 400000 } }),
 );
 eq(
   chipsFull.map((c) => c.key),
@@ -234,7 +234,7 @@ ok(
 );
 
 const chipsMerchOnly = pickPerfActionChips(
-  meta({ topProduct: { name: "Akar Widget", qty: 3, revenueMinor: 1000000 }, topExpenseCategory: null, counts: undefined }),
+  meta({ topProduct: { name: "Akar Widget", unitsSold: 3, revenueMinor: 1000000 }, topExpenseCategory: null, counts: undefined }),
 );
 eq(
   chipsMerchOnly.map((c) => c.key),
@@ -251,7 +251,7 @@ eq(pickPerfActionChips(null), [], "[3f] null meta → []");
 eq(pickPerfActionChips(undefined), [], "[3g] undefined meta → []");
 
 const chipsBadRange = pickPerfActionChips(
-  meta({ rangeFrom: "not-a-date", rangeTo: "2026-10-24", topProduct: { name: "X", qty: 1, revenueMinor: 1 }, counts: { ...BASE_COUNTS, recentPayments: 0 } }),
+  meta({ rangeFrom: "not-a-date", rangeTo: "2026-10-24", topProduct: { name: "X", unitsSold: 1, revenueMinor: 1 }, counts: { ...BASE_COUNTS, recentPayments: 0 } }),
 );
 ok(
   "[3h] a malformed persisted range drops the WINDOW but never the chip",

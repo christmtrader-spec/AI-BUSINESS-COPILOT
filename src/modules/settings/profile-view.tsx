@@ -149,7 +149,16 @@ export function ProfileView() {
       }
       void queryClient.invalidateQueries({ queryKey: ["me"] });
       void queryClient.invalidateQueries({ queryKey: ["businesses"] });
-      if (data.locale && data.locale !== locale) setLocale(data.locale === "fa" ? "fa" : "en");
+      // R143 — the locale CONFIRMATION law (closes the R141 observed flip):
+      // the response's /me.locale may only drive the UI when THIS mutation
+      // explicitly asked for a language change. A name save or the
+      // welcome-card restore PATCH carries the full /me body back — applying
+      // its persisted locale used to flip the active UI language mid-action
+      // (e.g. FA → EN on restore). The language Select below is the ONLY
+      // producer of payload.locale.
+      if (payload.locale !== undefined && data.locale && data.locale !== locale) {
+        setLocale(data.locale === "fa" ? "fa" : "en");
+      }
     },
     onError: (err) => {
       toast({

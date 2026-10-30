@@ -32,6 +32,7 @@ import {
   MessageSquareText,
   Package,
   Pencil,
+  PieChart,
   Pin,
   PinOff,
   ReceiptText,
@@ -43,9 +44,11 @@ import {
   Sparkles,
   Square,
   Trash2,
+  TrendingUp,
   TriangleAlert,
   UserRound,
   Wallet,
+  Waves,
   X,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -117,7 +120,9 @@ import type { BusinessSummary } from "../shell/types";
 import { useAppStore } from "@/store/app-store";
 // R102/R103 — the chip tooltips carry the EXACT business money (the
 // R99 FORMATTING law: formatted INSIDE the component, never a raw template).
-import { fmtMoney } from "../finance-shared/finance-kit";
+// R143 — the perf chips' cashflow tooltip joins with fmtCount (same law:
+// the R140 ONE-locale formatter, never a raw ICU {count}).
+import { fmtCount, fmtMoney } from "../finance-shared/finance-kit";
 
 /**
  * AI Copilot — Phase 05/06. Read-only Q&A over deterministic, server-computed
@@ -190,7 +195,11 @@ type CopilotMeta = {
   // R98+ — PROVEN answer facts (server-computed, never model-invented).
   // Optional + tolerant: old persisted metas simply lack them (the pickers
   // must stay honest about that — additive law).
-  topProduct?: { name: string; qty: number; revenueMinor: number } | null;
+  // R143 DRIFT FIX — the server's TopProductView (src/lib/merch-facts.ts)
+  // normalizes its report row to `unitsSold`; the client type used to say
+  // `qty` (the raw report field). Same value, honest name — the type now
+  // matches the wire contract byte-for-byte.
+  topProduct?: { name: string; unitsSold: number; revenueMinor: number } | null;
   topExpenseCategory?: { category: string; totalMinor: number } | null;
   topStockProduct?: { id: string; name: string; valueMinor: number } | null;
   // R103 — the podium's rank 2 (additive optional — old persisted metas
@@ -444,6 +453,101 @@ function StockActionChips({
             ) : (
               <Medal className="size-3 shrink-0" aria-hidden="true" />
             )}
+            {t(chip.key)}
+            <ChevronDown
+              className="size-3 shrink-0 opacity-60 rtl:-scale-x-100"
+              aria-hidden="true"
+            />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---- Perf action chips (R143 — the R142 priority (1): the FIRST external
+//      producers of the perf deep-link grammar) ------------------------------
+
+/**
+ * R143 — the performance action chips under a grounded answer: one chip per
+ * PROVEN fact (pickPerfActionChips — r100's deterministic order products →
+ * expenses → cashflow), each a REAL control into the R100/R136 perf sub-view
+ * landing (#/reports?perf=<token>[&from&to]). Laws:
+ * - the chip's window is the meta's OWN range keys — carried ONLY when BOTH
+ *   boundaries survived metaWindowOrNull (the parser drops orphan window
+ *   fields wholesale, so the navigation must never serialize one);
+ * - a dropped window NEVER kills the chip — the panel honestly falls back to
+ *   its own last-30-days default (never a fabricated window);
+ * - the cashflow chip carries NO direction (no meta fact names IN/OUT — the
+ *   panel's honest "all directions" default wins);
+ * - tooltips carry the EXACT proven figure (fmtMoney / fmtCount INSIDE the
+ *   component — never a raw ICU template; the R99/R140 formatting laws);
+ * - absent facts → renders null (honest silence, the StockActionChips law).
+ */
+function PerfActionChips({
+  meta,
+  business,
+}: {
+  meta: CopilotMeta;
+  business: BusinessSummary;
+}) {
+  const t = useTranslations("copilot");
+  const uiLocale = useLocale();
+  const navigate = useAppStore((s) => s.navigate);
+  const chips = pickPerfActionChips(meta);
+  if (chips.length === 0) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5 ps-1" data-testid="copilot-perf-chips">
+      {chips.map((chip) => {
+        const productFact = chip.key === "actionPerfProducts" ? meta.topProduct : null;
+        const expenseFact = chip.key === "actionPerfExpenses" ? meta.topExpenseCategory : null;
+        const tooltip = productFact
+          ? t("actionPerfProductsTitle", {
+              name: productFact.name,
+              money: fmtMoney(business, productFact.revenueMinor),
+            })
+          : expenseFact
+            ? t("actionPerfExpensesTitle", {
+                category: expenseFact.category,
+                money: fmtMoney(business, expenseFact.totalMinor),
+              })
+            : t("actionPerfCashflowTitle", {
+                count: fmtCount(uiLocale, meta.counts?.recentPayments ?? 0),
+              });
+        const Icon =
+          chip.key === "actionPerfProducts"
+            ? TrendingUp
+            : chip.key === "actionPerfExpenses"
+              ? PieChart
+              : Waves;
+        return (
+          <button
+            key={chip.key}
+            type="button"
+            onClick={() =>
+              navigate({
+                kind: "module",
+                module: "reports",
+                param: chip.param,
+                ...(chip.from && chip.to ? { perfFrom: chip.from, perfTo: chip.to } : {}),
+              })
+            }
+            title={tooltip}
+            aria-label={tooltip}
+            data-testid={
+              chip.param === "perf-sales"
+                ? "copilot-action-perf-sales"
+                : chip.param === "perf-expenses"
+                  ? "copilot-action-perf-expenses"
+                  : "copilot-action-perf-cashflow"
+            }
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none transition-colors",
+              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600",
+              "border-violet-600/30 bg-violet-600/5 text-violet-800 dark:text-violet-300 hover:bg-violet-600/10",
+            )}
+          >
+            <Icon className="size-3 shrink-0" aria-hidden="true" />
             {t(chip.key)}
             <ChevronDown
               className="size-3 shrink-0 opacity-60 rtl:-scale-x-100"
@@ -2261,6 +2365,12 @@ export function CopilotView({
                       ) : null}
                       {!m.failed && m.meta ? (
                         <StockActionChips meta={m.meta} business={business} />
+                      ) : null}
+                      {/* R143 — the perf chips: the grounded answer's proven
+                          facts become REAL controls into the perf sub-view
+                          (the R100 grammar's first external producers). */}
+                      {!m.failed && m.meta ? (
+                        <PerfActionChips meta={m.meta} business={business} />
                       ) : null}
                       {resumingId === m.id ? (
                         <div
