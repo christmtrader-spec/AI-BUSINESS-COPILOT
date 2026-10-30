@@ -476,7 +476,7 @@ const en = {
     perfOpenReports: "Open reports",
     lowStockAlertTitle: "{count, plural, =0 {No products are running low} =1 {1 product is running low} other {# products are running low}}",
     lowStockAlertDesc: "{items} — at or below their low-stock threshold. Restock soon.",
-    lowStockAlertAction: "Review products",
+    lowStockAlertAction: "Open restock suggestions",
     // Prompt 52 §F2 — quick actions row
     quickActions: "Quick actions",
     quickNewInvoice: "New invoice",
@@ -5353,6 +5353,9 @@ const en = {
       dashboard: "Open dashboard",
       crmTasks: "Open CRM tasks",
       products: "Open Products",
+      // R151 — the low-stock alert's honest CTA (the reorder suggestions
+      // panel); "products" stays for legacy rows.
+      reorder: "Open restock suggestions",
       support: "Open Support Center",
     },
     emailFooter: "You are receiving this message because of activity on your account. Manage optional notifications in your settings.",

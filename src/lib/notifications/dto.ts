@@ -29,7 +29,14 @@ const actionRoutePathMap: Record<string, string> = {
   // workspace. This entry was MISSING from this map when Prompt 38 landed
   // (drift vs. the catalog's ACTION_ROUTES), which silently stripped the
   // low-stock notification's CTA in the center API — caught by the 38-F E2E.
+  // R151 — LEGACY: rows persisted before the reorder drill keep this key
+  // resolvable (never a dead CTA); new low-stock rows carry "reorder".
   products: "#/products",
+  // R151 — the low-stock alert's honest destination: the reorder
+  // suggestions panel. BOTH maps here and in types.ts must carry every
+  // allowlisted key (the 38-F drift law — one map alone is a silent CTA
+  // stripper).
+  reorder: "#/reports?reorder=1",
 };
 
 export type NotificationDTO = {

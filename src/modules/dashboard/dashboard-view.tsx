@@ -360,8 +360,14 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
           <Button
             size="sm"
             variant="outline"
-            className="shrink-0 border-amber-500/40 text-amber-800 hover:bg-amber-500/10 dark:text-amber-300"
-            onClick={() => navigate({ kind: "module", module: "products" })}
+            className="shrink-0 border-amber-500/40 text-amber-800 transition-colors motion-reduce:transition-none hover:bg-amber-500/10 dark:text-amber-300"
+            // R151 — the alert's own words are "Restock soon." — the honest
+            // destination is the REORDER SUGGESTIONS panel (the surface
+            // that EXISTS for restocking), not the generic products
+            // workspace. The store serializes this to #/reports?reorder=1
+            // (the Prompt 55 §X2 grammar — the SAME token the low-stock
+            // notification CTA now lands, one drill law).
+            onClick={() => navigate({ kind: "module", module: "reports", param: "reorder" })}
           >
             {t("lowStockAlertAction")}
           </Button>

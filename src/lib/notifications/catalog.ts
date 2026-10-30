@@ -648,7 +648,11 @@ export const NOTIFICATION_CATALOG: Record<NotificationType, NotificationCatalogE
       stockQty: z.number().int().min(0).max(1_000_000_000),
       lowStockAt: z.number().int().min(0).max(1_000_000_000),
     }),
-    actionRoute: "products",
+    // R151 — the honest destination: the REORDER SUGGESTIONS panel (the
+    // surface that exists for restocking — the alert's own words are
+    // "Restock soon."). Was "products" (the generic workspace) before the
+    // reorder drill; legacy rows keep the old key resolvable.
+    actionRoute: "reorder",
     expiresAfterDays: 30,
     emailDefaultEnabled: true,
     source:

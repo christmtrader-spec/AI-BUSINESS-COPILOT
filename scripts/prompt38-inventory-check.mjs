@@ -275,7 +275,8 @@ let apply1;
     include: { deliveries: true },
   });
   ok("A5 owner got both product alerts", ownerNotifs.length === LOW_PRODUCTS);
-  ok("A6 every notification carries the products CTA", ownerNotifs.every((n) => n.actionRoute === "products"));
+  // R151 — new rows carry the reorder drill (the honest restock surface).
+  ok("A6 every notification carries the reorder CTA (R151)", ownerNotifs.every((n) => n.actionRoute === "reorder"));
   ok("A7 dataJson holds qty + threshold, never price fields", ownerNotifs.every((n) => {
     const d = JSON.parse(n.dataJson);
     return "stockQty" in d && "lowStockAt" in d && !("costPriceMinor" in d) && !("salePriceMinor" in d) && !("businessId" in d) && !("userId" in d) && !("email" in d);
@@ -675,7 +676,7 @@ console.log("== F-CENTER NOTIFICATION CENTER + HEALTH (§110–§112) ==");
   const list = await f("/api/v1/me/notifications");
   const low = list.body?.data?.items?.filter((n) => n.type === "BUSINESS_INVENTORY_LOW_STOCK") ?? [];
   ok("N1 center lists the low-stock alerts", low.length >= 1);
-  ok("N2 CTA maps to the products workspace (#/products)", low.every((n) => n.action?.route === "#/products"));
+  ok("N2 CTA maps to the reorder panel (#/reports?reorder=1 — R151)", low.every((n) => n.action?.route === "#/reports?reorder=1"));
   ok("N3 severity WARNING surfaced", low.every((n) => n.severity === "WARNING"));
   ok("N4 business attribution present (summary name, DTO law)", low.every((n) => Boolean(n.businessName)));
   const health = await fetch(`${BASE}/api/health`);

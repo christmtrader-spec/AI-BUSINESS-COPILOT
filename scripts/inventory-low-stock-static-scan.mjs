@@ -199,7 +199,11 @@ check(
 
 /* ------------------------------- CTA + routes ----------------------------- */
 section0("routes");
-check("16 actionRoute is the closed catalog key", src.routes ?? "", 'case "products":', true);
+// R151 — the low-stock CTA drills to the reorder panel: the switch must
+// carry BOTH the legacy products case and the reorder case (the 38-F drift
+// law — both maps, never one).
+check("16 actionRoute is the closed catalog key (legacy products + R151 reorder)", src.routes ?? "", 'case "products":', true);
+check("16b the reorder case maps the drill (R151)", src.routes ?? "", 'case "reorder":', true);
 
 /* ------------------------------ CLI discipline ---------------------------- */
 section0("cli");

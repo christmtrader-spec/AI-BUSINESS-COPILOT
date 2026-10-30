@@ -165,7 +165,11 @@ console.log("[6 catalog entry]");
   ok("6g. EMAIL optional", entry.channels.EMAIL === "IF_ENABLED");
   ok("6h. mandatory (in-app cannot be disabled)", entry.mandatory === true);
   ok("6i. preference available for email", entry.preferenceAvailable === true);
-  ok("6j. actionRoute is the closed products key", entry.actionRoute === "products");
+  // R151 — the GROWN law: the low-stock alert drills to the reorder
+  // suggestions panel (the restock surface); "products" stays allowlisted
+  // for legacy rows (never a dead CTA).
+  ok("6j. actionRoute is the closed reorder key (R151 drill)", entry.actionRoute === "reorder");
+  ok("6j2. legacy products key stays allowlisted (backward compat)", (ACTION_ROUTES as readonly string[]).includes("products"));
   ok("6k. expires after 30 days", entry.expiresAfterDays === 30);
   ok("6l. email default enabled", entry.emailDefaultEnabled === true);
 
@@ -230,6 +234,10 @@ console.log("[7 action route]");
 ok("7a. products is an action route", isActionRoute("products"));
 ok("7b. maps to #/products", actionRoutePath("products") === "#/products");
 ok("7c. products in the closed ACTION_ROUTES list", (ACTION_ROUTES as readonly string[]).includes("products"));
+// R151 — the reorder drill joins the closed vocabulary (BOTH maps).
+ok("7d. reorder is an action route", isActionRoute("reorder"));
+ok("7e. maps to #/reports?reorder=1", actionRoutePath("reorder") === "#/reports?reorder=1");
+ok("7f. reorder in the closed ACTION_ROUTES list", (ACTION_ROUTES as readonly string[]).includes("reorder"));
 
 /* ------------------------------- 8. templates ------------------------------ */
 console.log("[8 template rendering]");
@@ -256,6 +264,10 @@ console.log("[9 i18n parity]");
   const enCta = (en as unknown as Record<string, { cta: Record<string, string> }>).notifications.cta.products;
   const faCta = (fa as unknown as Record<string, { cta: Record<string, string> }>).notifications.cta.products;
   ok("9c. cta.products in EN + FA", Boolean(enCta) && Boolean(faCta));
+  // R151 — the reorder CTA rides the SAME parity law.
+  const enCtaR = (en as unknown as Record<string, { cta: Record<string, string> }>).notifications.cta.reorder;
+  const faCtaR = (fa as unknown as Record<string, { cta: Record<string, string> }>).notifications.cta.reorder;
+  ok("9d. cta.reorder in EN + FA (R151)", Boolean(enCtaR) && Boolean(faCtaR));
 }
 
 /* ----------------------- 10. scan page size bounds ------------------------ */

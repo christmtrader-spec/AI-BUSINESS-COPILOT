@@ -131,6 +131,12 @@ export const ACTION_ROUTES = [
   // workspace. Product deep-links (#/products/<id>) are deliberately
   // absent (same law as crmTasks — no deep links yet).
   "products",
+  // R151 — the low-stock alert's honest destination: the reorder
+  // suggestions panel (#/reports?reorder=1 — the Prompt 55 §X2 closed
+  // token). "products" stays allowlisted for legacy rows persisted before
+  // this round (the map still resolves it — backward compatibility, never
+  // a dead CTA).
+  "reorder",
   // Prompt 62 — the tenant Support Center (my tickets + thread).
   "support",
 ] as const;
@@ -166,7 +172,13 @@ export function actionRoutePath(route: ActionRoute): string {
       return "#/crm?tab=tasks";
     case "products":
       // Prompt 38 — the CTA opens the existing Products workspace.
+      // R151 — LEGACY for low-stock rows persisted before the reorder
+      // drill; new low-stock rows carry "reorder" (below).
       return "#/products";
+    case "reorder":
+      // R151 — the low-stock alert's honest destination: the reorder
+      // suggestions panel (the surface that exists for restocking).
+      return "#/reports?reorder=1";
     case "support":
       // Prompt 62 — the tenant Support Center workspace.
       return "#/support";
