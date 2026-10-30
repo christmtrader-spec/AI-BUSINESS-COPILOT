@@ -189,7 +189,13 @@ export type AppView =
        * (month → inventory → reorder → perf → range). Orphan/malformed
        * fields never serialize and never ride another module. */
       rangeFrom?: string;
-      rangeTo?: string; }
+      rangeTo?: string;
+      /** R144 — the copilot ask deep link (#/copilot?ask=…): a composer
+       * DRAFT pre-seed (never an auto-send — a metered AI request is the
+       * user's action, not a navigation's). Bounded to the composer's own
+       * 500-char cap, trimmed; a blank/over-cap value drops WHOLESALE
+       * (bare copilot). Other modules never grow the token. */
+      ask?: string; }
   /** Prompt 28 — internal platform console (separate workspace, §15). */
   | { kind: "platform"; section: PlatformSection }
   /** Prompt 30 §250 — email verification landing (token from the email link). */
@@ -390,6 +396,13 @@ export function sameView(a: AppView, b: AppView): boolean {
         (a.rangeFrom ?? null) === (b.rangeFrom ?? null) &&
         (a.rangeTo ?? null) === (b.rangeTo ?? null)
       );
+    }
+    // R144 — the copilot ask seed is structural: a DIFFERENT ask re-enters
+    // the store so the composer seed effect re-fires (the same ask never
+    // re-fires — the seed is one navigation, one draft) — all without
+    // remounting the module shell (viewKey stays "module:copilot").
+    if (a.module === "copilot" && b.module === "copilot") {
+      return (a.ask ?? null) === (b.ask ?? null);
     }
     return (a.param ?? null) === (b.param ?? null);
   }
@@ -655,6 +668,14 @@ export function viewToHash(view: AppView): string | null {
         ) {
           return `#/reports?from=${view.rangeFrom}&to=${view.rangeTo}`;
         }
+      }
+      // R144 — the copilot ask seed serializes canonically (?ask=…,
+      // encodeURIComponent) so refresh/back keep the seed and the
+      // address stays canonical; a blank ask never serializes (never a
+      // lying "?ask=" with nothing behind it).
+      if (view.module === "copilot") {
+        const ask = (view.ask ?? "").trim();
+        return ask ? `#/copilot?ask=${encodeURIComponent(ask)}` : "#/copilot";
       }
       return `#/${view.module}`;
     }
@@ -968,6 +989,18 @@ export function hashToView(hash: string): AppView {
     // sub-view. Closed token, never arbitrary state.
     if (path === "reports" && query.get("reorder") === "1") {
       return { kind: "module", module: path, param: "reorder" };
+    }
+    // R144 — the copilot ask deep link (?ask=…): a COMPOSER DRAFT seed,
+    // never an auto-send. URLSearchParams already decoded the value (a
+    // second decode would corrupt literal "%" text); the seed is trimmed
+    // and bounded to the composer's OWN 500-char cap. A blank or wholly
+    // over-cap value drops WHOLESALE (bare copilot — never a half state);
+    // an over-cap TRIMMED TAIL is honest (the composer maxLength would
+    // enforce the same bound on typed text). Other modules ignore ?ask=
+    // entirely (the sub-state vocabulary never grows sideways).
+    if (path === "copilot" && query.has("ask")) {
+      const ask = (query.get("ask") ?? "").trim().slice(0, 500);
+      return ask ? { kind: "module", module: path, ask } : { kind: "module", module: path };
     }
     // R100 — the performance sub-view: ?perf=<sales|expenses|cashflow>
     // (CLOSED vocabulary, case-strict) with an OPTIONAL ordered window

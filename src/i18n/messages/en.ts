@@ -1471,6 +1471,15 @@ const en = {
     // Prompt 50 — advanced performance drill-down (ADVANCED_REPORTS).
     perfTitle: "Performance detail",
     perfDesc: "The source records behind the summary — grouped exactly as recorded.",
+    // R144 — the ask-the-copilot handoff: the button label, the honest
+    // seed-not-send hint, and the three per-kind questions. Each question
+    // names ONLY a fact the copilot's own grounded tools can answer over
+    // the copilot's OWN default window — never the panel's custom range.
+    perfAskCopilot: "Ask the Copilot",
+    perfAskHint: "Opens the Copilot with a ready question — edit it before sending.",
+    perfAskSales: "Which products drove my sales the most recently?",
+    perfAskExpenses: "What are my biggest expense categories recently?",
+    perfAskCashflow: "Summarize my recent cash flow.",
     perfLocked: "Performance detail is part of the advanced plan.",
     perfKind: "Report type",
     perfKindSales: "Sales performance",

@@ -737,6 +737,9 @@ export function CopilotView({
   const tCommon = useTranslations("common");
   const tErrors = useTranslations("errors");
   const uiLocale = useLocale();
+  // R144 — the ask deep-link seed reads the ONE store view (the hash IS
+  // the state: #/copilot?ask=… carries the composer draft pre-seed).
+  const view = useAppStore((s) => s.view);
 
   // ---- Multi-session transcripts (per business, localStorage) -------------
   // `messages` below is ALWAYS the active session's message list; every
@@ -784,6 +787,32 @@ export function CopilotView({
 
   const canUse = can(role, "copilot:use");
   const pending = activeStreamId !== null;
+
+  // R144 — the ASK DEEP-LINK SEED (the reports panel's "Ask the Copilot"
+  // button is the first producer of #/copilot?ask=…). Laws:
+  //  - the seed fills the composer DRAFT and focuses it — it NEVER sends
+  //    (spending a metered AI request is the user's action, never a
+  //    navigation's);
+  //  - one ask, one seed (seededAskRef): re-entering with the SAME ask
+  //    never re-fires, a DIFFERENT ask does;
+  //  - an EMPTY composer is the only overwrite-able state — if the user
+  //    typed (or a stream is mid-flight) the seed is consumed WITHOUT
+  //    seeding (an explicit navigation may never silently destroy typed
+  //    text); the hash survives, so a reload re-seeds honestly;
+  //  - the same ask value never re-seeds even when the input was cleared
+  //    by hand afterwards — re-clicking the SAME link is not a new intent.
+  const seededAskRef = useRef<string | null>(null);
+  useEffect(() => {
+    const ask =
+      view.kind === "module" && view.module === "copilot" ? (view.ask ?? "").trim() : "";
+    if (!ask || seededAskRef.current === ask) return;
+    if (activeStreamId !== null) return;
+    seededAskRef.current = ask;
+    if (input.trim() === "") {
+      setInput(ask);
+      textareaRef.current?.focus();
+    }
+  }, [view, activeStreamId, input]);
 
   // Feature B — live server counts (the SAME cached aggregate the dashboard
   // and idle prefetch warm: ["reports","summary","30"]). Deterministic —

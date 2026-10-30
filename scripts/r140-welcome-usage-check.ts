@@ -118,7 +118,13 @@ ok(
 );
 ok(
   "[2] replay affordance honesty: hidden where the tour cannot run (no lg → display:none, out of the a11y tree)",
-  card.includes("hidden w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-start text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 lg:flex"),
+  card.includes("hidden w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-start text-sm transition-all focus-visible:outline-none focus-visible:ring-2 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0 motion-reduce:transition-none lg:flex"),
+);
+ok(
+  "[2] R144 styling detail: all three tiles carry the motion-safe lift + group icon chip (count pins)",
+  count(card, "motion-safe:hover:-translate-y-px") === 3 &&
+    count(card, "group-hover:bg-primary/15") === 3 &&
+    count(card, "transition-colors group-hover:bg-primary/15") === 3,
 );
 ok("[2] the card mounts on the dashboard right after the PageHeader", dash.includes("import { WelcomeCard } from \"@/modules/dashboard/welcome-card\";") && count(dash, "<WelcomeCard />") === 1);
 ok("[2] the card is testid-findable", card.includes('data-testid="welcome-card"'));

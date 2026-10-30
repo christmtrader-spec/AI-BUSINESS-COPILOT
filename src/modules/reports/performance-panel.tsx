@@ -23,6 +23,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import {
   BarChart3,
+  Bot,
   ChevronLeft,
   ChevronRight,
   Coins,
@@ -357,12 +358,40 @@ export function PerformancePanel({
 
   const data = perfQuery.data;
 
+  // R144 — the ASK-THE-COPILOT handoff (the reverse of R143's perf chips:
+  // those navigate copilot → reports, this one reports → copilot). The
+  // composed question names ONLY what the copilot's own grounded facts can
+  // honestly answer (top product / biggest expense category / recorded
+  // payments over the copilot's OWN default window) — it never promises
+  // the panel's custom range, because the copilot's tools compute their
+  // own window. The navigation PRE-SEEDS the composer draft (?ask=…); the
+  // send stays the user's action (seed-not-send, the meter law).
+  const askQuestion =
+    kind === "sales"
+      ? t("perfAskSales")
+      : kind === "expenses"
+        ? t("perfAskExpenses")
+        : t("perfAskCashflow");
+  const askCopilot = () => navigate({ kind: "module", module: "copilot", ask: askQuestion });
+
   return (
     <Card data-testid="performance-panel">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
+        <CardTitle className="flex flex-wrap items-center gap-2 text-base">
           <BarChart3 className="text-primary size-4" aria-hidden="true" />
           {t("perfTitle")}
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-primary hover:bg-primary/5 border-primary/30 hover:border-primary/50 ms-auto h-7 gap-1.5 rounded-full px-2.5 text-[11px] font-medium"
+            onClick={askCopilot}
+            title={t("perfAskHint")}
+            aria-label={t("perfAskHint")}
+            data-testid="perf-ask-copilot"
+          >
+            <Bot className="size-3.5" aria-hidden="true" />
+            {t("perfAskCopilot")}
+          </Button>
         </CardTitle>
         <CardDescription>{t("perfDesc")}</CardDescription>
       </CardHeader>

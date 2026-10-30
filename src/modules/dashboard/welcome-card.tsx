@@ -100,10 +100,10 @@ export function WelcomeCard() {
             <button
               type="button"
               data-testid="welcome-action-copilot"
-              className="hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-ring/40 flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-start text-sm transition-colors focus-visible:outline-none focus-visible:ring-2"
+              className="group hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-ring/40 flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-start text-sm transition-all focus-visible:outline-none focus-visible:ring-2 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0 motion-reduce:transition-none"
               onClick={() => navigate({ kind: "module", module: "copilot" })}
             >
-              <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md">
+              <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md transition-colors group-hover:bg-primary/15">
                 <Bot className="size-4" aria-hidden="true" />
               </span>
               <span className="min-w-0 truncate" dir="auto">
@@ -115,10 +115,10 @@ export function WelcomeCard() {
             <button
               type="button"
               data-testid="welcome-action-reports"
-              className="hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-ring/40 flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-start text-sm transition-colors focus-visible:outline-none focus-visible:ring-2"
+              className="group hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-ring/40 flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-start text-sm transition-all focus-visible:outline-none focus-visible:ring-2 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0 motion-reduce:transition-none"
               onClick={() => navigate({ kind: "module", module: "reports" })}
             >
-              <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md">
+              <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md transition-colors group-hover:bg-primary/15">
                 <BarChart3 className="size-4" aria-hidden="true" />
               </span>
               <span className="min-w-0 truncate" dir="auto">
@@ -133,10 +133,10 @@ export function WelcomeCard() {
             <button
               type="button"
               data-testid="welcome-action-tour"
-              className="hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-ring/40 hidden w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-start text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 lg:flex"
+              className="group hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-ring/40 hidden w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-start text-sm transition-all focus-visible:outline-none focus-visible:ring-2 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0 motion-reduce:transition-none lg:flex"
               onClick={() => replayProductTour()}
             >
-              <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md">
+              <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md transition-colors group-hover:bg-primary/15">
                 <PlayCircle className="size-4" aria-hidden="true" />
               </span>
               <span className="min-w-0 truncate" dir="auto">
