@@ -15,7 +15,12 @@
  *
  * Drill-down law (§16): deep links carry STABLE IDs (entity routes) — a
  * row without a stable identity (unlinked line, unassigned customer) never
- * fakes a destination.
+ * fakes a destination. R155 — the ONE exception is the FACET family (the
+ * month deep-link's grammar, not entity navigation): a category row's
+ * destination is the expenses workspace FILTERED to the report's own
+ * aggregation key verbatim (the value IS the filter's exact value, the
+ * same way a month rides YYYY-MM) — still never a fabricated id, never a
+ * navigation that rides a name into an ENTITY route.
  */
 
 import { useMemo, useState } from "react";
@@ -611,6 +616,9 @@ function PerfBody({
   pagesUsed: number;
 }) {
   const t = useTranslations("reports");
+  // R155 — the category rows' facet drill rides the store's navigate (the
+  // hash builder is the authority — never a hand-built #/expenses?…).
+  const navigate = useAppStore((s) => s.navigate);
   const fmtDay = (key: string) => {
     try {
       return new Intl.DateTimeFormat(uiLocale === "fa" ? "fa-IR" : "en-US", {
@@ -681,6 +689,7 @@ function PerfBody({
             onRowClick={(row) =>
               row.productId ? openEntity("product", row.productId) : undefined
             }
+            rowClassName={() => "transition-colors hover:bg-muted/40 motion-reduce:transition-none"}
             columns={[
               {
                 id: "name",
@@ -737,6 +746,7 @@ function PerfBody({
             onRowClick={(row) =>
               row.customerId ? openEntity("customer", row.customerId) : undefined
             }
+            rowClassName={() => "transition-colors hover:bg-muted/40 motion-reduce:transition-none"}
             columns={[
               {
                 id: "name",
@@ -842,35 +852,53 @@ function PerfBody({
             {t("perfEmpty")}
           </p>
         ) : r.groupBy === "category" ? (
-          <DataTable<Extract<(typeof r.groups)[number], { dimension: "category" }>>
-            ariaLabel={t("perfKindExpenses")}
-            sortLocale={uiLocale}
-            maxHeightClass="max-h-96"
-            columns={[
-              {
-                id: "category",
-                header: t("perfColCategory"),
-                cell: (row) => <span className="truncate" dir="auto">{row.category}</span>,
-              },
-              {
-                id: "count",
-                header: t("perfExpenseCount", { count: "" }),
-                align: "end",
-                sortValue: (row) => row.expenseCount,
-                cell: (row) => <Ltr>{fmtCount(uiLocale, row.expenseCount)}</Ltr>,
-              },
-              {
-                id: "amount",
-                header: t("perfColAmount"),
-                align: "end",
-                defaultSortDir: "desc",
-                sortValue: (row) => row.amountMinor,
-                cell: (row) => <Ltr className="font-medium">{fmt(row.amountMinor)}</Ltr>,
-              },
-            ]}
-            rows={r.groups.filter((g): g is Extract<(typeof r.groups)[number], { dimension: "category" }> => g.dimension === "category")}
-            getRowId={(row) => row.category}
-          />
+          // R155 — the panel's LAST drill-less rows find their list: a
+          // category row opens the expenses workspace filtered to the
+          // report's own aggregation key (the facet family — the month
+          // deep-link's grammar, NOT entity navigation; the gate is the
+          // row's own non-blank key). The hover tint is HONEST because the
+          // row really navigates (the R152 rowClassName law) — the same
+          // unification every navigable table in this panel now carries.
+          <div className="space-y-2">
+            <DataTable<Extract<(typeof r.groups)[number], { dimension: "category" }>>
+              ariaLabel={t("perfKindExpenses")}
+              sortLocale={uiLocale}
+              maxHeightClass="max-h-96"
+              onRowClick={(row) =>
+                row.category.trim()
+                  ? navigate({ kind: "module", module: "expenses", category: row.category })
+                  : undefined
+              }
+              rowClassName={() => "transition-colors hover:bg-muted/40 motion-reduce:transition-none"}
+              columns={[
+                {
+                  id: "category",
+                  header: t("perfColCategory"),
+                  cell: (row) => <span className="truncate" dir="auto">{row.category}</span>,
+                },
+                {
+                  id: "count",
+                  header: t("perfExpenseCount", { count: "" }),
+                  align: "end",
+                  sortValue: (row) => row.expenseCount,
+                  cell: (row) => <Ltr>{fmtCount(uiLocale, row.expenseCount)}</Ltr>,
+                },
+                {
+                  id: "amount",
+                  header: t("perfColAmount"),
+                  align: "end",
+                  defaultSortDir: "desc",
+                  sortValue: (row) => row.amountMinor,
+                  cell: (row) => <Ltr className="font-medium">{fmt(row.amountMinor)}</Ltr>,
+                },
+              ]}
+              rows={r.groups.filter((g): g is Extract<(typeof r.groups)[number], { dimension: "category" }> => g.dimension === "category")}
+              getRowId={(row) => row.category}
+            />
+            <p className="text-muted-foreground text-xs" data-testid="perf-category-drill-hint">
+              {t("perfCategoryDrillHint")}
+            </p>
+          </div>
         ) : r.groupBy === "supplier" ? (
           <DataTable<Extract<(typeof r.groups)[number], { dimension: "supplier" }>>
             ariaLabel={t("perfKindExpenses")}
@@ -879,6 +907,7 @@ function PerfBody({
             onRowClick={(row) =>
               row.supplierId ? openEntity("supplier", row.supplierId) : undefined
             }
+            rowClassName={() => "transition-colors hover:bg-muted/40 motion-reduce:transition-none"}
             columns={[
               {
                 id: "name",
@@ -978,6 +1007,7 @@ function PerfBody({
             : row.expense ? openEntity("expense", row.expense.id)
             : openEntity("payment", row.id)
           }
+          rowClassName={() => "transition-colors hover:bg-muted/40 motion-reduce:transition-none"}
           columns={[
             {
               id: "date",

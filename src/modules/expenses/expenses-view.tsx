@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { Banknote, CalendarDays, Download, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
+import { Banknote, CalendarDays, Download, Layers, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
 import { downloadCsv, exportStamp, fetchAllPages, toCsv } from "@/lib/csv";
@@ -115,20 +115,32 @@ export function ExpensesView({
       ? view.param
       : null;
 
+  // R155 — the category facet deep link (#/expenses?category=<name>): the
+  // performance panel's category rows land here. The parser already trimmed
+  // and capped the value (the column's OWN 60); this re-check is the view's
+  // own defensive non-blank read (a blank facet is no facet).
+  const category =
+    view.kind === "module" && view.module === "expenses" &&
+    typeof view.category === "string" && view.category.trim().length > 0
+      ? view.category
+      : null;
+
   // Render-time reset (React docs "adjusting state when a prop changes"):
-  // a new month deep link/page param flips back to page 1 without an effect.
-  const [pageKey, setPageKey] = useState(month ?? "");
-  if ((month ?? "") !== pageKey) {
-    setPageKey(month ?? "");
+  // a new month/category deep link/page param flips back to page 1 without
+  // an effect.
+  const [pageKey, setPageKey] = useState(`${month ?? ""}|${category ?? ""}`);
+  if (`${month ?? ""}|${category ?? ""}` !== pageKey) {
+    setPageKey(`${month ?? ""}|${category ?? ""}`);
     setPage(1);
   }
 
   const statusQs = status === "ALL" ? "" : `&status=${status}`;
   const monthQs = month ? `&month=${month}` : "";
+  const categoryQs = category ? `&category=${encodeURIComponent(category)}` : "";
   const { data, isLoading, isFetching, error, refetch } = useQuery<ExpensesPage>({
-    queryKey: [...txKeys.expenses, q, page, status, month],
+    queryKey: [...txKeys.expenses, q, page, status, month, category],
     queryFn: () =>
-      api(`/api/v1/expenses?q=${encodeURIComponent(q)}&page=${page}&pageSize=10${statusQs}${monthQs}`),
+      api(`/api/v1/expenses?q=${encodeURIComponent(q)}&page=${page}&pageSize=10${statusQs}${monthQs}${categoryQs}`),
   });
 
   const monthLabel = useMemo(
@@ -171,7 +183,7 @@ export function ExpensesView({
     mutationFn: async () => {
       const { rows, total: grand, truncated } = await fetchAllPages<ExpenseRow>((pg, pageSize) =>
         api<ExpensesPage>(
-          `/api/v1/expenses?q=${encodeURIComponent(q)}&page=${pg}&pageSize=${pageSize}${statusQs}${monthQs}`,
+          `/api/v1/expenses?q=${encodeURIComponent(q)}&page=${pg}&pageSize=${pageSize}${statusQs}${monthQs}${categoryQs}`,
         ),
       );
       const csv = toCsv(
@@ -247,10 +259,46 @@ export function ExpensesView({
           </span>
           <button
             type="button"
-            onClick={() => navigate({ kind: "module", module: "expenses" })}
+            onClick={() =>
+              // R155 — each facet chip clears ONLY ITSELF: the month's
+              // exit preserves the category (the compose/decay law — a
+              // sibling facet is not this chip's to take).
+              navigate({
+                kind: "module",
+                module: "expenses",
+                ...(category ? { category } : {}),
+              })
+            }
             aria-label={t("monthFilterClear")}
             title={t("monthFilterClear")}
-            className="hover:bg-amber-500/15 -me-1 rounded-full p-0.5 transition-colors"
+            className="hover:bg-amber-500/15 -me-1 rounded-full p-0.5 transition-colors motion-reduce:transition-none"
+          >
+            <X className="size-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
+
+      {category ? (
+        <div
+          className="border-amber-500/30 bg-amber-500/5 text-amber-800 dark:text-amber-300 inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium"
+          data-testid="expenses-category-chip"
+        >
+          <Layers className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 truncate">{t("categoryFiltered", { category })}</span>
+          <button
+            type="button"
+            onClick={() =>
+              // The mirror of the month chip's decay: clearing the
+              // category preserves the month.
+              navigate({
+                kind: "module",
+                module: "expenses",
+                ...(month ? { param: month } : {}),
+              })
+            }
+            aria-label={t("categoryFilterClear")}
+            title={t("categoryFilterClear")}
+            className="hover:bg-amber-500/15 -me-1 rounded-full p-0.5 transition-colors motion-reduce:transition-none"
           >
             <X className="size-3.5" aria-hidden="true" />
           </button>
@@ -461,7 +509,7 @@ export function ExpensesView({
             skeletonRows={5}
             onRowClick={(e) => navigateToEntity("expense", e.id)}
             empty={
-              !q && status === "ALL" && !month ? (
+              !q && status === "ALL" && !month && !category ? (
                 <EmptyState
                   icon={Wallet}
                   title={t("empty")}
@@ -484,9 +532,38 @@ export function ExpensesView({
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => navigate({ kind: "module", module: "expenses" })}
+                      onClick={() =>
+                        // The decay law here too: this exit clears the
+                        // MONTH, never the sibling category facet.
+                        navigate({
+                          kind: "module",
+                          module: "expenses",
+                          ...(category ? { category } : {}),
+                        })
+                      }
                     >
                       {t("monthFilterClear")}
+                    </Button>
+                  }
+                />
+              ) : category ? (
+                <EmptyState
+                  icon={Layers}
+                  title={t("categoryEmptyTitle")}
+                  description={t("categoryEmptyDesc", { category })}
+                  action={
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        navigate({
+                          kind: "module",
+                          module: "expenses",
+                          ...(month ? { param: month } : {}),
+                        })
+                      }
+                    >
+                      {t("categoryFilterClear")}
                     </Button>
                   }
                 />

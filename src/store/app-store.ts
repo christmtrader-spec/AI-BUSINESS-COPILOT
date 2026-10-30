@@ -204,7 +204,18 @@ export type AppView =
        * blank seed drops WHOLESALE (bare ?inventory=1). Only the inventory
        * sub-view grows this token — the parser branch is inventory-scoped,
        * so no other reports sub-view can ever see it. */
-      invQuery?: string; }
+      invQuery?: string;
+      /** R155 — the expenses-only category facet (#/expenses?category=…):
+       * the performance panel's category rows land the user on the expenses
+       * workspace FILTERED to the report's own aggregation key. The value
+       * rides VERBATIM as the filter's EXACT value — the month deep-link's
+       * FACET family (the value IS the filter, never an entity id, never a
+       * fuzzy match). Trimmed, sliced to the category column's OWN 60 cap
+       * (expenseCreateSchema — the consumer-cap-authority law); a blank
+       * value drops WHOLESALE (bare expenses). Composes with ?month= (both
+       * chips render, each clears only itself). Other modules never grow
+       * the token. */
+      category?: string; }
   /** Prompt 28 — internal platform console (separate workspace, §15). */
   | { kind: "platform"; section: PlatformSection }
   /** Prompt 30 §250 — email verification landing (token from the email link). */
@@ -645,6 +656,19 @@ export function viewToHash(view: AppView): string | null {
         }
         return "#/reports";
       }
+      // R155 — the expenses category facet serializes canonically:
+      // ?month= (when a month-shaped param rides) then ?category= — the
+      // value is ENCODED (free text may carry "&", "#", spaces); an orphan
+      // category field without the expenses module NEVER serializes (the
+      // guard is module-scoped), and a blank one never either.
+      if (view.module === "expenses") {
+        const cat = (view.category ?? "").trim();
+        if (cat) {
+          const monthPart =
+            view.param && /^\d{4}-\d{2}$/.test(view.param) ? `month=${view.param}&` : "";
+          return `#/expenses?${monthPart}category=${encodeURIComponent(cat)}`;
+        }
+      }
       if (view.param && /^\d{4}-\d{2}$/.test(view.param)) {
         // R87/R88 — canonical sales order: month → overdue → customer.
         if (view.module === "sales") {
@@ -981,6 +1005,14 @@ export function hashToView(hash: string): AppView {
     // (e.g. "Open in Sales" from the reports month dialog). Prompt 51:
     // ?inventory=1 opens the detailed inventory valuation sub-view.
     const month = query.get("month");
+    // R155 — the expenses category facet (?category=<name>): URLSearchParams
+    // already decoded ONCE (no second decode — literal "%" survives), trim,
+    // slice to the category column's OWN 60 cap (expenseCreateSchema — the
+    // consumer-cap-authority law, R148's invQuery precedent); a blank value
+    // drops WHOLESALE. Other modules ignore ?category= entirely (the
+    // sub-state vocabulary never grows sideways).
+    const rawCategory =
+      path === "expenses" ? (query.get("category") ?? "").trim().slice(0, 60) : "";
     if (month && /^\d{4}-\d{2}$/.test(month)) {
       // R87/R88 — the sales worklist composes with the month drill-down:
       // month → overdue → customer (canonical order both ways).
@@ -996,7 +1028,19 @@ export function hashToView(hash: string): AppView {
             customerRaw && isValidEntityId(customerRaw) ? customerRaw : undefined,
         };
       }
-      return { kind: "module", module: path, param: month };
+      // R155 — the category facet composes WITH the month (both chips
+      // render, each clears only itself).
+      return {
+        kind: "module",
+        module: path,
+        param: month,
+        ...(path === "expenses" && rawCategory ? { category: rawCategory } : {}),
+      };
+    }
+    // R155 — the category facet WITHOUT a month: the performance panel's
+    // category rows land here.
+    if (path === "expenses" && rawCategory) {
+      return { kind: "module", module: path, category: rawCategory };
     }
     if (path === "reports" && query.get("inventory") === "1") {
       // R148 — the search seed rides WITH the closed inventory token: the

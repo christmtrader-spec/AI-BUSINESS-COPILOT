@@ -28,10 +28,22 @@ export const GET = route(async (req: NextRequest) => {
     throw new ApiError(422, "VALIDATION_ERROR", "Invalid month. Use YYYY-MM.");
   }
 
+  // R155 — optional category facet (?category=<name>): the performance
+  // panel's category rows land here. The value rides VERBATIM as the
+  // filter's EXACT value (the month deep-link's facet family — the report's
+  // own aggregation key, never a fuzzy match and never an entity id);
+  // trimmed and sliced to the category column's OWN 60 cap
+  // (expenseCreateSchema — the consumer-cap-authority law, listParams' q
+  // precedent); a blank value drops WHOLESALE. Composes with every other
+  // filter (the shared `where` reaches both pagination paths).
+  const categoryRaw = new URL(req.url).searchParams.get("category");
+  const category = (categoryRaw ?? "").trim().slice(0, 60) || null;
+
   const where = {
     businessId: ctx.businessId,
     deletedAt: null,
     ...(status ? { status } : {}),
+    ...(category ? { category } : {}),
     ...(month
       ? { spentAt: { gte: monthWindow(month)!.from, lt: monthWindow(month)!.until } }
       : {}),
