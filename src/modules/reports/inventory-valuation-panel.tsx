@@ -26,6 +26,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import {
+  Bot,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -405,6 +406,33 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
             <CardDescription className="mt-1">{t("invValDesc")}</CardDescription>
           </div>
           <div className="flex items-center gap-1.5">
+            {/* R146 — the THIRD ?ask= producer: the inventory-valuation panel
+                hands the copilot an honest stock-VALUE question (the snapshot's
+                inventory block — valueAtCost, pre-formatted — is the proven
+                answer domain; system rule 6b keeps the framing operational).
+                The gate translates the R145 family law to this panel's own
+                data presence: a loaded, non-error dataset with at least one
+                included row (pg.totalCount) — a filtered-to-zero view or a
+                failed fetch never shows an ask affordance. The question names
+                the WHOLE current book, never the panel's active filters (the
+                R144 honesty law — the copilot computes its own whole-book
+                fact). Seed-not-send, always. */}
+            {!error && (pg?.totalCount ?? 0) > 0 ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-primary hover:bg-primary/5 border-primary/30 hover:border-primary/50 h-7 gap-1.5 rounded-full px-2.5 text-[11px] font-medium"
+                onClick={() =>
+                  navigate({ kind: "module", module: "copilot", ask: t("inventoryAskQuestion") })
+                }
+                title={t("askCopilotHint")}
+                aria-label={t("askCopilotHint")}
+                data-testid="inventory-valuation-ask-copilot"
+              >
+                <Bot className="size-3.5" aria-hidden="true" />
+                {t("askCopilotLabel")}
+              </Button>
+            ) : null}
             <Button
               variant="outline"
               size="sm"
@@ -584,7 +612,12 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
             {/* §8.4 — summary cards ALWAYS describe the current (filtered)
                 dataset; the note states the convention explicitly. */}
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" data-testid="inventory-valuation-cards">
-              <div className="rounded-lg border p-3">
+              {/* R146 styling — the KPI cards join the R145 semantic hover
+                  family (reorder panel): the hue repeats each card's own
+                  semantic — primary on the three neutral figures, amber on
+                  the zero-cost review flag (whose conditional border is
+                  untouched and merely deepens on hover). */}
+              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25">
                 <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
                   {t("invValCardValue")}
                 </p>
@@ -593,7 +626,7 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
                 </p>
                 <p className="text-muted-foreground text-xs">{t("invValCardValueHint")}</p>
               </div>
-              <div className="rounded-lg border p-3">
+              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25">
                 <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
                   {t("invValCardProducts")}
                 </p>
@@ -604,7 +637,7 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
                   {t("invValCardProductsHint", { count: count(data.totals.inactiveCount) })}
                 </p>
               </div>
-              <div className="rounded-lg border p-3">
+              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25">
                 <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
                   {t("invValCardPositiveStock")}
                 </p>
@@ -617,7 +650,7 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
               </div>
               <div
                 className={cn(
-                  "rounded-lg border p-3",
+                  "bg-card rounded-lg border p-3 transition-colors hover:border-amber-500/40",
                   data.totals.zeroCostPositiveStockCount > 0 && "border-amber-500/30 bg-amber-500/5",
                 )}
               >

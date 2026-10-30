@@ -1651,6 +1651,12 @@ const en = {
     // the proven answer domain — the question never promises purchase orders
     // (the panel's own no-side-effects law, in the composer too).
     reorderAskQuestion: "Which products are running low right now?",
+    // R146 — the THIRD ?ask= producer: the inventory-valuation panel's
+    // stock-value question. The snapshot's inventory block (valueAtCost,
+    // pre-formatted) is the proven answer domain — the question names the
+    // WHOLE current book, never the panel's active filters, and promises
+    // no accounting concept (the §8.6 basis law holds in the composer too).
+    inventoryAskQuestion: "How much is my inventory worth right now?",
     reorderBasis: "A decision aid based on the low-stock threshold you set on each product: suggested quantity tops stock back up to the threshold (at least 1 unit). This report never places purchase orders or changes stock — review and act from the purchase or inventory modules.",
     reorderColProduct: "Product",
     reorderColSku: "SKU",
