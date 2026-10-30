@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { Banknote, HandCoins } from "lucide-react";
+import { Banknote, Bot, HandCoins } from "lucide-react";
 import { can, asRole, type Role } from "@/lib/rbac";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,6 +22,7 @@ import {
 import { PaymentFormDialog, type PaymentTarget } from "../payments/payment-form-dialog";
 import { fetchBalancesData, type BalancesData, type BalanceItem } from "./balances-data";
 import { AgingCard } from "./aging-card";
+import { useAppStore } from "@/store/app-store";
 import type { BusinessSummary } from "../shell/types";
 
 /**
@@ -40,6 +41,11 @@ export function BalancesView({
 }) {
   const t = useTranslations(kind === "receivables" ? "finance.receivables" : "finance.payables");
   const tCommon = useTranslations("common");
+  // R147 — the generic ?ask= affordance keys live in the ONE reports
+  // namespace (the R145 promotion law — one key one meaning); this view
+  // borrows them rather than duplicating the strings per kind.
+  const tAsk = useTranslations("reports");
+  const navigate = useAppStore((s) => s.navigate);
   const canPay = can(asRole(role), "finance:manage");
 
   const [q, setQ] = useState("");
@@ -87,7 +93,32 @@ export function BalancesView({
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
-          <ListExportButton<BalanceItem>
+          <>
+            {/* R147 — the FOURTH ?ask= producer: the balances board hands the
+                copilot an honest whole-book question (largestDebtor /
+                largestCreditor — the SAME fact the board's own statTopParty
+                card cites; the copilot's grounded outstanding block is the
+                proven answer domain). The gate is the family law translated
+                to this board's data presence: a loaded, non-error dataset
+                whose leaders fact has a rank 1 — an empty book, a failed
+                fetch, or a still-loading board never shows an ask
+                affordance. Seed-not-send, always; the question rides the
+                kind-scoped namespace so each side asks about ITS party. */}
+            {!error && data?.topLeader ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-primary hover:bg-primary/5 border-primary/30 hover:border-primary/50 h-7 gap-1.5 rounded-full px-2.5 text-[11px] font-medium"
+                onClick={() => navigate({ kind: "module", module: "copilot", ask: t("askQuestion") })}
+                title={tAsk("askCopilotHint")}
+                aria-label={tAsk("askCopilotHint")}
+                data-testid="balances-ask-copilot"
+              >
+                <Bot className="size-3.5" aria-hidden="true" />
+                {tAsk("askCopilotLabel")}
+              </Button>
+            ) : null}
+            <ListExportButton<BalanceItem>
             filename={kind}
             columns={[
               { header: t("colRef"), value: (i) => i.label1 },
@@ -114,6 +145,7 @@ export function BalancesView({
               return { rows, total: rows.length, truncated: false };
             }}
           />
+          </>
         }
       />
 

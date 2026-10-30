@@ -18,7 +18,7 @@ import { zonedDayStartUtc, zonedDayEndExclusiveUtc } from "@/lib/report-periods"
 import { formatMoney, type CurrencyConfig } from "@/lib/money";
 // R96 — the ONE leader extractor for the snapshot's debtor/creditor facts
 // (the same authority the balances strips read — never a second ranking).
-import { topLeaderOfFact, type LeadersFactInput } from "@/lib/leader-view";
+import { topLeaderOfFact, topLeadersOfFact, type LeadersFactInput } from "@/lib/leader-view";
 import { rollupAccumulate, rollupRank, type AgingRollupAccumulator } from "@/lib/aging-details";
 // R98 — the merch facts: the report's OWN rank 1 for products and expense
 // categories (zero-import extractor pair; the copilot chips gate on it).
@@ -35,6 +35,22 @@ function trendChangeLabel(pct: number | null): string {
   if (pct === 0) return "flat (0% versus the current window)";
   return pct > 0 ? `up ${pct}% versus the current window` : `down ${Math.abs(pct)}% versus the current window`;
 }
+
+/**
+ * R147 — the outstanding leader WITH its stable party id: the shape the
+ * drill chips read. The name-only BookLeaderView cannot drill (§16/§18 law:
+ * navigation never rides a name — it rides the id); the podium view
+ * (topLeadersOfFact) is the ONE authority that carries `partyId`. null
+ * partyId/partyName = the unassigned mass / a nameless party — carried
+ * honestly, but the chip picker refuses to drill it (there is no party to
+ * scope to — the R96 mass-row law).
+ */
+export type CopilotOutstandingView = {
+  partyId: string | null;
+  partyName: string | null;
+  outstandingMinor: number;
+  openItems: number;
+};
 
 export type CopilotSnapshotMeta = {
   days: ReportDays;
@@ -54,6 +70,15 @@ export type CopilotSnapshotMeta = {
   // silence — the chips simply never render, never a fabricated leader.
   topStockProduct?: TopStockView | null;
   topStockRunnerUp?: TopStockView | null;
+  // R147 — the OUTSTANDING leaders: rank 1 of the debtors/creditors facts
+  // WITH the stable party id (the §16/§18 aging drill needs the id). The
+  // SAME fact the snapshot's largestDebtor/largestCreditor cite, read
+  // through the ONE podium extractor (topLeadersOfFact — verbatim, never
+  // re-ranked, zero new queries). Optional + nullable: a silent book is
+  // honest silence — the chips simply never render, never a fabricated
+  // leader; the unassigned mass (partyId null) is carried but never drills.
+  topDebtor?: CopilotOutstandingView | null;
+  topCreditor?: CopilotOutstandingView | null;
   /**
    * Record counts behind this answer — surfaced in the UI as citation chips
    * so users can see exactly how much data the copilot is grounded in.
@@ -78,6 +103,25 @@ export type CopilotGrounding = {
   dataBlock: string;
   meta: CopilotSnapshotMeta;
 };
+
+/**
+ * R147 — PURE: rank 1 of a leaders fact as the drill meta reads it, through
+ * the ONE podium extractor (topLeadersOfFact — the r96-tested authority;
+ * the fact's own order IS the ranking, [0] verbatim). A silent fact (null /
+ * empty book) maps to null — honest silence, never a fabricated leader.
+ * The podium's rank/partyCount fields are deliberately DROPPED here: the
+ * meta carries exactly what the chips render (id, name, money, count).
+ */
+function outstandingViewOf(fact: LeadersFactInput): CopilotOutstandingView | null {
+  const first = topLeadersOfFact(fact, 1)[0];
+  if (!first) return null;
+  return {
+    partyId: first.partyId,
+    partyName: first.partyName,
+    outstandingMinor: first.outstandingMinor,
+    openItems: first.openItems,
+  };
+}
 
 export async function buildCopilotGrounding(opts: {
   businessId: string;
@@ -395,6 +439,11 @@ export async function buildCopilotGrounding(opts: {
     // summary card and the dashboard tile cite — one authority, no drift).
     topStockProduct: topStockProductOf(report.inventory.topValueProducts),
     topStockRunnerUp: stockRunnerUpOf(report.inventory.topValueProducts),
+    // R147 — the outstanding leaders WITH the drill id: rank 1 of the SAME
+    // debtors/creditors facts, read through the ONE podium extractor (the
+    // fact's own order IS the ranking; [0] verbatim or honest silence).
+    topDebtor: outstandingViewOf(debtorsFact),
+    topCreditor: outstandingViewOf(creditorsFact),
     counts: {
       sales: k.salesCount,
       expenses: k.expensesCount,

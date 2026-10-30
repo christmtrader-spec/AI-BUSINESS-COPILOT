@@ -12,6 +12,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import {
   ArrowDown,
+  ArrowUpRight,
   BarChart3,
   BookMarked,
   Bot,
@@ -205,6 +206,21 @@ type CopilotMeta = {
   // R103 — the podium's rank 2 (additive optional — old persisted metas
   // honestly omit it; the pickers never fabricate it).
   topStockRunnerUp?: { id: string; name: string; valueMinor: number } | null;
+  // R147 — the OUTSTANDING leaders with the stable party id: the §16/§18
+  // aging drill rides the ID (navigation never rides a name). Optional +
+  // nullable — old persisted metas honestly omit them; null partyId =
+  // the unassigned mass (carried, but the picker refuses to drill it —
+  // there is no party to scope to, the R96 mass-row law).
+  topDebtor?: CopilotOutstandingFact | null;
+  topCreditor?: CopilotOutstandingFact | null;
+};
+
+/** R147 — the client mirror of the server's CopilotOutstandingView. */
+type CopilotOutstandingFact = {
+  partyId: string | null;
+  partyName: string | null;
+  outstandingMinor: number;
+  openItems: number;
 };
 
 const WINDOWS = [7, 30, 90] as const;
@@ -722,6 +738,142 @@ export function pickStockActionChips(meta: CopilotMeta | null | undefined): Stoc
     chips.push({ key: "actionTopStockRunnerUp" });
   }
   return chips;
+}
+
+// ---- Outstanding action chips (R147 — the drill with the stable id) --------
+
+export type OutstandingActionChip = {
+  key: "actionDebtor" | "actionCreditor";
+  side: "receivables" | "payables";
+  partyId: string;
+  partyName: string;
+  outstandingMinor: number;
+  openItems: number;
+};
+
+/**
+ * R147 — the outstanding drill's gates. LAWS (battery-pinned in
+ * scripts/r147-outstanding-drill-check.ts):
+ * - TWO chips max, deterministic order debtor → creditor (the snapshot's
+ *   own field order — customersOweYou before youOweSuppliers);
+ * - each chip gates on ITS OWN proof: the fact present, a non-blank partyId
+ *   (the §16/§18 drill law — navigation rides the STABLE id, never the
+ *   name), a non-blank partyName (a chip that cannot name its party is
+ *   noise, not an affordance), and outstandingMinor > 0 with openItems > 0
+ *   (the family's positive-value law — no chip about nothing);
+ * - the unassigned mass (partyId null) and nameless parties NEVER drill —
+ *   the R96 mass-row law, verbatim;
+ * - old persisted metas without the fields stay honest ([]);
+ * - null/undefined meta → [].
+ */
+export function pickOutstandingActionChips(
+  meta: CopilotMeta | null | undefined,
+): OutstandingActionChip[] {
+  if (!meta || typeof meta !== "object") return [];
+  const chips: OutstandingActionChip[] = [];
+  const push = (
+    key: OutstandingActionChip["key"],
+    side: OutstandingActionChip["side"],
+    fact: CopilotOutstandingFact | null | undefined,
+  ) => {
+    if (!fact || typeof fact !== "object") return;
+    if (typeof fact.partyId !== "string" || fact.partyId.trim().length === 0) return;
+    if (typeof fact.partyName !== "string" || fact.partyName.trim().length === 0) return;
+    if (
+      typeof fact.outstandingMinor !== "number" ||
+      !Number.isFinite(fact.outstandingMinor) ||
+      fact.outstandingMinor <= 0
+    )
+      return;
+    if (typeof fact.openItems !== "number" || !Number.isFinite(fact.openItems) || fact.openItems <= 0)
+      return;
+    chips.push({
+      key,
+      side,
+      partyId: fact.partyId,
+      partyName: fact.partyName,
+      outstandingMinor: fact.outstandingMinor,
+      openItems: fact.openItems,
+    });
+  };
+  push("actionDebtor", "receivables", meta.topDebtor);
+  push("actionCreditor", "payables", meta.topCreditor);
+  return chips;
+}
+
+/**
+ * R147 — the outstanding drill chips under a grounded answer: when the
+ * answer's proven facts name the biggest debtor/creditor WITH a stable
+ * party id, each chip is a REAL control into the §16/§18 aging-details
+ * drill (#/reports/aging-details?side=…&party=<id>) — the SAME landing the
+ * balances board's leader rows drill to (one drill law, no second grammar).
+ * Laws:
+ * - NO bucket and NO pastDue on the navigation: the meta fact is the
+ *   party's WHOLE open balance — a bucket would fabricate an age the fact
+ *   does not carry, and pastDue would silently filter the landing (on the
+ *   receivables side there is no authoritative due date at all);
+ * - tooltips carry the EXACT proven money + open-item count (fmtMoney /
+ *   fmtCount INSIDE the component — never a raw ICU template; the
+ *   R99/R140 formatting laws); title = aria-label = ONE source;
+ * - the icons mirror the app's OWN nav iconography (receivables =
+ *   HandCoins, payables = ArrowUpRight — one icon one meaning);
+ * - absent/undrillable facts → renders null (honest silence).
+ */
+function OutstandingActionChips({
+  meta,
+  business,
+}: {
+  meta: CopilotMeta;
+  business: BusinessSummary;
+}) {
+  const t = useTranslations("copilot");
+  const uiLocale = useLocale();
+  const navigate = useAppStore((s) => s.navigate);
+  const chips = pickOutstandingActionChips(meta);
+  if (chips.length === 0) return null;
+  return (
+    <div
+      className="mt-1 flex flex-wrap items-center gap-1.5 ps-1"
+      data-testid="copilot-outstanding-chips"
+    >
+      {chips.map((chip) => {
+        const debtor = chip.key === "actionDebtor";
+        const tooltip = t(debtor ? "actionDebtorTitle" : "actionCreditorTitle", {
+          name: chip.partyName,
+          money: fmtMoney(business, chip.outstandingMinor),
+          count: fmtCount(uiLocale, chip.openItems),
+        });
+        return (
+          <button
+            key={chip.key}
+            type="button"
+            onClick={() => navigate({ kind: "aging-details", side: chip.side, partyId: chip.partyId })}
+            title={tooltip}
+            aria-label={tooltip}
+            data-testid={debtor ? "copilot-action-debtor" : "copilot-action-creditor"}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none transition-colors motion-reduce:transition-none",
+              "focus-visible:outline-2 focus-visible:outline-offset-2",
+              debtor
+                ? "border-emerald-600/30 bg-emerald-600/5 text-emerald-800 focus-visible:outline-emerald-600 dark:text-emerald-300 hover:bg-emerald-600/10"
+                : "border-rose-600/30 bg-rose-600/5 text-rose-800 focus-visible:outline-rose-600 dark:text-rose-300 hover:bg-rose-600/10",
+            )}
+          >
+            {debtor ? (
+              <HandCoins className="size-3 shrink-0" aria-hidden="true" />
+            ) : (
+              <ArrowUpRight className="size-3 shrink-0" aria-hidden="true" />
+            )}
+            {t(chip.key)}
+            <ChevronDown
+              className="size-3 shrink-0 opacity-60 rtl:-scale-x-100"
+              aria-hidden="true"
+            />
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 // ---- View -------------------------------------------------------------------
@@ -2400,6 +2552,12 @@ export function CopilotView({
                           (the R100 grammar's first external producers). */}
                       {!m.failed && m.meta ? (
                         <PerfActionChips meta={m.meta} business={business} />
+                      ) : null}
+                      {/* R147 — the outstanding drill chips: the proven
+                          debtor/creditor leaders with a STABLE party id
+                          drill into the §16/§18 aging-details boards. */}
+                      {!m.failed && m.meta ? (
+                        <OutstandingActionChips meta={m.meta} business={business} />
                       ) : null}
                       {resumingId === m.id ? (
                         <div

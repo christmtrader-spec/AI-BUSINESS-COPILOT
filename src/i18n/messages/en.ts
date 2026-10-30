@@ -1241,6 +1241,12 @@ const en = {
       colAmount: "Total",
       colBalance: "Balance",
       colStatus: "Status",
+      // R147 — the FOURTH ?ask= producer: the receivables board hands the
+      // copilot an honest whole-book question. The copilot's proven answer
+      // domain is the snapshot's largestDebtor (ALL-TIME open balances —
+      // the SAME fact the board's own statTopParty card cites); "right
+      // now" names the CURRENT open state, never a window.
+      askQuestion: "Which customer owes me the most right now?",
     },
     payables: {
       title: "Payables",
@@ -1262,6 +1268,9 @@ const en = {
       colAmount: "Amount",
       colBalance: "Balance",
       colStatus: "Status",
+      // R147 — the payables twin of the receivables ask question (the
+      // snapshot's largestCreditor is the proven answer domain).
+      askQuestion: "Which supplier do I owe the most right now?",
     },
     aging: {
       title: "Aging",
@@ -2003,6 +2012,14 @@ const en = {
     actionTopStockTitle: "Largest stock value: «{name}» at {money}. Open the detailed valuation.",
     actionTopStockRunnerUp: "Second most valuable",
     actionTopStockRunnerUpTitle: "Second largest stock value: «{name}» at {money}. Open the detailed valuation.",
+    // R147 — the outstanding drill chips (the aging-details landing). The
+    // labels name the DESTINATION side; the tooltips carry the EXACT proven
+    // money + open-item count (formatted inside the component — never a
+    // raw number here).
+    actionDebtor: "Receivables aging",
+    actionDebtorTitle: "«{name}» owes you {money} across {count} open invoices. Open their aging details.",
+    actionCreditor: "Payables aging",
+    actionCreditorTitle: "You owe «{name}» {money} across {count} open bills. Open their aging details.",
     suggestion1: "Who owes me money?",
     suggestion2: "How did sales do in the last 30 days?",
     suggestion3: "Where is my money going?",
