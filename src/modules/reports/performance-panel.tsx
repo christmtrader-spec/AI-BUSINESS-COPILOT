@@ -359,13 +359,14 @@ export function PerformancePanel({
   const data = perfQuery.data;
 
   // R144 — the ASK-THE-COPILOT handoff (the reverse of R143's perf chips:
-  // those navigate copilot → reports, this one reports → copilot). The
-  // composed question names ONLY what the copilot's own grounded facts can
-  // honestly answer (top product / biggest expense category / recorded
-  // payments over the copilot's OWN default window) — it never promises
-  // the panel's custom range, because the copilot's tools compute their
-  // own window. The navigation PRE-SEEDS the composer draft (?ask=…); the
-  // send stays the user's action (seed-not-send, the meter law).
+  // those navigate copilot → reports, this one reports → copilot). R145 —
+  // the affordance keys are GENERIC (askCopilotLabel/askCopilotHint — the
+  // reorder panel is the second producer); the QUESTION stays perf-specific
+  // and names ONLY what the copilot's own grounded facts can honestly
+  // answer (top product over the copilot's OWN default window) — it never
+  // promises the panel's custom range, because the copilot's tools compute
+  // their own window. The navigation PRE-SEEDS the composer draft (?ask=…);
+  // the send stays the user's action (seed-not-send, the meter law).
   const askQuestion =
     kind === "sales"
       ? t("perfAskSales")
@@ -385,12 +386,12 @@ export function PerformancePanel({
             size="sm"
             className="text-primary hover:bg-primary/5 border-primary/30 hover:border-primary/50 ms-auto h-7 gap-1.5 rounded-full px-2.5 text-[11px] font-medium"
             onClick={askCopilot}
-            title={t("perfAskHint")}
-            aria-label={t("perfAskHint")}
+            title={t("askCopilotHint")}
+            aria-label={t("askCopilotHint")}
             data-testid="perf-ask-copilot"
           >
             <Bot className="size-3.5" aria-hidden="true" />
-            {t("perfAskCopilot")}
+            {t("askCopilotLabel")}
           </Button>
         </CardTitle>
         <CardDescription>{t("perfDesc")}</CardDescription>

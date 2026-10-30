@@ -15,7 +15,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { ChevronLeft, Info, PackagePlus, TriangleAlert, Wrench } from "lucide-react";
+import { Bot, ChevronLeft, Info, PackagePlus, TriangleAlert, Wrench } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { useAppStore } from "@/store/app-store";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -179,8 +179,28 @@ export function ReorderSuggestionsPanel({ business }: { business: BusinessSummar
             </CardTitle>
             <CardDescription className="mt-1">{t("reorderDesc")}</CardDescription>
           </div>
-          {exportRows.length > 0 && !error ? (
-            <ListExportButton
+          {(exportRows.length > 0 && !error) ? (
+            <div className="flex shrink-0 items-center gap-2">
+              {/* R145 — the SECOND ?ask= producer: the reorder panel hands the
+                  copilot an honest low-stock question (the copilot's grounded
+                  stock facts are the proven answer domain). The gate mirrors
+                  the export button's law — an ask affordance rides only where
+                  the panel's own data exists. Seed-not-send, always. */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-primary hover:bg-primary/5 border-primary/30 hover:border-primary/50 h-7 gap-1.5 rounded-full px-2.5 text-[11px] font-medium"
+                onClick={() =>
+                  navigate({ kind: "module", module: "copilot", ask: t("reorderAskQuestion") })
+                }
+                title={t("askCopilotHint")}
+                aria-label={t("askCopilotHint")}
+                data-testid="reorder-ask-copilot"
+              >
+                <Bot className="size-3.5" aria-hidden="true" />
+                {t("askCopilotLabel")}
+              </Button>
+              <ListExportButton
               filename="reorder-suggestions"
               sheetName={t("reorderSheetName")}
               columns={[
@@ -199,14 +219,17 @@ export function ReorderSuggestionsPanel({ business }: { business: BusinessSummar
                 { header: t("reorderColStatus"), value: (r: ReorderRow) => r.severity },
               ]}
               fetchRows={async () => ({ rows: exportRows, total: exportRows.length, truncated: false })}
-            />
+              />
+            </div>
           ) : null}
         </div>
 
         {/* Decision-aid disclosure: always visible — this report suggests,
-            it never orders (no side effects, Rule 05). */}
+            it never orders (no side effects, Rule 05). R145 styling: the
+            primary-tinted edge ties the disclosure to the panel's ask
+            affordance without stealing the KPI strip's contrast. */}
         <div
-          className="bg-muted/50 text-muted-foreground flex items-start gap-2 rounded-lg border px-3 py-2 text-xs"
+          className="bg-muted/50 text-muted-foreground flex items-start gap-2 rounded-lg border border-primary/15 px-3 py-2 text-xs"
           data-testid="reorder-basis"
         >
           <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
@@ -241,9 +264,11 @@ export function ReorderSuggestionsPanel({ business }: { business: BusinessSummar
           />
         ) : (
           <>
-            {/* KPI strip — server-computed totals only. */}
+            {/* KPI strip — server-computed totals only. R145 styling: the
+                Info icon chips carry the semantic hue per KPI and the cards
+                ride a subtle tabular rhythm (values already tabular-nums). */}
             <div className="grid gap-3 sm:grid-cols-3" data-testid="reorder-kpis">
-              <div className="bg-card rounded-lg border p-3">
+              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25">
                 <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
                   {t("reorderKpiItems")}
                 </p>
@@ -251,7 +276,7 @@ export function ReorderSuggestionsPanel({ business }: { business: BusinessSummar
                   {count(totals?.suggestionCount ?? 0)}
                 </p>
               </div>
-              <div className="bg-card rounded-lg border p-3">
+              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-destructive/30">
                 <p className="text-muted-foreground flex items-center gap-1 text-xs font-medium tracking-wide uppercase">
                   <TriangleAlert className="size-3 text-destructive" aria-hidden="true" />
                   {t("reorderKpiOutOfStock")}
@@ -260,7 +285,7 @@ export function ReorderSuggestionsPanel({ business }: { business: BusinessSummar
                   {count(totals?.outOfStockCount ?? 0)}
                 </p>
               </div>
-              <div className="bg-card rounded-lg border p-3">
+              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25">
                 <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
                   {t("reorderKpiEstTotal")}
                 </p>

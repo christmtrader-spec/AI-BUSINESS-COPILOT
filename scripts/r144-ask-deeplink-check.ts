@@ -150,7 +150,7 @@ console.log("\n== [4] producer law ==");
     ok("4c. per-kind question: expenses → perfAskExpenses", block.includes('t("perfAskExpenses")'));
     ok("4d. per-kind question: cashflow → perfAskCashflow", block.includes('t("perfAskCashflow")'));
     ok("4e. navigate carries the ask (module copilot, ask payload)", block.includes('module: "copilot"') && block.includes("ask: askQuestion"));
-    ok("4f. ONE tooltip source: title = aria-label = perfAskHint", block.includes('title={t("perfAskHint")}') && block.includes('aria-label={t("perfAskHint")}'));
+    ok("4f. ONE tooltip source: title = aria-label = askCopilotHint (R145: generic key)", block.includes('title={t("askCopilotHint")}') && block.includes('aria-label={t("askCopilotHint")}'));
     ok("4g. the Bot icon carries the semantic", block.includes("<Bot"));
     ok("4h. the pill styling (rounded-full, ms-auto, primary family)", block.includes("rounded-full") && block.includes("ms-auto") && block.includes("text-primary"));
   }
@@ -163,16 +163,17 @@ console.log("\n== [4] producer law ==");
 // [5] the I18N LAW ----------------------------------------------------------------
 console.log("\n== [5] i18n law ==");
 
-const KEYS = ["perfAskCopilot", "perfAskHint", "perfAskSales", "perfAskExpenses", "perfAskCashflow"] as const;
+const KEYS = ["askCopilotLabel", "askCopilotHint", "perfAskSales", "perfAskExpenses", "perfAskCashflow"] as const;
 for (const k of KEYS) {
   const enRe = new RegExp(`${k}: "([^"]+)"`);
   const faRe = new RegExp(`${k}: "([^"]+)"`);
   ok(`5a. ${k} exists in EN`, enRe.test(en));
   ok(`5b. ${k} exists in FA`, faRe.test(fa));
 }
-ok("5c. EN label is the handoff name", /perfAskCopilot: "Ask the Copilot"/.test(en));
-ok("5d. FA label is pure Persian", /perfAskCopilot: "از دستیار بپرس"/.test(fa));
-ok("5e. FA hint is pure Persian (no Latin letters)", /perfAskHint: "([^"]*)"/.test(fa) && !/[A-Za-z]/.test(fa.match(/perfAskHint: "([^"]*)"/)?.[1] ?? ""));
+ok("5c. EN label is the handoff name (R145: the GENERIC affordance key)", /askCopilotLabel: "Ask the Copilot"/.test(en));
+ok("5d. FA label is pure Persian", /askCopilotLabel: "از دستیار بپرس"/.test(fa));
+ok("5d2. R145: the old perf-scoped affordance keys are GONE (one key, one string)", !/perfAskCopilot|perfAskHint/.test(en) && !/perfAskCopilot|perfAskHint/.test(fa));
+ok("5e. FA hint is pure Persian (no Latin letters)", /askCopilotHint: "([^"]*)"/.test(fa) && !/[A-Za-z]/.test(fa.match(/askCopilotHint: "([^"]*)"/)?.[1] ?? ""));
 {
   // The hint names the seed-not-send contract in BOTH locales.
   ok("5f. EN hint says edit-before-send", /edit it before sending/.test(en));

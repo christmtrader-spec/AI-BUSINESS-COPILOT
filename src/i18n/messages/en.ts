@@ -1475,8 +1475,12 @@ const en = {
     // seed-not-send hint, and the three per-kind questions. Each question
     // names ONLY a fact the copilot's own grounded tools can answer over
     // the copilot's OWN default window — never the panel's custom range.
-    perfAskCopilot: "Ask the Copilot",
-    perfAskHint: "Opens the Copilot with a ready question — edit it before sending.",
+    // R145 — the affordance keys are GENERIC (askCopilotLabel/askCopilotHint):
+    // the reorder panel is the SECOND ?ask= producer — the handoff is a
+    // family, not a perf-only affordance; the QUESTION keys stay
+    // surface-specific (one honest question per producer).
+    askCopilotLabel: "Ask the Copilot",
+    askCopilotHint: "Opens the Copilot with a ready question — edit it before sending.",
     perfAskSales: "Which products drove my sales the most recently?",
     perfAskExpenses: "What are my biggest expense categories recently?",
     perfAskCashflow: "Summarize my recent cash flow.",
@@ -1642,6 +1646,11 @@ const en = {
     reorderOpen: "Purchase suggestions",
     reorderTitle: "Purchase suggestions",
     reorderDesc: "Products at or below their low-stock threshold, with a top-up suggestion and its estimated cost.",
+    // R145 — the SECOND ?ask= producer: the reorder panel's stock question.
+    // The copilot's grounded stock facts (top-stock + low-stock lines) are
+    // the proven answer domain — the question never promises purchase orders
+    // (the panel's own no-side-effects law, in the composer too).
+    reorderAskQuestion: "Which products are running low right now?",
     reorderBasis: "A decision aid based on the low-stock threshold you set on each product: suggested quantity tops stock back up to the threshold (at least 1 unit). This report never places purchase orders or changes stock — review and act from the purchase or inventory modules.",
     reorderColProduct: "Product",
     reorderColSku: "SKU",
