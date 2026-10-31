@@ -63,10 +63,28 @@ export type ExpenseEditRow = {
   reference: string | null;
 };
 
+/**
+ * R170 — "Repeat expense" (duplicate-as-new) source. Carries ONLY the
+ * details that legitimately repeat (category, amount, note, supplier);
+ * the ORIGINAL bill's due date and reference are deliberately NOT copied
+ * — they identify the original document, and the fresh expense starts
+ * UNPAID for today (the create API's own spentAt default).
+ */
+export type ExpenseDuplicateSource = {
+  category: string;
+  amountMinor: number;
+  note: string | null;
+  supplierId: string | null;
+  /** Kept ONLY so the Select can render the name when the supplier sits
+   *  beyond the options page — never written to the new expense. */
+  supplierName: string | null;
+};
+
 function formFrom(
   e: ExpenseEditRow | null,
   precision: number,
   presetSupplierId?: string | null,
+  dup?: ExpenseDuplicateSource | null,
 ): ExpenseForm {
   if (e) {
     return {
@@ -79,6 +97,19 @@ function formFrom(
       note: e.note ?? "",
     };
   }
+  if (dup) {
+    // R170 — the repeat prefill: same details, BLANK due date + reference
+    // (they belong to the original bill), supplier carried over when the
+    // source had one.
+    return {
+      supplierId: presetSupplierId ?? "",
+      category: dup.category,
+      amount: String(fromMinor(dup.amountMinor, precision)),
+      dueDate: "",
+      reference: "",
+      note: dup.note ?? "",
+    };
+  }
   return { supplierId: presetSupplierId ?? "", category: "", amount: "", dueDate: "", reference: "", note: "" };
 }
 
@@ -88,6 +119,7 @@ export function ExpenseFormDialog({
   editing,
   business,
   presetSupplier,
+  duplicateFrom,
   onSaved,
 }: {
   open: boolean;
@@ -96,6 +128,8 @@ export function ExpenseFormDialog({
   business: BusinessSummary;
   /** Pre-selected supplier — e.g. "New expense" from the supplier 360 page. */
   presetSupplier?: { id: string; name: string } | null;
+  /** R170 — repeat mode: prefill from a past expense; still a CREATE (POST). */
+  duplicateFrom?: ExpenseDuplicateSource | null;
   /** Invoked after a successful save — lets 360 pages refresh their data. */
   onSaved?: () => void;
 }) {
@@ -106,8 +140,18 @@ export function ExpenseFormDialog({
   const invalidateFinance = useInvalidateFinance();
   const businessId = useAppStore((s) => s.activeBusinessId);
 
+  // R170 — the repeat source may carry a supplier beyond the options page;
+  // the preset merge below covers BOTH entry points with ONE list.
+  const dupPreset = duplicateFrom?.supplierId
+    ? {
+        id: duplicateFrom.supplierId,
+        name: duplicateFrom.supplierName ?? duplicateFrom.supplierId,
+      }
+    : null;
+  const preset = presetSupplier ?? dupPreset;
+
   const [form, setForm] = useState<ExpenseForm>(() =>
-    formFrom(editing, business.decimalPrecision, presetSupplier?.id),
+    formFrom(editing, business.decimalPrecision, preset?.id, duplicateFrom),
   );
 
   // Render-phase reset when the dialog opens (React-sanctioned adjustment).
@@ -115,7 +159,7 @@ export function ExpenseFormDialog({
   if (open !== prevOpen) {
     setPrevOpen(open);
     if (open)
-      setForm(formFrom(editing, business.decimalPrecision, presetSupplier?.id));
+      setForm(formFrom(editing, business.decimalPrecision, preset?.id, duplicateFrom));
   }
 
   // Supplier options — only fetched while the dialog is open (same as the
@@ -136,11 +180,11 @@ export function ExpenseFormDialog({
   // into the selectable list so the Select always renders its name.
   const supplierOptions = useMemo(() => {
     const list = suppliers ?? [];
-    if (presetSupplier && !list.some((s) => s.id === presetSupplier.id)) {
-      return [{ id: presetSupplier.id, name: presetSupplier.name }, ...list];
+    if (preset && !list.some((s) => s.id === preset.id)) {
+      return [{ id: preset.id, name: preset.name }, ...list];
     }
     return list;
-  }, [suppliers, presetSupplier]);
+  }, [suppliers, preset]);
 
   const amountMinor = moneyToMinorOrNull(form.amount, business.decimalPrecision);
   const canSubmit =
@@ -162,6 +206,8 @@ export function ExpenseFormDialog({
     },
     onSuccess: () => {
       toast({ title: editing ? t("updatedToast") : t("createdToast") });
+      // R170 — a repeat save is a plain create: the createdToast branch
+      // already covers it (editing is null in repeat mode).
       onOpenChange(false);
       // Same invalidation set as the list's own mutation (finance-wide).
       invalidateFinance();
@@ -181,8 +227,8 @@ export function ExpenseFormDialog({
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={editing ? t("editTitle") : t("addExpense")}
-      description={t("formDescription")}
+      title={editing ? t("editTitle") : duplicateFrom ? t("duplicateTitle") : t("addExpense")}
+      description={duplicateFrom && !editing ? t("duplicateDesc") : t("formDescription")}
       submitLabel={editing ? tCommon("save") : tCommon("add")}
       cancelLabel={tCommon("cancel")}
       pending={saveMutation.isPending}

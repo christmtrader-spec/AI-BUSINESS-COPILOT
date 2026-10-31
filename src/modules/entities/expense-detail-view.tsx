@@ -11,6 +11,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import {
   CalendarDays,
+  Copy,
   CreditCard,
   Pencil,
   ReceiptText,
@@ -47,6 +48,7 @@ export function ExpenseDetailView({
   role: Role;
 }) {
   const t = useTranslations("entityDetail");
+  const tExpenses = useTranslations("finance.expenses");
   const tCommon = useTranslations("common");
   const tSearch = useTranslations("search");
   const tErrors = useTranslations("errors");
@@ -57,6 +59,9 @@ export function ExpenseDetailView({
   const canManageFinance = can(role, "finance:manage");
   const e = data.expense;
   const [editOpen, setEditOpen] = useState(false);
+  // R170 — repeat: a SECOND dialog instance in create mode, prefilled from
+  // this expense (the two instances never share state).
+  const [dupOpen, setDupOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
 
   const deleteMutation = useMutation({
@@ -101,6 +106,15 @@ export function ExpenseDetailView({
                   <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
                     <Pencil className="size-4" aria-hidden="true" />
                     {tCommon("edit")}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setDupOpen(true)}
+                    data-testid="expense-detail-repeat"
+                  >
+                    <Copy className="size-4" aria-hidden="true" />
+                    {tExpenses("duplicate")}
                   </Button>
                   <EntityDeleteDialog
                     triggerLabel={tCommon("delete")}
@@ -198,6 +212,27 @@ export function ExpenseDetailView({
           note: e.note,
           dueDate: e.dueDate,
           reference: e.reference,
+        }}
+        business={business}
+        onSaved={() => {
+          if (e.supplierId) {
+            invalidateEntityDetail(queryClient, businessId, "supplier", e.supplierId);
+          }
+        }}
+      />
+
+      {/* R170 — the repeat dialog: create mode, prefilled from THIS
+          expense; due date + reference stay with the original bill. */}
+      <ExpenseFormDialog
+        open={dupOpen}
+        onOpenChange={setDupOpen}
+        editing={null}
+        duplicateFrom={{
+          category: e.category,
+          amountMinor: e.amountMinor,
+          note: e.note,
+          supplierId: e.supplierId,
+          supplierName: e.supplierName,
         }}
         business={business}
         onSaved={() => {

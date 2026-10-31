@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { Banknote, CalendarDays, Download, Layers, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
+import { Banknote, CalendarDays, Copy, Download, Layers, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiClientError } from "@/lib/api-client";
 import { downloadCsv, exportStamp, fetchAllPages, toCsv } from "@/lib/csv";
@@ -41,12 +41,13 @@ import {
   useInvalidateFinance,
 } from "../finance-shared/finance-kit";
 import { PaymentFormDialog, type PaymentTarget } from "../payments/payment-form-dialog";
-import { ExpenseFormDialog } from "./expense-form-dialog";
+import { ExpenseFormDialog, type ExpenseDuplicateSource } from "./expense-form-dialog";
 import { navigateToEntity } from "@/modules/entities/entity-route";
 import { invalidateEntityDetail } from "@/modules/entities/entity-api";import type { BusinessSummary } from "../shell/types";
 
 type ExpenseRow = {
   id: string;
+  supplierId: string | null;
   supplierName: string | null;
   category: string;
   amountMinor: number;
@@ -106,6 +107,9 @@ export function ExpensesView({
   // Prompt 52 §F2 — dashboard quick action: open the create dialog on arrival.
   useQuickIntent("new-expense", () => setDialogOpen(true));
   const [editing, setEditing] = useState<ExpenseRow | null>(null);
+  // R170 — repeat mode: the dialog opens as a CREATE prefilled from a past
+  // expense; the two states are mutually exclusive by construction.
+  const [dupSource, setDupSource] = useState<ExpenseDuplicateSource | null>(null);
   const [payTarget, setPayTarget] = useState<PaymentTarget | null>(null);
 
   // Month drill-down deep link (#/expenses?month=YYYY-MM, "Open in Expenses"
@@ -150,11 +154,25 @@ export function ExpensesView({
 
   function openCreate() {
     setEditing(null);
+    setDupSource(null);
     setDialogOpen(true);
   }
 
   function openEdit(e: ExpenseRow) {
     setEditing(e);
+    setDupSource(null);
+    setDialogOpen(true);
+  }
+
+  function openDuplicate(e: ExpenseRow) {
+    setEditing(null);
+    setDupSource({
+      category: e.category,
+      amountMinor: e.amountMinor,
+      note: e.note,
+      supplierId: e.supplierId,
+      supplierName: e.supplierName,
+    });
     setDialogOpen(true);
   }
 
@@ -435,7 +453,10 @@ export function ExpensesView({
                       header: tCommon("actions"),
                       align: "end" as const,
                       cell: (e: ExpenseRow) => (
-                        <div className="flex items-center justify-end gap-1">
+                        // R170 — flex-wrap: the four action icons stay on
+                        // one row at desktop widths but wrap instead of
+                        // overflowing on ≤360px phones.
+                        <div className="flex flex-wrap items-center justify-end gap-1">
                           {canPay && e.balanceMinor > 0 ? (
                             <Button
                               variant="ghost"
@@ -451,6 +472,7 @@ export function ExpensesView({
                                 })
                               }
                               aria-label={t("pay")}
+                              title={t("pay")}
                             >
                               <Banknote className="size-4" aria-hidden="true" />
                             </Button>
@@ -463,8 +485,20 @@ export function ExpensesView({
                                 className="size-8"
                                 onClick={() => openEdit(e)}
                                 aria-label={tCommon("edit")}
+                                title={tCommon("edit")}
                               >
                                 <Pencil className="size-4" aria-hidden="true" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-8"
+                                onClick={() => openDuplicate(e)}
+                                aria-label={t("duplicate")}
+                                title={t("duplicate")}
+                                data-testid="expense-duplicate"
+                              >
+                                <Copy className="size-4" aria-hidden="true" />
                               </Button>
                               <AlertDialog>
                                 <AlertDialogTrigger asChild>
@@ -473,6 +507,7 @@ export function ExpensesView({
                                     size="icon"
                                     className="text-destructive hover:text-destructive size-8"
                                     aria-label={tCommon("delete")}
+                                    title={tCommon("delete")}
                                   >
                                     <Trash2 className="size-4" aria-hidden="true" />
                                   </Button>
@@ -593,6 +628,7 @@ export function ExpensesView({
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         editing={editing}
+        duplicateFrom={dupSource}
         business={business}
       />
 
