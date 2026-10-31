@@ -202,7 +202,7 @@ ok(
 );
 // Round-trip: a sales month view survives hash → view → hash.
 const monthView: AppView = { kind: "module", module: "sales", param: "2026-10" };
-const monthHash = viewToHash(monthView);
+const monthHash = viewToHash(monthView)!;
 const roundTrip = hashToView(monthHash);
 ok(
   "5d the sales month deep link round-trips (hash → view → hash)",
@@ -214,7 +214,7 @@ ok(
 );
 // Expenses month round-trip too (the R148 chip surface).
 const expMonthView: AppView = { kind: "module", module: "expenses", param: "2026-09" };
-const expHash = viewToHash(expMonthView);
+const expHash = viewToHash(expMonthView)!;
 const expTrip = hashToView(expHash);
 ok(
   "5e the expenses month deep link round-trips",

@@ -999,6 +999,108 @@ function ProductActionChip({
   );
 }
 
+// ---- Expense facet chip (R167 — the category's own list) --------------------
+
+export type ExpenseActionChipFact = {
+  category: string;
+  totalMinor: number;
+};
+
+/**
+ * R167 — the expense facet drill's gate: when the answer's proven
+ * largest-expense-category fact carries a non-blank category name, ONE
+ * chip opens the expenses workspace pre-filtered to that category (the
+ * R155 facet grammar — the value IS the filter's exact value, never an
+ * id). Laws (battery-pinned in scripts/r167-expense-facet-check.ts):
+ * - the FACET-name law — the category is the report's OWN aggregation
+ *   key (the §16 facet-family exception, the R155 drill law verbatim:
+ *   the module's filter is name-shaped, the value IS the filter, never a
+ *   fabricated id);
+ * - the positive-value law — totalMinor > 0 (no chip about nothing —
+ *   the stock family's law);
+ * - a nameless fact never drills (a chip that cannot name its filter is
+ *   noise, not an affordance);
+ * - NO month composed — the fact is the meta's rolling-window total and
+ *   the module's filters are month-shaped: a composed month would
+ *   fabricate a scope the fact does not carry (the R152 scope honesty);
+ * - old persisted metas without the fields stay honest (null);
+ * - null/undefined meta → null.
+ */
+export function pickExpenseActionChip(
+  meta: CopilotMeta | null | undefined,
+): ExpenseActionChipFact | null {
+  if (!meta || typeof meta !== "object") return null;
+  const fact = meta.topExpenseCategory;
+  if (!fact || typeof fact !== "object") return null;
+  if (typeof fact.category !== "string" || fact.category.trim().length === 0) return null;
+  if (
+    typeof fact.totalMinor !== "number" ||
+    !Number.isFinite(fact.totalMinor) ||
+    fact.totalMinor <= 0
+  )
+    return null;
+  return { category: fact.category, totalMinor: fact.totalMinor };
+}
+
+/**
+ * R167 — the ONE expense facet chip under a grounded answer: the proven
+ * largest expense category opens THE EXPENSES WORKSPACE PRE-FILTERED to
+ * that category (the R155 facet grammar — navigate rides the store's ONE
+ * view authority, never a hand-built #/expenses?category=…; ONE hop where
+ * the R143 chip's journey was chip → perf panel → category row). Laws:
+ * - ONE chip max (the fact is one rank-1); the violet perf chip keeps its
+ *   OWN destination (the window-shaped perf view) — this chip is the
+ *   category's own list, a materially different surface (the rows live
+ *   there), not a duplicate (the R153 no-dedupe law);
+ * - the icon mirrors the app's OWN nav iconography (Wallet = expenses —
+ *   one icon one meaning); the hue is the R152/R153 "open the surface"
+ *   primary identity;
+ * - the tooltip carries the EXACT proven figure (fmtMoney INSIDE the
+ *   component — never a raw ICU template; the R99/R140 formatting laws);
+ *   title = aria-label = ONE source; the hint names what the chip OPENS,
+ *   never what the report does (the R152 hint law);
+ * - absent/undrillable fact → renders null (honest silence).
+ */
+function ExpenseActionChip({
+  meta,
+  business,
+}: {
+  meta: CopilotMeta;
+  business: BusinessSummary;
+}) {
+  const t = useTranslations("copilot");
+  const navigate = useAppStore((s) => s.navigate);
+  const chip = pickExpenseActionChip(meta);
+  if (!chip) return null;
+  const tooltip = t("actionExpenseTitle", {
+    category: chip.category,
+    money: fmtMoney(business, chip.totalMinor),
+  });
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5 ps-1" data-testid="copilot-expense-chips">
+      <button
+        type="button"
+        onClick={() => navigate({ kind: "module", module: "expenses", category: chip.category })}
+        title={tooltip}
+        aria-label={tooltip}
+        data-testid="copilot-action-expense-facet"
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none transition-colors motion-reduce:transition-none",
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+          "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10",
+        )}
+      >
+        <Wallet className="size-3 shrink-0" aria-hidden="true" />
+        {t("actionExpense", { category: chip.category })}
+        <ChevronDown
+          className="size-3 shrink-0 opacity-60 rtl:-scale-x-100"
+          aria-hidden="true"
+        />
+      </button>
+    </div>
+  );
+}
+
 // ---- View -------------------------------------------------------------------
 
 export function CopilotView({
@@ -2469,9 +2571,13 @@ export function CopilotView({
                         syncAppend(sessionId, { role: "user", content: s }, titleFromQuestion(s));
                         void send(s, []);
                       }}
-                      className="border-border bg-background hover:border-emerald-500/40 hover:bg-emerald-500/5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors motion-reduce:transition-none"
+                      className="border-border bg-background hover:border-emerald-500/40 hover:bg-emerald-500/5 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-background group active:scale-[0.98] inline-flex max-w-full items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all hover:shadow-sm motion-reduce:transition-none motion-reduce:active:scale-100"
                     >
-                      {s}
+                      <Sparkles
+                        className="text-muted-foreground group-hover:text-emerald-600 size-3 shrink-0 transition-colors dark:group-hover:text-emerald-400 motion-reduce:transition-none"
+                        aria-hidden="true"
+                      />
+                      <span className="max-w-72 truncate">{s}</span>
                     </button>
                   ))}
                 </div>
@@ -2689,6 +2795,13 @@ export function CopilotView({
                       {!m.failed && m.meta ? (
                         <ProductActionChip meta={m.meta} business={business} />
                       ) : null}
+                      {/* R167 — the expense facet chip: the proven largest
+                          expense category opens the expenses workspace
+                          PRE-FILTERED to that category (the R155 facet
+                          grammar — ONE hop, the rows live there). */}
+                      {!m.failed && m.meta ? (
+                        <ExpenseActionChip meta={m.meta} business={business} />
+                      ) : null}
                       {resumingId === m.id ? (
                         <div
                           className={cn(
@@ -2735,7 +2848,7 @@ export function CopilotView({
                         key={key}
                         type="button"
                         onClick={() => askFollowUp(t(key))}
-                        className="border-emerald-500/25 bg-emerald-500/5 hover:border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors motion-reduce:transition-none"
+                        className="border-emerald-500/25 bg-emerald-500/5 hover:border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.98] rounded-full border px-3 py-1.5 text-xs font-medium transition-colors motion-reduce:transition-none motion-reduce:active:scale-100"
                       >
                         {t(key)}
                       </button>

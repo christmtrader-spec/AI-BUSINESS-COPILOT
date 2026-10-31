@@ -2044,6 +2044,8 @@ const en = {
     actionCreditorTitle: "You owe «{name}» {money} across {count} open bills. Open their aging details.",
     actionProduct: "The product's page",
     actionProductTitle: "Best seller in this window: «{name}» — {count} units at {money}. Open the product's own page.",
+    actionExpense: "{category} expenses",
+    actionExpenseTitle: "Largest expense category: «{category}» at {money}. Open the {category} expenses in the Expenses workspace.",
     suggestion1: "Who owes me money?",
     suggestion2: "How did sales do in the last 30 days?",
     suggestion3: "Where is my money going?",

@@ -2029,6 +2029,8 @@ const fa: Messages = {
     actionCreditorTitle: "شما به «{name}» {money} بدهکار هستید، در {count} صورتحساب باز. مشاهدهٔ جزئیات سررسیدشان.",
     actionProduct: "صفحهٔ خودِ کالا",
     actionProductTitle: "پرفروش‌ترینِ این بازه: «{name}» — {count} واحد به ارزش {money}. بازکردن صفحهٔ خودِ کالا.",
+    actionExpense: "هزینه‌های {category}",
+    actionExpenseTitle: "بزرگ‌ترین دستهٔ هزینه: «{category}» به ارزش {money}. بازکردن هزینه‌های {category} در میز کار هزینه‌ها.",
     suggestion1: "چه کسی به من بدهکار است؟",
     suggestion2: "فروش ۳۰ روز گذشته چطور بود؟",
     suggestion3: "پول من کجا می‌رود؟",
