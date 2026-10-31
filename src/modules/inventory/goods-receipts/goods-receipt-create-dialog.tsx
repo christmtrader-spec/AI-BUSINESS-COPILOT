@@ -167,7 +167,7 @@ export function GoodsReceiptCreateDialog({
                     type="button"
                     role="option"
                     aria-selected={false}
-                    className="flex w-full items-center justify-between rounded-md px-2 py-2 text-start text-sm transition-colors hover:bg-muted/60 motion-reduce:transition-none"
+                    className="flex w-full items-center justify-between rounded-md px-2 py-2 text-start text-sm transition-colors hover:bg-muted/60 motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                     onClick={() => setSelected(po)}
                   >
                     <span dir="auto" className="min-w-0 truncate">

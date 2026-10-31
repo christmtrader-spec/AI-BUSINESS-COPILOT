@@ -272,7 +272,7 @@ function TaskQueueCard({
   return (
     <div
       className={cn(
-        "hover:bg-muted/40 flex min-h-11 items-start gap-3 rounded-lg border p-3 transition-colors",
+        "hover:bg-muted/40 flex min-h-11 items-start gap-3 rounded-lg border p-3 transition-colors motion-reduce:transition-none",
         overdue && "border-destructive/30",
       )}
     >

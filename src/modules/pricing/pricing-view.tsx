@@ -326,7 +326,7 @@ export function PricingView() {
                 </div>
 
                 {/* Currency selector (§20/§78) — ONLY server-declared currencies */}
-                <div className="mx-auto flex flex-col items-center gap-2">
+                <div className="mx-auto flex flex-col items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background">
                   <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
                     {t("currency.label")}
                   </span>
@@ -375,7 +375,7 @@ export function PricingView() {
                   <Card
                     key={plan.code}
                     className={cn(
-                      "relative flex flex-col transition-shadow duration-200 hover:shadow-md",
+                      "relative flex flex-col transition-shadow duration-200 hover:shadow-md motion-reduce:transition-none",
                       featured && "border-primary/40 shadow-sm ring-1 ring-primary/20",
                     )}
                     data-plan={plan.code}

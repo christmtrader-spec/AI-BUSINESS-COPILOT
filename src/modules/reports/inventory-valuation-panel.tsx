@@ -673,7 +673,7 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
               </div>
               <div
                 className={cn(
-                  "bg-card rounded-lg border p-3 transition-colors hover:border-amber-500/40",
+                  "bg-card rounded-lg border p-3 transition-colors hover:border-amber-500/40 motion-reduce:transition-none",
                   data.totals.zeroCostPositiveStockCount > 0 && "border-amber-500/30 bg-amber-500/5",
                 )}
               >

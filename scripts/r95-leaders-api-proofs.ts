@@ -19,11 +19,18 @@
  *  [D] THE PAYABLES TWIN — suppliers S1 800k / S2 500k + anonymous 100k →
  *      payables leaders [S1, S2, mass], partyCount 3; paying S1 → S2 rank 1.
  *  [E] THE COPILOT GROUNDING — buildCopilotGrounding over the SAME seeded
- *      book: outstandingAllTime.largestDebtors / largestCreditors carry
- *      the parties VERBATIM (rank, name — "unassigned" for the mass — and
- *      the exact pre-formatted balance string from the shared formatMoney);
- *      the system prompt speaks the 6d BOOK LEADERS law; the meta's
- *      attribution fields remain untouched (additive grounding).
+ *      book [RE-PINNED R169: the R95-era largestDebtors/largestCreditors
+ *      ARRAYS became the SINGULAR largestDebtor/largestCreditor through
+ *      topLeaderOfFact, the '6d. BOOK LEADERS' prompt law left in a later
+ *      round, and the meta's attribution family rotated — the battery
+ *      could not run in-process since birth (the server-only chain) so
+ *      every drift went stale-unnoticed; the R169 react-server runner
+ *      un-froze it]: the snapshot's singular throne citations carry the
+ *      parties VERBATIM (name — null for the mass — integer minor units,
+ *      openItems, partyCount); the system prompt speaks the CURRENT
+ *      verbatim-citation law family (6b/6e/6f) and embeds the singular
+ *      leader keys; the meta's attribution family is untouched (additive
+ *      law); the attention figures reconcile.
  *  [F] 401 — both dashboard routes reject the unauthenticated.
  *
  * Run: bun --conditions react-server scripts/r95-leaders-api-proofs.ts
@@ -349,26 +356,30 @@ async function main() {
       decimalPrecision: business.decimalPrecision,
       locale: business.locale,
     };
-    const expectedDebtors = [
-      { rank: 1, name: "unassigned", balance: formatMoney(2_000_000, money), openItems: 1 },
-      { rank: 2, name: "Bahar Foods", balance: formatMoney(500_000, money), openItems: 1 },
-    ];
-    ok("E1 largestDebtors = [unassigned rank1, Bahar rank2] with EXACT pre-formatted balances (post-flip book)",
-      JSON.stringify(snap.outstandingAllTime?.largestDebtors) === JSON.stringify(expectedDebtors),
-      JSON.stringify(snap.outstandingAllTime?.largestDebtors));
-    const expectedCreditors = [
-      { rank: 1, name: "Bahar Supply", balance: formatMoney(500_000, money), openItems: 1 },
-      { rank: 2, name: "unassigned", balance: formatMoney(100_000, money), openItems: 1 },
-    ];
-    ok("E2 largestCreditors twin = [Bahar Supply rank1, unassigned rank2] — same law, payables side",
-      JSON.stringify(snap.outstandingAllTime?.largestCreditors) === JSON.stringify(expectedCreditors),
-      JSON.stringify(snap.outstandingAllTime?.largestCreditors));
-    ok("E3 the system prompt speaks the 6d BOOK LEADERS law (name parties, never re-rank)",
-      grounding.systemPrompt.includes('6d. BOOK LEADERS') &&
-      grounding.systemPrompt.includes("largestDebtors") &&
-      grounding.systemPrompt.includes("largestCreditors"));
-    ok("E4 the grounding meta's attribution fields untouched (topOverdueCustomer present, additive law)",
-      "topOverdueCustomer" in grounding.meta && "topPastDueSupplier" in grounding.meta);
+    // RE-PINNED R169 (honest archaeology): the R95-era snapshot carried
+    // largestDebtors/largestCreditors ARRAYS (pre-formatted balance strings);
+    // a later round reshaped them to the SINGULAR largestDebtor/largestCreditor
+    // through topLeaderOfFact ({partyName, outstandingMinor, openItems,
+    // partyCount} — integer minor units, the citation shape). The battery
+    // could not run in-process since birth (the server-only chain) so the
+    // reshape went stale-unnoticed; the R169 react-server runner un-froze it.
+    ok("E1 largestDebtor = the mass throne {partyName null, 2M, openItems 1, partyCount 2} — the anonymous balance LEADS and pre-formatted money lives elsewhere (post-flip book) [R169: singular citation shape]",
+      JSON.stringify(snap.outstandingAllTime?.largestDebtor) ===
+        JSON.stringify({ partyName: null, outstandingMinor: 2_000_000, openItems: 1, partyCount: 2 }),
+      JSON.stringify(snap.outstandingAllTime?.largestDebtor));
+    ok("E2 largestCreditor twin = { partyName 'Bahar Supply', 500k, 1, partyCount 2 } — same law, payables side",
+      JSON.stringify(snap.outstandingAllTime?.largestCreditor) ===
+        JSON.stringify({ partyName: "Bahar Supply", outstandingMinor: 500_000, openItems: 1, partyCount: 2 }),
+      JSON.stringify(snap.outstandingAllTime?.largestCreditor));
+    ok("E3 the system prompt speaks the CURRENT leader law family (6b/6e/6f verbatim-citation rules) and embeds the snapshot's singular leader keys [R169 re-pin: the R95-era '6d. BOOK LEADERS' numbered law left the prompt in a later round — the debtors citation now rides the embedded snapshot + rules 1/4]",
+      grounding.systemPrompt.includes('6b.') &&
+      grounding.systemPrompt.includes('6e.') &&
+      grounding.systemPrompt.includes('6f.') &&
+      grounding.systemPrompt.includes('"largestDebtor"') &&
+      grounding.systemPrompt.includes('"largestCreditor"'));
+    ok("E4 the grounding meta's attribution family untouched (topProduct/topExpenseCategory/topDebtor/topCreditor present, additive law) [R169 re-pin: the R91/R92 fields left the meta in a later round]",
+      "topProduct" in grounding.meta && "topExpenseCategory" in grounding.meta &&
+      "topDebtor" in grounding.meta && "topCreditor" in grounding.meta);
     ok("E5 the snapshot's attention figures still reconcile (customersOweYou = post-flip 2.5M)",
       snap.outstandingAllTime?.customersOweYou === formatMoney(2_500_000, money),
       JSON.stringify(snap.outstandingAllTime?.customersOweYou));

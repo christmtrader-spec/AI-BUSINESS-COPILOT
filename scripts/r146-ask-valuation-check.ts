@@ -143,7 +143,7 @@ console.log("\n== [4] styling law ==");
 {
   // The valuation KPI cards join the R145 semantic hover family.
   ok("4a. the three neutral KPI cards ride hover:border-primary/25", (val.match(/bg-card rounded-lg border p-3 transition-colors hover:border-primary\/25/g) ?? []).length === 3);
-  ok("4b. the zero-cost card rides hover:border-amber-500/40 (its own hue)", val.includes('"bg-card rounded-lg border p-3 transition-colors hover:border-amber-500/40"'));
+  ok("4b. the zero-cost card rides hover:border-amber-500/40 (its own hue) [RE-PINNED R169: the deep motion audit appended motion-reduce:transition-none — the R156 law's cn()-blind-spot closure; the hue law intact]", val.includes('"bg-card rounded-lg border p-3 transition-colors hover:border-amber-500/40 motion-reduce:transition-none"'));
   ok("4c. the zero-cost card's conditional border is untouched", val.includes('data.totals.zeroCostPositiveStockCount > 0 && "border-amber-500/30 bg-amber-500/5"'));
   // §8.6 neutrality: the valuation BASIS disclosure keeps its neutral edge —
   // unlike the reorder decision-aid chip (border-primary/15), the basis text

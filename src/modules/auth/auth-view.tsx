@@ -95,8 +95,8 @@ const errorBoxClass =
  * only — same form, same NextAuth, same MFA flow for both.
  */
 const tenantPrimaryButtonClass =
-  "h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400";
-const platformPrimaryButtonClass = `h-11 w-full ${PLATFORM_GRADIENT_CTA} transition-all hover:shadow-[#5C27FE]/40`;
+  "h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400 motion-reduce:transition-none";
+const platformPrimaryButtonClass = `h-11 w-full ${PLATFORM_GRADIENT_CTA} transition-all hover:shadow-[#5C27FE]/40 motion-reduce:transition-none`;
 
 /* ─────────────── Modern auth presentation helpers (r52) ───────────────
    Glass card + hairline + icon badge + leading field icons + password

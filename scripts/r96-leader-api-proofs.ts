@@ -14,14 +14,22 @@
  *  [B] THE SEED (through the API, the r95 law): customers Akar 800k ×2,
  *      Bahar 500k, Chinar PAID (never competes), walk-in 2M mass;
  *      suppliers S1 800k, S2 500k + anonymous 100k →
- *      meta.largestDebtor = { partyName: null, 2M, openItems 1,
- *      partyCount 3 } (the mass LEADS — an anonymous balance is real
- *      money) and meta.largestCreditor = { "Akar Ltd", 800k, 1, 3 } —
+ *      meta.topDebtor = { partyId null, partyName null, 2M, openItems 1
+ *      } (the mass LEADS — an anonymous balance is real money) and
+ *      meta.topCreditor = { s1, "Akar Ltd", 800k, 1 } — RE-PINNED R169:
+ *      the R147 OUTSTANDING DRILL renamed meta.largestDebtor → topDebtor
+ *      and reshaped it through outstandingViewOf (partyId IN for the
+ *      §16/§18 drill, rank/partyCount deliberately DROPPED — the meta
+ *      carries exactly what the chips render); the batteries could not
+ *      run in-process since birth (server-only chain) so the rename went
+ *      stale-unnoticed, the R169 react-server runner un-froze them.
  *      AND the client extractor (topLeaderOfFact over the RAW route
  *      response, exactly what fetchBalancesData does in the browser)
- *      agrees BYTE-FOR-BYTE with the meta: the two readers of rank 1
- *      cannot disagree by construction.
- *  [C] THE FLIP — pay S1 in full → meta.largestCreditor becomes S2 500k
+ *      agrees FIELD-WISE with the meta (partyName/outstandingMinor/
+ *      openItems — partyId rides the wire row, partyCount the
+ *      extractor's own output): the two readers of rank 1 cannot
+ *      disagree by construction.
+ *  [C] THE FLIP — pay S1 in full → meta.topCreditor becomes S2 500k
  *      (the creditor chip's tooltip money would move live); pay Akar →
  *      the debtor leader stays the mass but partyCount shrinks honestly
  *      to 2 (settled money leaves the population).
@@ -205,11 +213,11 @@ async function main() {
     ok("A4 payables twin maps to null too",
       payEmpty.status === 200 && topLeaderOfFact(payEmpty.body?.leaders) === null);
     const metaEmpty = await groundingMeta();
-    ok("A5 meta.largestDebtor present-but-null on an empty book (the chip gate reads falsy)",
-      "largestDebtor" in metaEmpty && (metaEmpty as any).largestDebtor === null,
-      JSON.stringify((metaEmpty as any).largestDebtor));
-    ok("A6 meta.largestCreditor present-but-null too",
-      "largestCreditor" in metaEmpty && (metaEmpty as any).largestCreditor === null);
+    ok("A5 meta.topDebtor present-but-null on an empty book (the chip gate reads falsy) [RE-PINNED R169: R147 renamed largestDebtor→topDebtor]",
+      "topDebtor" in metaEmpty && (metaEmpty as any).topDebtor === null,
+      JSON.stringify((metaEmpty as any).topDebtor));
+    ok("A6 meta.topCreditor present-but-null too",
+      "topCreditor" in metaEmpty && (metaEmpty as any).topCreditor === null);
 
     console.log("\n[B] THE SEED — every document through the API");
     const akar = await api(jar, "/api/v1/customers", { method: "POST", body: JSON.stringify({ name: "Akar Trading" }) });
@@ -298,23 +306,29 @@ async function main() {
 
     console.log("\n[B+] THE META LAW — rank 1 as the chips read it (and the two readers agree)");
     const meta = (await groundingMeta()) as any;
-    ok("B11 meta.largestDebtor = { partyName: null, 2,000,000, openItems 1, partyCount 3 } — the mass LEADS",
-      JSON.stringify(meta.largestDebtor) ===
-        JSON.stringify({ partyName: null, outstandingMinor: 2_000_000, openItems: 1, partyCount: 3 }),
-      JSON.stringify(meta.largestDebtor));
-    ok("B12 meta.largestCreditor = { 'Akar Ltd', 800,000, openItems 1, partyCount 3 }",
-      JSON.stringify(meta.largestCreditor) ===
-        JSON.stringify({ partyName: "Akar Ltd", outstandingMinor: 800_000, openItems: 1, partyCount: 3 }),
-      JSON.stringify(meta.largestCreditor));
+    ok("B11 meta.topDebtor = { partyId null, partyName null, 2,000,000, openItems 1 } — the mass LEADS [R147 shape: rank/partyCount dropped]",
+      JSON.stringify(meta.topDebtor) ===
+        JSON.stringify({ partyId: null, partyName: null, outstandingMinor: 2_000_000, openItems: 1 }),
+      JSON.stringify(meta.topDebtor));
+    ok("B12 meta.topCreditor = { partyId s1, 'Akar Ltd', 800,000, openItems 1 }",
+      JSON.stringify(meta.topCreditor) ===
+        JSON.stringify({ partyId: s1Id, partyName: "Akar Ltd", outstandingMinor: 800_000, openItems: 1 }),
+      JSON.stringify(meta.topCreditor));
 
     const recv = await api(jar, "/api/v1/receivables");
     const pay = await api(jar, "/api/v1/payables");
-    ok("B13 THE TWO READERS AGREE — the client extractor over the RAW receivables response === meta.largestDebtor",
-      JSON.stringify(topLeaderOfFact(recv.body?.leaders)) === JSON.stringify(meta.largestDebtor),
-      `${JSON.stringify(topLeaderOfFact(recv.body?.leaders))} vs ${JSON.stringify(meta.largestDebtor)}`);
-    ok("B14 same agreement on the payables side (meta.largestCreditor)",
-      JSON.stringify(topLeaderOfFact(pay.body?.leaders)) === JSON.stringify(meta.largestCreditor),
-      `${JSON.stringify(topLeaderOfFact(pay.body?.leaders))} vs ${JSON.stringify(meta.largestCreditor)}`);
+    ok("B13 THE TWO READERS AGREE — the client extractor over the RAW receivables response agrees FIELD-WISE with meta.topDebtor [R169: the shapes legitimately differ — the extractor carries partyCount, the meta carries partyId]",
+      topLeaderOfFact(recv.body?.leaders)?.partyName === meta.topDebtor?.partyName &&
+      topLeaderOfFact(recv.body?.leaders)?.outstandingMinor === meta.topDebtor?.outstandingMinor &&
+      topLeaderOfFact(recv.body?.leaders)?.openItems === meta.topDebtor?.openItems &&
+      recv.body?.leaders?.leaders?.[0]?.partyId === meta.topDebtor?.partyId,
+      `${JSON.stringify(topLeaderOfFact(recv.body?.leaders))} vs ${JSON.stringify(meta.topDebtor)}`);
+    ok("B14 same agreement on the payables side (meta.topCreditor)",
+      topLeaderOfFact(pay.body?.leaders)?.partyName === meta.topCreditor?.partyName &&
+      topLeaderOfFact(pay.body?.leaders)?.outstandingMinor === meta.topCreditor?.outstandingMinor &&
+      topLeaderOfFact(pay.body?.leaders)?.openItems === meta.topCreditor?.openItems &&
+      pay.body?.leaders?.leaders?.[0]?.partyId === meta.topCreditor?.partyId,
+      `${JSON.stringify(topLeaderOfFact(pay.body?.leaders))} vs ${JSON.stringify(meta.topCreditor)}`);
     ok("B15 the response's own aggregates byte-untouched (3,300,000 over 4 open invoices)",
       recv.body?.totalOutstandingMinor === 3_300_000 && recv.body?.openCount === 4,
       JSON.stringify({ m: recv.body?.totalOutstandingMinor, n: recv.body?.openCount }));
@@ -326,10 +340,10 @@ async function main() {
     });
     ok("C1 S1's expense paid (201)", payS1.status === 201, `got ${payS1.status}`);
     const metaFlip1 = (await groundingMeta()) as any;
-    ok("C2 after the flip: meta.largestCreditor = { 'Bahar Supply', 500,000, 1, partyCount 2 } — the throne moves",
-      JSON.stringify(metaFlip1.largestCreditor) ===
-        JSON.stringify({ partyName: "Bahar Supply", outstandingMinor: 500_000, openItems: 1, partyCount: 2 }),
-      JSON.stringify(metaFlip1.largestCreditor));
+    ok("C2 after the flip: meta.topCreditor = { partyId s2, 'Bahar Supply', 500,000, openItems 1 } — the throne moves",
+      JSON.stringify(metaFlip1.topCreditor) ===
+        JSON.stringify({ partyId: s2Id, partyName: "Bahar Supply", outstandingMinor: 500_000, openItems: 1 }),
+      JSON.stringify(metaFlip1.topCreditor));
     const payAkar = await api(jar, "/api/v1/payments", {
       method: "POST",
       body: JSON.stringify({ saleId: inv1.body.id, amountMinor: 500_000, method: "CASH" }),
@@ -340,21 +354,25 @@ async function main() {
     });
     ok("C3 Akar's both invoices paid (201 ×2)", payAkar.status === 201 && payAkar2.status === 201);
     const metaFlip2 = (await groundingMeta()) as any;
-    ok("C4 the debtor leader stays the mass (2M still rank 1) but partyCount shrinks honestly to 2",
-      JSON.stringify(metaFlip2.largestDebtor) ===
-        JSON.stringify({ partyName: null, outstandingMinor: 2_000_000, openItems: 1, partyCount: 2 }),
-      JSON.stringify(metaFlip2.largestDebtor));
     const recvFlip = await api(jar, "/api/v1/receivables");
-    ok("C5 the reader agreement survives the flip (extractor === meta on the post-flip book)",
-      JSON.stringify(topLeaderOfFact(recvFlip.body?.leaders)) === JSON.stringify(metaFlip2.largestDebtor));
+    ok("C4 the debtor leader stays the mass (2M still rank 1 — the meta view is rank-blind by design) and the WIRE's partyCount shrinks honestly to 2 [R169: partyCount moved out of the R147 view — the population lives on the extractor/wire side]",
+      JSON.stringify(metaFlip2.topDebtor) ===
+        JSON.stringify({ partyId: null, partyName: null, outstandingMinor: 2_000_000, openItems: 1 }) &&
+      topLeaderOfFact(recvFlip.body?.leaders)?.partyCount === 2,
+      JSON.stringify(metaFlip2.topDebtor));
+    ok("C5 the reader agreement survives the flip (field-wise, extractor === meta on the post-flip book)",
+      topLeaderOfFact(recvFlip.body?.leaders)?.outstandingMinor === metaFlip2.topDebtor?.outstandingMinor &&
+      topLeaderOfFact(recvFlip.body?.leaders)?.openItems === metaFlip2.topDebtor?.openItems &&
+      topLeaderOfFact(recvFlip.body?.leaders)?.partyName === metaFlip2.topDebtor?.partyName);
 
     console.log("\n[D] THE ADDITIVE LAW — nothing pre-existing moved");
-    ok("D1 meta.counts intact (agedOver60Invoices/pastDueBills/receivablesOverdue present, numbers)",
-      typeof meta.counts?.agedOver60Invoices === "number" &&
-      typeof meta.counts?.pastDueBills === "number" &&
-      typeof meta.counts?.receivablesOverdue === "number");
-    ok("D2 meta's R91/R92 attribution fields still present (topOverdueCustomer/topAgedOver60Customer/topPastDueSupplier)",
-      "topOverdueCustomer" in meta && "topAgedOver60Customer" in meta && "topPastDueSupplier" in meta);
+    ok("D1 meta.counts intact (sales/openInvoices/lowStock present, numbers) [RE-PINNED R169: the aged/past-due counters left counts in a later round — the current closed scope is pinned]",
+      typeof meta.counts?.sales === "number" &&
+      typeof meta.counts?.openInvoices === "number" &&
+      typeof meta.counts?.lowStock === "number");
+    ok("D2 meta's attribution family still present (topProduct/topExpenseCategory/topDebtor/topCreditor) [RE-PINNED R169: the R91/R92 fields left the meta in a later round; the current family pinned]",
+      "topProduct" in meta && "topExpenseCategory" in meta &&
+      "topDebtor" in meta && "topCreditor" in meta);
     const payFlip = await api(jar, "/api/v1/payables");
     ok("D3 payables aggregates byte-untouched post-flip (600,000 over 2 open bills — S2 500k + mass 100k)",
       payFlip.body?.totalOutstandingMinor === 600_000 && payFlip.body?.openCount === 2,

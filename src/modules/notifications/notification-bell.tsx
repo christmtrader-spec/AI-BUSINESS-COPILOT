@@ -133,7 +133,7 @@ export function NotificationItemRow({
         onNavigate?.(item);
       }}
       className={cn(
-        "hover:bg-accent/60 focus-visible:bg-accent/60 flex w-full items-start gap-3 rounded-md px-3 py-2.5 text-start transition-colors",
+        "hover:bg-accent/60 focus-visible:bg-accent/60 flex w-full items-start gap-3 rounded-md px-3 py-2.5 text-start transition-colors motion-reduce:transition-none",
         unread && "bg-accent/30",
       )}
       aria-label={item.title}

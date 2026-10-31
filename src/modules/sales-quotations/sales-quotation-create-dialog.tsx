@@ -188,7 +188,7 @@ export function SalesQuotationCreateDialog({
                     type="button"
                     role="option"
                     aria-selected={false}
-                    className="w-full rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-muted/60 motion-reduce:transition-none"
+                    className="w-full rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-muted/60 motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                     onClick={() => setSelected(c)}
                   >
                     <span dir="auto">{c.name}</span>

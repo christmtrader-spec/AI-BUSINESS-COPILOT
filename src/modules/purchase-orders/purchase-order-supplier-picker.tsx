@@ -66,12 +66,12 @@ export function PurchaseOrderSupplierPicker({
               role="option"
               aria-selected={selectedId === s.id}
               className={cn(
-                "flex w-full items-center justify-between gap-3 border-b px-3 py-2.5 text-start text-sm transition-colors last:border-b-0 hover:bg-muted/40",
+                "flex w-full items-center justify-between gap-3 border-b px-3 py-2.5 text-start text-sm transition-colors last:border-b-0 hover:bg-muted/40 motion-reduce:transition-none",
                 selectedId === s.id && "bg-muted/60",
               )}
               onClick={() => onSelect({ id: s.id, name: s.name })}
             >
-              <span className="min-w-0">
+              <span className="min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background">
                 <span className="block truncate font-medium" dir="auto">{s.name}</span>
                 {s.phone || s.email ? (
                   <span className="block truncate text-xs text-muted-foreground" dir="ltr">

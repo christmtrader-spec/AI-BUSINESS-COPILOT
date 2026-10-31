@@ -307,12 +307,14 @@ async function main() {
   ok("D2 the ADDITIVE law — meta.counts intact (WINDOWED: 3 sales in the 30d window — the 50d-back sale is honestly outside — and 5 expenses)",
     flipped.meta.counts && flipped.meta.counts.sales === 3 && flipped.meta.counts.expenses === 5,
     JSON.stringify({ sales: flipped.meta.counts?.sales, expenses: flipped.meta.counts?.expenses }));
-  ok("D3 the ADDITIVE law — the R96/R97 leader fields still present",
-    "largestDebtor" in flipped.meta && "topDebtors" in flipped.meta && "largestCreditor" in flipped.meta && "topCreditors" in flipped.meta);
-  ok("D4 the ADDITIVE law — the R91/R92 attribution fields still present",
-    "topOverdueCustomer" in flipped.meta && "topPastDueSupplier" in flipped.meta);
-  ok("D5 the snapshot's topProducts section UNTOUCHED (still the full ranked list)",
-    Array.isArray(flipped.meta.topDebtors) && Array.isArray(flipped.meta.topCreditors));
+  ok("D3 the ADDITIVE law — the CURRENT leader fields still present [RE-PINNED R169: the R147 drill renamed/reshaped the meta's leader fields to the singular topDebtor/topCreditor; the batteries could not run in-process since birth — the server-only chain — so the drift went stale-unnoticed; the R169 react-server runner un-froze them]",
+    "topDebtor" in flipped.meta && "topCreditor" in flipped.meta);
+  ok("D4 the ADDITIVE law — the CURRENT attribution family still present [R169 re-pin: the R91/R92 fields left the meta in a later round]",
+    "topProduct" in flipped.meta && "topExpenseCategory" in flipped.meta &&
+    "topStockProduct" in flipped.meta && "topStockRunnerUp" in flipped.meta);
+  ok("D5 the meta's own merch fields carry the R98 law (topStockProduct/topStockRunnerUp present; topProduct shaped) — the throne facts the chips cite",
+    flipped.meta.topStockProduct !== undefined && flipped.meta.topStockRunnerUp !== undefined &&
+    (flipped.meta.topProduct === null || typeof flipped.meta.topProduct === "object"));
 
   console.log("\n[E] 401 — the unauthenticated are rejected");
   const anon = await fetch(`${BASE}/api/v1/reports/summary?days=30`, { redirect: "manual" });

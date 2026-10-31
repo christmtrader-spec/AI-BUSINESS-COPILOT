@@ -1,34 +1,46 @@
 /**
  * scripts/r97-podium-api-proofs.ts — R97 REAL-HTTP PROOFS (persists).
  *
- * Proves the PODIUM tier end-to-end over live HTTP — the meta's
- * topDebtors/topCreditors (the copilot "who else?" chips' existence
- * proof) and the balances client mapping (runnersUpOfFact over the RAW
- * route response, exactly what fetchBalancesData does in the browser):
+ * Proves the PODIUM tier end-to-end over live HTTP — the meta's throne
+ * facts (topDebtor/topCreditor — the copilot's outstanding chips'
+ * existence proof) and the balances client mapping (runnersUpOfFact over
+ * the RAW route response, exactly what fetchBalancedData does in the
+ * browser):
  *
- *  [A] HONEST SILENCE — a fresh book: the meta's topDebtors/topCreditors
- *      are PRESENT-but-EMPTY arrays ([] — the chip gate reads length < 2
- *      → hidden) and the client runners-up extractor maps the routes'
- *      honest-empty leaders fact to [] — no chip, no podium row.
+ *  RE-PINNED R169 (honest archaeology): the R97-era meta carried
+ *  topDebtors/topCreditors PODIUM ARRAYS; the R147 OUTSTANDING DRILL
+ *  replaced them with the SINGULAR topDebtor/topCreditor
+ *  (outstandingViewOf: partyId IN for the aging drill, rank/partyCount
+ *  deliberately dropped). These batteries could not run in-process since
+ *  birth (the server-only import chain) so the reshape went
+ *  stale-unnoticed; the R169 `bun --conditions react-server` runner
+ *  un-froze them and this battery now pins the CURRENT shapes.
+ *
+ *  [A] HONEST SILENCE — a fresh book: the meta's topDebtor/topCreditor
+ *      are PRESENT-but-NULL (the chip gate reads falsy → hidden) and the
+ *      client runners-up extractor maps the routes' honest-empty leaders
+ *      fact to [] — no chip, no podium row.
  *  [B] THE SEED (the r96 law): Akar 800k (2 open), Bahar 500k, Chinar
  *      PAID (never competes), walk-in 2M mass; suppliers S1 800k, S2
- *      500k + anonymous 100k → meta.topDebtors = [mass 2M rank1, Akar
- *      800k rank2, Bahar 500k rank3] (top-3 of a 3-party book — Chinar
- *      settled absent) and meta.topCreditors = [Akar Ltd 800k rank1,
- *      Bahar Supply 500k rank2, mass 100k rank3]; THE READERS AGREE at
- *      podium depth: runnersUpOfFact over the RAW responses === the
- *      meta's podium minus rank 1, byte-for-byte, both sides; each row
- *      carries the server's OWN rank + partyId (null on the mass).
- *  [C] THE FLIP — pay S1 → the creditor podium shrinks to [Bahar 500k,
- *      mass 100k] (the chip's tooltip would move live); pay Akar's both
- *      invoices → the debtor podium shrinks to [mass 2M, Bahar 500k]
- *      (Akar leaves by money, never by fiat); pay the REST of the
- *      payables book → topCreditors = [] (the honest silence, again).
- *  [D] THE ADDITIVE LAW — largestDebtor/largestCreditor still present
- *      and agreeing with podium[0] after every flip; meta.counts and the
- *      R91/R92 attribution fields intact; the routes' own aggregates
- *      byte-untouched (2.5M/2 receivable, 0/0 payable at the end).
- *  [E] 401 — both routes reject the unauthenticated.
+ *      500k + anonymous 100k → meta.topDebtor = the mass throne
+ *      (2M, openItems 1) and meta.topCreditor = the S1 throne (800k, 1);
+ *      THE READERS AGREE at throne depth: throneOf (the battery's mirror
+ *      of outstandingViewOf) over the RAW responses === the meta, both
+ *      sides; the PODIUM itself lives on the client extractor
+ *      (runnersUpOfFact yields ranks 2..3 with the server's OWN rank +
+ *      partyId, null on the mass).
+ *  [C] THE FLIP — pay S1 → the creditor throne MOVES to S2 500k (the
+ *      chip's tooltip would move live); pay Akar's both invoices → Akar
+ *      leaves the WIRE podium by money (ranks 2..3 = Bahar alone over a
+ *      2-party book) while the throne honestly stays the mass; pay the
+ *      REST of the payables book → topCreditor = null (the honest
+ *      silence, again).
+ *  [D] THE ADDITIVE LAW — the meta's topDebtor agrees with the wire's
+ *      throne after every flip; meta.counts (the current closed scope)
+ *      and the current attribution family intact; the routes' own
+ *      aggregates byte-untouched (3.3M/4 → 2.5M/2 receivable,
+ *      1.4M/3 → 0 payable).
+ *  [E] 401 — the routes reject the unauthenticated.
  *
  * Run: bun --conditions react-server scripts/r97-podium-api-proofs.ts
  *      (--cleanup sweeps the probe; --keep keeps it for browser QA)
@@ -180,9 +192,26 @@ async function groundingMeta() {
 function clientPodium(rawLeaders: any) {
   return runnersUpOfFact(rawLeaders, 3);
 }
-/** The copilot chip gate's exact view: the meta's podium minus rank 1. */
-function metaRunners(metaPodium: any[]) {
-  return (metaPodium ?? []).filter((e) => e.rank !== 1);
+/**
+ * The meta's exact throne mapping (outstandingViewOf's R147 law, mirrored
+ * over the RAW wire rows): partyId + partyName + outstandingMinor +
+ * openItems (the wire's `count` renamed) — rank/partyCount deliberately
+ * DROPPED: the meta carries exactly what the chips render.
+ * RE-PINNED R169: the R97-era meta carried topDebtors/topCreditors PODIUM
+ * ARRAYS; the R147 OUTSTANDING DRILL replaced them with the singular
+ * topDebtor/topCreditor (the batteries could not run in-process since
+ * birth — the server-only chain — so the reshape went stale-unnoticed;
+ * the R169 react-server runner un-froze them).
+ */
+function throneOf(rawLeaders: any) {
+  const first = rawLeaders?.leaders?.[0];
+  if (!first) return null;
+  return {
+    partyId: first.partyId,
+    partyName: first.partyName,
+    outstandingMinor: first.outstandingMinor,
+    openItems: first.count,
+  };
 }
 
 async function main() {
@@ -205,12 +234,11 @@ async function main() {
     const recvEmpty = await api(jar, "/api/v1/receivables");
     ok("A1 receivables 200", recvEmpty.status === 200, `got ${recvEmpty.status}`);
     const metaEmpty = await groundingMeta();
-    ok("A2 meta.topDebtors present-but-EMPTY on a fresh book ([] — the chip gate reads length < 2)",
-      Array.isArray(metaEmpty.topDebtors) && metaEmpty.topDebtors.length === 0,
-      JSON.stringify(metaEmpty.topDebtors));
-    ok("A3 meta.topCreditors present-but-EMPTY too",
-      Array.isArray(metaEmpty.topCreditors) && metaEmpty.topCreditors.length === 0,
-      JSON.stringify(metaEmpty.topCreditors));
+    ok("A2 meta.topDebtor present-but-NULL on a fresh book (the chip gate reads falsy) [RE-PINNED R169: the R147 drill replaced the topDebtors PODIUM ARRAY with the singular throne]",
+      "topDebtor" in (metaEmpty as any) && (metaEmpty as any).topDebtor === null,
+      JSON.stringify((metaEmpty as any).topDebtor));
+    ok("A3 meta.topCreditor present-but-NULL too",
+      "topCreditor" in (metaEmpty as any) && (metaEmpty as any).topCreditor === null);
     ok("A4 the CLIENT runners-up extractor maps the honest-empty fact to [] (no podium row)",
       clientPodium(recvEmpty.body?.leaders).length === 0 &&
       JSON.stringify(clientPodium(recvEmpty.body?.leaders)) === "[]");
@@ -300,31 +328,28 @@ async function main() {
 
     console.log("\n[B+] THE PODIUM LAW — ranks 1..3 as the meta and the chips read them");
     const meta = await groundingMeta();
-    ok("B6 meta.topDebtors = [mass 2M rank1, Akar 800k rank2, Bahar 500k rank3] — top-3 of a 3-party book",
-      JSON.stringify(meta.topDebtors) ===
-        JSON.stringify([
-          { rank: 1, partyId: null, partyName: null, outstandingMinor: 2_000_000, openItems: 1, partyCount: 3 },
-          { rank: 2, partyId: akarId, partyName: "Akar Trading", outstandingMinor: 800_000, openItems: 2, partyCount: 3 },
-          { rank: 3, partyId: baharId, partyName: "Bahar Foods", outstandingMinor: 500_000, openItems: 1, partyCount: 3 },
-        ]),
-      JSON.stringify(meta.topDebtors));
-    ok("B7 meta.topCreditors = [Akar Ltd 800k rank1, Bahar Supply 500k rank2, mass 100k rank3]",
-      JSON.stringify(meta.topCreditors) ===
-        JSON.stringify([
-          { rank: 1, partyId: s1Id, partyName: "Akar Ltd", outstandingMinor: 800_000, openItems: 1, partyCount: 3 },
-          { rank: 2, partyId: s2Id, partyName: "Bahar Supply", outstandingMinor: 500_000, openItems: 1, partyCount: 3 },
-          { rank: 3, partyId: null, partyName: null, outstandingMinor: 100_000, openItems: 1, partyCount: 3 },
-        ]),
-      JSON.stringify(meta.topCreditors));
+    ok("B6 meta.topDebtor = { partyId null, partyName null, 2,000,000, openItems 1 } — the mass LEADS a 3-party book [R147 throne shape]",
+      JSON.stringify(meta.topDebtor) ===
+        JSON.stringify({ partyId: null, partyName: null, outstandingMinor: 2_000_000, openItems: 1 }),
+      JSON.stringify(meta.topDebtor));
+    ok("B7 meta.topCreditor = { partyId s1, 'Akar Ltd', 800,000, openItems 1 } — the payables throne",
+      JSON.stringify(meta.topCreditor) ===
+        JSON.stringify({ partyId: s1Id, partyName: "Akar Ltd", outstandingMinor: 800_000, openItems: 1 }),
+      JSON.stringify(meta.topCreditor));
 
     const recv = await api(jar, "/api/v1/receivables");
     const pay = await api(jar, "/api/v1/payables");
-    ok("B8 THE READERS AGREE at podium depth — client runnersUpOfFact(RAW receivables) === meta.topDebtors minus rank 1",
-      JSON.stringify(clientPodium(recv.body?.leaders)) === JSON.stringify(metaRunners(meta.topDebtors)),
-      `${JSON.stringify(clientPodium(recv.body?.leaders))} vs ${JSON.stringify(metaRunners(meta.topDebtors))}`);
+    ok("B8 THE READERS AGREE at throne depth — the meta's topDebtor === the RAW receivables rows mapped by the SAME law (throneOf mirrors outstandingViewOf)",
+      JSON.stringify(throneOf(recv.body?.leaders)) === JSON.stringify(meta.topDebtor),
+      `${JSON.stringify(throneOf(recv.body?.leaders))} vs ${JSON.stringify(meta.topDebtor)}`);
     ok("B9 same agreement on the payables side (the rose rows' proof)",
-      JSON.stringify(clientPodium(pay.body?.leaders)) === JSON.stringify(metaRunners(meta.topCreditors)),
-      `${JSON.stringify(clientPodium(pay.body?.leaders))} vs ${JSON.stringify(metaRunners(meta.topCreditors))}`);
+      JSON.stringify(throneOf(pay.body?.leaders)) === JSON.stringify(meta.topCreditor),
+      `${JSON.stringify(throneOf(pay.body?.leaders))} vs ${JSON.stringify(meta.topCreditor)}`);
+    ok("B9b the PODIUM lives on the client side — runnersUpOfFact over the RAW rows yields ranks 2..3 (Akar then Bahar) with the server's own rank fields",
+      clientPodium(recv.body?.leaders).length === 2 &&
+      clientPodium(recv.body?.leaders)[0]?.rank === 2 && clientPodium(recv.body?.leaders)[0]?.partyId === akarId &&
+      clientPodium(recv.body?.leaders)[1]?.rank === 3 && clientPodium(recv.body?.leaders)[1]?.partyId === baharId,
+      JSON.stringify(clientPodium(recv.body?.leaders)));
     ok("B10 the client leaderboard rows carry the server's OWN rank + partyId (mass row partyId null)",
       clientPodium(recv.body?.leaders)[0]?.rank === 2 &&
       clientPodium(recv.body?.leaders)[0]?.partyId === akarId &&
@@ -341,16 +366,13 @@ async function main() {
     });
     ok("C1 S1's expense paid (201)", payS1.status === 201, `got ${payS1.status}`);
     const metaFlip1 = await groundingMeta();
-    ok("C2 after the flip: meta.topCreditors = [Bahar Supply 500k rank1, mass 100k rank2] — the chip's tooltip money moves",
-      JSON.stringify(metaFlip1.topCreditors) ===
-        JSON.stringify([
-          { rank: 1, partyId: s2Id, partyName: "Bahar Supply", outstandingMinor: 500_000, openItems: 1, partyCount: 2 },
-          { rank: 2, partyId: null, partyName: null, outstandingMinor: 100_000, openItems: 1, partyCount: 2 },
-        ]),
-      JSON.stringify(metaFlip1.topCreditors));
-    ok("C3 flip symmetry: the extractor over the RAW payables response agrees post-flip",
-      JSON.stringify(clientPodium((await api(jar, "/api/v1/payables")).body?.leaders)) ===
-        JSON.stringify(metaRunners(metaFlip1.topCreditors)));
+    ok("C2 after the flip: meta.topCreditor = { partyId s2, 'Bahar Supply', 500,000, openItems 1 } — the throne's tooltip money moves",
+      JSON.stringify(metaFlip1.topCreditor) ===
+        JSON.stringify({ partyId: s2Id, partyName: "Bahar Supply", outstandingMinor: 500_000, openItems: 1 }),
+      JSON.stringify(metaFlip1.topCreditor));
+    ok("C3 flip symmetry: the extractor over the RAW payables response agrees post-flip (throne depth)",
+      JSON.stringify(throneOf((await api(jar, "/api/v1/payables")).body?.leaders)) ===
+        JSON.stringify(metaFlip1.topCreditor));
 
     const payAkar1 = await api(jar, "/api/v1/payments", {
       method: "POST",
@@ -362,15 +384,16 @@ async function main() {
     });
     ok("C4 Akar's both invoices paid (201 ×2)", payAkar1.status === 201 && payAkar2.status === 201);
     const metaFlip2 = await groundingMeta();
-    ok("C5 Akar leaves the debtor podium BY MONEY: topDebtors = [mass 2M rank1, Bahar 500k rank2], partyCount 2",
-      JSON.stringify(metaFlip2.topDebtors) ===
+    ok("C5 Akar leaves the WIRE podium BY MONEY (ranks 2..3 become Bahar alone over a 2-party book) while the throne stays the mass — the singular meta view is rank-blind by design [R169 re-pin: the departure law lives on the client extractor]",
+      JSON.stringify(clientPodium((await api(jar, "/api/v1/receivables")).body?.leaders)) ===
         JSON.stringify([
-          { rank: 1, partyId: null, partyName: null, outstandingMinor: 2_000_000, openItems: 1, partyCount: 2 },
           { rank: 2, partyId: baharId, partyName: "Bahar Foods", outstandingMinor: 500_000, openItems: 1, partyCount: 2 },
-        ]),
-      JSON.stringify(metaFlip2.topDebtors));
+        ]) &&
+      JSON.stringify(metaFlip2.topDebtor) ===
+        JSON.stringify({ partyId: null, partyName: null, outstandingMinor: 2_000_000, openItems: 1 }),
+      `${JSON.stringify(metaFlip2.topDebtor)}`);
     ok("C6 the creditor throne stays honest through the debtor flip (payables untouched by sales payments)",
-      JSON.stringify(metaFlip2.topCreditors) === JSON.stringify(metaFlip1.topCreditors));
+      JSON.stringify(metaFlip2.topCreditor) === JSON.stringify(metaFlip1.topCreditor));
 
     const payS2 = await api(jar, "/api/v1/payments", {
       method: "POST",
@@ -382,39 +405,27 @@ async function main() {
     });
     ok("C7 the rest of the payables book paid (201 ×2)", payS2.status === 201 && payAnon.status === 201);
     const metaFlip3 = await groundingMeta();
-    ok("C8 an empty payables book → meta.topCreditors = [] (the honest silence, again)",
-      Array.isArray(metaFlip3.topCreditors) && metaFlip3.topCreditors.length === 0,
-      JSON.stringify(metaFlip3.topCreditors));
+    ok("C8 an empty payables book → meta.topCreditor = null (the honest silence, again)",
+      "topCreditor" in (metaFlip3 as any) && (metaFlip3 as any).topCreditor === null,
+      JSON.stringify((metaFlip3 as any).topCreditor));
     const payFinal = await api(jar, "/api/v1/payables");
     ok("C9 the client extractor agrees with the silence (no podium rows on an empty book)",
       JSON.stringify(clientPodium(payFinal.body?.leaders)) === "[]");
 
     console.log("\n[D] THE ADDITIVE LAW — nothing pre-existing moved");
-    ok("D1 meta.largestDebtor still present and === topDebtors[0]'s four shared fields",
-      metaFlip3.largestDebtor &&
-      metaFlip3.topDebtors[0] &&
-      JSON.stringify({
-        partyName: metaFlip3.largestDebtor.partyName,
-        outstandingMinor: metaFlip3.largestDebtor.outstandingMinor,
-        openItems: metaFlip3.largestDebtor.openItems,
-        partyCount: metaFlip3.largestDebtor.partyCount,
-      }) ===
-        JSON.stringify({
-          partyName: metaFlip3.topDebtors[0].partyName,
-          outstandingMinor: metaFlip3.topDebtors[0].outstandingMinor,
-          openItems: metaFlip3.topDebtors[0].openItems,
-          partyCount: metaFlip3.topDebtors[0].partyCount,
-        }),
-      JSON.stringify(metaFlip3.largestDebtor));
+    const recvD1 = await api(jar, "/api/v1/receivables");
+    ok("D1 the meta's topDebtor agrees with the WIRE's throne at the end state (throneOf === meta.topDebtor) [RE-PINNED R169: the R147 meta dropped largestDebtor AND the podium arrays — the shared-fields law is now meta.topDebtor vs the wire rows]",
+      JSON.stringify(throneOf(recvD1.body?.leaders)) === JSON.stringify((metaFlip3 as any).topDebtor),
+      `${JSON.stringify(throneOf(recvD1.body?.leaders))} vs ${JSON.stringify((metaFlip3 as any).topDebtor)}`);
     ok("D2 topLeaderOfFact(RAW payables on an empty book) === null — the two extractors agree on silence",
       topLeaderOfFact(payFinal.body?.leaders) === null);
-    ok("D3 meta.counts intact (agedOver60Invoices/pastDueBills/receivablesOverdue present, numbers)",
-      typeof meta.counts?.agedOver60Invoices === "number" &&
-      typeof meta.counts?.pastDueBills === "number" &&
-      typeof meta.counts?.receivablesOverdue === "number");
-    ok("D4 meta's R91/R92/R96 fields still present",
-      "topOverdueCustomer" in meta && "topAgedOver60Customer" in meta &&
-      "topPastDueSupplier" in meta && "largestDebtor" in meta && "largestCreditor" in meta);
+    ok("D3 meta.counts intact (sales/openInvoices/lowStock present, numbers) [RE-PINNED R169: the aged/past-due counters left counts in a later round — the current closed scope is pinned]",
+      typeof meta.counts?.sales === "number" &&
+      typeof meta.counts?.openInvoices === "number" &&
+      typeof meta.counts?.lowStock === "number");
+    ok("D4 meta's attribution family still present (topProduct/topExpenseCategory/topStockProduct/topDebtor/topCreditor) [RE-PINNED R169: the R91/R92 fields left the meta in a later round; the current family pinned]",
+      "topProduct" in meta && "topExpenseCategory" in meta &&
+      "topStockProduct" in meta && "topDebtor" in meta && "topCreditor" in meta);
     const recvFinal = await api(jar, "/api/v1/receivables");
     ok("D5 receivables aggregates byte-untouched post-flips (2.5M over 2 open invoices)",
       recvFinal.body?.totalOutstandingMinor === 2_500_000 && recvFinal.body?.openCount === 2,
