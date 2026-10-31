@@ -26,6 +26,10 @@
  */
 
 import { readFileSync, statSync } from "node:fs";
+// R174 — the shared census module (R173 §3 priority #1): the family's
+// suite counts are READ from the runner's arrays at battery-run time,
+// never hard-coded — a new battery joining can no longer turn this RED.
+import { familyCensus } from "./family-census";
 
 let passed = 0;
 let failed = 0;
@@ -199,13 +203,10 @@ console.log("\n== [3] scripts/run-family.sh ==");
       sh.includes('run_suite "$p" bun --conditions react-server "scripts/$p"'),
     );
     ok(
-      "3e the family census: 23 tsx + 2 bun + 5 proofs = 30 suite entries (RE-PINNED R173: was 22, the quick-product battery joined)",
+      "3e the family census reads from the runner's arrays via the shared module (R174: the re-pin ritual ENDED — floors, not exact counts; the join-day canary moved to each new battery's own self-registration pin)",
       (() => {
-        const grab = (name: string) => {
-          const m = sh.match(new RegExp(`${name}=\\([\\s\\S]*?\\)`));
-          return m ? (m[0].match(/\br\d+-[a-z-]+\.ts\b/g) ?? []).length : -1;
-        };
-        return grab("BATTERIES_TSX") === 23 && grab("BATTERIES_BUN") === 2 && grab("PROOFS") === 5;
+        const c = familyCensus();
+        return c.tsx >= 23 && c.bun === 2 && c.proofs === 5 && c.names.length === c.tsx + c.bun + c.proofs;
       })(),
     );
     ok(

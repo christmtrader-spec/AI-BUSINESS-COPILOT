@@ -51,6 +51,8 @@ const en = {
       hint: "to open anywhere",
       groups: {
         navigate: "Go to",
+        // R174 — the quick-create group (the family's third surface).
+        quickCreate: "Quick create",
         // R135 — the recent-destinations group (MRU, device-local).
         recent: "Recent",
         preferences: "Preferences",

@@ -38,6 +38,9 @@ import type { BusinessListItem } from "./types";
  *   copy of the same strings would drift; the i18n audit keeps parity).
  * - The trigger carries aria-label AND title from one variable (the R171
  *   title-parity law) and inherits the Button base focus ring.
+ * R174 — the items array + tone map are EXPORTED (QUICK_CREATE_ITEMS /
+ * QUICK_CREATE_TONES): the ⌘K command palette renders the SAME set from
+ * the SAME array, so the family's action set has ONE home.
  */
 
 type QuickCreateAction =
@@ -46,7 +49,11 @@ type QuickCreateAction =
   | "new-expense"
   | "new-product";
 
-const ITEMS: Array<{
+export type { QuickCreateAction };
+
+/** R173 — the money trio and the inventory entry are separate groups:
+ * a separator renders before the item that starts a new group. */
+type QuickCreateItem = {
   action: QuickCreateAction;
   module: "sales" | "payments" | "expenses" | "products";
   labelKey:
@@ -55,14 +62,33 @@ const ITEMS: Array<{
     | "quickNewExpense"
     | "quickNewProduct";
   icon: LucideIcon;
-  /** R173 — the money trio and the inventory entry are separate groups:
-   * a separator renders before the item that starts a new group. */
   startsGroup?: boolean;
-}> = [
-  { action: "new-sale", module: "sales", labelKey: "quickNewInvoice", icon: ReceiptText },
-  { action: "new-payment", module: "payments", labelKey: "quickRecordPayment", icon: Banknote },
-  { action: "new-expense", module: "expenses", labelKey: "quickNewExpense", icon: Wallet },
-  { action: "new-product", module: "products", labelKey: "quickNewProduct", icon: Package, startsGroup: true },
+  /** R174 — the family's hue, ONE source shared by every surface that
+   * renders these actions (the dashboard tiles carry the same hues in
+   * their own pinned tile classes). */
+  tone: "invoice" | "payment" | "expense" | "product";
+};
+
+/** R174 — the tone → icon class map (one hue source for the family;
+ * dark variants keep the contrast the tiles already carry). */
+export const QUICK_CREATE_TONES: Record<QuickCreateItem["tone"], string> = {
+  invoice: "text-emerald-700 dark:text-emerald-400",
+  payment: "text-emerald-600 dark:text-emerald-400",
+  expense: "text-rose-600 dark:text-rose-400",
+  product: "text-sky-600 dark:text-sky-400",
+};
+
+/**
+ * The ONE source for the quick-create family's action set (R174): the
+ * header menu and the ⌘K command palette both render from this array —
+ * a second copy of the pairs would drift (the batteries extract the set
+ * from every surface and assert equality).
+ */
+export const QUICK_CREATE_ITEMS: QuickCreateItem[] = [
+  { action: "new-sale", module: "sales", labelKey: "quickNewInvoice", icon: ReceiptText, tone: "invoice" },
+  { action: "new-payment", module: "payments", labelKey: "quickRecordPayment", icon: Banknote, tone: "payment" },
+  { action: "new-expense", module: "expenses", labelKey: "quickNewExpense", icon: Wallet, tone: "expense" },
+  { action: "new-product", module: "products", labelKey: "quickNewProduct", icon: Package, tone: "product", startsGroup: true },
 ];
 
 export function QuickCreateMenu() {
@@ -100,7 +126,7 @@ export function QuickCreateMenu() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-52">
-        {ITEMS.map((item) => {
+        {QUICK_CREATE_ITEMS.map((item) => {
           const Icon = item.icon;
           return (
             <div key={item.action} data-testid={`quick-create-group-${item.action}`}>
@@ -112,7 +138,10 @@ export function QuickCreateMenu() {
                   navigate({ kind: "module", module: item.module });
                 }}
               >
-                <Icon className="size-4" aria-hidden="true" />
+                <Icon
+                  className={`size-4 ${QUICK_CREATE_TONES[item.tone]}`}
+                  aria-hidden="true"
+                />
                 {tDashboard(item.labelKey)}
               </DropdownMenuItem>
             </div>

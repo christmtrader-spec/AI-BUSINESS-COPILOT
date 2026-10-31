@@ -77,6 +77,11 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 import type { BusinessListItem } from "./types";
+import {
+  QUICK_CREATE_ITEMS,
+  QUICK_CREATE_TONES,
+  type QuickCreateAction,
+} from "./quick-create-menu";
 
 type PaletteNavKey =
   | "dashboard"
@@ -177,17 +182,30 @@ function recentLabelOf(view: AppView): PaletteItem | null {
  * requests are debounced and keyed per query so an older response can never
  * overwrite a newer one. Clicking a result only NAVIGATES — the palette is
  * a discovery layer and never executes mutations (§1).
+ * R174 — a QUICK CREATE group joins (the subtitle always promised "run a
+ * quick action" but none existed): the four family intents render from the
+ * menu's exported QUICK_CREATE_ITEMS (one source) behind the SAME
+ * data:write gate. §1 stays intact — a quick-create command fires the
+ * cross-view INTENT (client store state, Prompt 52 §F2) that navigates and
+ * opens the module's REAL create dialog; the record is still authored by
+ * the user there, never by the palette.
  */
 export function CommandPalette({ membership }: { membership: BusinessListItem | null }) {
   const tNav = useTranslations("nav");
   const tCommon = useTranslations("common");
   const tSearch = useTranslations("search");
+  // R174 — the quick-create group reuses the dashboard namespace keys (the
+  // family's one label source — same keys the header menu renders).
+  const tDashboard = useTranslations("dashboard");
   // R150 — the ask door's tooltip rides the ONE generic seed-not-send hint
   // (the reports namespace — the same source every producer cites).
   const tAsk = useTranslations("reports");
   const open = useAppStore((s) => s.commandOpen);
   const setOpen = useAppStore((s) => s.setCommandOpen);
   const navigate = useAppStore((s) => s.navigate);
+  // R174 — the palette's quick-create group fires the SAME cross-view
+  // intent the header menu and the dashboard tiles fire (Prompt 52 §F2).
+  const fireQuickIntent = useAppStore((s) => s.fireQuickIntent);
   const setLocale = useAppStore((s) => s.setLocale);
   const locale = useAppStore((s) => s.locale);
   const { theme, setTheme } = useTheme();
@@ -237,6 +255,16 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
   function go(view: AppView) {
     setOpen(false);
     navigate(view);
+  }
+
+  // R174 — a quick-create command closes the palette, fires the SAME intent
+  // (client state — §1 intact: the palette still never executes mutations;
+  // the module's REAL dialog opens and the user authors the record there),
+  // then navigates — the header menu's exact call order.
+  function quickCreate(action: QuickCreateAction, module: "sales" | "payments" | "expenses" | "products") {
+    setOpen(false);
+    fireQuickIntent(action);
+    navigate({ kind: "module", module });
   }
 
   function openResult(item: SearchResultItem) {
@@ -440,6 +468,36 @@ export function CommandPalette({ membership }: { membership: BusinessListItem | 
             </CommandItem>
           ))}
         </CommandGroup>
+        {/* R174 — the palette's own copy promised "run a quick action" but
+            had none; this group IS it: the SAME four intents, the SAME
+            one-source array the header menu renders, the SAME data:write
+            gate (role from the membership prop — the palette's own gate
+            source), hidden entirely for read-only roles. NOT gated on
+            !searchActive: cmdk's client filter matches these items' values
+            as the user types ("new exp" surfaces New expense), so typed
+            access works — the QA walk measured 27+ ArrowDowns to reach the
+            group in nav mode, which no keyboard user should pay. */}
+        {can(role, "data:write") ? (
+          <CommandGroup heading={tCommon("palette.groups.quickCreate")}>
+            {QUICK_CREATE_ITEMS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <CommandItem
+                  key={`quick-create-${item.action}`}
+                  value={`${tDashboard(item.labelKey)} ${item.labelKey}`}
+                  onSelect={() => quickCreate(item.action, item.module)}
+                  data-testid={`palette-quick-create-${item.action}`}
+                >
+                  <Icon
+                    className={`size-4 ${QUICK_CREATE_TONES[item.tone]}`}
+                    aria-hidden="true"
+                  />
+                  <span>{tDashboard(item.labelKey)}</span>
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
+        ) : null}
         <CommandSeparator />
         <CommandGroup heading={tCommon("palette.groups.preferences")}>
           {(["light", "dark", "system"] as const).map((mode) => (
