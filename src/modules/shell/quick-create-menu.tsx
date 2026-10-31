@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { Banknote, Plus, ReceiptText, Wallet, type LucideIcon } from "lucide-react";
+import { Banknote, Package, Plus, ReceiptText, Wallet, type LucideIcon } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { can, asRole } from "@/lib/rbac";
 import { useAppStore } from "@/store/app-store";
@@ -11,18 +11,24 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { BusinessListItem } from "./types";
 
 /**
  * R172 — the global quick-create menu (the header's "+ New").
+ * R173 — grew the FOURTH entry: "new-product" joins, closing the R172
+ * scope law ("a fourth joins only when its view grows a useQuickIntent
+ * hook") — products-view now consumes the intent and opens its REAL
+ * create dialog. The dashboard toolbar grew the same fourth tile, so the
+ * one law holds: the menu's item set == the dashboard toolbar's tile set.
  *
  * The dashboard's quick-actions toolbar has fired cross-view create intents
  * since Prompt 52 §F2: `fireQuickIntent({action})` + `navigate(module)`, and
  * the target module's `useQuickIntent` hook opens its REAL create dialog
  * (once per intent, the seq guard). This menu lifts that exact mechanism
- * out of the dashboard: the same three actions, the same navigation, the
+ * out of the dashboard: the same actions, the same navigation, the
  * same dialogs — reachable from EVERY module instead of home only.
  *
  * Laws carried over, unchanged:
@@ -34,17 +40,29 @@ import type { BusinessListItem } from "./types";
  *   title-parity law) and inherits the Button base focus ring.
  */
 
-type QuickCreateAction = "new-sale" | "new-payment" | "new-expense";
+type QuickCreateAction =
+  | "new-sale"
+  | "new-payment"
+  | "new-expense"
+  | "new-product";
 
 const ITEMS: Array<{
   action: QuickCreateAction;
-  module: "sales" | "payments" | "expenses";
-  labelKey: "quickNewInvoice" | "quickRecordPayment" | "quickNewExpense";
+  module: "sales" | "payments" | "expenses" | "products";
+  labelKey:
+    | "quickNewInvoice"
+    | "quickRecordPayment"
+    | "quickNewExpense"
+    | "quickNewProduct";
   icon: LucideIcon;
+  /** R173 — the money trio and the inventory entry are separate groups:
+   * a separator renders before the item that starts a new group. */
+  startsGroup?: boolean;
 }> = [
   { action: "new-sale", module: "sales", labelKey: "quickNewInvoice", icon: ReceiptText },
   { action: "new-payment", module: "payments", labelKey: "quickRecordPayment", icon: Banknote },
   { action: "new-expense", module: "expenses", labelKey: "quickNewExpense", icon: Wallet },
+  { action: "new-product", module: "products", labelKey: "quickNewProduct", icon: Package, startsGroup: true },
 ];
 
 export function QuickCreateMenu() {
@@ -85,17 +103,19 @@ export function QuickCreateMenu() {
         {ITEMS.map((item) => {
           const Icon = item.icon;
           return (
-            <DropdownMenuItem
-              key={item.action}
-              data-testid={`quick-create-${item.action}`}
-              onClick={() => {
-                fireQuickIntent(item.action);
-                navigate({ kind: "module", module: item.module });
-              }}
-            >
-              <Icon className="size-4" aria-hidden="true" />
-              {tDashboard(item.labelKey)}
-            </DropdownMenuItem>
+            <div key={item.action} data-testid={`quick-create-group-${item.action}`}>
+              {item.startsGroup ? <DropdownMenuSeparator aria-hidden="true" /> : null}
+              <DropdownMenuItem
+                data-testid={`quick-create-${item.action}`}
+                onClick={() => {
+                  fireQuickIntent(item.action);
+                  navigate({ kind: "module", module: item.module });
+                }}
+              >
+                <Icon className="size-4" aria-hidden="true" />
+                {tDashboard(item.labelKey)}
+              </DropdownMenuItem>
+            </div>
           );
         })}
       </DropdownMenuContent>

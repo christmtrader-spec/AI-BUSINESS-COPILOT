@@ -78,6 +78,7 @@ BATTERIES_TSX=(
   r170-repeat-family-check.ts
   r171-duplicate-placement-check.ts
   r172-quick-create-check.ts
+  r173-quick-product-check.ts
 )
 # TLA-pinned batteries — bun ONLY (the R168 convention).
 BATTERIES_BUN=(

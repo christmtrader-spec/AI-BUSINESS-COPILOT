@@ -1347,14 +1347,17 @@ type AppState = {
    * makes every fire unique so the same action can fire twice in a row.
    * Never persisted; consumed by the target view on mount/observation.
    */
-  quickIntent: { action: "new-sale" | "new-expense" | "new-payment"; seq: number } | null;
+  quickIntent: {
+    action: "new-sale" | "new-expense" | "new-payment" | "new-product";
+    seq: number;
+  } | null;
   setLocale: (locale: Locale) => void;
   setActiveBusiness: (id: string | null) => void;
   navigate: (view: AppView, opts?: { replace?: boolean }) => void;
   /** Back/forward + deep links: set view WITHOUT pushing a new history entry. */
   replaceView: (view: AppView) => void;
   setCommandOpen: (open: boolean) => void;
-  fireQuickIntent: (action: "new-sale" | "new-expense" | "new-payment") => void;
+  fireQuickIntent: (action: "new-sale" | "new-expense" | "new-payment" | "new-product") => void;
   consumeQuickIntent: () => void;
 };
 

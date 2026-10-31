@@ -12,7 +12,7 @@ import { useAppStore } from "@/store/app-store";
  * intent from a previous session harmless because it is consumed on mount).
  */
 export function useQuickIntent(
-  action: "new-sale" | "new-expense" | "new-payment",
+  action: "new-sale" | "new-expense" | "new-payment" | "new-product",
   onFire: () => void,
 ): void {
   const quickIntent = useAppStore((s) => s.quickIntent);

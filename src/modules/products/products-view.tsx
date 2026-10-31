@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { ArrowLeftRight, CheckSquare, Copy, Download, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { useQuickIntent } from "@/hooks/use-quick-intent";
 import { useBillingErrorText } from "@/hooks/use-billing-error-text";
 import { api, ApiClientError } from "@/lib/api-client";
 import { can, type Role } from "@/lib/rbac";
@@ -86,6 +87,13 @@ export function ProductsView({
     queryKey: ["products", q, page],
     queryFn: () => api(`/api/v1/products?q=${encodeURIComponent(q)}&page=${page}&pageSize=10`),
   });
+
+  // R173 — the FOURTH quick-create intent: the header "+ New" menu and the
+  // dashboard toolbar's fourth tile fire "new-product" and land here;
+  // openCreate resets all three dialog sources (edit/duplicate stay null)
+  // so the dialog opens in create mode (openCreate is a hoisted declaration,
+  // so referencing it from the hook's effect is safe).
+  useQuickIntent("new-product", openCreate);
 
   function openCreate() {
     setEditing(null);

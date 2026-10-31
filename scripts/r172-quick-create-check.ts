@@ -71,15 +71,18 @@ const listTsx = (dir: string): string[] => {
     src.includes("can(asRole(") && src.includes('"data:write"') && src.includes("if (!writable) return null"),
   );
   ok(
-    "1b exactly the dashboard's three action/module pairs",
-    ['action: "new-sale", module: "sales"', 'action: "new-payment", module: "payments"', 'action: "new-expense", module: "expenses"'].every(
-      (s) => src.includes(s),
-    ),
-    "the trio must mirror dashboard-view's intents",
+    "1b exactly the dashboard's action/module pairs (R173 re-pin: 3→4, the fourth joins)",
+    [
+      'action: "new-sale", module: "sales"',
+      'action: "new-payment", module: "payments"',
+      'action: "new-expense", module: "expenses"',
+      'action: "new-product", module: "products"',
+    ].every((s) => src.includes(s)),
+    "the quartet must mirror dashboard-view's intents",
   );
   ok(
-    "1c no fourth quick action drifted in",
-    (src.match(/action: "new-/g) ?? []).length === 3,
+    "1c no fifth quick action drifted in (RE-PINNED R173: was ===3 no-fourth, the product intent closed the R172 scope law)",
+    (src.match(/action: "new-/g) ?? []).length === 4,
     `found ${(src.match(/action: "new-/g) ?? []).length}`,
   );
   ok(
@@ -88,9 +91,11 @@ const listTsx = (dir: string): string[] => {
       /navigate\(\{\s*kind: "module",\s*module: item\.module\s*\}\)/.test(src),
   );
   ok(
-    "1e item labels REUSE the dashboard namespace (one source)",
+    "1e item labels REUSE the dashboard namespace (one source; R173 re-pin: +quickNewProduct)",
     src.includes('useTranslations("dashboard")') &&
-      ["quickNewInvoice", "quickRecordPayment", "quickNewExpense"].every((k) => src.includes(k)),
+      ["quickNewInvoice", "quickRecordPayment", "quickNewExpense", "quickNewProduct"].every((k) =>
+        src.includes(k),
+      ),
   );
   ok(
     "1f the trigger's aria-label and title come from ONE source (the R171 title-parity law)",
@@ -125,8 +130,10 @@ const listTsx = (dir: string): string[] => {
     fa.includes('quickCreate: "ایجاد جدید…"') && fa.includes('quickCreateShort: "جدید"'),
   );
   ok(
-    "1m the dashboard source keys still exist in both locales (the reuse source)",
-    ["quickNewInvoice", "quickRecordPayment", "quickNewExpense"].every((k) => en.includes(k) && fa.includes(k)),
+    "1m the dashboard source keys still exist in both locales (the reuse source; R173 re-pin: +quickNewProduct)",
+    ["quickNewInvoice", "quickRecordPayment", "quickNewExpense", "quickNewProduct"].every((k) =>
+      en.includes(k) && fa.includes(k),
+    ),
   );
 }
 
@@ -205,21 +212,24 @@ const listTsx = (dir: string): string[] => {
       dash.includes('data-tour="quick-actions"'),
   );
   ok(
-    "4b the dashboard still fires exactly the three intents",
-    ['fireQuickIntent("new-sale")', 'fireQuickIntent("new-payment")', 'fireQuickIntent("new-expense")'].every((s) =>
-      dash.includes(s),
-    ),
+    "4b the dashboard fires the four intents (R173 re-pin: 3→4, the product tile joined)",
+    [
+      'fireQuickIntent("new-sale")',
+      'fireQuickIntent("new-payment")',
+      'fireQuickIntent("new-expense")',
+      'fireQuickIntent("new-product")',
+    ].every((s) => dash.includes(s)),
   );
   const consumers = listTsx("src/modules").filter((p) => read(p).includes("use-quick-intent"));
   ok(
-    "4c useQuickIntent keeps exactly its three module consumers",
-    consumers.length === 3 && consumers.every((p) => /sales|payments|expenses/.test(p)),
+    "4c useQuickIntent keeps exactly its four module consumers (RE-PINNED R173: was 3, products-view grew the hook)",
+    consumers.length === 4 && consumers.every((p) => /sales|payments|expenses|products/.test(p)),
     JSON.stringify(consumers),
   );
   const store = read("src/store/app-store.ts");
   ok(
-    "4d the store keeps the intent shape and both functions",
-    store.includes('"new-sale" | "new-expense" | "new-payment"') &&
+    "4d the store keeps the intent shape and both functions (R173 re-pin: the union grew the fourth member)",
+    store.includes('"new-sale" | "new-expense" | "new-payment" | "new-product"') &&
       store.includes("fireQuickIntent: (action)") &&
       store.includes("consumeQuickIntent: () =>"),
   );

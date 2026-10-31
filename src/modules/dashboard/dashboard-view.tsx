@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Coins,
   Map,
+  Package,
   Plus,
   ReceiptText,
   Settings2,
@@ -394,7 +395,7 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
           create dialog immediately (role-gated to keep the row honest). */}
       {can(role, "data:write") ? (
         <div
-          className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+          className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4"
           role="toolbar"
           aria-label={t("quickActions")}
           data-tour="quick-actions"
@@ -438,6 +439,20 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
               <Wallet className="size-4" />
             </span>
             {t("quickNewExpense")}
+            <Plus className="ms-auto size-4 opacity-60" aria-hidden="true" />
+          </Button>
+          <Button
+            variant="outline"
+            className="h-11 justify-start gap-2.5 border-sky-600/30 hover:bg-sky-600/5"
+            onClick={() => {
+              fireQuickIntent("new-product");
+              navigate({ kind: "module", module: "products" });
+            }}
+          >
+            <span aria-hidden="true" className="bg-sky-600/10 text-sky-600 grid size-6 place-items-center rounded-md">
+              <Package className="size-4" />
+            </span>
+            {t("quickNewProduct")}
             <Plus className="ms-auto size-4 opacity-60" aria-hidden="true" />
           </Button>
         </div>
