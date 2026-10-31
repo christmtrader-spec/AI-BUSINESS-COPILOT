@@ -77,6 +77,7 @@ BATTERIES_TSX=(
   r169-apiproofs-archaeology-check.ts
   r170-repeat-family-check.ts
   r171-duplicate-placement-check.ts
+  r172-quick-create-check.ts
 )
 # TLA-pinned batteries — bun ONLY (the R168 convention).
 BATTERIES_BUN=(

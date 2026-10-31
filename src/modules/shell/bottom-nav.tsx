@@ -88,12 +88,19 @@ export function BottomNav() {
               onFocus={item.view ? () => prefetchOnHover(item.view!) : undefined}
               className={cn(
                 "flex min-w-0 flex-1 flex-col items-center justify-start gap-0.5 px-1 pt-2 pb-1.5 text-[10px] font-medium transition-colors",
+                // R172 — the interaction-state family (the R167-R171 sibling
+                // law): a visible keyboard focus ring + reduced-motion pairs.
+                // This surface was the LIVE instance of the deep audit's
+                // documented cn()-sibling composite blind spot (transition
+                // literal and hover state in sibling strings — never scanned
+                // as one), so the v1/v2 audits never flagged it.
+                "rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background motion-reduce:transition-none",
                 active ? "text-primary" : "text-muted-foreground hover:text-foreground",
               )}
             >
               <span
                 className={cn(
-                  "flex size-7 items-center justify-center rounded-md transition-colors",
+                  "flex size-7 items-center justify-center rounded-md transition-colors motion-reduce:transition-none active:scale-95 motion-reduce:active:scale-100",
                   active && "bg-primary/10",
                 )}
               >

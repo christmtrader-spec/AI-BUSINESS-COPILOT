@@ -396,6 +396,9 @@ const en = {
     navInventory: "Inventory",
     navMore: "More",
     navBarLabel: "Bottom navigation",
+    // R172 — global quick-create menu (header "+ New")
+    quickCreate: "Create new…",
+    quickCreateShort: "New",
   },
   dashboard: {
     checklistTitle: "Get started",

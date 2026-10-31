@@ -199,13 +199,13 @@ console.log("\n== [3] scripts/run-family.sh ==");
       sh.includes('run_suite "$p" bun --conditions react-server "scripts/$p"'),
     );
     ok(
-      "3e the family census: 21 tsx + 2 bun + 5 proofs = 28 suite entries (r171 joined)",
+      "3e the family census: 22 tsx + 2 bun + 5 proofs = 29 suite entries (r172 joined)",
       (() => {
         const grab = (name: string) => {
           const m = sh.match(new RegExp(`${name}=\\([\\s\\S]*?\\)`));
           return m ? (m[0].match(/\br\d+-[a-z-]+\.ts\b/g) ?? []).length : -1;
         };
-        return grab("BATTERIES_TSX") === 21 && grab("BATTERIES_BUN") === 2 && grab("PROOFS") === 5;
+        return grab("BATTERIES_TSX") === 22 && grab("BATTERIES_BUN") === 2 && grab("PROOFS") === 5;
       })(),
     );
     ok(

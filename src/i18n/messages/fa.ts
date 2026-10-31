@@ -399,6 +399,9 @@ const fa: Messages = {
     navInventory: "موجودی",
     navMore: "بیشتر",
     navBarLabel: "ناوبری پایین صفحه",
+    // R172 — منوی ایجاد سریع سراسری (دکمه «جدید» در هدر)
+    quickCreate: "ایجاد جدید…",
+    quickCreateShort: "جدید",
   },
   dashboard: {
     checklistTitle: "شروع کنید",
