@@ -794,10 +794,10 @@ export function BusinessSettingsView({ business }: { business: BusinessSummary }
                     setRestoreReport(null);
                   }}
                   className={cn(
-                    "rounded-lg border p-3 text-start transition-colors",
+                    "rounded-lg border p-3 text-start transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100",
                     restoreIdMode === opt.value
                       ? "border-primary bg-primary/5 ring-primary/20 ring-1"
-                      : "hover:bg-muted/40 border-border",
+                      : "hover:border-primary/30 hover:bg-muted/40 border-border",
                   )}
                 >
                   <span className="flex items-center gap-2 text-sm font-medium">

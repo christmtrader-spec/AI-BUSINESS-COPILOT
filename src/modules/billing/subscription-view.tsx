@@ -701,7 +701,7 @@ export function SubscriptionView({ business, role }: { business: BusinessSummary
                       }
                     }}
                     className={cn(
-                      "w-full cursor-pointer rounded-lg border p-3 text-start outline-none transition-all focus-visible:ring-2 focus-visible:ring-primary/40",
+                      "w-full cursor-pointer rounded-lg border p-3 text-start outline-none transition-all focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100",
                       isSelected
                         ? "border-primary/60 bg-primary/5 shadow-sm ring-2 ring-primary/25"
                         : isCurrent
