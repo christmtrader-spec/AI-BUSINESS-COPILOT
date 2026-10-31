@@ -119,6 +119,7 @@ export function Pagination({
           disabled={safePage <= 1}
           onClick={() => onPage(safePage - 1)}
           aria-label={labels?.prev ?? tCommon("previous")}
+          title={labels?.prev ?? tCommon("previous")}
         >
           <ChevronLeft className="size-4 rtl:rotate-180" aria-hidden="true" />
         </Button>
@@ -155,6 +156,7 @@ export function Pagination({
           disabled={safePage >= pages}
           onClick={() => onPage(safePage + 1)}
           aria-label={labels?.next ?? tCommon("next")}
+          title={labels?.next ?? tCommon("next")}
         >
           <ChevronRight className="size-4 rtl:rotate-180" aria-hidden="true" />
         </Button>

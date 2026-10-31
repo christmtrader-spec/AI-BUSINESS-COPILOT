@@ -365,6 +365,7 @@ export function SaleFormDialog({
                         className="text-destructive hover:text-destructive hover:bg-destructive/10 size-8 shrink-0"
                         onClick={() => setLines((prev) => prev.filter((x) => x.key !== l.key))}
                         aria-label={tCommon("delete")}
+                        title={tCommon("delete")}
                         disabled={lines.length <= 1}
                       >
                         <Trash2 className="size-4" />

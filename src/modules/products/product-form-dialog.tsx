@@ -31,8 +31,16 @@ type ProductForm = {
   lowStockAt: string;
 };
 
-function formFrom(p: Product | null, precision: number): ProductForm {
-  return p
+/**
+ * R171 — the product duplicate (the R170 Repeat-expense sibling).
+ * The honest-copy law: a duplicate carries ONLY what legitimately repeats
+ * (unit, sale/cost prices, low-stock threshold). The NAME is marked as a
+ * copy via the i18n suffix (`duplicateName`), the SKU — the original's
+ * identity — is left BLANK, and the stock starts at 0: the NEW product's
+ * shelf count is a physical fact, not an inherited number.
+ */
+function formFrom(p: Product | null, precision: number, duplicateName?: string): ProductForm {
+  const base = p
     ? {
         name: p.name,
         sku: p.sku ?? "",
@@ -43,6 +51,10 @@ function formFrom(p: Product | null, precision: number): ProductForm {
         lowStockAt: String(p.lowStockAt),
       }
     : { name: "", sku: "", unit: "", salePrice: "", costPrice: "", stockQty: "0", lowStockAt: "5" };
+  if (duplicateName !== undefined) {
+    return { ...base, name: duplicateName, sku: "", stockQty: "0" };
+  }
+  return base;
 }
 
 export function ProductFormDialog({
@@ -50,11 +62,13 @@ export function ProductFormDialog({
   onOpenChange,
   editing,
   business,
+  duplicateFrom,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editing: Product | null;
   business: { currencySymbol: string; decimalPrecision: number };
+  duplicateFrom?: Product | null;
 }) {
   const t = useTranslations("products");
   const tCommon = useTranslations("common");
@@ -64,13 +78,21 @@ export function ProductFormDialog({
   const businessId = useAppStore((s) => s.activeBusinessId);
   const precision = business.decimalPrecision;
 
-  const [form, setForm] = useState<ProductForm>(() => formFrom(editing, precision));
+  // R171 — the duplicate branch is guarded by `duplicateFrom && !editing`
+  // so edit mode can never inherit the copy transform or its title/desc
+  // (the R170 expense-repeat law).
+  const duplicateName =
+    duplicateFrom && !editing ? t("duplicateName", { name: duplicateFrom.name }) : undefined;
+
+  const [form, setForm] = useState<ProductForm>(() =>
+    formFrom(duplicateFrom ?? editing, precision, duplicateName),
+  );
 
   // Render-phase reset when the dialog opens (React-sanctioned adjustment).
   const [prevOpen, setPrevOpen] = useState(open);
   if (open !== prevOpen) {
     setPrevOpen(open);
-    if (open) setForm(formFrom(editing, precision));
+    if (open) setForm(formFrom(duplicateFrom ?? editing, precision, duplicateName));
   }
 
   const saleMinor = moneyToMinorOrNull(form.salePrice, precision);
@@ -121,8 +143,8 @@ export function ProductFormDialog({
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={editing ? t("edit") : t("add")}
-      description={t("formDescription")}
+      title={editing ? t("edit") : duplicateFrom ? t("duplicateTitle") : t("add")}
+      description={editing ? t("formDescription") : duplicateFrom ? t("duplicateDesc") : t("formDescription")}
       submitLabel={editing ? tCommon("save") : tCommon("add")}
       cancelLabel={tCommon("cancel")}
       pending={saveMutation.isPending}

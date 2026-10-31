@@ -210,6 +210,7 @@ export function NotificationsView() {
                               size="icon"
                               className="size-7"
                               aria-label={t("markRead")}
+                              title={t("markRead")}
                               onClick={() => markRead.mutate(item.id)}
                             >
                               <MailOpen className="size-3.5" aria-hidden="true" />
@@ -220,6 +221,7 @@ export function NotificationsView() {
                               size="icon"
                               className="size-7"
                               aria-label={t("markUnread")}
+                              title={t("markUnread")}
                               onClick={() => markUnread.mutate(item.id)}
                             >
                               <RotateCcw className="size-3.5" aria-hidden="true" />
@@ -230,6 +232,7 @@ export function NotificationsView() {
                             size="icon"
                             className="text-muted-foreground size-7"
                             aria-label={t("archive")}
+                            title={t("archive")}
                             onClick={() => archive.mutate(item.id)}
                           >
                             <Archive className="size-3.5" aria-hidden="true" />

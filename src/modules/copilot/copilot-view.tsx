@@ -2938,6 +2938,7 @@ export function CopilotView({
                 onClick={handleSubmit}
                 disabled={input.trim().length === 0}
                 aria-label={t("send")}
+                title={t("send")}
               >
                 <SendHorizontal className="size-4" aria-hidden="true" />
               </Button>

@@ -45,7 +45,7 @@ export function LocaleSwitcher() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label={tProfile("language")}>
+        <Button variant="ghost" size="icon" aria-label={tProfile("language")} title={tProfile("language")}>
           <Languages className="size-4" />
         </Button>
       </DropdownMenuTrigger>
@@ -77,7 +77,7 @@ export function ThemeToggle() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label={tShell("toggleTheme")}>
+        <Button variant="ghost" size="icon" aria-label={tShell("toggleTheme")} title={tShell("toggleTheme")}>
           <Sun className="size-4 dark:hidden" />
           <Moon className="hidden size-4 dark:block" />
         </Button>
@@ -165,7 +165,7 @@ export function UserMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="rounded-full" aria-label={tShell("userMenu")}>
+        <Button variant="ghost" size="icon" className="rounded-full" aria-label={tShell("userMenu")} title={tShell("userMenu")}>
           <Avatar className="size-8">
             <AvatarFallback className="text-xs">{initials}</AvatarFallback>
           </Avatar>

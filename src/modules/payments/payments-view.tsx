@@ -289,6 +289,7 @@ export function PaymentsView({
                               size="icon"
                               className="text-destructive hover:text-destructive size-8"
                               aria-label={tCommon("delete")}
+                              title={tCommon("delete")}
                             >
                               <Trash2 className="size-4" aria-hidden="true" />
                             </Button>

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { ArrowLeftRight, CheckSquare, Download, Package, Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowLeftRight, CheckSquare, Copy, Download, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useBillingErrorText } from "@/hooks/use-billing-error-text";
 import { api, ApiClientError } from "@/lib/api-client";
@@ -73,6 +73,11 @@ export function ProductsView({
   const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
+  // R171 — the product duplicate feeds the SAME dialog instance as
+  // create/edit; the three sources are mutually exclusive (the R170
+  // expense-repeat law: the mutation keys on `editing` alone, so a
+  // duplicate is a plain POST create).
+  const [duplicateFrom, setDuplicateFrom] = useState<Product | null>(null);
   const [stockTarget, setStockTarget] = useState<Product | null>(null);
   // R61-6 bulk selection — current-page ids only (honest scope).
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -84,11 +89,19 @@ export function ProductsView({
 
   function openCreate() {
     setEditing(null);
+    setDuplicateFrom(null);
     setDialogOpen(true);
   }
 
   function openEdit(p: Product) {
     setEditing(p);
+    setDuplicateFrom(null);
+    setDialogOpen(true);
+  }
+
+  function openDuplicate(p: Product) {
+    setEditing(null);
+    setDuplicateFrom(p);
     setDialogOpen(true);
   }
 
@@ -394,13 +407,14 @@ export function ProductsView({
                           header: tCommon("actions"),
                           align: "end" as const,
                           cell: (p: Product) => (
-                            <div className="flex items-center justify-end gap-1">
+                            <div className="flex flex-wrap items-center justify-end gap-1">
                               <Button
                                 variant="ghost"
                                 size="icon"
                                 className="size-8"
                                 onClick={() => setStockTarget(p)}
                                 aria-label={t("adjust")}
+                                title={t("adjust")}
                               >
                                 <ArrowLeftRight className="size-4" aria-hidden="true" />
                               </Button>
@@ -410,8 +424,20 @@ export function ProductsView({
                                 className="size-8"
                                 onClick={() => openEdit(p)}
                                 aria-label={t("edit")}
+                                title={t("edit")}
                               >
                                 <Pencil className="size-4" aria-hidden="true" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-8"
+                                onClick={() => openDuplicate(p)}
+                                aria-label={t("duplicate")}
+                                title={t("duplicate")}
+                                data-testid="product-duplicate"
+                              >
+                                <Copy className="size-4" aria-hidden="true" />
                               </Button>
                               <AlertDialog>
                                 <AlertDialogTrigger asChild>
@@ -420,6 +446,7 @@ export function ProductsView({
                                     size="icon"
                                     className="text-destructive size-8 hover:text-destructive"
                                     aria-label={tCommon("delete")}
+                                    title={tCommon("delete")}
                                   >
                                     <Trash2 className="size-4" aria-hidden="true" />
                                   </Button>
@@ -490,6 +517,7 @@ export function ProductsView({
         onOpenChange={setDialogOpen}
         editing={editing}
         business={business}
+        duplicateFrom={duplicateFrom}
       />
 
       {stockTarget ? (

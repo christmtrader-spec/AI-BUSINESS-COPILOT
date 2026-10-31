@@ -155,6 +155,7 @@ export function SearchCenterView() {
             size="icon"
             onClick={clearSearch}
             aria-label={tSearch("clearSearch")}
+            title={tSearch("clearSearch")}
             className="absolute end-1 top-1/2 size-10 -translate-y-1/2"
           >
             <X className="size-4" aria-hidden="true" />

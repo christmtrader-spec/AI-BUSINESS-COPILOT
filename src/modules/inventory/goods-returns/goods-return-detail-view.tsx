@@ -538,12 +538,13 @@ export function GoodsReturnDetailView({ id, role }: { id: string; role: Role }) 
                         header: "",
                         align: "end" as const,
                         cell: (r: GoodsReturnLineDto) => (
-                          <div className="flex items-center justify-end gap-1">
+                          <div className="flex flex-wrap items-center justify-end gap-1">
                             <Button
                               type="button"
                               variant="ghost"
                               size="icon"
                               aria-label={t("editLine")}
+                              title={t("editLine")}
                               onClick={() => setEditTarget({ line: r })}
                             >
                               <Pencil className="size-4" aria-hidden />
@@ -553,6 +554,7 @@ export function GoodsReturnDetailView({ id, role }: { id: string; role: Role }) 
                               variant="ghost"
                               size="icon"
                               aria-label={t("removeLine")}
+                              title={t("removeLine")}
                               onClick={() => setRemoveTarget(r)}
                             >
                               <Trash2 className="text-destructive size-4" aria-hidden />

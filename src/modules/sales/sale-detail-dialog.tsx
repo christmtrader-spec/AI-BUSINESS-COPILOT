@@ -516,6 +516,7 @@ export function SaleDetailDialog({
                             className="text-destructive hover:text-destructive size-8 shrink-0"
                             onClick={() => deletePaymentMutation.mutate(p.id)}
                             aria-label={tCommon("delete")}
+                            title={tCommon("delete")}
                             disabled={deletePaymentMutation.isPending}
                           >
                             <Trash2 className="size-4" />

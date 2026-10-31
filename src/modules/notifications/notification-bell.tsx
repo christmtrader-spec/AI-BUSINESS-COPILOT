@@ -274,6 +274,7 @@ export function NotificationBell() {
       size="icon"
       className="relative"
       aria-label={t("bell")}
+      title={t("bell")}
       data-testid="notification-bell"
     >
       <Bell className="size-4" aria-hidden="true" />

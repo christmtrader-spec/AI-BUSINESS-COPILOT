@@ -296,7 +296,7 @@ function IdentityMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label={t("identity.menuLabel")} data-testid="pf-identity-trigger">
+        <Button variant="ghost" size="icon" aria-label={t("identity.menuLabel")} title={t("identity.menuLabel")} data-testid="pf-identity-trigger">
           <UserRound className="size-4" aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>

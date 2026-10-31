@@ -560,7 +560,7 @@ export function MembersView({ membership }: { membership: BusinessListItem }) {
                     canModifyTarget(m) && asRole(m.role) !== "OWNER" ? (
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
-                          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" aria-label={tCommon("delete")}>
+                          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" aria-label={tCommon("delete")} title={tCommon("delete")}>
                             <Trash2 className="size-4" aria-hidden="true" />
                           </Button>
                         </AlertDialogTrigger>

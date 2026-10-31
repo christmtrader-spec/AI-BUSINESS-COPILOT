@@ -256,6 +256,7 @@ export function ApiKeysCard({ activeId, editable }: { activeId: string; editable
                     className="text-destructive hover:text-destructive hover:bg-destructive/10 size-8"
                     onClick={() => setRevokeTarget(k)}
                     aria-label={t("apiKeyRevoke")}
+                    title={t("apiKeyRevoke")}
                   >
                     <Trash2 className="size-4" />
                   </Button>

@@ -403,13 +403,14 @@ export function SalesView({
                 header: tCommon("actions"),
                 align: "end",
                 cell: (s) => (
-                  <div className="flex items-center justify-end gap-1">
+                  <div className="flex flex-wrap items-center justify-end gap-1">
                     <Button
                       variant="ghost"
                       size="icon"
                       className="size-8"
                       onClick={() => setDetailId(s.id)}
                       aria-label={t("view")}
+                      title={t("view")}
                     >
                       <Eye className="size-4" aria-hidden="true" />
                     </Button>
@@ -421,6 +422,7 @@ export function SalesView({
                             size="icon"
                             className="text-destructive hover:text-destructive size-8"
                             aria-label={tCommon("delete")}
+                            title={tCommon("delete")}
                           >
                             <Trash2 className="size-4" aria-hidden="true" />
                           </Button>

@@ -864,6 +864,10 @@ const en = {
     invalidMoney: "Enter a valid amount (e.g. 12.50).",
     priceNote: "Stored as exact integer minor units — no floating-point.",
     adjust: "Stock",
+    duplicate: "Duplicate product",
+    duplicateTitle: "Duplicate product",
+    duplicateName: "{name} (copy)",
+    duplicateDesc: "Saving creates a new product with the same prices, unit and low-stock threshold — the SKU is not copied and the new product starts with 0 stock.",
   },
   inventory: {
     title: "Inventory",

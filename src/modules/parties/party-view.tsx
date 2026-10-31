@@ -276,13 +276,14 @@ export function PartyView({
                           header: tCommon("actions"),
                           align: "end" as const,
                           cell: (p: Party) => (
-                            <div className="flex items-center justify-end gap-1">
+                            <div className="flex flex-wrap items-center justify-end gap-1">
                               <Button
                                 variant="ghost"
                                 size="icon"
                                 className="text-muted-foreground hover:text-foreground size-8"
                                 onClick={() => openEdit(p)}
                                 aria-label={t("edit", { type: typeLabel })}
+                                title={t("edit", { type: typeLabel })}
                               >
                                 <Pencil className="size-4" aria-hidden="true" />
                               </Button>
@@ -293,6 +294,7 @@ export function PartyView({
                                     size="icon"
                                     className="text-muted-foreground size-8 hover:bg-destructive/10 hover:text-destructive"
                                     aria-label={tCommon("delete")}
+                                    title={tCommon("delete")}
                                   >
                                     <Trash2 className="size-4" aria-hidden="true" />
                                   </Button>

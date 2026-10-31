@@ -27,6 +27,19 @@ state (focus-visible:ring-2 / focus-visible:outline-2). Read-only — deep
 findings are REPORT-only (hand-fix with Edit; the R168 battery pins the
 radio family structurally).
 
+DEEP v2 (--deep, R170 §3 priority #1) — THE RING-PLACEMENT LAW. The R170
+QA caveat exposed the third blind spot: the focus check searched a 900-char
+WINDOW after role="…", so a focus-visible ring on a CHILD <span> satisfied
+it while the ring was behaviorally DEAD on the keyboard path (a span can
+never receive focus — the PO supplier picker bug). v2 resolves the JSX
+OPENING TAG that carries the role attribute (a quote- and brace-aware walk:
+`>` inside strings or {...} — arrow functions, nested JSX — never ends the
+tag) and requires focus-visible INSIDE THAT TAG. Three verdicts per role
+element:
+  - on-tag  → clean;
+  - child-window ring but not on the tag → deep-m MISPLACED (dead ring);
+  - no ring anywhere near → deep-f ABSENT (the v1 gap, unchanged).
+
 Usage: python3 scripts/r156-motion-audit.py [--fix] [--deep]
 """
 import re
@@ -82,8 +95,67 @@ def scan():
     return fixable, manual
 
 
+def _tag_bounds(text: str, role_start: int, role_end: int):
+    """v2: resolve the JSX opening tag that CONTAINS the role attribute.
+
+    Returns (tag_start, tag_end) inclusive-of-'>' indices, or None when the
+    walk cannot resolve the tag (comments, unusual nesting) — the caller
+    then falls back to the v1 window check only.
+
+    Both walks are quote- and brace-aware: a '>' inside a string literal or
+    inside a {...} expression container (arrow functions `() =>`, nested
+    JSX props) must NOT end the tag; an unquoted '>' at brace depth 0 does.
+    """
+    # backward: find the '<' that opens this tag
+    depth, q, i = 0, None, role_start
+    while i >= 0:
+        c = text[i]
+        if q:
+            if c == q:
+                q = None
+        elif c in "\"'`":
+            q = c
+        elif c == "}":
+            depth += 1
+        elif c == "{":
+            if depth == 0:
+                return None  # a JSX expression container BEFORE our tag — unresolved
+            depth -= 1
+        elif c == "<" and depth == 0:
+            if text[i + 1 : i + 2].isalpha():
+                tag_start = i
+                break
+            return None  # '</' closing tag or stray '<' — unresolved
+        i -= 1
+    else:
+        return None
+    if i < 0:
+        return None
+    # forward: find the '>' that closes the opening tag
+    depth, q, j = 0, None, role_end
+    while j < len(text):
+        c = text[j]
+        if q:
+            if c == q:
+                q = None
+        elif c in "\"'`":
+            q = c
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        elif c == ">" and depth == 0:
+            return (tag_start, j)
+        elif c == "<" and depth == 0:
+            return None  # a new tag began before ours closed — unresolved
+        j += 1
+    return None
+
+
 def deep_scan():
-    """R169 --deep: read-only. Returns (transition_gaps, focus_gaps).
+    """R169 --deep (v2 placement law, R170 §3): read-only.
+
+    Returns (transition_gaps, focus_gaps, misplaced).
 
     transition_gaps: string literals (className= OR cn() pieces OR plain
     arrays) carrying a transition token without the escape, where the string
@@ -91,9 +163,13 @@ def deep_scan():
     hover:/focus/active:/group-hover) — state-styled strings only, so plain
     data strings never fire.
     focus_gaps: role="radio|option|menuitem|tab|switch" surfaces whose
-    900-char neighborhood carries NO focus-visible class.
+    900-char neighborhood carries NO focus-visible class (ABSENT).
+    misplaced (v2): role=* surfaces where focus-visible exists in the
+    surrounding window but NOT inside the opening tag itself — the ring
+    landed on a CHILD element and is behaviorally DEAD on the keyboard path
+    (a <span> can never receive focus; the R170 PO-picker bug).
     """
-    transition_gaps, focus_gaps = [], []
+    transition_gaps, focus_gaps, misplaced = [], [], []
     STATE_TOKEN = re.compile(r"hover:|focus|active:|group-hover:")
     for p in sorted(SRC.rglob("*.tsx")):
         rel = str(p.relative_to(ROOT))
@@ -112,16 +188,29 @@ def deep_scan():
                 continue  # a transition with NO interactive state is decorative/static
             line = text[: m.start()].count("\n") + 1
             transition_gaps.append((rel, line, cls[:120]))
-        # (b) every role=* interactive surface needs a visible focus state
+        # (b) every role=* interactive surface needs a VISIBLE focus state
+        #     ON ITSELF (v2 placement law), not on a child element.
         for m in ROLE_SURFACE.finditer(text):
+            line = text[: m.start()].count("\n") + 1
+            bounds = _tag_bounds(text, m.start(), m.end())
+            if bounds is not None:
+                tag_text = text[bounds[0] : bounds[1] + 1]
+                window = text[bounds[1] + 1 : bounds[1] + 1 + 900]
+                if FOCUS_VISIBLE.search(tag_text):
+                    continue  # the ring lives ON the interactive element — clean
+                if FOCUS_VISIBLE.search(window):
+                    misplaced.append((rel, line, m.group(1)))
+                    continue  # dead ring on a child — v2's whole point
+                focus_gaps.append((rel, line, m.group(1)))
+                continue
+            # unresolved tag — fall back to the v1 window check
             window = text[m.end() : m.end() + 900]
             if not FOCUS_VISIBLE.search(window):
-                line = text[: m.start()].count("\n") + 1
                 focus_gaps.append((rel, line, m.group(1)))
     # dedupe (a) by (rel, line) — nested quotes can double-report
     seen = set()
     transition_gaps = [g for g in transition_gaps if not (g[0], g[1]) in seen and not seen.add((g[0], g[1]))]
-    return transition_gaps, focus_gaps
+    return transition_gaps, focus_gaps, misplaced
 
 
 def apply(fixable):
@@ -150,16 +239,19 @@ def main():
         f2, m2 = scan()
         print(f"\nafter fix: fixable {len(f2)}, manual {len(m2)}")
     if "--deep" in sys.argv:
-        tgap, fgap = deep_scan()
+        tgap, fgap, mis = deep_scan()
         print(f"\nDEEP transition gaps: {len(tgap)} (state-styled strings missing {ESCAPE})")
         for rel, line, cls in tgap:
             print(f"  deep-t  {rel}:{line}  {cls}")
+        print(f"DEEP misplaced rings: {len(mis)} (focus-visible on a CHILD of the role=* element — dead on the keyboard path)")
+        for rel, line, role in mis:
+            print(f"  deep-m  {rel}:{line}  role={role}")
         print(f"DEEP focus gaps: {len(fgap)} (role=* surfaces without focus-visible)")
         for rel, line, role in fgap:
             print(f"  deep-f  {rel}:{line}  role={role}")
-        if tgap or fgap:
+        if tgap or fgap or mis:
             return 1
-        print("DEEP: CLEAN ✓")
+        print("DEEP: CLEAN ✓ (v2 placement law)")
     return 0
 
 

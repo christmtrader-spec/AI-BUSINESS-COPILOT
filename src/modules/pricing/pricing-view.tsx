@@ -314,7 +314,7 @@ export function PricingView() {
                       aria-selected={period === p}
                       onClick={() => setPeriod(p)}
                       className={cn(
-                        "rounded-full px-5 py-2 text-sm font-medium transition-colors",
+                        "rounded-full px-5 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100",
                         period === p
                           ? "bg-primary text-primary-foreground shadow-sm"
                           : "text-muted-foreground hover:text-foreground",
@@ -326,7 +326,7 @@ export function PricingView() {
                 </div>
 
                 {/* Currency selector (§20/§78) — ONLY server-declared currencies */}
-                <div className="mx-auto flex flex-col items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background">
+                <div className="mx-auto flex flex-col items-center gap-2">
                   <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
                     {t("currency.label")}
                   </span>

@@ -23,6 +23,14 @@
 #   bash scripts/run-family.sh --with-smoke     # + e2e-smoke (needs server)
 #   bash scripts/run-family.sh --with-types     # + tsc + eslint
 #   bash scripts/run-family.sh --all            # everything
+#   bash scripts/run-family.sh --list           # print the RESOLVED suite
+#                                               # manifest for the given flags
+#                                               # and run NOTHING (R171: the
+#                                               # round-opening spot check —
+#                                               # see the manifest a growing
+#                                               # family would run, catch a
+#                                               # mis-registered battery before
+#                                               # a 6-minute run starts)
 #
 # Exit 0 only when EVERY selected suite passed. The summary table prints
 # one line per suite (exit code + the suite's own last "passed" summary
@@ -33,12 +41,14 @@ cd "$(dirname "$0")/.."
 SKIP_PROOFS=0
 WITH_SMOKE=0
 WITH_TYPES=0
+LIST_ONLY=0
 for arg in "$@"; do
   case "$arg" in
     --skip-proofs) SKIP_PROOFS=1 ;;
     --with-smoke)  WITH_SMOKE=1 ;;
     --with-types)  WITH_TYPES=1 ;;
     --all)         WITH_SMOKE=1; WITH_TYPES=1 ;;
+    --list)        LIST_ONLY=1 ;;
     *) echo "unknown flag: $arg"; exit 2 ;;
   esac
 done
@@ -66,6 +76,7 @@ BATTERIES_TSX=(
   r168-prod-build-check.ts
   r169-apiproofs-archaeology-check.ts
   r170-repeat-family-check.ts
+  r171-duplicate-placement-check.ts
 )
 # TLA-pinned batteries — bun ONLY (the R168 convention).
 BATTERIES_BUN=(
@@ -105,6 +116,41 @@ run_suite() {
     printf '%s\n' "$out" | tail -12 | sed 's/^/      | /'
   fi
 }
+
+# ---- resolved manifest (R171 --list) ---------------------------------------
+# Print EXACTLY what the given flags would run, numbered and runner-tagged,
+# then exit 0 without executing anything. The same arrays and conditionals
+# as the execution path below — a manifest that could drift from reality
+# would be a dishonest manifest, so there is ONE source: these arrays.
+print_manifest() {
+  echo "== run-family.sh — RESOLVED SUITE MANIFEST (nothing will run) =="
+  echo "   flags: skip-proofs=$SKIP_PROOFS with-smoke=$WITH_SMOKE with-types=$WITH_TYPES"
+  local n=0
+  for b in "${BATTERIES_TSX[@]}"; do n=$((n+1)); printf '  %2d. tsx-battery   %s\n' "$n" "$b"; done
+  for b in "${BATTERIES_BUN[@]}"; do n=$((n+1)); printf '  %2d. bun-battery   %s  (TLA-pinned)\n' "$n" "$b"; done
+  if [ $SKIP_PROOFS -eq 0 ]; then
+    for p in "${PROOFS[@]}"; do n=$((n+1)); printf '  %2d. api-proof     %s  (REAL-HTTP)\n' "$n" "$p"; done
+  fi
+  n=$((n+1)); printf '  %2d. audit         i18n-audit\n' "$n"
+  n=$((n+1)); printf '  %2d. audit         motion-audit (v1)\n' "$n"
+  n=$((n+1)); printf '  %2d. audit         motion-audit (--deep, v2 placement law)\n' "$n"
+  if [ $WITH_SMOKE -eq 1 ]; then
+    n=$((n+1)); printf '  %2d. real-http     e2e-smoke  (needs dev:3000)\n' "$n"
+  fi
+  if [ $WITH_TYPES -eq 1 ]; then
+    n=$((n+1)); printf '  %2d. types         tsc --noEmit\n' "$n"
+    n=$((n+1)); printf '  %2d. lint          eslint .\n' "$n"
+  fi
+  echo "   total: $n suites"
+  if [ $WITH_SMOKE -eq 1 ]; then
+    echo "   note: --with-smoke bootstraps the dev server regardless of --skip-proofs"
+  fi
+}
+
+if [ $LIST_ONLY -eq 1 ]; then
+  print_manifest
+  exit 0
+fi
 
 echo "== run-family.sh — the regression family =="
 echo "   flags: skip-proofs=$SKIP_PROOFS with-smoke=$WITH_SMOKE with-types=$WITH_TYPES"
