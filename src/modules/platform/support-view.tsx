@@ -249,7 +249,7 @@ export function SupportView() {
             {rows.map((ticket) => (
               <Card
                 key={ticket.id}
-                className="cursor-pointer py-0 transition-colors hover:bg-accent/40"
+                className="cursor-pointer py-0 transition-colors hover:bg-accent/40 motion-reduce:transition-none"
                 onClick={() => setOpenTicketId(ticket.id)}
               >
                 <CardContent className="space-y-2 p-4">

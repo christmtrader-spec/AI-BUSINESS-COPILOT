@@ -258,7 +258,7 @@ export function DataTable<T>({
                       title={t("sortBy", {
                         column: typeof col.header === "string" ? col.header : col.id,
                       })}
-                      className="group hover:text-foreground focus-visible:ring-ring -mx-1 inline-flex h-7 items-center gap-1 rounded px-1 transition-colors focus-visible:ring-2 focus-visible:outline-none"
+                      className="group hover:text-foreground focus-visible:ring-ring -mx-1 inline-flex h-7 items-center gap-1 rounded px-1 transition-colors focus-visible:ring-2 focus-visible:outline-none motion-reduce:transition-none"
                     >
                       {col.header}
                       {isActive ? (
@@ -269,7 +269,7 @@ export function DataTable<T>({
                         )
                       ) : (
                         <ArrowUpDown
-                          className="size-3.5 opacity-40 transition-opacity group-hover:opacity-100"
+                          className="size-3.5 opacity-40 transition-opacity group-hover:opacity-100 motion-reduce:transition-none"
                           aria-hidden="true"
                         />
                       )}

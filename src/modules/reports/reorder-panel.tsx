@@ -268,7 +268,7 @@ export function ReorderSuggestionsPanel({ business }: { business: BusinessSummar
                 Info icon chips carry the semantic hue per KPI and the cards
                 ride a subtle tabular rhythm (values already tabular-nums). */}
             <div className="grid gap-3 sm:grid-cols-3" data-testid="reorder-kpis">
-              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25">
+              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25 motion-reduce:transition-none">
                 <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
                   {t("reorderKpiItems")}
                 </p>
@@ -276,7 +276,7 @@ export function ReorderSuggestionsPanel({ business }: { business: BusinessSummar
                   {count(totals?.suggestionCount ?? 0)}
                 </p>
               </div>
-              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-destructive/30">
+              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-destructive/30 motion-reduce:transition-none">
                 <p className="text-muted-foreground flex items-center gap-1 text-xs font-medium tracking-wide uppercase">
                   <TriangleAlert className="size-3 text-destructive" aria-hidden="true" />
                   {t("reorderKpiOutOfStock")}
@@ -285,7 +285,7 @@ export function ReorderSuggestionsPanel({ business }: { business: BusinessSummar
                   {count(totals?.outOfStockCount ?? 0)}
                 </p>
               </div>
-              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25">
+              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25 motion-reduce:transition-none">
                 <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
                   {t("reorderKpiEstTotal")}
                 </p>

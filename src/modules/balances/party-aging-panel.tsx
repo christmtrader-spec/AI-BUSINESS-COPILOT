@@ -148,7 +148,7 @@ export function PartyAgingPanel({
                   <button
                     key={b.key}
                     type="button"
-                    className="rounded-lg border p-3 text-start transition-colors hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    className="rounded-lg border p-3 text-start transition-colors hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none"
                     onClick={() => openDetails({ bucket: b.key })}
                     aria-label={`${t(BUCKET_LABEL_KEYS[b.key])} — ${t("openDetailsHint")}`}
                   >

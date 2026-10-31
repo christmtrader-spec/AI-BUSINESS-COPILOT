@@ -88,7 +88,7 @@ export function WelcomeCard({ role }: { role: Role }) {
 
   return (
     <Card
-      className="border-primary/20 from-primary/5 bg-gradient-to-br to-transparent transition-shadow duration-200 hover:shadow-md"
+      className="border-primary/20 from-primary/5 bg-gradient-to-br to-transparent transition-shadow duration-200 hover:shadow-md motion-reduce:transition-none"
       data-testid="welcome-card"
       data-view="welcome-card"
     >
@@ -129,7 +129,7 @@ export function WelcomeCard({ role }: { role: Role }) {
               className="group hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-ring/40 flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-start text-sm transition-all focus-visible:outline-none focus-visible:ring-2 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0 motion-reduce:transition-none"
               onClick={() => navigate({ kind: "module", module: "copilot" })}
             >
-              <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md transition-colors group-hover:bg-primary/15">
+              <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md transition-colors group-hover:bg-primary/15 motion-reduce:transition-none">
                 <Bot className="size-4" aria-hidden="true" />
               </span>
               <span className="min-w-0 truncate" dir="auto">
@@ -144,7 +144,7 @@ export function WelcomeCard({ role }: { role: Role }) {
               className="group hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-ring/40 flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-start text-sm transition-all focus-visible:outline-none focus-visible:ring-2 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0 motion-reduce:transition-none"
               onClick={() => navigate({ kind: "module", module: "reports" })}
             >
-              <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md transition-colors group-hover:bg-primary/15">
+              <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md transition-colors group-hover:bg-primary/15 motion-reduce:transition-none">
                 <BarChart3 className="size-4" aria-hidden="true" />
               </span>
               <span className="min-w-0 truncate" dir="auto">
@@ -163,7 +163,7 @@ export function WelcomeCard({ role }: { role: Role }) {
                 className="group hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-ring/40 flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-start text-sm transition-all focus-visible:outline-none focus-visible:ring-2 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0 motion-reduce:transition-none"
                 onClick={() => navigate({ kind: "settings:members" })}
               >
-                <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md transition-colors group-hover:bg-primary/15">
+                <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md transition-colors group-hover:bg-primary/15 motion-reduce:transition-none">
                   <Users className="size-4" aria-hidden="true" />
                 </span>
                 <span className="min-w-0 truncate" dir="auto">
@@ -182,7 +182,7 @@ export function WelcomeCard({ role }: { role: Role }) {
               className="group hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-ring/40 hidden w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-start text-sm transition-all focus-visible:outline-none focus-visible:ring-2 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0 motion-reduce:transition-none lg:flex"
               onClick={() => replayProductTour()}
             >
-              <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md transition-colors group-hover:bg-primary/15">
+              <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md transition-colors group-hover:bg-primary/15 motion-reduce:transition-none">
                 <PlayCircle className="size-4" aria-hidden="true" />
               </span>
               <span className="min-w-0 truncate" dir="auto">

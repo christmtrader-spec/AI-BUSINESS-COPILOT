@@ -776,20 +776,68 @@ function PerfBody({
             rows={r.groups.filter((g): g is Extract<(typeof r.groups)[number], { dimension: "customer" }> => g.dimension === "customer")}
             getRowId={(row) => row.customerId ?? "__unassigned__"}
           />
+        ) : r.groupBy === "month" ? (
+          // R156 — the month rows find their list: a month row opens the
+          // module's OWN workspace pre-filtered to that month (the Prompt 51
+          // month deep-link grammar — the value IS the filter; navigate
+          // rides the store's hash builder, never a hand-built #/sales?…).
+          // The hover tint is HONEST because the row really navigates (the
+          // R152 rowClassName law — the same unification every navigable
+          // table in this panel carries).
+          <div className="space-y-2">
+            <DataTable<Extract<(typeof r.groups)[number], { dimension: "month" }>>
+              ariaLabel={t("perfKindSales")}
+              sortLocale={uiLocale}
+              maxHeightClass="max-h-96"
+              onRowClick={(row) =>
+                navigate({ kind: "module", module: "sales", param: row.month })
+              }
+              rowClassName={() => "transition-colors hover:bg-muted/40 motion-reduce:transition-none"}
+              columns={[
+                {
+                  id: "bucket",
+                  header: t("perfColMonth"),
+                  cell: (row) => <span dir="auto">{fmtMonth(row.month)}</span>,
+                },
+                {
+                  id: "invoices",
+                  header: t("perfColInvoices"),
+                  align: "end",
+                  sortValue: (row) => row.invoiceCount,
+                  cell: (row) => <Ltr>{fmtCount(uiLocale, row.invoiceCount)}</Ltr>,
+                },
+                {
+                  id: "revenue",
+                  header: t("perfColRevenue"),
+                  align: "end",
+                  defaultSortDir: "desc",
+                  sortValue: (row) => row.revenueMinor,
+                  cell: (row) => <Ltr className="font-medium">{fmt(row.revenueMinor)}</Ltr>,
+                },
+              ]}
+              rows={r.groups.filter((g): g is Extract<(typeof r.groups)[number], { dimension: "month" }> => g.dimension === "month")}
+              getRowId={(row) => row.month}
+            />
+            <p className="text-muted-foreground text-xs" data-testid="perf-sales-month-drill-hint">
+              {t("perfSalesMonthDrillHint")}
+            </p>
+          </div>
         ) : (
-          <DataTable<Extract<(typeof r.groups)[number], { dimension: "day" | "month" }>>
+          // R156 — the DAY rows keep honest SILENCE: the modules' own filters
+          // are month-shaped (?month=YYYY-MM — there is no day-shaped list
+          // filter), so a day row landing on a month view would INFLATE the
+          // row's scope — never a wrong-scope destination. No onRowClick,
+          // no tint (the R152 law: the tint is honest BECAUSE the row
+          // navigates; a silent row stays silent).
+          <DataTable<Extract<(typeof r.groups)[number], { dimension: "day" }>>
             ariaLabel={t("perfKindSales")}
             sortLocale={uiLocale}
             maxHeightClass="max-h-96"
             columns={[
               {
                 id: "bucket",
-                header: r.groupBy === "day" ? t("perfColDate") : t("perfColMonth"),
-                cell: (row) => (
-                  <span dir="auto">
-                    {"date" in row ? fmtDay(row.date) : fmtMonth(row.month)}
-                  </span>
-                ),
+                header: t("perfColDate"),
+                cell: (row) => <span dir="auto">{fmtDay(row.date)}</span>,
               },
               {
                 id: "invoices",
@@ -806,8 +854,8 @@ function PerfBody({
                 cell: (row) => <Ltr className="font-medium">{fmt(row.revenueMinor)}</Ltr>,
               },
             ]}
-            rows={r.groups.filter((g): g is Extract<(typeof r.groups)[number], { dimension: "day" | "month" }> => g.dimension === "day" || g.dimension === "month")}
-            getRowId={(row) => ("date" in row ? row.date : row.month)}
+            rows={r.groups.filter((g): g is Extract<(typeof r.groups)[number], { dimension: "day" }> => g.dimension === "day")}
+            getRowId={(row) => row.date}
           />
         )}
       </div>
@@ -937,18 +985,62 @@ function PerfBody({
             rows={r.groups.filter((g): g is Extract<(typeof r.groups)[number], { dimension: "supplier" }> => g.dimension === "supplier")}
             getRowId={(row) => row.supplierId ?? "__unassigned__"}
           />
+        ) : r.groupBy === "month" ? (
+          // R156 — the expenses month rows join the same law: a month row
+          // opens the expenses workspace pre-filtered to that month (the
+          // R148 month-chip grammar — the same surface the R155 category
+          // facet composes with). navigate rides the store's hash builder.
+          <div className="space-y-2">
+            <DataTable<Extract<(typeof r.groups)[number], { dimension: "month" }>>
+              ariaLabel={t("perfKindExpenses")}
+              sortLocale={uiLocale}
+              maxHeightClass="max-h-96"
+              onRowClick={(row) =>
+                navigate({ kind: "module", module: "expenses", param: row.month })
+              }
+              rowClassName={() => "transition-colors hover:bg-muted/40 motion-reduce:transition-none"}
+              columns={[
+                {
+                  id: "bucket",
+                  header: t("perfColMonth"),
+                  cell: (row) => <span dir="auto">{fmtMonth(row.month)}</span>,
+                },
+                {
+                  id: "count",
+                  header: t("perfExpenseCount", { count: "" }),
+                  align: "end",
+                  sortValue: (row) => row.expenseCount,
+                  cell: (row) => <Ltr>{fmtCount(uiLocale, row.expenseCount)}</Ltr>,
+                },
+                {
+                  id: "amount",
+                  header: t("perfColAmount"),
+                  align: "end",
+                  defaultSortDir: "desc",
+                  sortValue: (row) => row.amountMinor,
+                  cell: (row) => <Ltr className="font-medium">{fmt(row.amountMinor)}</Ltr>,
+                },
+              ]}
+              rows={r.groups.filter((g): g is Extract<(typeof r.groups)[number], { dimension: "month" }> => g.dimension === "month")}
+              getRowId={(row) => row.month}
+            />
+            <p className="text-muted-foreground text-xs" data-testid="perf-expenses-month-drill-hint">
+              {t("perfExpensesMonthDrillHint")}
+            </p>
+          </div>
         ) : (
-          <DataTable<Extract<(typeof r.groups)[number], { dimension: "day" | "month" }>>
+          // R156 — the expenses DAY rows keep the same honest SILENCE as the
+          // sales side (no day-shaped list filter exists; a month view would
+          // inflate the row's scope). No onRowClick, no tint.
+          <DataTable<Extract<(typeof r.groups)[number], { dimension: "day" }>>
             ariaLabel={t("perfKindExpenses")}
             sortLocale={uiLocale}
             maxHeightClass="max-h-96"
             columns={[
               {
                 id: "bucket",
-                header: r.groupBy === "day" ? t("perfColDate") : t("perfColMonth"),
-                cell: (row) => (
-                  <span dir="auto">{"date" in row ? fmtDay(row.date) : fmtMonth(row.month)}</span>
-                ),
+                header: t("perfColDate"),
+                cell: (row) => <span dir="auto">{fmtDay(row.date)}</span>,
               },
               {
                 id: "count",
@@ -965,8 +1057,8 @@ function PerfBody({
                 cell: (row) => <Ltr className="font-medium">{fmt(row.amountMinor)}</Ltr>,
               },
             ]}
-            rows={r.groups.filter((g): g is Extract<(typeof r.groups)[number], { dimension: "day" | "month" }> => g.dimension === "day" || g.dimension === "month")}
-            getRowId={(row) => ("date" in row ? row.date : row.month)}
+            rows={r.groups.filter((g): g is Extract<(typeof r.groups)[number], { dimension: "day" }> => g.dimension === "day")}
+            getRowId={(row) => row.date}
           />
         )}
       </div>
@@ -1257,7 +1349,7 @@ function LeaderStrip({
     >
       {body}
       <ChevronRight
-        className={`size-3.5 shrink-0 opacity-70 transition-transform rtl:-scale-x-100 group-hover:translate-x-0.5 rtl:group-hover:-translate-x-0.5 ${tn.icon}`}
+        className={`size-3.5 shrink-0 opacity-70 transition-transform motion-reduce:transition-none rtl:-scale-x-100 group-hover:translate-x-0.5 rtl:group-hover:-translate-x-0.5 ${tn.icon}`}
         aria-hidden="true"
       />
     </button>

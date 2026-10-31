@@ -277,7 +277,7 @@ function ForgotPasswordCard({ onBackToSignIn }: { onBackToSignIn: () => void }) 
 
             <Button
               type="submit"
-              className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400"
+              className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400 motion-reduce:transition-none"
               disabled={requestMutation.isPending}
             >
               {requestMutation.isPending ? (
@@ -483,7 +483,7 @@ function ResetPasswordCard({
 
             <Button
               type="submit"
-              className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400"
+              className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400 motion-reduce:transition-none"
               disabled={resetMutation.isPending}
             >
               {resetMutation.isPending ? (
@@ -830,9 +830,9 @@ export function AuthView({ variant = "default" }: { variant?: "default" | "platf
               ].map(({ icon: Icon, text }) => (
                 <li
                   key={text}
-                  className="group flex items-center gap-3.5 rounded-xl border border-border/50 bg-background/40 p-3.5 backdrop-blur-sm transition-colors duration-200 hover:border-primary/40 hover:bg-primary/5"
+                  className="group flex items-center gap-3.5 rounded-xl border border-border/50 bg-background/40 p-3.5 backdrop-blur-sm transition-colors duration-200 hover:border-primary/40 hover:bg-primary/5 motion-reduce:transition-none"
                 >
-                  <span className="bg-primary/10 text-primary border-primary/20 flex size-10 shrink-0 items-center justify-center rounded-lg border transition-transform duration-200 group-hover:scale-105">
+                  <span className="bg-primary/10 text-primary border-primary/20 flex size-10 shrink-0 items-center justify-center rounded-lg border transition-transform duration-200 group-hover:scale-105 motion-reduce:transition-none">
                     <Icon className="size-[18px]" aria-hidden="true" />
                   </span>
                   <span className="text-muted-foreground text-sm leading-relaxed">{text}</span>
@@ -1205,7 +1205,7 @@ function PlatformAdminEntry() {
         <Button
           type="button"
           variant="outline"
-          className="border-[#C165DD]/40 text-[#a13fd6] hover:bg-[#C165DD]/10 hover:text-[#a13fd6] dark:text-[#C165DD] dark:hover:bg-[#C165DD]/10 dark:hover:text-[#C165DD] h-10 w-full transition-colors"
+          className="border-[#C165DD]/40 text-[#a13fd6] hover:bg-[#C165DD]/10 hover:text-[#a13fd6] dark:text-[#C165DD] dark:hover:bg-[#C165DD]/10 dark:hover:text-[#C165DD] h-10 w-full transition-colors motion-reduce:transition-none"
           onClick={() => navigate({ kind: "platform", section: "overview" })}
         >
           <ShieldCheck className="size-4" aria-hidden="true" />
@@ -1331,7 +1331,7 @@ function MfaLoginCard({
           ) : null}
           <Button
             type="submit"
-            className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400"
+            className="h-11 w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25 transition-all hover:from-emerald-500 hover:to-teal-500 hover:shadow-emerald-600/40 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400 motion-reduce:transition-none"
             disabled={busy || code.length === 0}
           >
             {busy ? (

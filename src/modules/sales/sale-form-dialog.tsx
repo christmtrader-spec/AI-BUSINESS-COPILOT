@@ -317,7 +317,7 @@ export function SaleFormDialog({
                 return (
                   <div
                     key={l.key}
-                    className="bg-card/60 focus-within:border-ring/60 hover:border-border/90 rounded-xl border p-3 shadow-xs transition-colors"
+                    className="bg-card/60 focus-within:border-ring/60 hover:border-border/90 rounded-xl border p-3 shadow-xs transition-colors motion-reduce:transition-none"
                   >
                     {/* Line head: order badge + item picker + remove */}
                     <div className="flex items-center gap-2">

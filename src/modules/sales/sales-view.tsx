@@ -282,7 +282,7 @@ export function SalesView({
             onClick={() => navigate({ kind: "module", module: "sales" })}
             aria-label={t("monthFilterClear")}
             title={t("monthFilterClear")}
-            className="hover:bg-amber-500/15 -me-1 rounded-full p-0.5 transition-colors"
+            className="hover:bg-amber-500/15 -me-1 rounded-full p-0.5 transition-colors motion-reduce:transition-none"
           >
             <X className="size-3.5" aria-hidden="true" />
           </button>

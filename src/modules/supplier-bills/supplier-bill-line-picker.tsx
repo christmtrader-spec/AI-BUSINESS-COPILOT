@@ -89,7 +89,7 @@ export function SupplierBillLinePicker({
             role="option"
             aria-selected={false}
             data-line-row
-            className="w-full rounded-md border px-3 py-2 text-start text-sm transition-colors hover:bg-muted/60"
+            className="w-full rounded-md border px-3 py-2 text-start text-sm transition-colors hover:bg-muted/60 motion-reduce:transition-none"
             onClick={() => onPick(line)}
           >
             <div className="flex items-center justify-between gap-2">

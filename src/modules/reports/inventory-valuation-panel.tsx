@@ -321,7 +321,7 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
         <div className="flex min-w-0 flex-col">
           <button
             type="button"
-            className="hover:text-foreground max-w-[22rem] truncate rounded text-start font-medium transition-colors focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2"
+            className="hover:text-foreground max-w-[22rem] truncate rounded text-start font-medium transition-colors focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 motion-reduce:transition-none"
             title={r.sku ? `${r.name} — ${r.sku}` : r.name}
             aria-label={`${t("invValOpenProduct")}: ${r.name}`}
             onClick={() => navigate({ kind: "entity", entity: "product", id: r.id })}
@@ -640,7 +640,7 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
                   semantic — primary on the three neutral figures, amber on
                   the zero-cost review flag (whose conditional border is
                   untouched and merely deepens on hover). */}
-              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25">
+              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25 motion-reduce:transition-none">
                 <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
                   {t("invValCardValue")}
                 </p>
@@ -649,7 +649,7 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
                 </p>
                 <p className="text-muted-foreground text-xs">{t("invValCardValueHint")}</p>
               </div>
-              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25">
+              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25 motion-reduce:transition-none">
                 <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
                   {t("invValCardProducts")}
                 </p>
@@ -660,7 +660,7 @@ export function InventoryValuationPanel({ business }: { business: BusinessSummar
                   {t("invValCardProductsHint", { count: count(data.totals.inactiveCount) })}
                 </p>
               </div>
-              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25">
+              <div className="bg-card rounded-lg border p-3 transition-colors hover:border-primary/25 motion-reduce:transition-none">
                 <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
                   {t("invValCardPositiveStock")}
                 </p>

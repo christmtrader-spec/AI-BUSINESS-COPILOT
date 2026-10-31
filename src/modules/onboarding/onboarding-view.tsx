@@ -497,7 +497,7 @@ export function OnboardingView({
                       href="/pricing"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-sm underline-offset-4 transition-colors hover:underline"
+                      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-sm underline-offset-4 transition-colors hover:underline motion-reduce:transition-none"
                     >
                       <ArrowUpRight className="size-3.5" aria-hidden="true" />
                       {t("plansLink")}

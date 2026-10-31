@@ -445,7 +445,7 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Getting started */}
-        <Card className="transition-shadow duration-200 hover:shadow-md lg:col-span-2">
+        <Card className="transition-shadow duration-200 hover:shadow-md lg:col-span-2 motion-reduce:transition-none">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Map className="text-primary size-4" aria-hidden="true" />
@@ -486,7 +486,7 @@ export function DashboardView({ membership }: { membership: BusinessListItem }) 
         </Card>
 
         {/* Copilot — live in Phase 05 */}
-        <Card className="from-primary/5 border-primary/20 bg-gradient-to-br to-transparent transition-shadow duration-200 hover:shadow-md">
+        <Card className="from-primary/5 border-primary/20 bg-gradient-to-br to-transparent transition-shadow duration-200 hover:shadow-md motion-reduce:transition-none">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Bot className="text-primary size-4" aria-hidden="true" />
@@ -853,7 +853,7 @@ function LowStockAttentionLine({ summary }: { summary: ReportsSummary }) {
         {t("statInventoryLowLine", { count: fmtCount(uiLocale, low) })}
       </span>
       <ChevronRight
-        className="size-3 shrink-0 opacity-70 transition-transform rtl:-scale-x-100 rtl:group-hover:-translate-x-0.5 group-hover:translate-x-0.5"
+        className="size-3 shrink-0 opacity-70 transition-transform rtl:-scale-x-100 rtl:group-hover:-translate-x-0.5 group-hover:translate-x-0.5 motion-reduce:transition-none"
         aria-hidden="true"
       />
     </button>

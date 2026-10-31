@@ -76,7 +76,7 @@ export function SetupChecklistCard() {
   if (remaining.length === 0) return null;
 
   return (
-    <Card className="border-primary/20 from-primary/5 bg-gradient-to-br to-transparent transition-shadow duration-200 hover:shadow-md" data-view="setup-checklist">
+    <Card className="border-primary/20 from-primary/5 bg-gradient-to-br to-transparent transition-shadow duration-200 hover:shadow-md motion-reduce:transition-none" data-view="setup-checklist">
       <CardHeader className="flex-row items-start justify-between space-y-0 pb-3">
         <div className="space-y-1">
           <CardTitle className="flex items-center gap-2 text-base">
@@ -103,7 +103,7 @@ export function SetupChecklistCard() {
             <li key={task.key}>
               <button
                 type="button"
-                className="hover:border-primary/40 hover:bg-primary/5 flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2.5 text-start text-sm transition-colors"
+                className="hover:border-primary/40 hover:bg-primary/5 flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2.5 text-start text-sm transition-colors motion-reduce:transition-none"
                 onClick={() => navigate(task.view)}
               >
                 <span className="flex items-center gap-2.5">

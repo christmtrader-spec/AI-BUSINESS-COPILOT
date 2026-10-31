@@ -83,7 +83,7 @@ export function GoodsReceiptLinePicker({
                     aria-selected={false}
                     aria-disabled={alreadyOnReceipt}
                     disabled={alreadyOnReceipt}
-                    className="flex w-full flex-col gap-1 rounded-md px-2 py-2 text-start text-sm transition-colors enabled:hover:bg-muted/60 disabled:opacity-45"
+                    className="flex w-full flex-col gap-1 rounded-md px-2 py-2 text-start text-sm transition-colors enabled:hover:bg-muted/60 disabled:opacity-45 motion-reduce:transition-none"
                     onClick={() => !alreadyOnReceipt && onPick(line)}
                   >
                     <span dir="auto" className="min-w-0 truncate font-medium">

@@ -234,7 +234,7 @@ export function ProductDetailView({
                 <li key={st.stocktakeId}>
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40"
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40 motion-reduce:transition-none"
                     onClick={() => navigate({ kind: "inventory-stocktake", id: st.stocktakeId })}
                     aria-label={`${tStock("stocktakeHistory")}: ${st.reference}`}
                   >
@@ -285,7 +285,7 @@ export function ProductDetailView({
                 <li key={po.purchaseOrderId}>
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40"
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40 motion-reduce:transition-none"
                     onClick={() => navigate({ kind: "purchase-order", id: po.purchaseOrderId })}
                     aria-label={`${tPo("purchaseOrderHistory")}: ${po.reference}`}
                   >
@@ -328,7 +328,7 @@ export function ProductDetailView({
                 <li key={`${gr.id}`}>
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40"
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40 motion-reduce:transition-none"
                     onClick={() => navigate({ kind: "inventory-goods-receipt", id: gr.id })}
                     aria-label={`${tGr("productHistory")}: ${gr.reference}`}
                   >
@@ -367,7 +367,7 @@ export function ProductDetailView({
                 <li key={`${ret.id}`}>
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40"
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40 motion-reduce:transition-none"
                     onClick={() => navigate({ kind: "inventory-goods-return", id: ret.id })}
                     aria-label={`${tRt("productHistory")}: ${ret.reference}`}
                   >
@@ -408,7 +408,7 @@ export function ProductDetailView({
                 <li key={`${dsp.id}`}>
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40"
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40 motion-reduce:transition-none"
                     onClick={() => navigate({ kind: "inventory-goods-dispatch", id: dsp.id })}
                     aria-label={`${tGd("productHistory")}: ${dsp.reference}`}
                   >
@@ -449,7 +449,7 @@ export function ProductDetailView({
                 <li key={`${ord.id}`}>
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40"
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40 motion-reduce:transition-none"
                     onClick={() => navigate({ kind: "sales-order", id: ord.id })}
                     aria-label={`${tSo("orderHistory")}: ${ord.reference}`}
                   >
@@ -488,7 +488,7 @@ export function ProductDetailView({
                 <li key={`${qt.id}`}>
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40"
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-start transition-colors hover:bg-muted/40 motion-reduce:transition-none"
                     onClick={() => navigate({ kind: "sales-quotation", id: qt.id })}
                     aria-label={`${tSq("quotationHistory")}: ${qt.reference}`}
                   >

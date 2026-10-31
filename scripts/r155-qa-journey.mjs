@@ -13,18 +13,67 @@ import { chromium } from "playwright";
 import { mkdirSync } from "node:fs";
 
 const BASE = process.env.QA_BASE ?? "http://localhost:3000";
-const EMAIL = "r136-qa-1793388257266@test.local";
-const PASSWORD = "R136-QA-2026!";
-const OUT = "download/qa-r155";
+// R156: the sandbox DB reverted — the r136 persona is gone. The journey now
+// rides the FIXED R156 persona (r156-qa-seed.mjs) unless env overrides.
+const EMAIL = process.env.QA_EMAIL ?? "r156-qa@test.local";
+const PASSWORD = process.env.QA_PASSWORD ?? "R156-QA-2026!";
+const OUT = process.env.QA_OUT ?? "download/qa-r155";
 mkdirSync(OUT, { recursive: true });
 
 let passed = 0;
 let failed = 0;
+
+// Node-side session (the data-driven expectations call the API from HERE —
+// page.evaluate raced the dev server's on-demand recompiles once already).
+const jar = new Map();
+const absorb = (res) => {
+  for (const c of res.headers.getSetCookie?.() ?? []) {
+    const [pair] = c.split(";");
+    const eq = pair.indexOf("=");
+    jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+  }
+};
+const cookieHeader = () => [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+async function nodeApi(path, init = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { cookie: cookieHeader(), ...(init.headers ?? {}) },
+  });
+  absorb(res);
+  try {
+    return { status: res.status, body: await res.json() };
+  } catch {
+    return { status: res.status, body: null };
+  }
+}
+await (async () => {
+  const csrf = await nodeApi("/api/auth/csrf");
+  const res = await fetch(`${BASE}/api/auth/callback/credentials`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", cookie: cookieHeader() },
+    body: new URLSearchParams({
+      csrfToken: csrf.body?.csrfToken ?? "",
+      email: EMAIL,
+      password: PASSWORD,
+      callbackUrl: `${BASE}/`,
+      json: "true",
+    }).toString(),
+  });
+  absorb(res);
+})();
 const ok = (name, cond, info = "") => {
   if (cond) passed++;
   else failed++;
   console.log(`${cond ? "✓" : "✗"} ${name}${!cond && info ? ` — ${info}` : ""}`);
 };
+
+const { PrismaClient } = await import("@prisma/client");
+const prisma = new PrismaClient();
+const qaOwner = await prisma.user.findUnique({
+  where: { email: EMAIL },
+  select: { memberships: { select: { role: true, business: { select: { id: true } } } } },
+});
+const BID = qaOwner?.memberships?.find((m) => m.role === "OWNER")?.business?.id;
+ok("fixture business resolves", !!BID);
 
 const browser = await chromium.launch();
 
@@ -57,7 +106,10 @@ const chipText = (await chip.textContent()) ?? "";
 ok("the chip names the category verbatim", chipText.includes("Materials"), chipText);
 const dataRows = page.locator('[data-view="module:expenses"] table tbody tr');
 const rowCount = await dataRows.count();
-ok("the list shows exactly the category's expenses", rowCount === 1, String(rowCount));
+// Data-driven exactness: the expected count is the API's OWN total for the
+// category (the facet's EXACT-equality law — never a hardcoded fixture number).
+const apiTotal = (await nodeApi("/api/v1/expenses?category=Materials&page=1&pageSize=50", { headers: { "x-business-id": BID ?? "" } })).body?.data?.total ?? null;
+ok("the list shows exactly the category's expenses", apiTotal !== null && rowCount === apiTotal, `rows ${rowCount}, api total ${apiTotal}`);
 ok("the row's own category cell agrees", (await dataRows.first().textContent())?.includes("Materials") === true);
 await page.screenshot({ path: `${OUT}/en-light-facet-landing.png` });
 

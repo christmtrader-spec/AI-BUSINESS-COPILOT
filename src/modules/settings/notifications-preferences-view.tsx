@@ -210,7 +210,7 @@ export function NotificationsPreferencesView() {
                   return (
                     <div
                       key={type}
-                      className="flex flex-col gap-3 px-6 py-3.5 transition-colors hover:bg-emerald-500/[0.045] dark:hover:bg-emerald-400/[0.05] sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+                      className="flex flex-col gap-3 px-6 py-3.5 transition-colors hover:bg-emerald-500/[0.045] dark:hover:bg-emerald-400/[0.05] sm:flex-row sm:items-center sm:justify-between sm:gap-4 motion-reduce:transition-none"
                     >
                       <p className="min-w-0 flex-1 text-sm font-medium">
                         {tItems(`${type}.title` as "SECURITY_PASSWORD_CHANGED.title")}

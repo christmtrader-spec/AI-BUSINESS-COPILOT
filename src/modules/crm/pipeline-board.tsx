@@ -97,7 +97,7 @@ export function PipelineBoard({
                   col.items.map((opp) => (
                     <Card
                       key={opp.id}
-                      className="p-0 shadow-xs transition-shadow hover:shadow-md"
+                      className="p-0 shadow-xs transition-shadow hover:shadow-md motion-reduce:transition-none"
                     >
                       <button
                         type="button"

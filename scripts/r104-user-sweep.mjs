@@ -39,6 +39,7 @@ const EMAIL_PATTERNS = [
   "%@example.com", // origin-gate probes origintest1/2
   "%@t.dev", // repro-origin2 / repro-xfh / curl-ok / direct-ok / flow-login / rep16007-EXCLUDED below / smoke owners / invite probes
   "r136-qa-%@test.local", // R136 (registered in the SAME round — the r131 lesson is law)
+  "r156-qa%@test.local", // R156 perf month-drill persona (FIXED identity r156-qa@test.local — r156-qa-seed.mjs, registered in the SAME round)
   "r103-qa-user@test.local",
   "%r104-probe-1@test.local",
   "%r104-probe-2@test.local",
@@ -70,11 +71,13 @@ const EMAIL_PATTERNS = [
   "r131-qa-%@test.local", // R131 browser-QA trend persona (r131-qa-seed.mjs claims self-cleaning via THIS pattern — it was missing, census drifted 7/4→11/5, R132 fix)
 ];
 /** Baseline identities that must NEVER be swept even if they match a pattern. */
+// Business-name sweep patterns live with the business sweep below (R156 QA Shop rides there).
+
 const KEEP_EMAILS = new Set(["rep16007@t.dev"]);
 
 const SWEEP_BUSINESS_NAMES = ["R104 QA Studio", "R106 QA Ventures", "R107 QA Ventures", "R108 QA Ventures", "R110 QA Ventures", "R111 QA Ventures", "R112 QA Ventures", "R113 QA Ventures", "P23 Real Provider Shop", "P25 UI Trial Shop", "Trial Flow Shop"];
 /** R114 — stamped QA business names match by PREFIX ("R114 QA Ventures mvmv1g18"). */
-const SWEEP_BUSINESS_PREFIXES = ["R114 QA Ventures", "R115 QA Ventures", "R116 QA Ventures", "R117 QA Ventures", "R118 QA Ventures", "R131 QA Ventures", "R136 QA Shop ", "P19 Isolation Co "];
+const SWEEP_BUSINESS_PREFIXES = ["R114 QA Ventures", "R115 QA Ventures", "R116 QA Ventures", "R117 QA Ventures", "R118 QA Ventures", "R131 QA Ventures", "R136 QA Shop ", "R156 QA Shop", "P19 Isolation Co "];
 
 async function tableList() {
   const tables = await db.$queryRawUnsafe(

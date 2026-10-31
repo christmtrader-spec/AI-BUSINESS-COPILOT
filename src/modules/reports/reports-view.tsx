@@ -357,7 +357,7 @@ function InventoryThroneCard({
   return (
     <button
       type="button"
-      className="group focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 flex w-full items-center gap-2 rounded-lg border border-sky-600/25 bg-sky-600/[0.04] px-3 py-2 text-start transition-colors hover:border-sky-600/45 hover:bg-sky-600/10"
+      className="group focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 flex w-full items-center gap-2 rounded-lg border border-sky-600/25 bg-sky-600/[0.04] px-3 py-2 text-start transition-colors hover:border-sky-600/45 hover:bg-sky-600/10 motion-reduce:transition-none"
       data-testid="inv-summary-throne"
       onClick={() => navigate({ kind: "module", module: "reports", param: "inventory" })}
       title={tooltip}
@@ -388,7 +388,7 @@ function InventoryThroneCard({
         </span>
       ) : null}
       <ChevronRight
-        className="size-3.5 shrink-0 text-sky-600/70 transition-transform group-hover:translate-x-0.5 rtl:-scale-x-100 rtl:group-hover:-translate-x-0.5"
+        className="size-3.5 shrink-0 text-sky-600/70 transition-transform group-hover:translate-x-0.5 rtl:-scale-x-100 rtl:group-hover:-translate-x-0.5 motion-reduce:transition-none"
         aria-hidden="true"
       />
     </button>
@@ -1189,7 +1189,7 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                           <div className="flex min-w-0 items-center">
                             <button
                               type="button"
-                              className="hover:text-foreground inline-flex items-center gap-1 rounded font-medium transition-colors focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2"
+                              className="hover:text-foreground inline-flex items-center gap-1 rounded font-medium transition-colors focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 motion-reduce:transition-none"
                               aria-label={t("momRowOpen", {
                                 month: fmtMonth(row.month),
                               })}
@@ -1498,7 +1498,7 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                             {p.productId ? (
                               <button
                                 type="button"
-                                className="hover:text-foreground truncate rounded font-medium transition-colors focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2"
+                                className="hover:text-foreground truncate rounded font-medium transition-colors focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 motion-reduce:transition-none"
                                 onClick={() => navigate({ kind: "entity", entity: "product", id: p.productId! })}
                                 title={p.sku ? `${p.name} — ${p.sku}` : p.name}
                               >
@@ -1638,7 +1638,7 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                   <button
                     type="button"
                     onClick={() => navigate({ kind: "module", module: "receivables" })}
-                    className="group rounded-lg border p-3 text-start transition-colors hover:border-emerald-500/40 hover:bg-emerald-500/5"
+                    className="group rounded-lg border p-3 text-start transition-colors hover:border-emerald-500/40 hover:bg-emerald-500/5 motion-reduce:transition-none"
                   >
                     <p className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium uppercase">
                       <HandCoins className="size-3.5" aria-hidden="true" />
@@ -1654,7 +1654,7 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                   <button
                     type="button"
                     onClick={() => navigate({ kind: "module", module: "payables" })}
-                    className="group rounded-lg border p-3 text-start transition-colors hover:border-rose-500/40 hover:bg-rose-500/5"
+                    className="group rounded-lg border p-3 text-start transition-colors hover:border-rose-500/40 hover:bg-rose-500/5 motion-reduce:transition-none"
                   >
                     <p className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium uppercase">
                       <ArrowUpRight className="size-3.5" aria-hidden="true" />
@@ -1991,7 +1991,7 @@ function AdvancedInsightsCard({
                       name), so same-name customers stay distinct. */}
                   <button
                     type="button"
-                    className="hover:text-foreground w-28 shrink-0 truncate rounded text-start transition-colors focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 sm:w-40"
+                    className="hover:text-foreground w-28 shrink-0 truncate rounded text-start transition-colors focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 sm:w-40 motion-reduce:transition-none"
                     title={c.name}
                     onClick={() => navigate({ kind: "entity", entity: "customer", id: c.customerId })}
                   >

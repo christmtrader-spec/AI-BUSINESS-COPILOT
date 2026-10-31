@@ -343,7 +343,7 @@ export function SupplierBillsView({ role }: { role: Role }) {
                   <button
                     key={r.id}
                     type="button"
-                    className="w-full rounded-xl border bg-card p-4 text-start shadow-xs transition-colors hover:bg-muted/40"
+                    className="w-full rounded-xl border bg-card p-4 text-start shadow-xs transition-colors hover:bg-muted/40 motion-reduce:transition-none"
                     onClick={() => navigate({ kind: "supplier-bill", id: r.id })}
                   >
                     <div className="flex items-center justify-between gap-2">

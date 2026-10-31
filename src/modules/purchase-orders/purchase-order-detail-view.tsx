@@ -760,7 +760,7 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
                 <li key={r.id}>
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between gap-2 rounded-md px-1 py-2 text-start text-sm transition-colors hover:bg-muted/40"
+                    className="flex w-full items-center justify-between gap-2 rounded-md px-1 py-2 text-start text-sm transition-colors hover:bg-muted/40 motion-reduce:transition-none"
                     onClick={() => navigate({ kind: "inventory-goods-receipt", id: r.id })}
                   >
                     <span className="min-w-0 truncate font-medium" dir="auto">{r.reference}</span>
@@ -804,7 +804,7 @@ export function PurchaseOrderDetailView({ id, role }: { id: string; role: Role }
                 <li key={b.id}>
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between gap-2 rounded-md px-1 py-2 text-start text-sm transition-colors hover:bg-muted/40"
+                    className="flex w-full items-center justify-between gap-2 rounded-md px-1 py-2 text-start text-sm transition-colors hover:bg-muted/40 motion-reduce:transition-none"
                     onClick={() => navigate({ kind: "supplier-bill", id: b.id })}
                   >
                     <span className="min-w-0 truncate font-medium" dir="auto">{b.reference}</span>

@@ -288,7 +288,7 @@ export function SecurityView() {
                 type="button"
                 onClick={c.onClick}
                 aria-label={c.label}
-                className={`${tone} hover:bg-accent/40 bg-card rounded-xl border p-4 text-start shadow-sm transition-colors focus-visible:ring-ring/50 outline-none focus-visible:ring-[3px]`}
+                className={`${tone} hover:bg-accent/40 bg-card rounded-xl border p-4 text-start shadow-sm transition-colors motion-reduce:transition-none focus-visible:ring-ring/50 outline-none focus-visible:ring-[3px]`}
               >
                 {body}
               </button>

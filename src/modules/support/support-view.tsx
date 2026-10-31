@@ -144,7 +144,7 @@ export function SupportCenterView({ business }: { business: BusinessLike }) {
             {rows.map((ticket) => (
               <Card
                 key={ticket.id}
-                className="cursor-pointer py-0 transition-colors hover:bg-accent/40"
+                className="cursor-pointer py-0 transition-colors hover:bg-accent/40 motion-reduce:transition-none"
                 onClick={() => setOpenId(ticket.id)}
               >
                 <CardContent className="flex flex-wrap items-center gap-3 p-4">

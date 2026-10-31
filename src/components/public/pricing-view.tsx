@@ -230,7 +230,7 @@ export function PricingPublicView() {
                   type="button"
                   onClick={() => onBillingPeriodChange(period)}
                   aria-pressed={billingPeriod === period}
-                  className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+                  className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors motion-reduce:transition-none ${
                     billingPeriod === period
                       ? "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
@@ -285,7 +285,7 @@ export function PricingPublicView() {
                     key={plan.code}
                     onFocus={() => markPlanViewed(plan)}
                     onMouseEnter={() => markPlanViewed(plan)}
-                    className={`relative flex flex-col rounded-xl border p-5 transition-shadow hover:shadow-md ${
+                    className={`relative flex flex-col rounded-xl border p-5 transition-shadow hover:shadow-md motion-reduce:transition-none ${
                       isFeatured ? "border-primary/50 shadow-sm ring-1 ring-primary/20" : ""
                     }`}
                   >

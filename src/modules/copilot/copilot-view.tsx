@@ -2155,7 +2155,7 @@ export function CopilotView({
                             onClick={() => setSessionQuery("")}
                             aria-label={t("clearSearch")}
                             title={t("clearSearch")}
-                            className="text-muted-foreground/70 hover:text-foreground focus-visible:ring-ring absolute end-2 top-1/2 -translate-y-1/2 rounded p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2"
+                            className="text-muted-foreground/70 hover:text-foreground focus-visible:ring-ring absolute end-2 top-1/2 -translate-y-1/2 rounded p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 motion-reduce:transition-none"
                           >
                             <X className="size-3.5" aria-hidden="true" />
                           </button>
@@ -2297,7 +2297,7 @@ export function CopilotView({
                               }}
                               aria-label={t("renameConversation")}
                               title={t("renameConversation")}
-                              className="text-muted-foreground/70 hover:text-foreground rounded p-1 transition-colors"
+                              className="text-muted-foreground/70 hover:text-foreground rounded p-1 transition-colors motion-reduce:transition-none"
                             >
                               <Pencil className="size-3.5" aria-hidden="true" />
                             </button>
@@ -2309,7 +2309,7 @@ export function CopilotView({
                               }}
                               aria-label={t("deleteConversation")}
                               title={t("deleteConversation")}
-                              className="text-muted-foreground/70 hover:text-destructive rounded p-1 transition-colors"
+                              className="text-muted-foreground/70 hover:text-destructive rounded p-1 transition-colors motion-reduce:transition-none"
                             >
                               <Trash2 className="size-3.5" aria-hidden="true" />
                             </button>
@@ -2439,7 +2439,7 @@ export function CopilotView({
                           />
                         ) : (
                           <MessageSquareText
-                            className="text-muted-foreground group-hover:text-emerald-600 size-3 shrink-0 transition-colors dark:group-hover:text-emerald-400"
+                            className="text-muted-foreground group-hover:text-emerald-600 size-3 shrink-0 transition-colors dark:group-hover:text-emerald-400 motion-reduce:transition-none"
                             aria-hidden="true"
                           />
                         )}
@@ -2469,7 +2469,7 @@ export function CopilotView({
                         syncAppend(sessionId, { role: "user", content: s }, titleFromQuestion(s));
                         void send(s, []);
                       }}
-                      className="border-border bg-background hover:border-emerald-500/40 hover:bg-emerald-500/5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors"
+                      className="border-border bg-background hover:border-emerald-500/40 hover:bg-emerald-500/5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors motion-reduce:transition-none"
                     >
                       {s}
                     </button>
@@ -2785,7 +2785,7 @@ export function CopilotView({
 
         {/* Composer */}
         <div className="border-t p-3 sm:p-4">
-          <div className="border-input focus-within:ring-ring/40 flex items-end gap-2 rounded-2xl border p-2 transition-shadow focus-within:ring-2 focus-within:ring-offset-0">
+          <div className="border-input focus-within:ring-ring/40 flex items-end gap-2 rounded-2xl border p-2 transition-shadow focus-within:ring-2 focus-within:ring-offset-0 motion-reduce:transition-none">
             <textarea
               ref={textareaRef}
               value={input}

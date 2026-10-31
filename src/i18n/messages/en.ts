@@ -1568,6 +1568,8 @@ const en = {
     perfFocusExit: "Exit performance view",
     perfColCategory: "Category",
     perfCategoryDrillHint: "Open a row to see every expense recorded in that category.",
+    perfSalesMonthDrillHint: "Open a row to work that month in the Sales workspace.",
+    perfExpensesMonthDrillHint: "Open a row to work that month in the Expenses workspace.",
     perfColSupplier: "Supplier",
     perfColNoSupplier: "No supplier",
     perfColDate: "Date",

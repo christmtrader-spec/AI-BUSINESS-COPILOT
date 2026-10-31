@@ -341,8 +341,8 @@ section("[4] the PANEL LAW — the category rows find their list");
     ),
   );
   ok(
-    "4d ALL FIVE navigable tables carry the hover (product/customer/category/supplier/cashflow)",
-    (perfSrc.match(/transition-colors hover:bg-muted\/40 motion-reduce:transition-none/g) ?? []).length === 5,
+    "4d ALL SEVEN navigable tables carry the hover (product/customer/sales-month/category/supplier/expenses-month/cashflow — R156 grew the two month tables)",
+    (perfSrc.match(/transition-colors hover:bg-muted\/40 motion-reduce:transition-none/g) ?? []).length === 7,
   );
   ok(
     "4e the ONE discovery hint sits AFTER the table (the R152 grammar)",

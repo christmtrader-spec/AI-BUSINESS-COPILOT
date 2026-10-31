@@ -608,7 +608,7 @@ export function GoodsReceiptDetailView({ id, role }: { id: string; role: Role })
                 <button
                   key={ret.id}
                   type="button"
-                  className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-start text-sm transition-colors hover:bg-muted/40"
+                  className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-start text-sm transition-colors hover:bg-muted/40 motion-reduce:transition-none"
                   onClick={() => navigate({ kind: "inventory-goods-return", id: ret.id })}
                 >
                   <span className="font-medium" dir="auto">{ret.reference}</span>

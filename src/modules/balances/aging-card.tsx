@@ -201,7 +201,7 @@ export function AgingCard({
                   <button
                     key={b.key}
                     type="button"
-                    className="flex w-full items-center gap-3 rounded-md px-1 py-1 text-start transition-colors hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    className="flex w-full items-center gap-3 rounded-md px-1 py-1 text-start transition-colors hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none"
                     onClick={() => openDetails({ bucket: b.key })}
                     data-testid={`aging-bucket-${kind}-${b.key}`}
                     aria-label={`${t(BUCKET_LABEL_KEYS[b.key])} — ${t("openDetailsHint")}`}
@@ -239,7 +239,7 @@ export function AgingCard({
               side.pastDueCount > 0 ? (
                 <button
                   type="button"
-                  className="border-destructive/30 bg-destructive/5 text-destructive inline-flex max-w-full items-center gap-2 rounded-lg border px-3 py-2 text-start text-sm transition-colors hover:bg-destructive/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  className="border-destructive/30 bg-destructive/5 text-destructive inline-flex max-w-full items-center gap-2 rounded-lg border px-3 py-2 text-start text-sm transition-colors hover:bg-destructive/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none"
                   onClick={() => openDetails({ pastDue: true })}
                   data-testid="aging-past-due"
                 >
@@ -298,7 +298,7 @@ export function AgingCard({
                       <li key={p.partyId}>
                         <button
                           type="button"
-                          className="flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-start text-sm transition-colors hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                          className="flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-start text-sm transition-colors hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none"
                           onClick={() => openDetails({ partyId: p.partyId! })}
                           data-testid={`aging-party-${kind}-${p.partyId}`}
                         >

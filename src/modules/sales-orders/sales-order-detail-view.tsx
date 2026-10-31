@@ -316,7 +316,7 @@ export function SalesOrderDetailView({ id, role }: { id: string; role: Role }) {
         <div>
           <button
             type="button"
-            className="text-muted-foreground mb-1 flex items-center gap-1 text-sm transition-colors hover:text-foreground"
+            className="text-muted-foreground mb-1 flex items-center gap-1 text-sm transition-colors hover:text-foreground motion-reduce:transition-none"
             onClick={() => navigate({ kind: "sales-orders" })}
           >
             <ArrowLeft className="size-4" aria-hidden />
@@ -623,7 +623,7 @@ export function SalesOrderDetailView({ id, role }: { id: string; role: Role }) {
                 <button
                   key={d.id}
                   type="button"
-                  className="flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-start text-sm transition-colors hover:bg-muted/40"
+                  className="flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-start text-sm transition-colors hover:bg-muted/40 motion-reduce:transition-none"
                   onClick={() => navigate({ kind: "inventory-goods-dispatch", id: d.id })}
                   data-testid={`sales-order-dispatch-row-${d.reference}`}
                 >

@@ -316,7 +316,7 @@ export function ImportPanel() {
                       setDataset(key);
                       setStep("upload");
                     }}
-                    className={`hover:bg-accent/50 rounded-lg border p-4 text-start transition-colors ${
+                    className={`hover:bg-accent/50 rounded-lg border p-4 text-start transition-colors motion-reduce:transition-none ${
                       dataset === key ? "border-primary" : ""
                     }`}
                   >

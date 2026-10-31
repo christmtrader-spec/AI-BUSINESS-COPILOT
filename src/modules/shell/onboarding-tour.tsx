@@ -199,7 +199,7 @@ export function OnboardingTour({ enabled }: { enabled: boolean }) {
           box-shadow spread trick (no canvas, no measurement math beyond
           the anchor rect). Click-through stays blocked by the overlay. */}
       <div
-        className="absolute rounded-xl transition-all duration-200"
+        className="absolute rounded-xl transition-all duration-200 motion-reduce:transition-none"
         style={{
           top: rect.top - PAD,
           left: rect.left - PAD,

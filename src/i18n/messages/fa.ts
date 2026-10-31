@@ -1560,6 +1560,8 @@ const fa: Messages = {
     perfFocusExit: "خروج از نمای کارایی",
     perfColCategory: "دسته",
     perfCategoryDrillHint: "برای دیدن همهٔ هزینه‌های ثبت‌شدهٔ آن دسته ردیفی را باز کنید.",
+    perfSalesMonthDrillHint: "برای کارکردن روی همان ماه در میز کار فروش ردیفی را باز کنید.",
+    perfExpensesMonthDrillHint: "برای کارکردن روی همان ماه در میز کار هزینه‌ها ردیفی را باز کنید.",
     perfColSupplier: "تأمین‌کننده",
     perfColNoSupplier: "بدون تأمین‌کننده",
     perfColDate: "تاریخ",

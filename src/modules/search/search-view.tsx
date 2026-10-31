@@ -145,7 +145,7 @@ export function SearchCenterView() {
           }}
           placeholder={tSearch("placeholder")}
           maxLength={64}
-          className="bg-background ring-border focus:ring-ring h-12 w-full rounded-lg border-0 ps-10 pe-10 text-base shadow-sm outline-none ring-1 transition-shadow focus:ring-2 sm:text-lg"
+          className="bg-background ring-border focus:ring-ring h-12 w-full rounded-lg border-0 ps-10 pe-10 text-base shadow-sm outline-none ring-1 transition-shadow focus:ring-2 sm:text-lg motion-reduce:transition-none"
           dir="auto"
         />
         {input.length > 0 ? (
