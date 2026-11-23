@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { CalendarRange } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AdjacentWindowButtons } from "@/components/shared/custom-range-picker";
 import {
   JALALI_PRESETS,
   formatJalaliDisplay,
@@ -30,6 +31,7 @@ export function JalaliRangePresets({
   onChange,
   className,
   children,
+  timezone,
 }: {
   /** Currently applied window (Gregorian keys) or null for rolling presets. */
   value: JalaliRange | null;
@@ -40,6 +42,10 @@ export function JalaliRangePresets({
    *  slot keeps the range row ONE visual home — never a second floating
    *  bar competing with the presets. */
   children?: ReactNode;
+  /** R176 — the BUSINESS's timezone (the applied-window pager compares
+   *  the adjacent window against the business-local today, never the
+   *  browser's own zone). */
+  timezone: string;
 }) {
   const t = useTranslations("reports.jalali");
   const locale = useLocale();
@@ -108,11 +114,19 @@ export function JalaliRangePresets({
         ) : null}
       </div>
       {shown ? (
-        <p className="text-muted-foreground mt-1.5 text-xs tabular-nums" dir="auto">
-          <span dir={locale === "fa" ? "rtl" : "ltr"}>{shown.jalali}</span>
-          <span className="mx-2">·</span>
-          <span dir="ltr">{shown.gregorian}</span>
-        </p>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <p className="text-muted-foreground text-xs tabular-nums" dir="auto">
+            <span dir={locale === "fa" ? "rtl" : "ltr"}>{shown.jalali}</span>
+            <span className="mx-2">·</span>
+            <span dir="ltr">{shown.gregorian}</span>
+          </p>
+          {/* R176 — the applied-window pager, only for NON-preset windows
+              (activeKey is the preset match; a preset's pager is its own
+              sibling buttons — one pressed affordance per window). */}
+          {value && !activeKey ? (
+            <AdjacentWindowButtons value={value} onChange={onChange} timezone={timezone} />
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

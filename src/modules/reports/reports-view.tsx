@@ -822,8 +822,35 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                 setJalaliRange(null);
               }}
             >
-              <SelectTrigger className="h-9 min-w-0 flex-1 sm:w-44 sm:flex-none" aria-label={t("rangeLabel")}>
-                <SelectValue />
+              {/* R176 polish — the trigger shows the COMPACT pair (a control
+                  shows values, not prose): the verbose «Applied window: …»
+                  label stays the dropdown ITEM's text, the both-calendar
+                  shown-line right beneath carries the full truth, and the
+                  aria-label keeps the semantics for screen readers. The
+                  explicit state widens one notch (sm:w-56) — the ISO pair +
+                  padding + chevron needs ~200px in BOTH locales; the R175
+                  mid-glyph clip dies at the root. min-w-0 keeps the 360px
+                  mobile truncation graceful. */}
+              <SelectTrigger
+                className={cn(
+                  "h-9 min-w-0 flex-1 sm:flex-none",
+                  jalaliRange ? "sm:w-56" : "sm:w-44",
+                )}
+                aria-label={
+                  jalaliRange
+                    ? t("customRange.appliedTitle", {
+                        range: `${jalaliRange.from} → ${jalaliRange.to}`,
+                      })
+                    : t("rangeLabel")
+                }
+              >
+                <SelectValue>
+                  {jalaliRange ? (
+                    <span dir="ltr" className="tabular-nums">
+                      {jalaliRange.from} → {jalaliRange.to}
+                    </span>
+                  ) : undefined}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {RANGES.map((r) => (
@@ -872,7 +899,7 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
           picker: the ONE visual range home, writing through the SAME
           applied-range state (summary query, CSV export, deep links all
           ride jalaliRange unchanged). */}
-      <JalaliRangePresets value={jalaliRange} onChange={setJalaliRange}>
+      <JalaliRangePresets value={jalaliRange} onChange={setJalaliRange} timezone={business.timezone}>
         <CustomRangePicker
           value={jalaliRange}
           onChange={setJalaliRange}

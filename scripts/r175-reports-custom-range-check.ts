@@ -128,8 +128,8 @@ function ok(name: string, cond: boolean, info?: string) {
     presets.includes("children?: ReactNode;") && presets.includes("{children}"),
   );
   ok(
-    "2b the view hosts the picker INSIDE the presets row (never a second floating bar)",
-    /<JalaliRangePresets value=\{jalaliRange\} onChange=\{setJalaliRange\}>\s*<CustomRangePicker/.test(
+    "2b the view hosts the picker INSIDE the presets row (never a second floating bar) (RE-PINNED R176: the row gained the timezone prop — the wiring stays one-element)",
+    /<JalaliRangePresets value=\{jalaliRange\} onChange=\{setJalaliRange\} timezone=\{business\.timezone\}>\s*<CustomRangePicker/.test(
       view,
     ),
   );
@@ -329,12 +329,11 @@ function ok(name: string, cond: boolean, info?: string) {
       fa.includes('appliedTitle: "بازهٔ اعمال‌شده: {range}"'),
   );
   ok(
-    "6e the nudge edits the DRAFT only (never fires onChange), adjacency math: prev = [from−N, from−1], next = [to+1, to+N]",
+    "6e the nudge edits the DRAFT only and runs the SHARED adjacency helper (RE-PINNED R176: the inline prev/next math moved to lib/report-periods adjacentWindow — one source for both paging affordances)",
     /const nudgeDraft = \(direction: "prev" \| "next"\)/.test(src) &&
-      src.includes("setFromDraft(addLocalDays(fromKey, -span))") &&
-      src.includes("setToDraft(addLocalDays(fromKey, -1))") &&
-      src.includes("setFromDraft(addLocalDays(toKey, 1))") &&
-      src.includes("setToDraft(addLocalDays(toKey, span))") &&
+      src.includes("const w = adjacentWindow(fromKey, toKey, direction);") &&
+      src.includes('from "@/lib/report-periods"') &&
+      src.includes("adjacentWindow,") &&
       !/nudgeDraft[\s\S]{0,400}onChange\(/.test(src.split("const apply")[0] ?? src),
   );
   ok(
@@ -355,6 +354,76 @@ function ok(name: string, cond: boolean, info?: string) {
     src.includes('className="w-80 p-4"') &&
       /<CalendarRange className="text-muted-foreground size-4"/.test(src) &&
       /justify-end gap-2 border-t pt-3/.test(src),
+  );
+}
+
+// ==== [7] THE R176 APPLIED-WINDOW PAGER (shared adjacency, shown-line home) =
+
+{
+  console.log("\n[7] the applied-window pager (R176)");
+  const lib = read("src/lib/report-periods.ts");
+  const picker = read("src/components/shared/custom-range-picker.tsx");
+  const presets = read("src/components/shared/jalali-range-presets.tsx");
+  const view = read("src/modules/reports/reports-view.tsx");
+  const en = read("src/i18n/messages/en.ts");
+  const fa = read("src/i18n/messages/fa.ts");
+
+  ok(
+    "7a the adjacency helper is PURE lib law: prev = [from−N, from−1], next = [to+1, to+N], one source (lib/report-periods)",
+    lib.includes("export function adjacentWindow(") &&
+      lib.includes('return { from: addLocalDays(fromKey, -span), to: addLocalDays(fromKey, -1) };') &&
+      lib.includes('return { from: addLocalDays(toKey, 1), to: addLocalDays(toKey, span) };'),
+  );
+  ok(
+    "7b the picker's draft nudge consumes the shared helper (no second copy of the math)",
+    picker.includes("const w = adjacentWindow(fromKey, toKey, direction);"),
+  );
+  ok(
+    "7c the pager component: ghost icon pair, group semantics, testids, business-timezone input",
+    picker.includes("export function AdjacentWindowButtons(") &&
+      /role="group"/.test(picker) &&
+      picker.includes('data-testid="window-pager-prev"') &&
+      picker.includes('data-testid="window-pager-next"') &&
+      /localDateKeyOf\(new Date\(\), timezone\)/.test(picker),
+  );
+  ok(
+    "7d the crash guard: invalid/half-typed/reversed draft keys absent the pager (the perf panel and statements feed DRAFT inputs)",
+    /if \(!value \|\| !fromKey \|\| !toKey \|\| fromKey > toKey\) return null;/.test(picker) &&
+      /parseLocalDateKey\(value\?\.from\)/.test(picker) &&
+      /parseLocalDateKey\(value\?\.to\)/.test(picker),
+  );
+  ok(
+    "7e the server laws: next DISABLED when adjacent from is past business-local today; adjacent to clamped to today before applying",
+    /const nextReachable = next\.from <= todayKey;/.test(picker) &&
+      /disabled=\{!nextReachable\}/.test(picker) &&
+      /onChange\(\{ from: w\.from, to: w\.to > todayKey \? todayKey : w\.to \}\)/.test(picker),
+  );
+  ok(
+    "7f the shown-line home: pager renders ONLY for non-preset windows (activeKey guard) and the presets row carries the business timezone",
+    presets.includes("{value && !activeKey ? (") &&
+      presets.includes('<AdjacentWindowButtons value={value} onChange={onChange} timezone={timezone} />') &&
+      presets.includes("timezone: string;"),
+  );
+  ok(
+    "7g the view wires the timezone through (one call site, the SAME business.timezone the picker gets)",
+    view.includes("timezone={business.timezone}") &&
+      (view.match(/timezone=\{business\.timezone\}/g) ?? []).length >= 2,
+  );
+  ok(
+    "7h the RTL honesty: chevrons mirror in RTL (rtl:-scale-x-100) so they match time flowing right-to-left",
+    (picker.match(/rtl:-scale-x-100/g) ?? []).length >= 2,
+  );
+  ok(
+    "7i the pagerLabel key exists in BOTH locales (EN + FA, pure Persian FA)",
+    en.includes('pagerLabel: "Page the applied window"') &&
+      fa.includes('pagerLabel: "صفحه‌بندی بازهٔ اعمال‌شده"'),
+  );
+  ok(
+    "7j the trigger shows the COMPACT pair (control shows values, not prose): SelectValue override dir=ltr + tabular-nums, aria keeps the verbose appliedTitle, explicit widens sm:w-56 / rolling sm:w-44",
+    /<SelectValue>\s*\{jalaliRange \? \(/.test(view) &&
+      /<span dir="ltr" className="tabular-nums">/.test(view) &&
+      /jalaliRange \? "sm:w-56" : "sm:w-44"/.test(view) &&
+      /jalaliRange\s*\? t\("customRange\.appliedTitle"/.test(view),
   );
 }
 

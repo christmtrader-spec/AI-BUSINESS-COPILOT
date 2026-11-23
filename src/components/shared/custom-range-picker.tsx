@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import {
   MAX_REPORT_RANGE_DAYS,
   addLocalDays,
+  adjacentWindow,
   daysBetweenInclusive,
   localDateKeyOf,
   parseLocalDateKey,
@@ -109,21 +110,17 @@ export function CustomRangePicker({
   const clampedTo = toKey !== null && toKey > todayKey ? todayKey : toKey;
 
   // Nudge law — shift the DRAFT to the ADJACENT window of the same inclusive
-  // span (no overlap, no gaps): previous = [from − N, from − 1], next =
-  // [to + 1, to + N] where N = daysBetweenInclusive(from, to). The nudge
-  // edits the draft only — validation, the hint and the future-to clamp all
-  // run over the shifted draft, so the user reviews before applying (the
-  // server stays the authority; what the UI sends is what it would resolve).
+  // span (no overlap, no gaps) via the SHARED adjacency helper (R176 — the
+  // applied-window pager on the presets row runs the same math, one source).
+  // The nudge edits the draft only — validation, the hint and the future-to
+  // clamp all run over the shifted draft, so the user reviews before
+  // applying (the server stays the authority; what the UI sends is what it
+  // would resolve).
   const nudgeDraft = (direction: "prev" | "next") => {
     if (!fromKey || !toKey) return;
-    const span = daysBetweenInclusive(fromKey, toKey);
-    if (direction === "prev") {
-      setFromDraft(addLocalDays(fromKey, -span));
-      setToDraft(addLocalDays(fromKey, -1));
-    } else {
-      setFromDraft(addLocalDays(toKey, 1));
-      setToDraft(addLocalDays(toKey, span));
-    }
+    const w = adjacentWindow(fromKey, toKey, direction);
+    setFromDraft(w.from);
+    setToDraft(w.to);
   };
 
   const apply = () => {
@@ -304,5 +301,84 @@ export function CustomRangePicker({
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+/**
+ * R176 — the APPLIED-WINDOW PAGER: ‹ › sit on the presets row's shown-line
+ * and shift the APPLIED window one same-length adjacency step at a time
+ * (the popover's nudge pages the DRAFT; these page the TRUTH — the click
+ * writes straight through the parent's ONE applied-range state, so the
+ * summary query, CSV export, combobox label and shown-line all move
+ * together). Server laws stay the authority:
+ *  - next is DISABLED when the adjacent window's from is past the
+ *    business-local today (nothing to show — L4);
+ *  - an adjacent to past today is clamped to today BEFORE applying (L3 —
+ *    what the UI sends is what the server would resolve);
+ *  - prev never needs a gate: it only moves further into the past.
+ * Rendered ONLY for non-preset windows — a preset window's pager is its
+ * sibling preset buttons (one pressed affordance per window, never two).
+ * In RTL the DOM order flips the pair visually (previous lands on the
+ * right — time flows right-to-left) and the chevrons mirror to match.
+ */
+export function AdjacentWindowButtons({
+  value,
+  onChange,
+  timezone,
+}: {
+  value: CustomRangeValue | null;
+  onChange: (range: CustomRangeValue | null) => void;
+  /** The business timezone (L3 — the browser's own zone is never an input). */
+  timezone: string;
+}) {
+  const t = useTranslations("reports.customRange");
+  const todayKey = localDateKeyOf(new Date(), timezone);
+  // The callers' `value` is not always a VALID window (the perf panel and
+  // the statements view feed their DRAFT inputs here — a half-typed date
+  // pair is normal). adjacentWindow throws on invalid keys, so the pager
+  // silently absents itself unless BOTH keys parse as real calendar dates.
+  const fromKey = parseLocalDateKey(value?.from);
+  const toKey = parseLocalDateKey(value?.to);
+  if (!value || !fromKey || !toKey || fromKey > toKey) return null;
+
+  const prev = adjacentWindow(fromKey, toKey, "prev");
+  const next = adjacentWindow(fromKey, toKey, "next");
+  const nextReachable = next.from <= todayKey;
+  const apply = (w: CustomRangeValue) =>
+    onChange({ from: w.from, to: w.to > todayKey ? todayKey : w.to });
+
+  return (
+    <span
+      className="inline-flex items-center gap-0.5"
+      role="group"
+      aria-label={t("pagerLabel")}
+      data-testid="window-pager"
+    >
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="text-muted-foreground focus-visible:ring-offset-1 size-6 rtl:-scale-x-100"
+        onClick={() => apply(prev)}
+        aria-label={t("prevWindow")}
+        title={t("prevWindow")}
+        data-testid="window-pager-prev"
+      >
+        <ChevronLeft className="size-3.5" aria-hidden="true" />
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="text-muted-foreground focus-visible:ring-offset-1 size-6 rtl:-scale-x-100"
+        onClick={() => apply(next)}
+        disabled={!nextReachable}
+        aria-label={t("nextWindow")}
+        title={t("nextWindow")}
+        data-testid="window-pager-next"
+      >
+        <ChevronRight className="size-3.5" aria-hidden="true" />
+      </Button>
+    </span>
   );
 }

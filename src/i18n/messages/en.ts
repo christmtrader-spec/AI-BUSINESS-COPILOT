@@ -1448,6 +1448,7 @@ const en = {
       appliedTitle: "Applied window: {range}",
       prevWindow: "Previous window",
       nextWindow: "Next window",
+      pagerLabel: "Page the applied window",
     },
     rangeRejected: "The server rejected this range",
     title: "Reports",

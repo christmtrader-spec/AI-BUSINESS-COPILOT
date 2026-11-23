@@ -226,6 +226,31 @@ export function daysBetweenInclusive(fromKey: string, toKey: string): number {
   return Math.round((utcB - utcA) / 86_400_000) + 1;
 }
 
+/**
+ * R176 — the ADJACENCY MOVE, shared by both paging affordances (the
+ * picker popover's draft nudge AND the applied-window pager on the
+ * presets row): shift a window by its OWN inclusive span — no overlap,
+ * no gaps. prev = [from − N, from − 1], next = [to + 1, to + N] where
+ * N = daysBetweenInclusive(from, to), so the shifted window has exactly
+ * the same length and touches the original only at its boundary.
+ *
+ * Pure calendar math (UTC steps on DATE keys, L5); the caller owns the
+ * server-law clamping (a next window reaching past the business-local
+ * today is clamped to today BEFORE it is sent — what the UI sends is
+ * what the server would resolve, L3/L4).
+ */
+export function adjacentWindow(
+  fromKey: string,
+  toKey: string,
+  direction: "prev" | "next",
+): { from: string; to: string } {
+  const span = daysBetweenInclusive(fromKey, toKey);
+  if (direction === "prev") {
+    return { from: addLocalDays(fromKey, -span), to: addLocalDays(fromKey, -1) };
+  }
+  return { from: addLocalDays(toKey, 1), to: addLocalDays(toKey, span) };
+}
+
 /** Enumerate every local date from fromKey to toKey inclusive (ordered). */
 export function enumerateLocalDays(fromKey: string, toKey: string): string[] {
   const count = daysBetweenInclusive(fromKey, toKey);

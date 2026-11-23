@@ -73,3 +73,6 @@ db/*.db-*
 # are immutable release artifacts and MUST be version-controlled.
 var/data-portability/
 tool-results/
+
+# runtime artifact — rewritten on every dev restart
+.zscripts/dev.pid

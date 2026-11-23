@@ -250,6 +250,7 @@ export function StatementsView({
               keys; the server statement API is unchanged). */}
           <JalaliRangePresets
             value={{ from: range.from, to: range.to }}
+            timezone={timeZone}
             onChange={(r) => {
               if (r) applyRange(r.from, r.to);
             }}

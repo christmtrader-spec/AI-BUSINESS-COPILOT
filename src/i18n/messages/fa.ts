@@ -1441,6 +1441,7 @@ const fa: Messages = {
       appliedTitle: "بازهٔ اعمال‌شده: {range}",
       prevWindow: "بازهٔ قبلی",
       nextWindow: "بازهٔ بعدی",
+      pagerLabel: "صفحه‌بندی بازهٔ اعمال‌شده",
     },
     rangeRejected: "سرور این بازه را نپذیرفت",
     title: "گزارش‌ها",

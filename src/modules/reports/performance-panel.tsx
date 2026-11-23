@@ -479,6 +479,7 @@ export function PerformancePanel({
           <JalaliRangePresets
             className="w-full"
             value={{ from: fromInput, to: toInput }}
+            timezone={business.timezone || "UTC"}
             onChange={(r) => {
               if (r) {
                 setFromInput(r.from);

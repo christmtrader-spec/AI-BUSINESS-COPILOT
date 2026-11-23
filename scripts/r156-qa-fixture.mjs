@@ -155,8 +155,11 @@ ok(`expenses seeded (${expOk}/${EXPENSES.length})`, expOk === EXPENSES.length);
 // fixture-restore backfills FREE and this probe 403s. The old shape
 // (`body?.data?.groups ?? []`) MASKED the 403 as "empty groups" and failed
 // the round. The law is now verified BOTH ways: 403 ENTITLEMENT_NOT_AVAILABLE
-// = the server-side gate works (the perf-panel QA rides the r156-qa persona,
-// whose seed grants STARTER); 200 = the original ≥2-month-groups proof.
+// = the server-side gate works (R176 honesty fix: sara is and stays FREE by
+// the smoke-fixture contract — "sits at her FREE-plan limit" — so after a
+// revert this probe ALWAYS rides the 403 branch; the earlier "whose seed
+// grants STARTER" wording was stale, no seed ever granted STARTER);
+// 200 = the original ≥2-month-groups proof (a non-reverted STARTER-era DB).
 const perfExp = await api(
   "/api/v1/reports/performance?kind=expenses&groupBy=month&from=2026-08-01&to=2026-10-31",
   { headers: H },
