@@ -20,6 +20,23 @@
 # Usage:
 #   bash scripts/run-family.sh                  # batteries + proofs + audits
 #   bash scripts/run-family.sh --skip-proofs    # no server needed
+#   bash scripts/run-family.sh --skip-batteries # proofs/audits/smoke/types
+#                                               # only (R177: the OOM-safe
+#                                               # chunking law — the sandbox
+#                                               # reaps (and the kernel OOMs)
+#                                               # long detached runs, so a
+#                                               # round may run the family in
+#                                               # TWO runner-native invocations
+#                                               # whose union still covers the
+#                                               # WHOLE manifest: pass 1
+#                                               # --skip-proofs (batteries +
+#                                               # audits), pass 2
+#                                               # --skip-batteries (proofs +
+#                                               # audits + smoke + types). The
+#                                               # manifest printer always
+#                                               # reflects the flags — the
+#                                               # union is auditable, nothing
+#                                               # hand-typed).
 #   bash scripts/run-family.sh --with-smoke     # + e2e-smoke (needs server)
 #   bash scripts/run-family.sh --with-types     # + tsc + eslint
 #   bash scripts/run-family.sh --all            # everything
@@ -39,12 +56,14 @@ set -u
 cd "$(dirname "$0")/.."
 
 SKIP_PROOFS=0
+SKIP_BATTERIES=0
 WITH_SMOKE=0
 WITH_TYPES=0
 LIST_ONLY=0
 for arg in "$@"; do
   case "$arg" in
     --skip-proofs) SKIP_PROOFS=1 ;;
+    --skip-batteries) SKIP_BATTERIES=1 ;;
     --with-smoke)  WITH_SMOKE=1 ;;
     --with-types)  WITH_TYPES=1 ;;
     --all)         WITH_SMOKE=1; WITH_TYPES=1 ;;
@@ -128,10 +147,12 @@ run_suite() {
 # would be a dishonest manifest, so there is ONE source: these arrays.
 print_manifest() {
   echo "== run-family.sh — RESOLVED SUITE MANIFEST (nothing will run) =="
-  echo "   flags: skip-proofs=$SKIP_PROOFS with-smoke=$WITH_SMOKE with-types=$WITH_TYPES"
+  echo "   flags: skip-proofs=$SKIP_PROOFS skip-batteries=$SKIP_BATTERIES with-smoke=$WITH_SMOKE with-types=$WITH_TYPES"
   local n=0
-  for b in "${BATTERIES_TSX[@]}"; do n=$((n+1)); printf '  %2d. tsx-battery   %s\n' "$n" "$b"; done
-  for b in "${BATTERIES_BUN[@]}"; do n=$((n+1)); printf '  %2d. bun-battery   %s  (TLA-pinned)\n' "$n" "$b"; done
+  if [ $SKIP_BATTERIES -eq 0 ]; then
+    for b in "${BATTERIES_TSX[@]}"; do n=$((n+1)); printf '  %2d. tsx-battery   %s\n' "$n" "$b"; done
+    for b in "${BATTERIES_BUN[@]}"; do n=$((n+1)); printf '  %2d. bun-battery   %s  (TLA-pinned)\n' "$n" "$b"; done
+  fi
   if [ $SKIP_PROOFS -eq 0 ]; then
     for p in "${PROOFS[@]}"; do n=$((n+1)); printf '  %2d. api-proof     %s  (REAL-HTTP)\n' "$n" "$p"; done
   fi
@@ -157,22 +178,26 @@ if [ $LIST_ONLY -eq 1 ]; then
 fi
 
 echo "== run-family.sh — the regression family =="
-echo "   flags: skip-proofs=$SKIP_PROOFS with-smoke=$WITH_SMOKE with-types=$WITH_TYPES"
+echo "   flags: skip-proofs=$SKIP_PROOFS skip-batteries=$SKIP_BATTERIES with-smoke=$WITH_SMOKE with-types=$WITH_TYPES"
 
 if [ $SKIP_PROOFS -eq 0 ] || [ $WITH_SMOKE -eq 1 ]; then
   echo "-- bootstrap dev:3000 (proofs/smoke are REAL-HTTP) --"
   bash scripts/ensure-dev.sh || { echo "FATAL: dev server not READY"; exit 1; }
 fi
 
-echo "-- static batteries (tsx) --"
-for b in "${BATTERIES_TSX[@]}"; do
-  run_suite "$b" npx tsx "scripts/$b"
-done
+if [ $SKIP_BATTERIES -eq 0 ]; then
+  echo "-- static batteries (tsx) --"
+  for b in "${BATTERIES_TSX[@]}"; do
+    run_suite "$b" npx tsx "scripts/$b"
+  done
 
-echo "-- static batteries (bun, TLA-pinned) --"
-for b in "${BATTERIES_BUN[@]}"; do
-  run_suite "$b" bun "scripts/$b"
-done
+  echo "-- static batteries (bun, TLA-pinned) --"
+  for b in "${BATTERIES_BUN[@]}"; do
+    run_suite "$b" bun "scripts/$b"
+  done
+else
+  echo "-- static batteries SKIPPED (--skip-batteries; the pass-1 invocation covered them) --"
+fi
 
 if [ $SKIP_PROOFS -eq 0 ]; then
   echo "-- api-proofs (bun --conditions react-server) --"

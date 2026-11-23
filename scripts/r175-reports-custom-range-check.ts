@@ -427,6 +427,57 @@ function ok(name: string, cond: boolean, info?: string) {
   );
 }
 
+// ==== [8] THE R177 LIVE-HINT NUZZLE + THE APPLIED-WINDOW FEED (R176 §3) ===
+
+{
+  console.log("\n[8] the live-hint nudge + the applied-window feed (R177)");
+  const picker = read("src/components/shared/custom-range-picker.tsx");
+  const perf = read("src/modules/reports/performance-panel.tsx");
+  const recovery = read("scripts/recover-dev-data.sh");
+
+  ok(
+    "8a the nudge's LIVE HINT: would-be windows computed from the SAME draft via the SHARED adjacency law, gated by canApply (a disabled nudge never promises a window)",
+    /const nudgeHint =\s*\n\s*canApply && fromKey !== null && toKey !== null/.test(picker) &&
+      picker.includes('prev: adjacentWindow(fromKey, toKey, "prev")') &&
+      picker.includes('next: adjacentWindow(fromKey, toKey, "next")'),
+  );
+  ok(
+    "8b the hint sub-lines: visual-only under their buttons (aria-hidden), dir=ltr + tabular-nums (ISO keys are LTR data — the R175 bidi law), their own testids",
+    /aria-hidden="true"\s*\n?\s*data-testid="custom-range-hint-prev"/.test(picker.replace(/\r/g, "")) &&
+      picker.includes('data-testid="custom-range-hint-next"') &&
+      (picker.match(/dir="ltr"\s*\n?\s*className="tabular-nums"/g) ?? []).length >= 2,
+  );
+  ok(
+    "8c the nudge aria-labels carry the LIVE consequence, composed from the SAME i18n keys (no new strings — 6g's keys are the source)",
+    picker.includes('`${t("prevWindow")}: ${nudgeHint.prev.from} → ${nudgeHint.prev.to}`') &&
+      picker.includes('`${t("nextWindow")}: ${nudgeHint.next.from} → ${nudgeHint.next.to}`'),
+  );
+  ok(
+    "8d ONE mirror law: EVERY directional window chevron mirrors in RTL (the draft nudge pair + the applied pager pair = 4 sites)",
+    (picker.match(/rtl:-scale-x-100/g) ?? []).length >= 4 &&
+      /ChevronLeft className="size-3\.5 rtl:-scale-x-100"/.test(picker) &&
+      /ChevronRight className="size-3\.5 rtl:-scale-x-100"/.test(picker),
+  );
+  ok(
+    "8e the applied-window FEED: the perf panel's presets row reads `applied` (was: the DRAFT inputs) — press-states, shown-line, picker prefill and the pager all read the truth the query rides",
+    perf.includes("value={{ from: applied.from, to: applied.to }}") &&
+      /setFromInput\(r\.from\);\s*\n\s*setToInput\(r\.to\);\s*\n\s*applyRangeWith\(r\.from, r\.to\);/.test(perf),
+  );
+  ok(
+    "8f the honest guard comment: every consumer now feeds its APPLIED window; the crash guard stays as defense-in-depth (no stale draft-consumer claim)",
+    picker.includes("every consumer now feeds its APPLIED window") &&
+      picker.includes("Defense-in-depth") &&
+      !picker.includes("feed their DRAFT inputs"),
+  );
+  ok(
+    "8g the recovery runbook as ONE command: scripts/recover-dev-data.sh chains the fixtures in CONTRACT ORDER (personas first, QA shop second — order matters)",
+    recovery.includes("node scripts/e2e-smoke-fixture.mjs") &&
+      recovery.indexOf("node scripts/e2e-smoke-fixture.mjs") <
+        recovery.indexOf("node scripts/r156-qa-fixture.mjs") &&
+      recovery.includes("set -euo pipefail"),
+  );
+}
+
 console.log(`\n=== r175-reports-custom-range-check: ${passed.length} passed, ${failures.length} failed ===`);
 if (failures.length) {
   console.log("FAILURES:");

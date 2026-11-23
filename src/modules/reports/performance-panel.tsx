@@ -475,10 +475,18 @@ export function PerformancePanel({
             ) : null}
           </div>
           {/* Prompt 52 §F4 — Jalali presets fill the Gregorian inputs
-              (server stays the single date authority). */}
+              (server stays the single date authority). R177 — the presets
+              row is fed the APPLIED window (was: the DRAFT inputs), so the
+              preset press-states, the both-calendar shown-line, the picker
+              prefill and the applied-window pager all read — and page —
+              the TRUTH the query rides, exactly like the reports view and
+              the statements view (one honest system; the half-typed draft
+              stays a draft in the From/To inputs until Apply). The crash
+              guard in AdjacentWindowButtons stays as defense-in-depth for
+              any future draft-shaped consumer. */}
           <JalaliRangePresets
             className="w-full"
-            value={{ from: fromInput, to: toInput }}
+            value={{ from: applied.from, to: applied.to }}
             timezone={business.timezone || "UTC"}
             onChange={(r) => {
               if (r) {

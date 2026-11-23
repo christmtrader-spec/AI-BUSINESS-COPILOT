@@ -123,6 +123,20 @@ export function CustomRangePicker({
     setToDraft(w.to);
   };
 
+  // R177 — the nudge's LIVE HINT (the R176 §3 honesty upgrade): the buttons
+  // above say WHERE to page, but not WHAT lands there — the user had to
+  // click to discover the consequence. These sub-lines compute the WOULD-BE
+  // windows live from the SAME draft through the SAME shared adjacency law
+  // (one source; they move as the draft moves). Gated by canApply — the
+  // exact condition that enables the buttons, so a disabled nudge never
+  // promises a window it cannot reach (adjacentWindow throws on invalid
+  // keys, and canApply guarantees both keys parse, are ordered, within span
+  // and not future-from — the throw path is unreachable here).
+  const nudgeHint =
+    canApply && fromKey !== null && toKey !== null
+      ? { prev: adjacentWindow(fromKey, toKey, "prev"), next: adjacentWindow(fromKey, toKey, "next") }
+      : null;
+
   const apply = () => {
     if (!canApply || fromKey === null || clampedTo === null) return;
     onChange({ from: fromKey, to: clampedTo });
@@ -222,7 +236,12 @@ export function CustomRangePicker({
         {/* R175 — the window nudge: page the draft through time one
             same-length window at a time (prev/next are adjacency moves,
             never overlapping re-draws). dir=rtl mirrors the row by DOM
-            order — the icons keep their own directional meaning. */}
+            order; the chevrons mirror with it (R177 — ONE mirror law for
+            every directional window affordance: in RTL time flows
+            right-to-left, so "previous" points right). The aria-label
+            carries the LIVE consequence (the computed window) so screen
+            readers get what the sub-lines show — composed from the SAME
+            i18n keys, no new strings. */}
         <div className="mt-3 flex items-center justify-between gap-2">
           <Button
             type="button"
@@ -232,10 +251,10 @@ export function CustomRangePicker({
             onClick={() => nudgeDraft("prev")}
             disabled={!canApply}
             title={t("prevWindow")}
-            aria-label={t("prevWindow")}
+            aria-label={nudgeHint ? `${t("prevWindow")}: ${nudgeHint.prev.from} → ${nudgeHint.prev.to}` : t("prevWindow")}
             data-testid="custom-range-prev"
           >
-            <ChevronLeft className="size-3.5" aria-hidden="true" />
+            <ChevronLeft className="size-3.5 rtl:-scale-x-100" aria-hidden="true" />
             <span className="text-xs">{t("prevWindow")}</span>
           </Button>
           <Button
@@ -246,13 +265,37 @@ export function CustomRangePicker({
             onClick={() => nudgeDraft("next")}
             disabled={!canApply}
             title={t("nextWindow")}
-            aria-label={t("nextWindow")}
+            aria-label={nudgeHint ? `${t("nextWindow")}: ${nudgeHint.next.from} → ${nudgeHint.next.to}` : t("nextWindow")}
             data-testid="custom-range-next"
           >
             <span className="text-xs">{t("nextWindow")}</span>
-            <ChevronRight className="size-3.5" aria-hidden="true" />
+            <ChevronRight className="size-3.5 rtl:-scale-x-100" aria-hidden="true" />
           </Button>
         </div>
+        {/* R177 — the WOULD-BE windows under their buttons (visual-only;
+            the composed aria-labels above already announce the same pair).
+            ISO keys are LTR data — dir=ltr + tabular-nums keep the weak
+            segments ordered inside RTL, same law as the trigger's value. */}
+        {nudgeHint ? (
+          <div className="text-muted-foreground mt-1 flex items-center justify-between gap-2 text-[10px]">
+            <span
+              dir="ltr"
+              className="tabular-nums"
+              aria-hidden="true"
+              data-testid="custom-range-hint-prev"
+            >
+              {nudgeHint.prev.from} → {nudgeHint.prev.to}
+            </span>
+            <span
+              dir="ltr"
+              className="tabular-nums"
+              aria-hidden="true"
+              data-testid="custom-range-hint-next"
+            >
+              {nudgeHint.next.from} → {nudgeHint.next.to}
+            </span>
+          </div>
+        ) : null}
         <p
           role="status"
           className={cn(
@@ -333,10 +376,12 @@ export function AdjacentWindowButtons({
 }) {
   const t = useTranslations("reports.customRange");
   const todayKey = localDateKeyOf(new Date(), timezone);
-  // The callers' `value` is not always a VALID window (the perf panel and
-  // the statements view feed their DRAFT inputs here — a half-typed date
-  // pair is normal). adjacentWindow throws on invalid keys, so the pager
-  // silently absents itself unless BOTH keys parse as real calendar dates.
+  // Defense-in-depth (R177): every consumer now feeds its APPLIED window
+  // (the reports view's jalaliRange, the perf panel's `applied`, the
+  // statements view's `range`) — but the guard stays for any future
+  // draft-shaped consumer: adjacentWindow throws on invalid keys, so a
+  // half-typed or reversed pair must absent the pager, never crash a
+  // render. Silent absence is the honest state for "nothing to page".
   const fromKey = parseLocalDateKey(value?.from);
   const toKey = parseLocalDateKey(value?.to);
   if (!value || !fromKey || !toKey || fromKey > toKey) return null;
