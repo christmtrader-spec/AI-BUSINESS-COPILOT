@@ -75,6 +75,9 @@ import {
 } from "@/components/ui/chart";
 import { EmptyState, PageHeader } from "@/components/shared/primitives";
 import { JalaliRangePresets, type JalaliRange } from "@/components/shared/jalali-range-presets";
+// R175 — the CUSTOM date range: the server's own ?from=&to= grammar finally
+// reachable by hand (the presets alone could only reach seven fixed windows).
+import { CustomRangePicker } from "@/components/shared/custom-range-picker";
 import {
   Dialog,
   DialogContent,
@@ -212,6 +215,11 @@ type AdvancedInsights = {
 };
 
 const RANGES = ["7", "30", "90"] as const;
+
+// R175 — the combobox's synthetic "an explicit window is applied" item.
+// Never a rolling value (RANGES are numeric strings); selecting it is a
+// no-op by the onValueChange guard above.
+const EXPLICIT_RANGE_ITEM = "__explicit_window__";
 
 // ---- Month-over-month --------------------------------------------------------
 
@@ -800,7 +808,20 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
         subtitle={t("subtitle")}
         actions={
           <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
-            <Select value={days} onValueChange={(v) => { setDays(v); setJalaliRange(null); }}>
+            {/* R175 HONESTY FIX — the combobox must never LIE: when an
+                explicit window (preset or custom) drives the query, the
+                trigger shows the applied-window item instead of a stale
+                rolling label. Selecting any rolling range is still the
+                escape hatch — it clears the explicit window (the same
+                one-law shape the presets row's Clear button uses). */}
+            <Select
+              value={jalaliRange ? EXPLICIT_RANGE_ITEM : days}
+              onValueChange={(v) => {
+                if (v === EXPLICIT_RANGE_ITEM) return;
+                setDays(v);
+                setJalaliRange(null);
+              }}
+            >
               <SelectTrigger className="h-9 min-w-0 flex-1 sm:w-44 sm:flex-none" aria-label={t("rangeLabel")}>
                 <SelectValue />
               </SelectTrigger>
@@ -810,6 +831,17 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
                     {t(`range_${r}`)}
                   </SelectItem>
                 ))}
+                {jalaliRange ? (
+                  <SelectItem value={EXPLICIT_RANGE_ITEM}>
+                    {t("customRange.appliedTitle", {
+                      // R175 bidi law — LRI…PDI isolate around the Gregorian
+                      // pair: inside FA/RTL the weak hyphen-digit segments
+                      // visually reorder ("۲۰-10-2026"); the isolate pins the
+                      // whole run LTR without touching the surrounding Persian.
+                      range: `\u2066${jalaliRange.from} → ${jalaliRange.to}\u2069`,
+                    })}
+                  </SelectItem>
+                ) : null}
               </SelectContent>
             </Select>
             <Button
@@ -836,8 +868,17 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
 
       {/* Prompt 52 §F4 — Jalali calendar presets for the summary window.
           Selecting a preset overrides the rolling days selector until
-          cleared. */}
-      <JalaliRangePresets value={jalaliRange} onChange={setJalaliRange} />
+          cleared. R175 — the row's children slot hosts the CUSTOM range
+          picker: the ONE visual range home, writing through the SAME
+          applied-range state (summary query, CSV export, deep links all
+          ride jalaliRange unchanged). */}
+      <JalaliRangePresets value={jalaliRange} onChange={setJalaliRange}>
+        <CustomRangePicker
+          value={jalaliRange}
+          onChange={setJalaliRange}
+          timezone={business.timezone}
+        />
+      </JalaliRangePresets>
 
       {isReorderDetail ? (
         /* Prompt 55 §X2 — low-stock reorder suggestions sub-view
@@ -934,11 +975,20 @@ export function ReportsView({ business }: { business: BusinessSummary }) {
       ) : (
         <>
           {error ? (
-            <div className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm">
+            <div className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm" role="alert">
               {t("loadFailed")}{" "}
               <button className="underline" onClick={() => void refetch()}>
                 {t("retry")}
               </button>
+              {/* R175 — a rejected custom range is a USER input problem, not
+                  a load failure: the server's authoritative message (422
+                  INVALID_REPORT_RANGE) surfaces beneath the generic banner
+                  so the fix is actionable instead of a mystery. */}
+              {error instanceof ApiClientError && error.code === "INVALID_REPORT_RANGE" ? (
+                <p className="text-destructive/90 mt-1 text-xs" dir="auto">
+                  {t("rangeRejected")}: {error.message}
+                </p>
+              ) : null}
             </div>
           ) : null}
 

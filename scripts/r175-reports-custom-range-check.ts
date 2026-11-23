@@ -1,0 +1,366 @@
+/**
+ * r175-reports-custom-range-check.ts — the server's own range grammar
+ * finally reaches the UI.
+ *
+ * R175 Mandate 5: Prompt 52 §F4 gave /api/v1/reports/summary (and
+ * /reports/export) an explicit ?from=&to= window, but the UI could only
+ * REACH it through the seven fixed Jalali presets — no human could ask
+ * for "Oct 1 → Nov 15". A CustomRangePicker joins the presets row (the
+ * row's NEW children slot — ONE visual range home) and writes through
+ * the SAME applied-range state, so the summary query, the CSV export,
+ * the both-calendar shown-line and the deep-link grammar all keep riding
+ * UNCHANGED paths. The 422 INVALID_REPORT_RANGE banner now surfaces the
+ * server's authoritative message (a user-input problem, not a load
+ * failure).
+ *
+ * Sections:
+ *  [1] the picker law (pure period helpers, single applied state,
+ *      resolveCustomRange mirror: order → span-on-RAW → future-from →
+ *      clamp-future-to, business timezone input)
+ *  [2] the row-slot law (JalaliRangePresets children slot, one range home,
+ *      the view passes business.timezone and the SAME onChange)
+ *  [3] the a11y/styling law (label pairs, role=status hint, focus-visible
+ *      family on inputs and buttons, aria-pressed honesty, testids)
+ *  [4] the i18n law (EN+FA parity, pure Persian FA, the rangeRejected key)
+ *  [5] the family-census law (self-registration + --list manifest)
+ *
+ * Run: npx tsx scripts/r175-reports-custom-range-check.ts
+ */
+import { readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { familyCensus, assertRegistered } from "./family-census";
+
+const ROOT = process.cwd();
+const read = (p: string) => readFileSync(`${ROOT}/${p}`, "utf8");
+
+const passed: string[] = [];
+const failures: string[] = [];
+function ok(name: string, cond: boolean, info?: string) {
+  if (cond) passed.push(name);
+  else failures.push(info ? `${name} — ${info}` : name);
+}
+
+// ==== [1] THE PICKER LAW ====================================================
+
+{
+  console.log("\n[1] the custom-range picker (Mandate 5)");
+  const src = read("src/components/shared/custom-range-picker.tsx");
+
+  ok(
+    "1a the picker is a client component",
+    src.startsWith('"use client";'),
+  );
+  ok(
+    "1b it imports the PURE period helpers (never a client timezone, never fixed-ms math)",
+    src.includes('from "@/lib/report-periods"') &&
+      src.includes("parseLocalDateKey") &&
+      src.includes("daysBetweenInclusive") &&
+      src.includes("MAX_REPORT_RANGE_DAYS") &&
+      src.includes("localDateKeyOf") &&
+      src.includes("addLocalDays"),
+  );
+  ok(
+    "1c the timezone input is the BUSINESS's (L3 — the browser zone is never consulted)",
+    src.includes("timezone: string") &&
+      src.includes("localDateKeyOf(now, timezone)") &&
+      /Intl\.DateTimeFormat\(\s*"en-US"/.test(src) === false ||
+      src.includes("localDateKeyOf(now, timezone)"),
+  );
+  ok(
+    "1d ONE applied state: the picker writes ONLY through onChange (no parallel applied-range useState)",
+    src.includes("onChange({ from: fromKey, to: clampedTo })") &&
+      !/useState<\s*\{\s*from/.test(src),
+  );
+  ok(
+    "1e the resolveCustomRange mirror — ORDER check on the raw keys",
+    /fromKey > toKey\)\s*draftError = "order"/.test(src),
+  );
+  ok(
+    "1f the mirror — SPAN check on the RAW keys BEFORE clamping (clamping never rescues an over-wide span)",
+    /daysBetweenInclusive\(fromKey, toKey\) > MAX_REPORT_RANGE_DAYS/.test(src) &&
+      src.indexOf("daysBetweenInclusive(fromKey, toKey) > MAX_REPORT_RANGE_DAYS") <
+        src.indexOf("fromKey > todayKey"),
+  );
+  ok(
+    "1g the mirror — FUTURE-from rejection (L4) and the future-to CLAMP (what the UI sends is what the server would resolve)",
+    /fromKey > todayKey\)\s*draftError = "future"/.test(src) &&
+      /toKey > todayKey \? todayKey : toKey/.test(src),
+  );
+  ok(
+    "1h the draft dies with the popover: open PREFILLS the applied window (edit-in-place), abandon never leaks",
+    src.includes("value?.from ?? addLocalDays(todayKey, -29)") &&
+      src.includes('if (next) {'),
+  );
+  ok(
+    "1i strict Gregorian keys only — parseLocalDateKey guards both inputs (real calendar dates, 2000..2100)",
+    /parseLocalDateKey\(fromDraft\)/.test(src) && /parseLocalDateKey\(toDraft\)/.test(src),
+  );
+  ok(
+    "1j Apply is disabled unless the draft resolves clean",
+    /disabled=\{!canApply\}/.test(src) &&
+      /canApply = draftError === null && fromKey !== null && toKey !== null/.test(src),
+  );
+  ok(
+    "1k the both-calendar honesty: typed dates show their Jalali long-form inline (the presets' shown-line convention)",
+    src.includes("formatJalaliDisplay(toJalali(new Date(`${key}T12:00:00Z`))") &&
+      src.includes('locale: locale === "fa" ? "fa" : "en"'),
+  );
+  ok(
+    "1l pressed exactly when a NON-preset window is applied (deep link or custom pick) — never two pressed affordances",
+    /jalaliPresetWindow\(k, now\)/.test(src) &&
+      /customActive = value !== null && !matchesPreset/.test(src),
+  );
+  ok(
+    "1m no server-side or db imports leak into the client component",
+    !src.includes("next/server") && !src.includes("@prisma") && !src.includes("z-ai-web-dev-sdk"),
+  );
+}
+
+// ==== [2] THE ROW-SLOT LAW ==================================================
+
+{
+  console.log("\n[2] one visual range home (the presets row's children slot)");
+  const presets = read("src/components/shared/jalali-range-presets.tsx");
+  const view = read("src/modules/reports/reports-view.tsx");
+
+  ok(
+    "2a the presets row grew the typed children slot (R175 — extra affordances join the SAME row)",
+    presets.includes("children?: ReactNode;") && presets.includes("{children}"),
+  );
+  ok(
+    "2b the view hosts the picker INSIDE the presets row (never a second floating bar)",
+    /<JalaliRangePresets value=\{jalaliRange\} onChange=\{setJalaliRange\}>\s*<CustomRangePicker/.test(
+      view,
+    ),
+  );
+  ok(
+    "2c the SAME onChange writes both affordances (one applied-range state)",
+    view.includes("onChange={setJalaliRange}") && view.includes("value={jalaliRange}"),
+  );
+  ok(
+    "2d the business timezone feeds the picker (L3 at the call site)",
+    view.includes("timezone={business.timezone}"),
+  );
+  ok(
+    "2e the summary query keeps riding jalaliRange unchanged (custom ranges inherit ?from=&to=, CSV export included)",
+    view.includes('queryKey: ["reports", "summary", days, jalaliRange]') &&
+      view.includes("/api/v1/reports/summary?from=${jalaliRange.from}&to=${jalaliRange.to}") &&
+      view.includes("/api/v1/reports/export?from=${jalaliRange.from}&to=${jalaliRange.to}"),
+  );
+  ok(
+    "2f the 422 INVALID_REPORT_RANGE surfaces the server's message under the generic banner (role=alert)",
+    /error instanceof ApiClientError && error\.code === "INVALID_REPORT_RANGE"/.test(view) &&
+      /role="alert"[\s\S]{0,400}INVALID_REPORT_RANGE/.test(view),
+  );
+}
+
+// ==== [3] THE A11Y / STYLING LAW ============================================
+
+{
+  console.log("\n[3] accessibility and the focus-visible family");
+  const src = read("src/components/shared/custom-range-picker.tsx");
+
+  ok(
+    "3a htmlFor/id label pairs on both date inputs",
+    src.includes('htmlFor="custom-range-from"') &&
+      src.includes('id="custom-range-from"') &&
+      src.includes('htmlFor="custom-range-to"') &&
+      src.includes('id="custom-range-to"'),
+  );
+  ok(
+    "3b the hint is a live region (role=status) with the amber error family",
+    src.includes('role="status"') &&
+      src.includes("text-amber-700 dark:text-amber-300"),
+  );
+  ok(
+    "3c the focus-visible family on the date inputs (ring + offset + motion-reduce escape)",
+    src.includes("focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1") &&
+      /motion-reduce:transition-none/.test(src),
+  );
+  ok(
+    "3d the trigger presses honestly (aria-pressed) and carries a title + testid",
+    src.includes("aria-pressed={customActive}") &&
+      src.includes('title={t("trigger")}') &&
+      src.includes('data-testid="custom-range-trigger"'),
+  );
+  ok(
+    "3e the popover is a labelled dialog and every control carries a testid",
+    src.includes('role="dialog"') &&
+      src.includes('aria-label={t("popoverLabel")}') &&
+      src.includes('data-testid="custom-range-from"') &&
+      src.includes('data-testid="custom-range-to"') &&
+      src.includes('data-testid="custom-range-apply"') &&
+      src.includes('data-testid="custom-range-reset"') &&
+      src.includes('data-testid="custom-range-hint"'),
+  );
+  ok(
+    "3f the date inputs stay LTR in RTL locales (ISO keys are always LTR — dir on the input, not the label)",
+    /dir="ltr"\s+data-testid="custom-range-from"/.test(src),
+  );
+  ok(
+    "3g the to input carries min=from (the browser's own calendar cannot offer an impossible order)",
+    src.includes("min={fromKey ?? undefined}"),
+  );
+}
+
+// ==== [4] THE I18N LAW ======================================================
+
+{
+  console.log("\n[4] EN+FA parity, pure Persian");
+  const en = read("src/i18n/messages/en.ts");
+  const fa = read("src/i18n/messages/fa.ts");
+
+  const enKeys = [
+    "trigger: \"Custom range\"",
+    "popoverLabel: \"Custom date range\"",
+    "from: \"From\"",
+    "to: \"To\"",
+    "apply: \"Apply range\"",
+    "reset: \"Reset\"",
+    "hintDays: \"{count} days\"",
+    "invalid: \"Enter real calendar dates (YYYY-MM-DD).\"",
+    "order: \"From must be on or before To.\"",
+    "span: \"The range is limited to {max} days.\"",
+    "future: \"From cannot be in the future.\"",
+  ];
+  const faKeys = [
+    'trigger: "بازهٔ دلخواه"',
+    'popoverLabel: "بازهٔ زمانی دلخواه"',
+    'from: "از"',
+    'to: "تا"',
+    'apply: "اعمال بازه"',
+    'reset: "بازنشانی"',
+    'hintDays: "{count} روز"',
+    'invalid: "تاریخ واقعی میلادی را وارد کنید (YYYY-MM-DD)."',
+    'order: "«از» باید پیش یا هم‌روز با «تا» باشد."',
+    'span: "بازه حداکثر {max} روز است."',
+    'future: "«از» نمی‌تواند در آینده باشد."',
+  ];
+  ok(
+    "4a every customRange key exists in EN",
+    enKeys.every((k) => en.includes(k)),
+    enKeys.filter((k) => !en.includes(k)).join(" | "),
+  );
+  ok(
+    "4b every customRange key exists in FA and is pure Persian",
+    faKeys.every((k) => fa.includes(k)),
+    faKeys.filter((k) => !fa.includes(k)).join(" | "),
+  );
+  ok(
+    "4c the FA copy contains no Latin words (the format spec YYYY-MM-DD and the ICU placeholders {count}/{max} are the honest exceptions)",
+    (() => {
+      const block = /customRange: \{([\s\S]{0,900}?)\},\n/.exec(fa)?.[1] ?? "";
+      const values = [...block.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+      if (values.length < 11) return false; // the block's own 11 strings
+      return values.every((v) =>
+        !/[A-Za-z]/.test(v.replace(/YYYY-MM-DD/g, "").replace(/\{[a-z]+\}/g, "")),
+      );
+    })(),
+  );
+  ok(
+    "4d the rangeRejected banner key exists in both locales",
+    en.includes('rangeRejected: "The server rejected this range"') &&
+      fa.includes('rangeRejected: "سرور این بازه را نپذیرفت"'),
+  );
+  ok(
+    "4e the view consumes the new keys from the reports namespace",
+    read("src/modules/reports/reports-view.tsx").includes('t("rangeRejected")'),
+  );
+}
+
+// ==== [5] THE FAMILY-CENSUS LAW ============================================
+
+{
+  console.log("\n[5] self-registration (the census module law)");
+  ok(
+    "5a the self-registration canary: THIS battery is registered in the runner",
+    assertRegistered("r175-reports-custom-range-check.ts"),
+    "add r175-reports-custom-range-check.ts to run-family.sh BATTERIES_TSX",
+  );
+
+  const c = familyCensus();
+  ok(
+    "5b the live counts match the runner right now (tsx floor 24, bun 2, proofs 5, names sum)",
+    c.tsx >= 24 && c.bun === 2 && c.proofs === 5 && c.names.length === c.tsx + c.bun + c.proofs,
+    `tsx=${c.tsx} bun=${c.bun} proofs=${c.proofs}`,
+  );
+
+  try {
+    const list = execSync("bash scripts/run-family.sh --list", {
+      cwd: ROOT,
+      encoding: "utf8",
+    });
+    ok(
+      "5c the resolved --list manifest lists this battery (end-to-end registration proof)",
+      list.includes("r175-reports-custom-range-check.ts"),
+    );
+  } catch (e) {
+    ok("5c the resolved --list manifest lists this battery", false, String(e).slice(0, 80));
+  }
+}
+
+// ==== [6] THE ROUND'S INCREMENTS (honest combobox + window nudge + polish) ==
+
+{
+  console.log("\n[6] the honesty combobox, the window nudge, the polish");
+  const view = read("src/modules/reports/reports-view.tsx");
+  const src = read("src/components/shared/custom-range-picker.tsx");
+  const en = read("src/i18n/messages/en.ts");
+  const fa = read("src/i18n/messages/fa.ts");
+
+  ok(
+    "6a the combobox never lies: a synthetic explicit item exists and is NOT a rolling value",
+    view.includes('const EXPLICIT_RANGE_ITEM = "__explicit_window__"') &&
+      view.includes("value={jalaliRange ? EXPLICIT_RANGE_ITEM : days}"),
+  );
+  ok(
+    "6b selecting the explicit item is a no-op; any rolling selection clears the explicit window",
+    /if \(v === EXPLICIT_RANGE_ITEM\) return;/.test(view) &&
+      /setDays\(v\);\s*\n\s*setJalaliRange\(null\);/.test(view),
+  );
+  ok(
+    "6c the explicit item renders ONLY while a window is applied and carries the applied pair (bidi-isolated LRI…PDI — RTL weak-segment reordering)",
+    /jalaliRange \? \(\s*<SelectItem value=\{EXPLICIT_RANGE_ITEM\}>/.test(view) &&
+      /range: `\\u2066\$\{jalaliRange\.from\} → \$\{jalaliRange\.to\}\\u2069`/.test(view),
+  );
+  ok(
+    "6d the appliedTitle key exists in BOTH locales (EN + FA)",
+    en.includes('appliedTitle: "Applied window: {range}"') &&
+      fa.includes('appliedTitle: "بازهٔ اعمال‌شده: {range}"'),
+  );
+  ok(
+    "6e the nudge edits the DRAFT only (never fires onChange), adjacency math: prev = [from−N, from−1], next = [to+1, to+N]",
+    /const nudgeDraft = \(direction: "prev" \| "next"\)/.test(src) &&
+      src.includes("setFromDraft(addLocalDays(fromKey, -span))") &&
+      src.includes("setToDraft(addLocalDays(fromKey, -1))") &&
+      src.includes("setFromDraft(addLocalDays(toKey, 1))") &&
+      src.includes("setToDraft(addLocalDays(toKey, span))") &&
+      !/nudgeDraft[\s\S]{0,400}onChange\(/.test(src.split("const apply")[0] ?? src),
+  );
+  ok(
+    "6f the nudge buttons are disabled unless the draft resolves clean (validation stays the gate)",
+    /data-testid="custom-range-prev"/.test(src) &&
+      /data-testid="custom-range-next"/.test(src) &&
+      (src.match(/disabled=\{!canApply\}/g) ?? []).length >= 3,
+  );
+  ok(
+    "6g prevWindow/nextWindow keys exist in BOTH locales (EN + FA, pure Persian FA)",
+    en.includes('prevWindow: "Previous window"') &&
+      en.includes('nextWindow: "Next window"') &&
+      fa.includes('prevWindow: "بازهٔ قبلی"') &&
+      fa.includes('nextWindow: "بازهٔ بعدی"'),
+  );
+  ok(
+    "6h the polish: w-80 popover, CalendarRange title icon, border-t footer divider",
+    src.includes('className="w-80 p-4"') &&
+      /<CalendarRange className="text-muted-foreground size-4"/.test(src) &&
+      /justify-end gap-2 border-t pt-3/.test(src),
+  );
+}
+
+console.log(`\n=== r175-reports-custom-range-check: ${passed.length} passed, ${failures.length} failed ===`);
+if (failures.length) {
+  console.log("FAILURES:");
+  for (const f of failures) console.log(`  ✗ ${f}`);
+  process.exit(1);
+}

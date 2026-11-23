@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { CalendarRange } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,11 +29,17 @@ export function JalaliRangePresets({
   value,
   onChange,
   className,
+  children,
 }: {
   /** Currently applied window (Gregorian keys) or null for rolling presets. */
   value: JalaliRange | null;
   onChange: (range: JalaliRange | null) => void;
   className?: string;
+  /** R175 — extra range affordances that join the SAME row (the custom
+   *  range picker's trigger renders here; its popover portals out). The
+   *  slot keeps the range row ONE visual home — never a second floating
+   *  bar competing with the presets. */
+  children?: ReactNode;
 }) {
   const t = useTranslations("reports.jalali");
   const locale = useLocale();
@@ -87,6 +94,7 @@ export function JalaliRangePresets({
             {p.label}
           </Button>
         ))}
+        {children}
         {value ? (
           <Button
             type="button"
