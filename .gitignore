@@ -84,3 +84,7 @@ tool-results/
 .dev-supervisor.lock
 dev-rss-guard-events.jsonl
 dev-watchdog-events.jsonl
+
+# GitHub push bridge runtime state (R178.G)
+.zscripts/github-bridge.log
+.zscripts/github-bridge-state.json
