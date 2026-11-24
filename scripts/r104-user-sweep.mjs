@@ -75,7 +75,16 @@ const EMAIL_PATTERNS = [
 
 const KEEP_EMAILS = new Set(["rep16007@t.dev"]);
 
-const SWEEP_BUSINESS_NAMES = ["R104 QA Studio", "R106 QA Ventures", "R107 QA Ventures", "R108 QA Ventures", "R110 QA Ventures", "R111 QA Ventures", "R112 QA Ventures", "R113 QA Ventures", "P23 Real Provider Shop", "P25 UI Trial Shop", "Trial Flow Shop"];
+const SWEEP_BUSINESS_NAMES = ["R104 QA Studio", "R106 QA Ventures", "R107 QA Ventures", "R108 QA Ventures", "R110 QA Ventures", "R111 QA Ventures", "R112 QA Ventures", "R113 QA Ventures", "P23 Real Provider Shop", "P25 UI Trial Shop", "Trial Flow Shop",
+  // R178 sweep wave — the blob 766d32a restore (this round's fourth DB wipe)
+  // resurrected sara's PRE-SEED business "Sara's Handmade Shop". The fixture
+  // contract (e2e-smoke-fixture.mjs) requires sara to own EXACTLY ONE
+  // business (the FREE-plan limit + the smoke's owned===1 check), and the
+  // September KEEP-baseline (R136) never listed it — the canonical sara
+  // business is the fixture's "Sara Copilot Business". Registering the name
+  // makes the restore→sweep chain idempotent: every future blob restore
+  // lands back on the canonical census.
+  "Sara's Handmade Shop"];
 /** R114 — stamped QA business names match by PREFIX ("R114 QA Ventures mvmv1g18"). */
 const SWEEP_BUSINESS_PREFIXES = ["R114 QA Ventures", "R115 QA Ventures", "R116 QA Ventures", "R117 QA Ventures", "R118 QA Ventures", "R131 QA Ventures", "R136 QA Shop ", "R156 QA Shop", "P19 Isolation Co "];
 

@@ -76,3 +76,11 @@ tool-results/
 
 # runtime artifact — rewritten on every dev restart
 .zscripts/dev.pid
+
+# R178 — live runtime state: locks are heartbeat files rewritten every few
+# seconds; the events JSONL files feed the R111 dual-sink mirror. They
+# describe the RUNNING sandbox, not the codebase — never version-control them.
+.dev-rss-guard.lock
+.dev-supervisor.lock
+dev-rss-guard-events.jsonl
+dev-watchdog-events.jsonl

@@ -46,7 +46,20 @@ const INTERVAL_MS = Math.max(2000, Number(process.env.RSS_GUARD_INTERVAL_MS) || 
 // root cause). 2450 sits ABOVE the observed compile plateau while still
 // guarding the genuine runaway/OOM zone (R104 recorded a 2.85GB leak and
 // kernel OOM SIGKILLs under combined Chrome+server pressure).
-const HIGH_WATER_MB = Math.max(50, Number(process.env.RSS_GUARD_WATER_MB) || 2450);
+//
+// r178 RETUNE (2026-11-24): the plateau drifted UP again — this round's
+// guard log: transient peaks 2731–2771MB during the post-boot compile
+// storm, SETTLING at 2290–2406MB. 2450 left only a 44–160MB margin over
+// settle: a settle wobble (e.g. 2420/2440/2460) could hit 3 consecutive
+// samples and recycle a HEALTHY server (the r107 disease again — recycle
+// storms reconnect HMR and kill browser QA). 2600 restores the margin
+// (~200MB over settle) while staying BELOW the transient peaks' worst
+// case so a genuine runaway leak (sustained, not settling) still reaches
+// 3 consecutive samples and earns a CONTROLLED recycle before the kernel
+// OOM-killer shoots the server mid-QA. Evidence: dev-rss-guard.log this
+// round — peaks never held 3 samples; the killer was the KERNEL OOM (the
+// guard's down-selfheal revived the server in ~2s every time).
+const HIGH_WATER_MB = Math.max(50, Number(process.env.RSS_GUARD_WATER_MB) || 2600);
 const CONSECUTIVE = Math.max(1, Number(process.env.RSS_GUARD_CONSECUTIVE) || 3);
 // R112 grace: post-spawn samples judge RSS against water + HEADROOM so the
 // fresh generation's compile storm (battery chains touch every route) does
