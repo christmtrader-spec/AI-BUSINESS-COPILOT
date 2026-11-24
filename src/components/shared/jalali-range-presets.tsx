@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { CalendarRange } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -75,8 +75,34 @@ export function JalaliRangePresets({
       }
     : null;
 
+  // R179 — THE PRESSED-KEY DISAMBIGUATION. Two presets can compute the SAME
+  // window: last3Months and thisQuarter are byte-identical whenever the
+  // current Jalali month is a quarter-end month (months 3/6/9/12 — four
+  // months a year; R178's live sample: Azar 1405 ⇒ both = [Mehr 1 → Azar 30]).
+  // A window-equality find() alone highlights the array-order winner
+  // (thisQuarter is listed first), so the user's press on last3Months reads
+  // as "didn't register". The PRESSED key wins: a press records its key in a
+  // local ref (presentation state — the WINDOW is the query state and stays
+  // in the parent; the highlight is ephemeral UI, so it stays local too and
+  // all three consumers inherit the law with zero parent changes). The hint
+  // is honored ONLY while its recomputed window still equals the applied
+  // value; any other value change (deep link, adjacent pager, custom picker,
+  // rolling-days select) invalidates it and the highlight falls back to the
+  // deterministic window find() — fresh visits and deep links stay pinned to
+  // array order, never to a stale press. The hint is STATE (not a ref) — it
+  // drives the render output (the highlight), so it must be render-safe:
+  // react-hooks/refs forbids reading refs during render, and the press's
+  // setPressedHint batches with the parent's value update into ONE render.
+  const [pressedHint, setPressedHint] = useState<JalaliPresetKey | null>(null);
+  const pressedWindow = pressedHint
+    ? presets.find((p) => p.key === pressedHint)?.window ?? null
+    : null;
   const activeKey = value
-    ? presets.find((p) => p.window.from === value.from && p.window.to === value.to)?.key ?? null
+    ? pressedWindow &&
+      pressedWindow.from === value.from &&
+      pressedWindow.to === value.to
+      ? pressedHint
+      : presets.find((p) => p.window.from === value.from && p.window.to === value.to)?.key ?? null
     : null;
 
   return (
@@ -95,7 +121,10 @@ export function JalaliRangePresets({
             size="sm"
             className={`h-8 ${activeKey === p.key ? "border-primary/50 bg-primary/10" : ""}`}
             aria-pressed={activeKey === p.key}
-            onClick={() => onChange({ from: p.window.from, to: p.window.to })}
+            onClick={() => {
+              setPressedHint(p.key);
+              onChange({ from: p.window.from, to: p.window.to });
+            }}
           >
             {p.label}
           </Button>
@@ -107,7 +136,10 @@ export function JalaliRangePresets({
             variant="ghost"
             size="sm"
             className="text-muted-foreground h-8"
-            onClick={() => onChange(null)}
+            onClick={() => {
+              setPressedHint(null); // a stale hint must never bias a later deep link
+              onChange(null);
+            }}
           >
             {t("clear")}
           </Button>

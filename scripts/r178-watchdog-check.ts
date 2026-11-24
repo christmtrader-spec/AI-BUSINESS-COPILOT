@@ -185,8 +185,14 @@ function ok(name: string, cond: boolean, info?: string) {
       kinds.has("rss-guard-revived") && kinds.has("watchdog-start") && kinds.has("guard-ok"),
     );
     ok(
-      "4f the revival event carries the machine-readable WHY (why=pid-dead + the spawned childPid — the postmortem starts from data, not memory)",
-      lines.some((l) => l.kind === "rss-guard-revived" && l.why === "pid-dead" && typeof l.childPid === "number"),
+      "4f the revival event carries the machine-readable WHY (one of the three documented death verdicts — pid-dead | no-lock | heartbeat-stale — plus the spawned childPid; the postmortem starts from data, not memory. R179 checker fix: the WHY VALUE varies by the actual death (this session's sandbox wipe produced no-lock), the LAW is that a WHY is always recorded)",
+      lines.some(
+        (l) =>
+          l.kind === "rss-guard-revived" &&
+          typeof l.why === "string" &&
+          ["pid-dead", "no-lock", "heartbeat-stale"].includes(l.why) &&
+          typeof l.childPid === "number",
+      ),
     );
     const textLog = read("dev-watchdog.log");
     ok(

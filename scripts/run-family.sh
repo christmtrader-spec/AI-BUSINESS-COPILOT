@@ -101,6 +101,7 @@ BATTERIES_TSX=(
   r174-palette-quick-create-check.ts
   r175-reports-custom-range-check.ts
   r178-watchdog-check.ts
+  r179-preset-press-check.ts
 )
 # TLA-pinned batteries — bun ONLY (the R168 convention).
 BATTERIES_BUN=(
