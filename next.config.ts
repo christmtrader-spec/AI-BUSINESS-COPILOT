@@ -1,4 +1,21 @@
 import type { NextConfig } from "next";
+import { turbopackMemoryCeilingBytes } from "./scripts/dev-memory-ceiling";
+
+/**
+ * R180 — THE ENGINE MEMORY CEILING (the OOM-band hardening, R179 §3 #2).
+ *
+ * experimental.turbopackMemoryLimit — Next 16.1.3's own source comment
+ * (restored from the shipped .map): "A target memory limit for turbo, in
+ * bytes." The installed DEV path (dist/server/dev/hot-reloader-turbopack.js)
+ * and BUILD path (dist/build/turbopack-build/impl.js) both pass it into
+ * bindings.turbo.createProject — when the tracked engine allocations reach
+ * the limit the engine drops caches and collects BEFORE the external
+ * layers act (guard recycle 2600×3, kernel OOM). The value, the unit law
+ * (MB in, bytes out) and the env knob (NEXT_TURBOPACK_MEMORY_MB) live in
+ * scripts/dev-memory-ceiling.ts — the ONE source; this file only wires it.
+ * The battery (r180-memory-ceiling-check.ts) re-verifies the key against
+ * the INSTALLED next schema + both consumption sites at run time.
+ */
 
 /**
  * Prompt 29 §97/§98 — safe baseline security headers.
@@ -33,6 +50,10 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  experimental: {
+    // R180 layered defense, layer 1 — see scripts/dev-memory-ceiling.ts.
+    turbopackMemoryLimit: turbopackMemoryCeilingBytes(),
+  },
   /* config options here */
   reactStrictMode: false,
   // The sandbox preview serves the app from dynamic *.space-z.ai subdomains;

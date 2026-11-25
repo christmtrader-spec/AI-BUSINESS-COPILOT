@@ -61,6 +61,16 @@ const INTERVAL_MS = Math.max(2000, Number(process.env.RSS_GUARD_INTERVAL_MS) || 
 // guard's down-selfheal revived the server in ~2s every time).
 const HIGH_WATER_MB = Math.max(50, Number(process.env.RSS_GUARD_WATER_MB) || 2600);
 const CONSECUTIVE = Math.max(1, Number(process.env.RSS_GUARD_CONSECUTIVE) || 3);
+// R180 — THE NEAR-BAND WATCH (layered defense, layer 2's early tripwire — a
+// DATA-GENERATOR, not an action): one-sample rising-edge event when the
+// server settles ABOVE the documented settle band's top (R178 evidence:
+// 2290-2406MB). Purpose: the fattening disease's leading indicator — how
+// OFTEN does next-server live above its documented band? — feeds the
+// engine-ceiling tuning (NEXT_TURBOPACK_MEMORY_MB) with real samples
+// instead of vibes. NEVER recycles: the recycle law stays HIGH_WATER ×
+// CONSECUTIVE untouched (a false recycle mid-QA was the R107 disease).
+// Rising-edge + re-arm on recovery = one event per band ENTRY, zero spam.
+const EARLY_WATER_MB = Math.max(0, Number(process.env.RSS_GUARD_EARLY_MB) || 2400);
 // R112 grace: post-spawn samples judge RSS against water + HEADROOM so the
 // fresh generation's compile storm (battery chains touch every route) does
 // not trigger a recycle mid-chain. Env-overridable; SAMPLES=0 disables.
@@ -301,6 +311,9 @@ async function daemon() {
   });
   let overStreak = 0;
   let downStreak = 0;
+  // R180 near-band arm: false = BELOW the band (event armed), true = inside
+  // it (event fired for this entry; re-arms on a sub-band sample).
+  let nearBandArmed = false;
   // R112 grace clock: 0 at boot (boot never gets grace — a pre-existing
   // runaway is judged by the strict base water), reset to 0 on every spawn.
   let samplesSinceSpawn = Number.MAX_SAFE_INTEGER;
@@ -337,6 +350,18 @@ async function daemon() {
             fields: { rssMb: srv.rssMb },
           });
         overStreak = 0;
+        // R180 near-band watch: rising-edge event on ENTERING the band
+        // above the documented settle band (no action, re-armed below when
+        // the sample returns under EARLY_WATER — one event per entry).
+        if (EARLY_WATER_MB > 0 && srv.rssMb >= EARLY_WATER_MB && !nearBandArmed) {
+          nearBandArmed = true;
+          glogEvent(`near-band: ${srv.rssMb}MB above the settle band top (early=${EARLY_WATER_MB}MB, recycle=${HIGH_WATER_MB}MB) — data event, no action`, {
+            kind: "near-band",
+            fields: { rssMb: srv.rssMb, earlyMb: EARLY_WATER_MB, waterMb: HIGH_WATER_MB, pid: srv.pid },
+          });
+        } else if (srv.rssMb < EARLY_WATER_MB) {
+          nearBandArmed = false;
+        }
       }
     } else {
       overStreak = 0;
