@@ -103,6 +103,7 @@ BATTERIES_TSX=(
   r178-watchdog-check.ts
   r179-preset-press-check.ts
   r180-memory-ceiling-check.ts
+  r181-outstanding-runner-up-check.ts
 )
 # TLA-pinned batteries — bun ONLY (the R168 convention).
 BATTERIES_BUN=(

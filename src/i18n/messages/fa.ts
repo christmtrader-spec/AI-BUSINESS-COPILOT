@@ -2059,6 +2059,12 @@ const fa: Messages = {
     actionDebtorTitle: "«{name}» به شما {money} بدهکار است، در {count} فاکتور باز. مشاهدهٔ جزئیات سررسیدشان.",
     actionCreditor: "سررسید بدهی‌ها",
     actionCreditorTitle: "شما به «{name}» {money} بدهکار هستید، در {count} صورتحساب باز. مشاهدهٔ جزئیات سررسیدشان.",
+    // R181 — دومین ردیف سکوی بدهکاران/بستانکاران («چه کس دیگری؟»)؛ قانون
+    // نگارش runner-up سهام R103 به دو سمت مطالبات/بدهی‌ها آینه شده است.
+    actionDebtorRunnerUp: "دومین مطالبهٔ بزرگ",
+    actionDebtorRunnerUpTitle: "دومین مطالبهٔ بزرگ: «{name}» به شما {money} بدهکار است، در {count} فاکتور باز. مشاهدهٔ جزئیات سررسیدشان.",
+    actionCreditorRunnerUp: "دومین بدهی بزرگ",
+    actionCreditorRunnerUpTitle: "دومین بدهی بزرگ: شما به «{name}» {money} بدهکار هستید، در {count} صورتحساب باز. مشاهدهٔ جزئیات سررسیدشان.",
     actionProduct: "صفحهٔ خودِ کالا",
     actionProductTitle: "پرفروش‌ترینِ این بازه: «{name}» — {count} واحد به ارزش {money}. بازکردن صفحهٔ خودِ کالا.",
     actionExpense: "هزینه‌های {category}",

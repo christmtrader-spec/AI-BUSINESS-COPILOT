@@ -79,6 +79,16 @@ export type CopilotSnapshotMeta = {
   // leader; the unassigned mass (partyId null) is carried but never drills.
   topDebtor?: CopilotOutstandingView | null;
   topCreditor?: CopilotOutstandingView | null;
+  // R181 — the outstanding podium's rank 2 (the "who else?" fact): the SAME
+  // debtors/creditors facts, read ONE slice deeper through the SAME extractor
+  // (topLeadersOfFact(fact, 2)[1] — verbatim, never re-ranked, zero new
+  // queries). ADDITIVE optional — old persisted metas honestly omit it; a
+  // book of one has NO runner-up and padding one would be a lie (the R103
+  // stock runner-up silence law, mirrored). The unassigned mass and the
+  // nameless parties are carried but never drill (the R96 mass-row law,
+  // the picker refuses them exactly like rank 1).
+  topDebtorRunnerUp?: CopilotOutstandingView | null;
+  topCreditorRunnerUp?: CopilotOutstandingView | null;
   /**
    * Record counts behind this answer — surfaced in the UI as citation chips
    * so users can see exactly how much data the copilot is grounded in.
@@ -120,6 +130,29 @@ function outstandingViewOf(fact: LeadersFactInput): CopilotOutstandingView | nul
     partyName: first.partyName,
     outstandingMinor: first.outstandingMinor,
     openItems: first.openItems,
+  };
+}
+
+/**
+ * R181 — PURE: rank 2 of a leaders fact as the drill meta reads it — the
+ * EXACT same law as `outstandingViewOf`, one slice deeper: read through the
+ * ONE podium extractor (topLeadersOfFact(fact, 2)[1] — the fact's own order
+ * IS the ranking; [1] is rank 2 because the server said so, never because
+ * this file compared anything). Honest silence: a silent fact, an empty
+ * book, or a book of ONE maps to null — padding a runner-up would be a lie
+ * (the R103 stock runner-up law, mirrored verbatim). The podium's
+ * rank/partyCount fields are deliberately DROPPED — the meta carries
+ * exactly what the chips render (id, name, money, count), same shape as
+ * rank 1, one additive optional field pair.
+ */
+function outstandingRunnerUpOf(fact: LeadersFactInput): CopilotOutstandingView | null {
+  const second = topLeadersOfFact(fact, 2)[1];
+  if (!second) return null;
+  return {
+    partyId: second.partyId,
+    partyName: second.partyName,
+    outstandingMinor: second.outstandingMinor,
+    openItems: second.openItems,
   };
 }
 
@@ -444,6 +477,11 @@ export async function buildCopilotGrounding(opts: {
     // fact's own order IS the ranking; [0] verbatim or honest silence).
     topDebtor: outstandingViewOf(debtorsFact),
     topCreditor: outstandingViewOf(creditorsFact),
+    // R181 — the podium's rank 2 ("who else?"), read through the SAME
+    // extractors from the SAME facts — one authority, zero new queries,
+    // honest silence when the book has no second row.
+    topDebtorRunnerUp: outstandingRunnerUpOf(debtorsFact),
+    topCreditorRunnerUp: outstandingRunnerUpOf(creditorsFact),
     counts: {
       sales: k.salesCount,
       expenses: k.expensesCount,

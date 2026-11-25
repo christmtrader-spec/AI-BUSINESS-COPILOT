@@ -215,6 +215,13 @@ type CopilotMeta = {
   // there is no party to scope to, the R96 mass-row law).
   topDebtor?: CopilotOutstandingFact | null;
   topCreditor?: CopilotOutstandingFact | null;
+  // R181 — the outstanding podium's rank 2 ("who else?"), ADDITIVE optional
+  // — old persisted metas honestly omit it; a book of one has NO runner-up
+  // and the pickers never fabricate one (the R103 stock runner-up law,
+  // mirrored). Same drill grammar as rank 1: the id rides, the mass row
+  // (partyId null) never drills.
+  topDebtorRunnerUp?: CopilotOutstandingFact | null;
+  topCreditorRunnerUp?: CopilotOutstandingFact | null;
 };
 
 /** R147 — the client mirror of the server's CopilotOutstandingView. */
@@ -757,7 +764,7 @@ export function pickStockActionChips(meta: CopilotMeta | null | undefined): Stoc
 // ---- Outstanding action chips (R147 — the drill with the stable id) --------
 
 export type OutstandingActionChip = {
-  key: "actionDebtor" | "actionCreditor";
+  key: "actionDebtor" | "actionCreditor" | "actionDebtorRunnerUp" | "actionCreditorRunnerUp";
   side: "receivables" | "payables";
   partyId: string;
   partyName: string;
@@ -767,14 +774,19 @@ export type OutstandingActionChip = {
 
 /**
  * R147 — the outstanding drill's gates. LAWS (battery-pinned in
- * scripts/r147-outstanding-drill-check.ts):
- * - TWO chips max, deterministic order debtor → creditor (the snapshot's
- *   own field order — customersOweYou before youOweSuppliers);
+ * scripts/r147-outstanding-drill-check.ts + scripts/r181-outstanding-runner-up-check.ts):
+ * - FOUR chips max, deterministic order debtor → debtorRunnerUp → creditor
+ *   → creditorRunnerUp (the snapshot's own field order — rank 1 before its
+ *   runner-up per side, receivables before payables — the R103 podium law:
+ *   crown first, medal second, one authority per citation);
  * - each chip gates on ITS OWN proof: the fact present, a non-blank partyId
  *   (the §16/§18 drill law — navigation rides the STABLE id, never the
  *   name), a non-blank partyName (a chip that cannot name its party is
  *   noise, not an affordance), and outstandingMinor > 0 with openItems > 0
  *   (the family's positive-value law — no chip about nothing);
+ * - rank 1's gate NEVER blocks its runner-up: each fact is judged alone
+ *   (a one-party book renders the rank-1 chip only — padding a runner-up
+ *   would be a lie, the R103 silence law);
  * - the unassigned mass (partyId null) and nameless parties NEVER drill —
  *   the R96 mass-row law, verbatim;
  * - old persisted metas without the fields stay honest ([]);
@@ -811,7 +823,11 @@ export function pickOutstandingActionChips(
     });
   };
   push("actionDebtor", "receivables", meta.topDebtor);
+  // R181 — the podium's rank 2 rides the SAME push gates (each fact judged
+  // alone — rank 1's absence/zero never fabricates or blocks a runner-up).
+  push("actionDebtorRunnerUp", "receivables", meta.topDebtorRunnerUp);
   push("actionCreditor", "payables", meta.topCreditor);
+  push("actionCreditorRunnerUp", "payables", meta.topCreditorRunnerUp);
   return chips;
 }
 
@@ -851,12 +867,26 @@ function OutstandingActionChips({
       data-testid="copilot-outstanding-chips"
     >
       {chips.map((chip) => {
-        const debtor = chip.key === "actionDebtor";
-        const tooltip = t(debtor ? "actionDebtorTitle" : "actionCreditorTitle", {
-          name: chip.partyName,
-          money: fmtMoney(business, chip.outstandingMinor),
-          count: fmtCount(uiLocale, chip.openItems),
-        });
+        // R181 — the SIDE is the chip's identity (colors, icon, tooltip
+        // family); the KEY only picks rank 1 vs runner-up wording and its
+        // own testid. Deriving the side from chip.key broke the moment the
+        // podium grew rank 2 — chip.side is the law the type already packs.
+        const debtor = chip.side === "receivables";
+        const runnerUp = chip.key === "actionDebtorRunnerUp" || chip.key === "actionCreditorRunnerUp";
+        const tooltip = t(
+          runnerUp
+            ? debtor
+              ? "actionDebtorRunnerUpTitle"
+              : "actionCreditorRunnerUpTitle"
+            : debtor
+              ? "actionDebtorTitle"
+              : "actionCreditorTitle",
+          {
+            name: chip.partyName,
+            money: fmtMoney(business, chip.outstandingMinor),
+            count: fmtCount(uiLocale, chip.openItems),
+          },
+        );
         return (
           <button
             key={chip.key}
@@ -864,7 +894,15 @@ function OutstandingActionChips({
             onClick={() => navigate({ kind: "aging-details", side: chip.side, partyId: chip.partyId })}
             title={tooltip}
             aria-label={tooltip}
-            data-testid={debtor ? "copilot-action-debtor" : "copilot-action-creditor"}
+            data-testid={
+              chip.key === "actionDebtor"
+                ? "copilot-action-debtor"
+                : chip.key === "actionDebtorRunnerUp"
+                  ? "copilot-action-debtor-runner-up"
+                  : chip.key === "actionCreditor"
+                    ? "copilot-action-creditor"
+                    : "copilot-action-creditor-runner-up"
+            }
             className={cn(
               "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none transition-colors motion-reduce:transition-none",
               "focus-visible:outline-2 focus-visible:outline-offset-2",

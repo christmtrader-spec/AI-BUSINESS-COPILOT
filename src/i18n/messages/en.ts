@@ -2074,6 +2074,12 @@ const en = {
     actionDebtorTitle: "«{name}» owes you {money} across {count} open invoices. Open their aging details.",
     actionCreditor: "Payables aging",
     actionCreditorTitle: "You owe «{name}» {money} across {count} open bills. Open their aging details.",
+    // R181 — the outstanding podium's rank 2 ("who else?"), the R103 stock
+    // runner-up wording law mirrored onto the receivables/payables sides.
+    actionDebtorRunnerUp: "Second largest receivable",
+    actionDebtorRunnerUpTitle: "Second largest receivable: «{name}» owes you {money} across {count} open invoices. Open their aging details.",
+    actionCreditorRunnerUp: "Second largest payable",
+    actionCreditorRunnerUpTitle: "Second largest payable: you owe «{name}» {money} across {count} open bills. Open their aging details.",
     actionProduct: "The product's page",
     actionProductTitle: "Best seller in this window: «{name}» — {count} units at {money}. Open the product's own page.",
     actionExpense: "{category} expenses",

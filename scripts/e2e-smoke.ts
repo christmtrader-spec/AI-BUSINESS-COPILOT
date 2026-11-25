@@ -21,6 +21,8 @@
  */
 type Check = { name: string; ok: boolean; info?: string };
 
+import { PrismaClient } from "@prisma/client";
+
 const BASE = (() => {
   const i = process.argv.indexOf("--base");
   return i > -1 ? process.argv[i + 1] : "http://localhost:3000";
@@ -1127,6 +1129,37 @@ async function main() {
         delMb.status === 200,
         `status ${delMb.status}`,
       );
+    }
+  }
+
+  // 13. FIXTURE CENSUS HYGIENE (R181 — the user-leak fix). The throwaway
+  // sections ride the REAL register endpoints, so every run mints ONE owner
+  // + ONE invitee USER row. The business delete cascades the invite + the
+  // member, but the USER rows are global — each run leaked 2 (found LIVE:
+  // the census 7/5 drifted to 11/5 after two runs today). The suite's final
+  // act is erasing its OWN user fixtures — every row matching the smoke
+  // email patterns, this run's AND any crashed run's leftovers (self-heal,
+  // the §1a business sweep's spirit, at the DB layer: no user-delete API
+  // exists and none SHOULD — account deletion is a product decision, not a
+  // fixture one). Every User relation cascades (schema onDelete: Cascade).
+  // Seed-contract safety: the only other @t.dev seed email is
+  // rep16007@t.dev — it starts with neither prefix.
+  {
+    const prisma = new PrismaClient();
+    try {
+      const ownerSwept = await prisma.user.deleteMany({
+        where: { email: { startsWith: "smkowner", endsWith: "@t.dev" } },
+      });
+      const invSwept = await prisma.user.deleteMany({
+        where: { email: { startsWith: "inv", endsWith: "@t.dev" } },
+      });
+      record(
+        "fixtures: smoke user rows swept (census hygiene, R181)",
+        ownerSwept.count >= 1 && invSwept.count >= 1,
+        `owners ${ownerSwept.count}, invitees ${invSwept.count}`,
+      );
+    } finally {
+      await prisma.$disconnect();
     }
   }
 
